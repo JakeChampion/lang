@@ -1166,6 +1166,7 @@ TestSelfHostExampleGitMultiPackIndex 47
 TestSelfHostExampleGitOptions 83
 TestSelfHostExampleGitPacked 124
 TestSelfHostExampleGitPush 58
+TestSelfHostExampleGitRemerge 242
 TestSelfHostExampleGitRevisions 58
 TestSelfHostExampleGitSignatures 91
 TestSelfHostExampleGitThinValidation 33

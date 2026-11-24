@@ -5,7 +5,9 @@ import "std/array";
 import "std/crypto";
 import "std/deflate";
 import "std/hex";
+import "std/linediff";
 import "std/result";
+import "./attr";
 import "./color";
 import "./commitgraph";
 import "./config";
@@ -20,11 +22,13 @@ import "./linelog";
 import "./index";
 import "./log";
 import "./mailmap";
+import "./merge";
 import "./moved";
 import "./objects";
 import "./pack";
 import "./patch";
 import "./sig";
+import "./treediff";
 import "./userdiff";
 
 function unhex(s: string): u8[] {
@@ -1219,6 +1223,126 @@ function test_deferred_blobs(): test.TestOutcome {
   return test.pass();
 }
 
+// The merge of three texts with the names `ours`, `base` and `theirs`,
+// and its status in front.
+function merged_text(o: merge.Options, driver: string, marker: i32, inner: boolean, base: string, ours: string, theirs: string): string {
+  let t = merge.merge_text(o, driver, marker, inner, base.bytes(), ours.bytes(), theirs.bytes(), merge.Labels { base: "base", ours: "ours", theirs: "theirs" });
+  return t.status.to_string() + ":" + unsafe { string_from_bytes_unchecked(t.bytes) };
+}
+
+function test_merge_text(): test.TestOutcome {
+  let o = merge.defaults();
+  let text = (base: string, ours: string, theirs: string): string => merged_text(o, "text", 7, false, base, ours, theirs);
+  if (text("a\nb\nc\nd\ne\n", "A\nb\nc\nd\ne\n", "a\nb\nc\nd\nE\n") != "0:A\nb\nc\nd\nE\n") {
+    return test.fail("a clean merge");
+  }
+  if (text("a\nb\nc\nd\ne\n", "a\nb\nO\nd\ne\n", "a\nb\nT\nd\ne\n") != "1:a\nb\n<<<<<<< ours\nO\n=======\nT\n>>>>>>> theirs\nd\ne\n") {
+    return test.fail("a conflict");
+  }
+  // The line that the two sides add is not in the conflict.
+  if (text("a\nb\nc\n", "a\nx\ny\nc\n", "a\nx\nz\nc\n") != "1:a\nx\n<<<<<<< ours\ny\n=======\nz\n>>>>>>> theirs\nc\n") {
+    return test.fail("the zealous refinement");
+  }
+  // Two conflicts with three lines between them are one conflict.
+  if (text("1\n2\n3\n4\n5\n6\n7\n8\n", "1\nA\n3\n4\n5\nB\n7\n8\n", "1\nX\n3\n4\n5\nY\n7\n8\n") != "1:1\n<<<<<<< ours\nA\n3\n4\n5\nB\n=======\nX\n3\n4\n5\nY\n>>>>>>> theirs\n7\n8\n") {
+    return test.fail("two conflicts that are near");
+  }
+  let diff3 = merge.Options { ...o, style: linediff.STYLE_DIFF3 };
+  if (merged_text(diff3, "text", 7, false, "a\nb\nc\n", "a\nx\ny\nc\n", "a\nx\nz\nc\n") != "1:a\n<<<<<<< ours\nx\ny\n||||||| base\nb\n=======\nx\nz\n>>>>>>> theirs\nc\n") {
+    return test.fail("the style diff3");
+  }
+  let zdiff3 = merge.Options { ...o, style: linediff.STYLE_ZDIFF3 };
+  if (merged_text(zdiff3, "text", 7, false, "a\nb\nc\n", "a\nx\ny\nc\n", "a\nx\nz\nc\n") != "1:a\nx\n<<<<<<< ours\ny\n||||||| base\nb\n=======\nz\n>>>>>>> theirs\nc\n") {
+    return test.fail("the style zdiff3");
+  }
+  if (text("a\nb", "a\nO", "a\nT") != "1:a\n<<<<<<< ours\nO\n=======\nT\n>>>>>>> theirs\n") {
+    return test.fail("no line end at the end of the files");
+  }
+  if (merged_text(diff3, "text", 7, false, "a\nb", "a\nO", "a\nT") != "1:a\n<<<<<<< ours\nO\n||||||| base\nb\n=======\nT\n>>>>>>> theirs\n") {
+    return test.fail("no line end at the end of the files, with the base");
+  }
+  if (text("a\r\nb\r\nc\r\n", "a\r\nO\r\nc\r\n", "a\r\nT\r\nc\r\n") != "1:a\r\n<<<<<<< ours\r\nO\r\n=======\r\nT\r\n>>>>>>> theirs\r\nc\r\n") {
+    return test.fail("the line ends of the markers");
+  }
+  if (merged_text(o, "text", 10, false, "a\nb\nc\n", "a\nO\nc\n", "a\nT\nc\n") != "1:a\n<<<<<<<<<< ours\nO\n==========\nT\n>>>>>>>>>> theirs\nc\n") {
+    return test.fail("the size of a marker");
+  }
+  if (merged_text(o, "union", 7, false, "a\nb\nc\n", "a\nO\nc\n", "a\nT\nc\n") != "0:a\nO\nT\nc\n") {
+    return test.fail("the driver union");
+  }
+  return test.pass();
+}
+
+function test_merge_binary(): test.TestOutcome {
+  let o = merge.defaults();
+  // A file that the merge cannot change keeps the first side, and the
+  // base in the merge of two merge bases.
+  if (merged_text(o, "binary", 7, false, "b\n", "o\n", "t\n") != "2:o\n" || merged_text(o, "binary", 7, true, "b\n", "o\n", "t\n") != "0:b\n") {
+    return test.fail("the driver binary");
+  }
+  if (merged_text(o, "text", 7, false, "b\n", "o\x00\n", "t\n") != "2:o\x00\n" || merged_text(o, "union", 7, true, "b\n", "o\n", "t\x00\n") != "0:b\n") {
+    return test.fail("a content with a NUL");
+  }
+  let sizes: (string, i32, boolean)[] = [(attr.UNSPECIFIED, 7, true), ("12", 12, true), (" +9", 9, true), ("0", 7, true), ("-3", 7, true), ("12x", 7, false), ("", 7, false), ("x", 7, false), (attr.SET, 7, false), (attr.UNSET, 7, false), ("99999999999", 7, false)];
+  for c in sizes {
+    let (value, want, sound) = c;
+    let (size, ok) = merge.marker_size(value);
+    if (size != want || ok != sound) {
+      return test.fail("the marker size of the value '" + value + "'");
+    }
+  }
+  return test.pass();
+}
+
+function test_merge_config(): test.TestOutcome {
+  let read = (text: string): merge.Configured => merge.configured(config.Config { ...config.parse(text), file: ".git/config" }, merge.defaults(), "");
+  let plain = read("");
+  if (plain.fatal != "" || !plain.o.renames || !plain.o.dir_renames || plain.o.dir_moves || plain.o.rename_limit != 7000 || plain.o.style != linediff.STYLE_MERGE || plain.o.algo.algorithm != linediff.HISTOGRAM) {
+    return test.fail("the settings with no configuration");
+  }
+  let set = read("[merge]\n\tconflictStyle = zdiff3\n\trenameLimit = 2k\n\trenames = false\n\tdirectoryRenames = true\n\tdefault = union\n[diff]\n\talgorithm = patience\n[merge \"mine\"]\n\tdriver = true\n");
+  if (set.fatal != "" || set.o.style != linediff.STYLE_ZDIFF3 || set.o.rename_limit != 2048 || set.o.renames || !set.o.dir_moves || set.o.default_driver != "union" || set.o.algo.algorithm != linediff.PATIENCE || set.o.drivers != ["mine"]) {
+    return test.fail("the settings of a configuration");
+  }
+  if (read("[diff]\n\trenames = copies\n[merge]\n\tdirectoryRenames = false\n\trenameLimit = 0\n").o.renames != true || read("[merge]\n\tdirectoryRenames = false\n").o.dir_renames || read("[merge]\n\trenameLimit = 0\n").o.rename_limit != 7000) {
+    return test.fail("the renames of a configuration");
+  }
+  let style = read("[merge]\n\tconflictStyle = bogus\n");
+  if (style.error != "error: unknown style 'bogus' given for 'merge.conflictstyle'" || style.fatal != "bad config variable 'merge.conflictstyle' in file '.git/config' at line 2") {
+    return test.fail("a style that git does not know: " + style.error + " / " + style.fatal);
+  }
+  if (read("[merge]\n\trenameLimit = abc\n").fatal != "bad numeric config value 'abc' for 'merge.renamelimit' in file .git/config: invalid unit" || read("[merge]\n\trenames = maybe\n").fatal != "bad boolean config value 'maybe' for 'merge.renames'" || read("[diff]\n\talgorithm = bogus\n").fatal != "unknown value for config 'diff.algorithm': bogus") {
+    return test.fail("the values that git refuses");
+  }
+  if (!read("[merge]\n\trenormalize = true\n").fatal.starts_with("the port does not have merge.renormalize")) {
+    return test.fail("merge.renormalize");
+  }
+  if (merge.configured(config.empty(), merge.defaults(), "5").o.verbosity != 5 || read("[merge]\n\tverbosity = 4\n").o.verbosity != 4) {
+    return test.fail("the verbosity");
+  }
+  return test.pass();
+}
+
+function test_strmap_order(): test.TestOutcome {
+  // The order of the table of git: the hash FNV-1 of each key, in a table
+  // of 64 places.
+  let (two, places) = treediff.strmap_order(["aa", "zz"], 64);
+  let (same, _) = treediff.strmap_order(["zz", "aa"], 64);
+  let (other, _) = treediff.strmap_order(["d1", "d2"], 64);
+  if (two != ["zz", "aa"] || same != ["zz", "aa"] || other != ["d1", "d2"] || places != 64) {
+    return test.fail("the order of two keys");
+  }
+  let many: string[] = [];
+  for k in 0..52 {
+    many = many.append("dir" + k.to_string());
+  }
+  let (grown, wide) = treediff.strmap_order(many, 64);
+  if (wide != 256 || grown.len() != 52 || grown == many) {
+    return test.fail("a table that grows");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let r = test.new("git");
   r = r.it("the names of objects", test_names);
@@ -1254,5 +1378,9 @@ function main(): i32 {
   r = r.it("packed-object formats and strict references", test_pack_validation);
   r = r.it("the special blob checks", test_special_blobs);
   r = r.it("the deferred blob checks", test_deferred_blobs);
+  r = r.it("the merge of three texts", test_merge_text);
+  r = r.it("the merge of a binary file and the size of a marker", test_merge_binary);
+  r = r.it("the settings of a merge", test_merge_config);
+  r = r.it("the order of a table of git", test_strmap_order);
   return r.finish();
 }

@@ -33,6 +33,7 @@ import "./graph";
 import "./index";
 import "./log";
 import "./mailmap";
+import "./merge";
 import "./notes";
 import "./moved";
 import "./objects";
@@ -1069,7 +1070,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { lines: string[], hi: log.Highlight, gpg: sig.Programs, show_signature: boolean, notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_need: boolean, imply_patch: boolean, pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { lines: string[], hi: log.Highlight, gpg: sig.Programs, show_signature: boolean, notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_default: string, merges_need: boolean, imply_patch: boolean, remerge: merge.Configured[], pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1150,17 +1151,18 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
     let n = if (x == "--abbrev") { -1 } else if (x == "--no-abbrev") { 0 } else { log_digits(objects.part(x, 9, x.len())).max(4) };
     return (LogOpts { ...o, patch: patch.Opts { ...d, abbrev: n } }, 1);
   }
-  if (x == "-m" || x == "-c" || x == "--cc" || x == "--dd" || x == "--no-diff-merges") {
-    let m = if (x == "-m") { "separate" } else if (x == "-c") { "combined" } else if (x == "--cc") { "dense-combined" } else if (x == "--dd") { "first-parent" } else { "off" };
-    return (LogOpts { ...o, merges: m, merges_need: false, imply_patch: o.imply_patch || x == "-c" || x == "--cc" || x == "--dd" }, 1);
+  if (x == "-m" || x == "-c" || x == "--cc" || x == "--dd" || x == "--remerge-diff" || x == "--no-diff-merges") {
+    let m = if (x == "-m") { o.merges_default } else if (x == "-c") { "combined" } else if (x == "--cc") { "dense-combined" } else if (x == "--dd") { "first-parent" } else if (x == "--remerge-diff") { "remerge" } else { "off" };
+    let patch = x != "-m" && x != "--no-diff-merges";
+    return (with_merges(o, m, patch, patch), 1);
   }
   let (dm, dm_taken) = option_value(argv, i, "--diff-merges");
   if (dm_taken > 0) {
-    let m = merges_value(dm);
+    let m = merges_value(dm, o.merges_default);
     if (m.len() == 0) {
       return (LogOpts { ...o, bad: "invalid value for '--diff-merges': '" + dm + "'" }, dm_taken);
     }
-    return (LogOpts { ...o, merges: m, merges_need: m != "off" }, dm_taken);
+    return (with_merges(o, m, m != "off", false), dm_taken);
   }
   if (x == "--word-diff" || x.starts_with("--word-diff=")) {
     if (x == "--word-diff") {
@@ -1502,11 +1504,15 @@ function notes_of(r: refs.Repo, s_in: store.Store, o: LogOpts): (store.Store, no
 }
 
 // The diff of a merge that a value of `--diff-merges=` names, or "".
-function merges_value(v: string): string {
+// `usual` is the diff of `-m`, which `log.diffMerges` sets.
+function merges_value(v: string, usual: string): string {
   if (v == "off" || v == "none") {
     return "off";
   }
-  if (v == "on" || v == "m" || v == "separate") {
+  if (v == "on" || v == "m") {
+    return usual;
+  }
+  if (v == "separate") {
     return "separate";
   }
   if (v == "first-parent" || v == "1") {
@@ -1518,7 +1524,19 @@ function merges_value(v: string): string {
   if (v == "dense-combined" || v == "cc") {
     return "dense-combined";
   }
+  if (v == "remerge" || v == "r") {
+    return "remerge";
+  }
   return "";
+}
+
+// The options with the diff `m` of a merge (diff-merges.c of git). With
+// `need`, a merge has a diff, and with `imply`, each commit has a patch.
+// A diff from each parent and a diff of the parents merged again keep
+// each merge in a walk with paths.
+function with_merges(o: LogOpts, m: string, need: boolean, imply: boolean): LogOpts {
+  let full = m == "separate" || m == "first-parent" || m == "remerge";
+  return LogOpts { ...o, merges: m, merges_need: need, imply_patch: imply, walk: revwalk.Opts { ...o.walk, full_history: o.walk.full_history || full } };
 }
 
 // The options of the diff that the configuration sets.
@@ -1955,7 +1973,8 @@ function commit_changes(st: store.Store, c: log.Commit, parent: string, o: LogOp
 }
 
 // The diff of a merge that the options select (`--diff-merges=` of git):
-// "off", "first-parent", "separate", "combined" or "dense-combined".
+// "off", "first-parent", "separate", "combined", "dense-combined" or
+// "remerge".
 // `--first-parent` gives the diff from the first parent, unless an option
 // selects another diff.
 function merge_mode(o: LogOpts): string {
@@ -1966,8 +1985,16 @@ function merge_mode(o: LogOpts): string {
 }
 
 // The changes of a commit from a parent, and the parent of `-m` for the
-// line `commit HASH (from PARENT)`, or "".
-struct Diff { from: string, changes: treediff.Change[] }
+// line `commit HASH (from PARENT)`, or "". For `--remerge-diff`, the
+// changes are from the merge of the two parents: `remerge` is true,
+// `headers` holds the messages of the conflicts of each path, and
+// `header_pairs` is true when a path with a message and no change has a
+// patch. `note` is the line of git for a merge of more than two parents.
+struct Diff { from: string, changes: treediff.Change[], headers: Map[string, string[]], remerge: boolean, header_pairs: boolean, note: string }
+
+function diff_of(from: string, changes: treediff.Change[]): Diff {
+  return Diff { from: from, changes: changes, headers: Map { }, remerge: false, header_pairs: false, note: "" };
+}
 
 // The diffs of the commit `c`: one for a commit with one parent or none,
 // and for a merge none, one from the first parent, or one from each
@@ -1976,7 +2003,7 @@ function commit_diffs(st: store.Store, c: log.Commit, parents: string[], o: LogO
   let mode = merge_mode(o);
   if (parents.len() <= 1 || mode == "first-parent") {
     let (s1, changes, path) = commit_changes(st, c, if (parents.len() > 0) { parents[0] } else { "" }, o, follow);
-    return (s1, [Diff { from: "", changes: changes }], path);
+    return (s1, [diff_of("", changes)], path);
   }
   if (mode != "separate") {
     return (st, [], follow);
@@ -1988,14 +2015,14 @@ function commit_diffs(st: store.Store, c: log.Commit, parents: string[], o: LogO
     let (s2, changes, path2) = commit_changes(s, c, p, o, follow);
     s = s2;
     path = path2;
-    out = out.append(Diff { from: p, changes: changes });
+    out = out.append(diff_of(p, changes));
   }
   return (s, out, path);
 }
 
-// True when a diff has a change.
+// True when a diff has a change, or a line that git shows with no change.
 function any_change(diffs: Diff[]): boolean {
-  return diffs.any((d: Diff): boolean => d.changes.len() > 0);
+  return diffs.any((d: Diff): boolean => d.changes.len() > 0 || d.header_pairs || d.note.len() > 0);
 }
 
 // The source of the file `path` that the commit adds, as `--follow` finds
@@ -2042,6 +2069,12 @@ function commit_diff(st: store.Store, c: log.Commit, parent: string, o: LogOpts,
       base = log.commit_of(parent, p.body).tree;
     }
   }
+  return tree_diff(s, base, c, o, follow);
+}
+
+// The changes of the commit `c` against the tree `base`, or against no
+// tree for "", with the renames.
+function tree_diff(s: store.Store, base: string, c: log.Commit, o: LogOpts, follow: string): (store.Store, treediff.Change[], string) {
   if (o.follow) {
     let (after, found) = treediff.changes(s, base, c.tree, [follow]);
     // git looks for the source only of a path that is the pathspec.
@@ -2065,6 +2098,86 @@ function commit_diff(st: store.Store, c: log.Commit, parent: string, o: LogOpts,
   }
   let (s4, renamed) = treediff.detect(after, found, o.find, base, items);
   return (s4, renamed, follow);
+}
+
+// The graph of the merge bases of `--remerge-diff` after the walk shows
+// the commit `h`, or nothing when the walk changes no parents. git finds
+// the merge bases with the parents that the walk gave to each commit:
+// each commit before the first one with `--simplify-merges`, and each
+// shown commit with the other walks.
+function bases_graph(w: revwalk.Walk, bases: walk.Graph[], h: string): walk.Graph[] {
+  if (w.parents.is_empty()) {
+    return bases;
+  }
+  let with_parents = (g: walk.Graph, c: string, ps: string[]): walk.Graph => {
+    let (g1, n) = walk.node(g, c);
+    return walk.Graph { ...g1, nodes: g1.nodes.insert(c, walk.Node { ...n, parents: ps }) };
+  };
+  if (bases.len() == 0 && w.opts.simplify_merges) {
+    let g = w.g;
+    for e in w.parents.entries() {
+      let (c, ps) = e;
+      g = with_parents(g, c, ps);
+    }
+    return [g];
+  }
+  let Some(ps) = w.parents.get(h) else {
+    return bases;
+  };
+  return [with_parents(if (bases.len() > 0) { bases[0] } else { w.g }, h, ps)];
+}
+
+// The diff of the merge `c` of the two commits `parents` against the
+// merge of the two in memory (`do_remerge_diff` of git), and the reason
+// why the merge stops, or "". Each merge shows the line of git for a
+// value of the configuration that git refuses. With `wanted` false, no
+// option reads the diff of the merge, and the port does not do it.
+// `bases` holds the graph of the merge bases when it is not `g_in`.
+function remerge_diff(g_in: walk.Graph, bases: walk.Graph[], c: log.Commit, parents: string[], o: LogOpts, least: i32, wanted: boolean, follow: string): (walk.Graph, Diff, string, string) {
+  let none = Diff { ...diff_of("", []), remerge: true };
+  let read = if (o.remerge.len() > 0) { o.remerge[0] } else { merge.Configured { o: merge.defaults(), error: "", fatal: "" } };
+  if (read.fatal.len() > 0) {
+    if (read.error.len() > 0) {
+      eprint(read.error);
+    }
+    return (g_in, none, follow, read.fatal);
+  }
+  if (!wanted) {
+    return (g_in, none, follow, "");
+  }
+  let g = g_in;
+  let labels: string[] = [];
+  for p in parents {
+    let (g1, pc) = walk.commit(g, p);
+    g = g1;
+    labels = labels.append(refs.short_of(g.store, p, least) + " (" + log.subject(pc.message) + ")");
+  }
+  let history = if (bases.len() > 0) { walk.Graph { ...bases[0], store: g.store } } else { g };
+  let (g2, found_bases) = walk.merge_bases(history, parents[0], [parents[1]]);
+  let merged = merge.merge_commits(g2, merge.Options { ...read.o, abbrev: least, attrs: o.patch.attrs }, found_bases, parents[0], parents[1], labels[0], labels[1]);
+  g = walk.Graph { ...g, store: merged.store };
+  for w in merged.warnings {
+    eprint(w);
+  }
+  if (merged.fatal.len() > 0) {
+    return (g, none, follow, merged.fatal);
+  }
+  let (s1, found, path) = tree_diff(g.store, merged.tree, c, o, follow);
+  let changes = found;
+  if (o.pick.kind != 0) {
+    let (s2, kept) = patch.pickaxe(s1, found, o.pick, o.patch);
+    s1 = s2;
+    changes = kept;
+  }
+  let items = if (o.full_diff) { [] } else { o.walk.items };
+  let headers: Map[string, string[]] = Map { };
+  for m in merged.messages {
+    if (items.len() == 0 || treediff.interesting(items, m.path.bytes(), false) > 0) {
+      headers = headers.insert(m.path, m.lines);
+    }
+  }
+  let d = Diff { from: "", changes: changes, headers: headers, remerge: items.len() == 0 || !headers.is_empty(), header_pairs: !headers.is_empty() && o.pick.kind == 0, note: "" };
+  return (walk.Graph { ...g, store: s1 }, d, path, "");
 }
 
 // The lines of `--name-only` or `--name-status`.
@@ -2297,7 +2410,10 @@ function line_log_init(r: refs.Repo, w_in: revwalk.Walk, args: string[]): (revwa
 // and its text had no line end at its end.
 // `follow` is the path that `--follow` follows now.
 // `hidden` is true when the last commit gave no text.
-struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean, failed: boolean, fatal: string }
+// `bases` holds the graph of the merge bases of `--remerge-diff` when the
+// walk changes the parents of its commits: git finds the merge bases
+// with the changed parents of each commit that it showed.
+struct Shown { graph: graph.Graph, any: boolean, missing: boolean, follow: string, hidden: boolean, failed: boolean, fatal: string, bases: walk.Graph[] }
 
 // The padding of the graph before a line, or "" with no graph.
 function graph_pad(o: LogOpts, sh: Shown): (Shown, string) {
@@ -2393,7 +2509,7 @@ function entry_text(st: store.Store, c: log.Commit, o: LogOpts, ctx: log.Context
     out += "\n";
   }
   sh = Shown { ...sh, missing: missing };
-  if (changes.len() == 0) {
+  if (changes.len() == 0 && !o.patch.header_pairs) {
     return (s, out, sh);
   }
   if (o.form != "oneline" && !empty) {
@@ -2471,8 +2587,16 @@ function log_entry(st: store.Store, c: log.Commit, o_in: LogOpts, ctx: log.Conte
   let merge = ctx.parents.len() > 1;
   let o = merge_forms(o_in, merge);
   let mode = merge_mode(o);
-  let wanted = o.diff.len() > 0 || !o.no_output && patch.any(o.patch);
-  if (!wanted) {
+  if (known.len() > 0 && known[0].len() == 1 && known[0][0].note.len() > 0) {
+    let (s0, text0, sh0) = entry_text(st, c, o, ctx, least, sh_in, []);
+    return (s0, text0 + known[0][0].note, sh0);
+  }
+  let wanted = diff_wanted(o);
+  // With no form of the diff, git still reads the diff from each parent
+  // when an option asks for a diff, and shows the merge one time for each
+  // parent with a change.
+  let each_parent = merge && mode == "separate" && (o.merges_need || o.pick.kind != 0 || o.follow);
+  if (!wanted && !each_parent) {
     return entry_text(st, c, o, ctx, least, sh_in, []);
   }
   if (merge && (mode == "combined" || mode == "dense-combined")) {
@@ -2491,8 +2615,9 @@ function log_entry(st: store.Store, c: log.Commit, o_in: LogOpts, ctx: log.Conte
   }
   let out = "";
   for d in diffs {
-    if (d.changes.len() > 0) {
-      let (s2, text, sh2) = entry_text(s, c, o, log.Context { ...ctx, from: d.from }, least, sh, d.changes);
+    if (d.changes.len() > 0 || d.header_pairs) {
+      let shown = LogOpts { ...o, patch: patch.Opts { ...o.patch, headers: d.headers, remerge: d.remerge, header_pairs: d.header_pairs } };
+      let (s2, text, sh2) = entry_text(s, c, shown, log.Context { ...ctx, from: d.from }, least, sh, if (wanted) { d.changes } else { [] });
       s = s2;
       sh = sh2;
       out += text;
@@ -2502,6 +2627,11 @@ function log_entry(st: store.Store, c: log.Commit, o_in: LogOpts, ctx: log.Conte
     return (s, out, sh);
   }
   return entry_text(s, c, o, ctx, least, sh, []);
+}
+
+// True when a form of the diff shows the changes of a commit.
+function diff_wanted(o: LogOpts): boolean {
+  return o.diff.len() > 0 || !o.no_output && patch.any(o.patch);
 }
 
 // The text of a merge with its combined diff (`diff_tree_combined` of
@@ -2736,7 +2866,7 @@ function reflog_walk(r: refs.Repo, w_in: revwalk.Walk, o: LogOpts, names: string
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s2 } };
     decorations = by;
   }
-  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: "", hidden: false, failed: false, fatal: "" };
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: "", hidden: false, failed: false, fatal: "", bases: [] };
   let buf: u8[] = [];
   let count = 0;
   let skipped = 0;
@@ -2855,13 +2985,41 @@ function log_show(w_in: revwalk.Walk, item: LogItem, o: LogOpts, decorations: Ma
     let (s7, text2, after2) = entry_text(w.g.store, c, LogOpts { ...o, patch: patch.Opts { ...o.patch, line_ranges: ranges } }, ctx, least, sh, changes);
     return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s7 } }, text2, after2);
   }
+  if (merge_mode(o) == "remerge") {
+    sh = Shown { ...sh, bases: bases_graph(w, sh.bases, h) };
+  }
+  // git looks at the diff of a merge when an option asks for a diff of
+  // each commit or of each merge.
+  let asked = o.merges_need || diff_wanted(o) || o.pick.kind != 0 || o.follow;
+  if (ps.len() > 1 && asked && merge_mode(o) == "remerge") {
+    let forms = merge_forms(o, true);
+    let diffs = [Diff { ...diff_of("", []), note: "diff: warning: Skipping remerge-diff for octopus merges.\n" }];
+    if (ps.len() == 2) {
+      let (g5, d, path, died) = remerge_diff(w.g, sh.bases, c, ps, forms, least, diff_wanted(forms) || o.pick.kind != 0 || o.follow, sh.follow);
+      w = revwalk.Walk { ...w, g: g5 };
+      if (died.len() > 0) {
+        return (w, "", Shown { ...sh, fatal: died });
+      }
+      sh = Shown { ...sh, follow: path };
+      diffs = [d];
+    }
+    if ((o.pick.kind != 0 || o.follow) && !any_change(diffs)) {
+      store.release(w.g.store);
+      return (w, "", Shown { ...sh, hidden: true });
+    }
+    let (s8, text3, after3) = log_entry(w.g.store, c, o, ctx, least, sh, [diffs]);
+    store.release(s8);
+    return (revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s8 } }, text3, after3);
+  }
   // With the pickaxe and with --follow, a commit with no changes is not
   // shown, but the graph still takes it.
   if (o.pick.kind != 0 || o.follow) {
     let (s4, diffs, path) = commit_diffs(w.g.store, c, ps, merge_forms(o, ps.len() > 1), sh.follow);
     w = revwalk.Walk { ...w, g: walk.Graph { ...w.g, store: s4 } };
     sh = Shown { ...sh, follow: path };
-    if (!any_change(diffs)) {
+    // git shows a merge before its combined diff, with or without paths.
+    let combined = ps.len() > 1 && (merge_mode(o) == "combined" || merge_mode(o) == "dense-combined");
+    if (!any_change(diffs) && !combined) {
       return (w, "", Shown { ...sh, hidden: true });
     }
     let (s5, text1, after1) = log_entry(w.g.store, c, o, ctx, least, sh, [diffs]);
@@ -2940,8 +3098,20 @@ function log_command(argv: string[]): i32 {
   if (driver_config_status(r) != 0) {
     return 128;
   }
-  let o = LogOpts { lines: [], hi: log.no_highlight(), gpg: gpg_programs(r), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_need: false, imply_patch: false, pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { lines: [], hi: log.no_highlight(), gpg: gpg_programs(r), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_default: "separate", merges_need: false, imply_patch: false, remerge: [], pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
+  for e in r.config.entries {
+    if (e.name == "log.diffmerges") {
+      let m = merges_value(e.value, "separate");
+      if (e.bare || m.len() == 0) {
+        if (e.bare) {
+          eprint("error: " + config.missing_value(e));
+        }
+        return fatal(r.config.bad(e));
+      }
+      o = LogOpts { ...o, merges_default: m };
+    }
+  }
   let renames_value = r.config.get("diff.renames").unwrap_or("true").to_ascii_lower();
   let copies = renames_value == "copies" || renames_value == "copy";
   o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: copies || r.config.flag("diff.renames", true), find: treediff.Detect { ...o.find, copies: copies }, walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
@@ -3111,7 +3281,10 @@ function log_command(argv: string[]): i32 {
   if (o.imply_patch && o.diff.len() == 0 && !o.no_output && !patch.any(o.patch)) {
     o = LogOpts { ...o, patch: patch.Opts { ...o.patch, patch: true } };
   }
-  if (o.patch.patch || o.patch.color || o.diff == "check" || o.lines.len() > 0) {
+  if (o.merges == "remerge") {
+    o = LogOpts { ...o, remerge: [merge.configured(r.config, merge.defaults(), env("GIT_MERGE_VERBOSITY").unwrap_or(""))] };
+  }
+  if (o.patch.patch || o.patch.color || o.diff == "check" || o.lines.len() > 0 || o.merges == "remerge") {
     o = LogOpts { ...o, patch: patch.Opts { ...o.patch, attrs: [attr.load(r)], drivers: userdiff.from_config(r.config) } };
   }
   o = LogOpts { ...o, patch: patch.Opts { ...o.patch, abbrev: o.patch.abbrev.min(2 * st0.width) } };
@@ -3240,7 +3413,7 @@ function log_command(argv: string[]): i32 {
   }
   let shown: string[] = [];
   let buf: u8[] = [];
-  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false, failed: false, fatal: "" };
+  let sh = Shown { graph: graph.graph_new(o.patch.color), any: false, missing: false, follow: if (o.follow) { items[0] } else { "" }, hidden: false, failed: false, fatal: "", bases: [] };
   let p = Pull { w: w, skipped: 0, count: 0, candidates: [] };
   // The boundary commits to show after the walk (`get_revision_internal`),
   // and the commits after the current one, for the visual roots of the

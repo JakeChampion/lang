@@ -60,6 +60,7 @@ func TestDestinationBindsACallInsideItsValue(t *testing.T) {
 		{"receiver", "function view(): El[Msg] { let e: El[Msg] = text(\"a\").padded(2.0); return e; }"},
 		{"receiver of a receiver", "function view(): El[Msg] { return text(\"a\").padded(1.0).padded(2.0); }"},
 		{"receiver in a generic function", "function wide[M](s: string): El[M] { return column([text(s).padded(1.0)]).padded(6.0).padded(7.0); }\nfunction view(): El[Msg] { return wide(\"a\"); }"},
+		{"receiver in a generic function with a parameter of another name", "function wide[T](s: string): El[T] { return column([text(s).padded(1.0)]).padded(6.0).padded(7.0); }\nfunction view(): El[Msg] { return wide(\"a\"); }"},
 		{"receivers in an array argument", "function view(): El[Msg] { return column([text(\"a\").padded(1.0), button(\"+\", Inc).padded(2.0)]).padded(3.0); }"},
 		{"struct update base", "function view(): El[Msg] { return El { ...text(\"a\"), pad: 1.0 }; }"},
 		{"struct update base in a generic function", "function wide[M](s: string): El[M] { return El { ...text(s), pad: 1.0 }; }\nfunction view(): El[Msg] { return wide(\"a\"); }"},
