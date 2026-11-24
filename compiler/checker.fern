@@ -19719,7 +19719,7 @@ struct OclFactoryCache { known: boolean, factories: OclFactories }
 
 struct OclFactoryState { cache: Cell[OclFactoryCache], mod: parser.Module, env: ModuleEnv }
 
-struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, inlines: OclCapture[], types: string[], tparams: string[], summary: boolean, methods: Option[OwnLenders] }
+struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, proofs: Cell[OwnDataProofs], inlines: OclCapture[], types: string[], tparams: string[], summary: boolean, methods: Option[OwnLenders] }
 
 struct OclInlineFacts { facts: OclFacts, captures: OclCapture[] }
 
@@ -20094,7 +20094,7 @@ function ocl_value(value: ast.Expr, facts: OclFacts): OclCapture[] {
 
 // A value of plain data holds no callback, so it has no loan.
 function ocl_plain(ty: string, facts: OclFacts): boolean {
-  return ty.len() > 0 && ow_value_data(ty, facts.factories.decls, []);
+  return ow_cached_value_data(ty, facts.factories.decls, facts.proofs);
 }
 
 function ocl_aggregate(value: ast.Expr, facts: OclFacts): OclCapture[] {
@@ -20371,7 +20371,7 @@ function ocl_dynamic_call(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
     if (!owned) {
       if let ast.ExprIdent(arg) = c.args[i] {
         let at = facts.names.find(arg.name);
-        if (at >= 0 && ocl_unique(facts.names, arg.name) && !ow_value_data(facts.types[at], facts.factories.decls, [])) {
+        if (at >= 0 && ocl_unique(facts.names, arg.name) && !ow_cached_value_data(facts.types[at], facts.factories.decls, facts.proofs)) {
           out = ocl_merge(out, [ocl_capture(arg.name, facts.types[at], true)]);
         }
       }
@@ -20380,7 +20380,7 @@ function ocl_dynamic_call(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
   return out;
 }
 
-function ocl_factories(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): OclFactories {
+function ocl_factories(mod: parser.Module, env: ModuleEnv, dx: OwnDecls, proofs: Cell[OwnDataProofs]): OclFactories {
   let containers = ocl_containers(dx);
   let names: string[] = [];
   let funcs: parser.FuncDecl[] = [];
@@ -20406,7 +20406,7 @@ function ocl_factories(mod: parser.Module, env: ModuleEnv, dx: OwnDecls): OclFac
         continue;
       }
       stale = stale.with(i, false);
-      let facts = ocl_facts(funcs[i], factories, true, None);
+      let facts = ocl_facts(funcs[i], factories, proofs, true, None);
       let sources = ocl_factory_sources(funcs[i], facts, factories.rows[i]);
       if (sources.len() > factories.rows[i].len()) {
         factories = OclFactories { ...factories, rows: factories.rows.with(i, sources) };
@@ -20586,7 +20586,7 @@ function ocl_block(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
   return out;
 }
 
-function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: boolean, methods: Option[OwnLenders]): OclFacts {
+function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, proofs: Cell[OwnDataProofs], summarize: boolean, methods: Option[OwnLenders]): OclFacts {
   let defs: OclDef[] = [];
   for param in fn.params {
     defs = defs.append(ocl_param(param));
@@ -20602,7 +20602,7 @@ function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, summarize: bool
     rows = rows.append([]);
     types = types.append(def.spelling);
   }
-  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, inlines: [], types: types, tparams: ocl_type_params(fn), summary: summarize, methods: methods };
+  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, proofs: proofs, inlines: [], types: types, tparams: ocl_type_params(fn), summary: summarize, methods: methods };
   // A local of plain value data is a copy, which has no lender.
   let copies: boolean[] = [];
   for def in defs {
@@ -20705,15 +20705,15 @@ function ow_callback_facts(ctx: OwnCtx): OclFacts {
   let lu = ctx.last_use.get();
   let state = ctx.factories.cache.get();
   if (!state.known) {
-    state = OclFactoryCache { known: true, factories: ocl_factories(ctx.factories.mod, ctx.factories.env, ctx.decls) };
+    state = OclFactoryCache { known: true, factories: ocl_factories(ctx.factories.mod, ctx.factories.env, ctx.decls, ctx.value_proofs) };
     ctx.factories.cache.set(state);
   }
   if (!lu.captures_known) {
-    let facts = ocl_facts(annotate_func(lu.fn, ctx.factories.env), state.factories, false, Some(lu.lenders));
+    let facts = ocl_facts(annotate_func(lu.fn, ctx.factories.env), state.factories, ctx.value_proofs, false, Some(lu.lenders));
     lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
     ctx.last_use.set(lu);
   }
-  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams, summary: false, methods: None };
+  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, proofs: ctx.value_proofs, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams, summary: false, methods: None };
 }
 
 function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
@@ -28509,7 +28509,7 @@ function ow_copy_results(typed: parser.FuncDecl[], dx: OwnDecls): util.NameIndex
   return util.name_index(copyable);
 }
 
-struct OwnDataProofs { types: string[], copyable: boolean[] }
+struct OwnDataProofs { types: util.NameIndex, copyable: boolean[] }
 
 // The declarations stay fixed during this walk. A complete spelling retains
 // generic arguments; an erased or unresolved type has no copy contract.
@@ -28519,12 +28519,12 @@ function ow_copyable_result(ty: typeinfo.Type, ctx: OwnCtx): boolean {
 
 function ow_cached_value_data(spelling: string, decls: OwnDecls, cache: Cell[OwnDataProofs]): boolean {
   let proofs = cache.get();
-  let i = util.index_of_str(proofs.types, spelling);
+  let i = proofs.types.find(spelling);
   if (i >= 0) {
     return proofs.copyable[i];
   }
   let copyable = spelling.len() > 0 && ow_value_data(spelling, decls, []);
-  cache.set(OwnDataProofs { types: proofs.types.append(spelling), copyable: proofs.copyable.append(copyable) });
+  cache.set(OwnDataProofs { types: proofs.types.added(spelling), copyable: proofs.copyable.append(copyable) });
   return copyable;
 }
 
@@ -29792,7 +29792,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let handle_borrows = ow_handle_borrows(mod, borrows, decls);
   let lenders = OwnLenders { ...ow_lenders(mod, ofuncs, decls), fresh_methods: fresh_methods };
   let out: util.Diag[] = ow_value_diags(decls);
-  let value_proofs = cell_new(OwnDataProofs { types: [], copyable: [] });
+  let value_proofs = cell_new(OwnDataProofs { types: util.name_index([]), copyable: [] });
   let empty_names: string[] = [];
   let factories = OclFactoryState { mod: result_mod, env: env, cache: cell_new(OclFactoryCache { known: false, factories: OclFactories { names: util.name_index(empty_names), funcs: [], rows: [], decls: decls } }) };
   for i in 0..mod.funcs.len() {
