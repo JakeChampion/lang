@@ -458,6 +458,20 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		t.Setenv("PWD", "")
 		compare([]string{"-cn", "-L", "../../../examples/jq/tests/modules", `import "c" as foo; foo::c`}, "", "")
 	})
+	t.Run("relative library with stale PWD", func(t *testing.T) {
+		actual, stale := t.TempDir(), t.TempDir()
+		for dir, value := range map[string]string{actual: "actual", stale: "stale"} {
+			if err := os.Mkdir(filepath.Join(dir, "lib"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "lib", "m.jq"), []byte("def value: "+strconv.Quote(value)+";"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Chdir(actual)
+		t.Setenv("PWD", stale)
+		compare([]string{"-nc", "-L", "lib", `include "m"; value`}, "", "")
+	})
 	for _, c := range fileCases {
 		dir := t.TempDir()
 		args := append([]string{}, c.args...)
