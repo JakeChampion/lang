@@ -100,13 +100,14 @@ function tone(frames: i32, channels: i32, rate: i32): f32[] {
 }
 
 // The signal-to-noise ratio in dB of `channel` of the decoded output, from frame 1000 to one granule before the end.
-function snr(input: [f32], output: [f32], channels: i32, channel: i32): f64 {
+// Input frame t is output frame t + delay.
+function snr(input: [f32], output: [f32], channels: i32, channel: i32, delay: i32): f64 {
   let signal = 0.0;
   let noise = 0.0;
   let frames = input.len() / channels;
   for t in 1000..frames - 600 {
     let a = input[t * channels + channel] as f64;
-    let b = output[(t + encoder.DELAY) * channels + channel] as f64;
+    let b = output[(t + delay) * channels + channel] as f64;
     signal += a * a;
     noise += (a - b) * (a - b);
   }
@@ -142,15 +143,25 @@ function round_trip(): test.TestOutcome {
     let input = tone(3000, channels, rate);
     let bytes = match (encoder.encode(input, rate, channels, encoder.Options { bitrate: bitrate }, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("encode: " + e.message()); } };
     let count = (3000 + encoder.DELAY + 1151) / 1152;
-    if (!frames_valid(bytes, rate, channels, bitrate, count)) {
+    let tag = 144000 * bitrate / rate;
+    if (!frames_valid(bytes[tag:], rate, channels, bitrate, count)) {
       return test.fail("frame headers at " + rate.to_string() + " Hz and " + bitrate.to_string() + " kbit/s");
     }
-    let decoded = match (mp3.decode_raw(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("decode: " + e.message()); } };
-    if (decoded.sample_rate != rate || decoded.channels != channels || decoded.samples.len() != count * 1152 * channels) {
+    let raw = match (mp3.decode_raw(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("decode_raw: " + e.message()); } };
+    if (raw.samples.len() != (count + 1) * 1152 * channels) {
+      return test.fail("raw length");
+    }
+    for i in 0..1152 * channels {
+      if (raw.samples[i] != 0.0f32) {
+        return test.fail("the Info frame decodes to a nonzero sample");
+      }
+    }
+    let decoded = match (mp3.decode(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("decode: " + e.message()); } };
+    if (decoded.sample_rate != rate || decoded.channels != channels || decoded.samples.len() != 3000 * channels) {
       return test.fail("decoded format or length");
     }
     for ch in 0..channels {
-      let value = snr(input, decoded.samples, channels, ch);
+      let value = snr(input, decoded.samples, channels, ch, 0);
       if (value < config[3] as f64) {
         return test.fail(rate.to_string() + " Hz, " + channels.to_string() + " channels, " + bitrate.to_string() + " kbit/s: SNR " + value.to_string() + " dB");
       }
@@ -195,10 +206,68 @@ function writer_chunks(): test.TestOutcome {
     at += n;
     i += 1;
   }
-  let Ok((_, done)) = e.finish(output, pcm.default_limits()) else {
+  let Ok((last, done)) = e.finish(output, pcm.default_limits()) else {
     return test.fail("finish");
   };
-  return if (same(whole, done)) { test.pass() } else { test.fail("chunked stream differs") };
+  let Ok(stream) = last.tag() else {
+    return test.fail("tag");
+  };
+  for byte in done {
+    stream = stream.append(byte);
+  }
+  return if (same(whole, stream)) { test.pass() } else { test.fail("chunked stream differs") };
+}
+
+function be(bytes: [u8], at: i32, count: i32): i64 {
+  let value = 0i64;
+  for i in 0..count {
+    value = value << 8i64 | bytes[at + i] as i64;
+  }
+  return value;
+}
+
+function arc(bytes: [u8]): i64 {
+  let crc = 0i64;
+  for byte in bytes {
+    crc ^= byte as i64;
+    for _ in 0..8 {
+      crc = if ((crc & 1i64) == 1i64) { crc >> 1i64 ^ 40961i64 } else { crc >> 1i64 };
+    }
+  }
+  return crc;
+}
+
+// The Info frame gives the frame count, the byte count, the gapless fields and both checksums.
+// fern-lint: allow cyclomatic-complexity
+function info_tag(): test.TestOutcome {
+  for channels in [1, 2] {
+    let input = tone(5000, channels, 48000);
+    let Ok(bytes) = encoder.encode(input, 48000, channels, encoder.Options { bitrate: 32 }, pcm.default_limits()) else {
+      return test.fail("encode");
+    };
+    let Ok(track) = mp3.inspect_track(bytes, pcm.default_limits()) else {
+      return test.fail("inspect_track");
+    };
+    let count = (5000 + encoder.DELAY + 1151) / 1152;
+    if (track.declared_frames != count as u32 || track.skip_frames != encoder.DELAY || track.padding_frames != count * 1152 - 5000 - encoder.DELAY) {
+      return test.fail("frame count or gapless fields");
+    }
+    let frame = track.data_offset;
+    let lame = 4 + (if (channels == 1) { 17 } else { 32 }) + 16;
+    if (frame != 96 || be(bytes, lame - 16, 4) != be([73u8, 110u8, 102u8, 111u8], 0, 4) || be(bytes, lame - 4, 4) != bytes.len() as i64 || be(bytes, lame + 28, 4) != bytes.len() as i64) {
+      return test.fail("Info frame size, name or byte counts");
+    }
+    if (be(bytes, lame + 32, 2) != arc(bytes[frame:]) || be(bytes, lame + 34, 2) != arc(bytes[:lame + 34])) {
+      return test.fail("audio or tag CRC");
+    }
+  }
+  let Ok(e) = encoder.encoder(44100, 1, encoder.default_options()) else {
+    return test.fail("encoder");
+  };
+  let Ok((pushed, _)) = e.push(tone(2000, 1, 44100), [], pcm.default_limits()) else {
+    return test.fail("push");
+  };
+  return match (pushed.tag()) { Ok(_) => test.fail("a tag before finish"), Err(err) => if (err.message() == pcm.Truncated.message()) { test.pass() } else { test.fail(err.message()) } };
 }
 
 function silence(): test.TestOutcome {
@@ -260,6 +329,7 @@ function main(): i32 {
   runner = runner.it("planned cost equals written bits", plan_cost);
   runner = runner.it("round trip through std/audio/mp3", round_trip);
   runner = runner.it("chunked push equals one encode", writer_chunks);
+  runner = runner.it("Info frame with gapless fields", info_tag);
   runner = runner.it("silence stays silent", silence);
   runner = runner.it("unsupported formats and invalid samples", rejects);
   return runner.finish();
