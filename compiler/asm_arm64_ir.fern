@@ -5641,7 +5641,7 @@ struct Allocated { imm: ssa.Imms, call_kinds: i32[], alloc: ssa.Alloc, floats: b
 
 function ssa_allocated(f: ssa.SFunc, r: irtables.Lowered, s: asmcore.EmitState): Allocated {
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
-  let imm = ssa_logical_imms(f, ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false, true));
+  let imm = ssa_logical_imms(f, ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false, true, false));
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let floats = ssa.float_values(f, ssa_float_calls(f, s), true);

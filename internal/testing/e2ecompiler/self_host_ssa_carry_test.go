@@ -566,3 +566,31 @@ func TestSelfHostSSACarryConstantsStayAtTheirChain(t *testing.T) {
 		t.Errorf("add_sub_p loads -1 with movabsq:\n%s", fn)
 	}
 }
+
+// A borrow chain on x86-64 subtracts a constant that fits 32 bits as an immediate.
+func TestSelfHostSSABorrowTakesImmediate(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_add_sub_p")
+	if fn == "" {
+		t.Fatal("no __fn_add_sub_p in the listing")
+	}
+	if !regexp.MustCompile(`(?m)^\s+subq \$-1, %r\w+$`).MatchString(fn) {
+		t.Errorf("add_sub_p does not subtract -1 as an immediate:\n%s", fn)
+	}
+	if regexp.MustCompile(`(?m)^\s+movq \$-1, %r\w+$`).MatchString(fn) {
+		t.Errorf("add_sub_p loads -1 into a register:\n%s", fn)
+	}
+}

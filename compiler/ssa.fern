@@ -4183,7 +4183,10 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
 
 // `stores` says the target stores an immediate to memory with one instruction.
 // `zero_stores` says it stores only a zero so.
-pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[], stores: boolean, zero_stores: boolean): Imms {
+// With `flag_carries`, a carry that stays in the flags does not take its
+// operands out of the immediates, because it emits no instruction that reads them.
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[], stores: boolean, zero_stores: boolean, flag_carries: boolean): Imms {
+  let roles: i32[] = if (flag_carries) { carry_roles(f, use_counts(f)) } else { [] };
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -4206,6 +4209,9 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[],
   }
   for blk in f.blocks {
     for ins in blk.insts {
+      if (flag_carry(roles, ins)) {
+        continue;
+      }
       for a in 0..ins.args.len() {
         let v = ins.args[a];
         if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !((stores || zero_stores && value[v] == 0i64) && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
