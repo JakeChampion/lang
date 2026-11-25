@@ -5083,6 +5083,48 @@ function identity_operand(ins: SInst, defs: SInst[]): i32 {
   return -1;
 }
 
+// x & -1 is x and x & 0 is 0. An identity that one of these folds exposes, such
+// as x + (y & 0), also folds. The pass runs after fuse_carries, because the
+// carry formulas of a chain with a constant limb hold these ANDs.
+pub function fold_and_identities(f: SFunc): SFunc {
+  let defs = inst_defs(f);
+  let flat = identity_repl(f.nvals);
+  let changed = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let seen = rewrite_args(ins, flat);
+      let kept = and_operand(seen, defs);
+      if (kept < 0 && changed && args_move(ins, flat)) {
+        kept = identity_operand(seen, defs);
+      }
+      if (kept >= 0 && ins.result >= 0) {
+        flat = flat.with(ins.result, kept);
+        changed = true;
+      }
+    }
+  }
+  if (!changed) {
+    return f;
+  }
+  return prune_dead(rewrite_through(f, flat));
+}
+
+// The all-ones constant -1 has each of the 64 bits set, so the fold is correct at each width.
+function and_operand(ins: SInst, defs: SInst[]): i32 {
+  if (ins.kind_tag != BINARY || ins.ir_kind != ir.K_AND || ins.args.len() != 2) {
+    return -1;
+  }
+  let a = ins.args[0];
+  let b = ins.args[1];
+  if (const_is(defs, b, -1i64) || const_is(defs, a, 0i64)) {
+    return a;
+  }
+  if (const_is(defs, a, -1i64) || const_is(defs, b, 0i64)) {
+    return b;
+  }
+  return -1;
+}
+
 function left_identity(kind: i32): boolean {
   return kind == ir.K_ADD || kind == ir.K_OR || kind == ir.K_XOR || kind == ir.K_MUL;
 }
