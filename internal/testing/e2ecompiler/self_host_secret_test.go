@@ -434,6 +434,78 @@ function main(): i32 {
 }
 `
 
+// A record of a `@secret` struct also wipes each element of an array of
+// boxes that it holds alone: here the rows of a `u8[][]`, and the byte array
+// and the scalar of each record in a `Sub[]`. The probe reads back the
+// released blocks of each size class. "shared" returns one row from the key,
+// so that row must keep its bytes. The control is the same record without
+// the attribute.
+const secretElementsSrc = `struct Sub { bytes: u8[], tag: u64 }
+
+@secret
+struct Key { rows: u8[][], subs: Sub[], n: i32 }
+
+struct Plain { rows: u8[][], subs: Sub[], n: i32 }
+
+function fill(n: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  for i in 0..n {
+    b = b.with(i, 65 as u8);
+  }
+  return b;
+}
+
+@noinline
+function key(v: u64): i32 {
+  let k = Key { rows: [fill(48), fill(48)], subs: [Sub { bytes: fill(48), tag: v }], n: 1 };
+  return k.rows.len() + k.subs.len();
+}
+
+@noinline
+function plain(v: u64): i32 {
+  let k = Plain { rows: [fill(48), fill(48)], subs: [Sub { bytes: fill(48), tag: v }], n: 1 };
+  return k.rows.len() + k.subs.len();
+}
+
+@noinline
+function shared(v: u64): u8[] {
+  let b = fill(48);
+  let k = Key { rows: [b, fill(48)], subs: [Sub { bytes: fill(48), tag: v }], n: 1 };
+  let n = k.n;
+  return b;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 2..24 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word);
+  } else if (mode == "shared") {
+    let b = shared(word);
+    print(b[0].to_string() + " " + b[47].to_string());
+  } else {
+    let n = plain(word);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 // secretRun compiles src for target and gives a function that runs the
 // program in one mode and splits its output into fields.
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
@@ -563,6 +635,23 @@ func TestSelfHostSecretRecordWipesItsStrings(t *testing.T) {
 			}
 			if got := run("literal"); len(got) != 2 || got[0] != "20" {
 				t.Fatalf("literal printed %q; a string literal in a @secret record must keep its bytes", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsArraysOfBoxes(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretElementsSrc)
+			if got := secretCount(t, "plain", run("plain")); got < 152 {
+				t.Fatalf("plain read %d secret bytes back, want at least 152; the raw allocations no longer observe the released elements", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its array elements back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 3 || got[0] != "65" || got[1] != "65" {
+				t.Fatalf("shared printed %q; the row that the caller still holds must keep its bytes", got)
 			}
 		})
 	}
