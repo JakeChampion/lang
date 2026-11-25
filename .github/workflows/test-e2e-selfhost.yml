@@ -300,6 +300,7 @@ jobs:
           - { leg: wasm, shard: 1, count: 4 }
           - { leg: wasm, shard: 2, count: 4 }
           - { leg: wasm, shard: 3, count: 4 }
+    # .github/stdtest-weights.txt sets which cases each shard runs.
     env:
       FERN_STDTEST_SHARD: "${{ matrix.shard }}/${{ matrix.count }}"
     steps:
