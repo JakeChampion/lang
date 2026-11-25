@@ -8,6 +8,7 @@ import "std/tls";
 import "std/tls/client";
 import "std/tls/handshake";
 import "std/tls/identity";
+import "std/tls/ocsp";
 import "std/tls/server";
 import "std/tls/verify";
 import "std/time";
@@ -353,6 +354,20 @@ function served(leaf: string, key_pem: string): string {
     }
   }
   return "";
+}
+
+// The server staples its OCSP response to a client that asks for one. An
+// unsuccessful response shows that the client read the staple.
+function test_ocsp_response(): test.TestOutcome {
+  let unsuccessful = __codec_bytes(hex.decode("30030a0101"));
+  let sc = fixture_config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_ocsp_response(unsuccessful);
+  let got = "";
+  for p in [ocsp.NoCheck, ocsp.CheckStapled] {
+    got = got + outcome(connect(client.config("tls.example", roots()).with_revocation(p), sc)) + ";";
+  }
+  let plain = fixture_config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32));
+  got = got + outcome(connect(client.config("tls.example", roots()).with_revocation(ocsp.RequireStapled), plain));
+  return test.assert_eq(got, outcome(connect(client.config("tls.example", roots()), plain)) + ";client: " + tls.Revocation(ocsp.NotSuccessful(1)).message() + ";client: " + tls.Revocation(ocsp.NotStapled).message());
 }
 
 function test_leaves(): test.TestOutcome {
@@ -1161,6 +1176,7 @@ function test_start_refuses_short_entropy(): test.TestOutcome {
 
 function main(): i32 {
   let r = test.new("std/tls/server");
+  r = r.it("an OCSP response stapled to a client that asks", test_ocsp_response);
   r = r.it("ticket secret length", test_ticket_secret_length);
   r = r.it("start gives a Step with no output", test_start_is_a_step);
   r = r.it("start refuses short entropy", test_start_refuses_short_entropy);

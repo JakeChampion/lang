@@ -170,7 +170,7 @@ function verification(events: handshake.Event[]): handshake.Verification {
       }
     }
   }
-  return handshake.Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false };
+  return handshake.Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false, stapled: [] };
 }
 
 function signing(events: handshake.Event[]): handshake.Signing {
@@ -490,16 +490,91 @@ function refused_in_encrypted_extensions(extra: message.Extension): string {
   return "";
 }
 
+// The Verification of a handshake between cc and sc. With forget, the client
+// keeps no record that its ClientHello asked for a status.
+function verified_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig, forget: boolean): Result[handshake.Verification, handshake.HandshakeError] {
+  let start = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
+  let server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
+  let s1 = server.read(start.output)?;
+  let client = start.client;
+  if (forget) {
+    let asked: message.Extension[] = [];
+    for e in client.hello.extensions {
+      if (e.kind != message.EXT_STATUS_REQUEST) {
+        asked = asked.append(e);
+      }
+    }
+    client = handshake.Client { ...client, hello: message.ClientHello { ...client.hello, extensions: asked } };
+  }
+  let sg = signing(s1.events);
+  let sig: u8[] = [];
+  match (signed_with(seed(), sg.signed)) {
+    Ok(b) => {
+      sig = b;
+    },
+    Err(e) => {
+      return Err(handshake.Misuse("sign"));
+    }
+  }
+  let s2 = s1.server.signature(sig)?;
+  let c1 = client.read(cat(s1.output, s2.output))?;
+  return Ok(verification(c1.events));
+}
+
+function stapling_server(response: u8[]): handshake.ServerConfig {
+  return handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), ocsp_response: response };
+}
+
+// RFC 8446 section 4.4.2.1: the response is in the CertificateEntry of the leaf.
+function test_a_stapled_response_reaches_the_verification(): test.TestOutcome {
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), extensions: [message.ext_status_request()] };
+  match (verified_between(cc, stapling_server([0x30u8, 0x03u8, 0x0au8, 0x01u8, 0x00u8]), false)) {
+    Ok(v) => {
+      return test.assert_eq(hex.encode(v.stapled), "30030a0100");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("no result");
+}
+
+function test_no_staple_for_a_client_that_does_not_ask(): test.TestOutcome {
+  match (handshake_between(handshake.client_config("example.com"), stapling_server([0x30u8, 0x00u8]))) {
+    Ok(p) => {
+      return test.assert_eq(p.client.stapled.len(), 0);
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("no result");
+}
+
 // RFC 8446 section 4.4.2: the client asked for no extension of an entry.
 function test_certificate_entry_extension_is_refused(): test.TestOutcome {
-  let status = message.Extension { kind: 5, data: [1u8, 0u8, 0u8, 0u8, 0u8] };
-  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), entry_extensions: [status] };
-  match (handshake_between(handshake.client_config("example.com"), sc)) {
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), extensions: [message.ext_status_request()] };
+  match (verified_between(cc, stapling_server([0x30u8, 0x00u8]), true)) {
     Ok(_) => {
       return test.fail("connected");
     },
     Err(e) => {
       return test.assert_eq(e.message(), handshake.Illegal("certificate entry extension").message());
+    }
+  }
+  return test.fail("no result");
+}
+
+// RFC 8446 section 4.4.2.1: a TLS 1.3 server does not staple in EncryptedExtensions.
+function test_status_request_in_encrypted_extensions_is_refused(): test.TestOutcome {
+  let cc = handshake.ClientConfig { ...handshake.client_config("example.com"), extensions: [message.ext_status_request()] };
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), extensions: [message.Extension { kind: message.EXT_STATUS_REQUEST, data: [] }] };
+  match (handshake_between(cc, sc)) {
+    Ok(_) => {
+      return test.fail("connected");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), handshake.Illegal("extension in EncryptedExtensions").message());
     }
   }
   return test.fail("no result");
@@ -1550,6 +1625,9 @@ function main(): i32 {
   r = r.it("no record comes between the parts of a handshake message", test_no_record_between_the_parts_of_a_message);
   r = r.it("extensions that EncryptedExtensions cannot hold", test_extensions_that_encrypted_extensions_cannot_hold);
   r = r.it("an extension of a certificate entry that the client did not ask for", test_certificate_entry_extension_is_refused);
+  r = r.it("a stapled OCSP response reaches the verification", test_a_stapled_response_reaches_the_verification);
+  r = r.it("no staple for a client that does not ask", test_no_staple_for_a_client_that_does_not_ask);
+  r = r.it("a status_request in EncryptedExtensions", test_status_request_in_encrypted_extensions_is_refused);
   r = r.it("the handshake secrets do not stay after the handshake", test_handshake_secrets_do_not_stay);
   r = r.it("the extensions of CertificateRequest and NewSessionTicket", test_extensions_of_request_and_ticket);
   r = r.it("the server name goes out with no trailing dot", test_the_name_goes_out_with_no_trailing_dot);

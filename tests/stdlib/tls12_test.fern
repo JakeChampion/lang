@@ -370,6 +370,54 @@ function test_server_hello12(): test.TestOutcome {
   return test.assert_eq(alert_after(started(false).client, server_hello(server_random(), 0xc02f, ems)), 70);
 }
 
+function asking(): handshake.Client {
+  let cfg = handshake.ClientConfig { ...handshake.client_config("example.com"), tls12: true, extensions: [message.ext_status_request()] };
+  match (handshake.client_start(cfg, counting(handshake.client_entropy(cfg)))) {
+    Ok(step) => {
+      return step.client;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(97);
+    }
+  }
+  exit(97);
+}
+
+function handshake_record(m: u8[]): u8[] {
+  return record.frame(record.Handshake, 0x0303, m);
+}
+
+// RFC 6066 section 8: a CertificateStatus follows the Certificate when the ServerHello announces it.
+function test_certificate_status(): test.TestOutcome {
+  let ems = message.Extension { kind: 23, data: [] };
+  let status = message.Extension { kind: message.EXT_STATUS_REQUEST, data: [] };
+  if (alert_after(started(true).client, server_hello(server_random(), 0xc02f, [ems, status])) != 110) {
+    return test.fail("a status_request that the client did not offer");
+  }
+  let flight = server_hello(server_random(), 0xc02f, [ems, status]).concat(handshake_record(tls12.certificate([bytes("aabb")]))).concat(handshake_record(tls12.handshake_message(message.CERTIFICATE_STATUS, message.certificate_status(bytes("3003")))));
+  match (asking().read(flight)) {
+    Ok(step) => {
+      if (hex.encode(step.client.stapled) != "3003") {
+        return test.fail("stapled " + hex.encode(step.client.stapled));
+      }
+      let again = handshake_record(tls12.handshake_message(message.CERTIFICATE_STATUS, message.certificate_status(bytes("3003"))));
+      if (alert_after(step.client, again) != 10) {
+        return test.fail("a second CertificateStatus");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  let unannounced = server_hello(server_random(), 0xc02f, [ems]).concat(handshake_record(tls12.certificate([bytes("aabb")]))).concat(handshake_record(tls12.handshake_message(message.CERTIFICATE_STATUS, message.certificate_status(bytes("3003")))));
+  if (alert_after(asking(), unannounced) != 10) {
+    return test.fail("a CertificateStatus that the ServerHello did not announce");
+  }
+  let empty = server_hello(server_random(), 0xc02f, [ems, status]).concat(handshake_record(tls12.certificate([bytes("aabb")]))).concat(handshake_record(tls12.handshake_message(message.CERTIFICATE_STATUS, bytes("01000000"))));
+  return test.assert_eq(alert_after(asking(), empty), 50);
+}
+
 function main(): i32 {
   let r = test.new("std/tls/tls12");
   r = r.it("signature schemes match suite authentication", test_suite_signatures);
@@ -387,6 +435,7 @@ function main(): i32 {
   r = r.it("the schemes of a CertificateRequest", test_request_schemes);
   r = r.it("the client hello offers TLS 1.2", test_hello_offers_tls12);
   r = r.it("a TLS 1.2 ServerHello", test_server_hello12);
+  r = r.it("a TLS 1.2 CertificateStatus", test_certificate_status);
   return r.finish();
 }
 
