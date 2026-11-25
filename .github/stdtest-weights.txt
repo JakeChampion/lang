@@ -277,6 +277,7 @@ mp4_smoke 10
 mpeg12_freeformat 35
 net 15
 net_broadcast 13
+noise 48
 num_reducers 4
 one_of_none_of 5
 option_and_set_ops 5
