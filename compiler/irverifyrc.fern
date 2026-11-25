@@ -397,30 +397,56 @@ function read_site(ops: ir.Op[], call: i32): Site {
   };
 }
 
-// A one-argument call that retains, releases or moves the local that the
-// op before it reads, or -1.
-function counted_local(ops: ir.Op[], i: i32, sigs: rcsigs.Table): i32 {
-  if (i < 1 || ops[i].kind_tag != ir.K_CALL_DIRECT || ops[i].i32_imm != 1) {
+// The local that argument k of the call at i reads directly, or -1. The
+// arguments after k must be straight-line ops.
+function arg_local(ops: ir.Op[], i: i32, k: i32): i32 {
+  let after = ops[i].i32_imm - 1 - k;
+  let net = 0;
+  let j = i - 1;
+  while (net != after) {
+    if (j < 0 || net > after || ir.op_pops(ops[j]) < 0 || is_flow_kind(ops[j].kind_tag)) {
+      return -1;
+    }
+    net += ir.op_pushes(ops[j]) - ir.op_pops(ops[j]);
+    j -= 1;
+  }
+  if (j < 0 || ops[j].kind_tag != ir.K_LOAD_LOCAL && ops[j].kind_tag != ir.K_TEE_LOCAL) {
     return -1;
   }
-  let arg = ops[i - 1].kind_tag;
-  if (arg != ir.K_LOAD_LOCAL && arg != ir.K_TEE_LOCAL) {
-    return -1;
+  return ops[j].i32_imm;
+}
+
+function is_flow_kind(t: i32): boolean {
+  return t == ir.K_BLOCK || t == ir.K_LOOP || t == ir.K_IF || t == ir.K_ELSE || t == ir.K_END
+    || t == ir.K_BR || t == ir.K_BRIF || t == ir.K_RETURN;
+}
+
+// True when the call at i retains, releases or moves the local donor
+// through one of its arguments.
+function changes_count_of(ops: ir.Op[], i: i32, donor: i32, sigs: rcsigs.Table): boolean {
+  if (ops[i].kind_tag != ir.K_CALL_DIRECT) {
+    return false;
   }
   let sig = sigs.lookup(ops[i].str);
-  if (!sig.known || sig.arg != 0) {
-    return -1;
+  if (!sig.known) {
+    return false;
   }
-  if (sig.effect != rcsigs.effect_retain() && sig.effect != rcsigs.effect_release() && sig.effect != rcsigs.effect_move()) {
-    return -1;
+  let counts = sig.effect == rcsigs.effect_retain() || sig.effect == rcsigs.effect_release() || sig.effect == rcsigs.effect_move();
+  if (counts && sig.arg >= 0 && sig.arg < ops[i].i32_imm && arg_local(ops, i, sig.arg) == donor) {
+    return true;
   }
-  return ops[i - 1].i32_imm;
+  for a in sig.also {
+    if (a >= 0 && a < ops[i].i32_imm && arg_local(ops, i, a) == donor) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function first_count_change(ops: ir.Op[], from: i32, to: i32, donor: i32, sigs: rcsigs.Table): i32 {
   let i = from;
   while (i < to) {
-    if (counted_local(ops, i, sigs) == donor) {
+    if (changes_count_of(ops, i, donor, sigs)) {
       return i;
     }
     i += 1;

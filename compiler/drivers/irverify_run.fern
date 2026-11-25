@@ -1036,6 +1036,34 @@ function rc_count_checks(): i32 {
   if (!counts_changed(insert_ops(native_reuse(1, 1, 1), 5, count_call(1, "__fern_arr_cow_inplace")))) {
     return 119;
   }
+  let append_range: ir.Op[] = [
+    ir.op_load_local(2), ir.op_const_i32(0), ir.op_const_i32(4), ir.op_load_local(1),
+    ir.op_call_direct("__fern_bytes_append_range", 4), ir.op_drop(),
+  ];
+  if (!counts_changed(insert_ops(selfhost_reuse(1, 1), 4, append_range))) {
+    return 128;
+  }
+  let map_set: ir.Op[] = [
+    ir.op_load_local(2), ir.op_load_local(5), ir.op_load_local(1),
+    ir.op_call_direct("__map_set_impl", 3), ir.op_drop(),
+  ];
+  if (!counts_changed(insert_ops(selfhost_reuse(1, 1), 4, map_set))) {
+    return 129;
+  }
+  let computed: ir.Op[] = [
+    ir.op_load_local(1), ir.op_load_local(2), ir.op_load_local(5), raw_op("add"), ir.op_load_local(6),
+    ir.op_call_direct("__map_set_impl", 3), ir.op_drop(),
+  ];
+  if (!counts_changed(insert_ops(selfhost_reuse(1, 1), 4, computed))) {
+    return 131;
+  }
+  let lent: ir.Op[] = [
+    ir.op_load_local(1), ir.op_const_i32(0), ir.op_const_i32(4), ir.op_load_local(2),
+    ir.op_call_direct("__fern_bytes_append_range", 4), ir.op_drop(),
+  ];
+  if (!counts_kept(insert_ops(selfhost_reuse(1, 1), 4, lent))) {
+    return 149;
+  }
   return 0;
 }
 
