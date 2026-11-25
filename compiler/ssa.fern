@@ -4799,6 +4799,144 @@ function same_operand(a: i32, b: i32, defs: SInst[]): boolean {
   return da.kind_tag == db.kind_tag && (da.kind_tag == CONST_INT || da.kind_tag == CONST_I64) && da.imm == db.imm && da.str == db.str;
 }
 
+// An integer operation of constants becomes a constant. The emitters do not
+// agree on the high half of a 32-bit result, so a 32-bit operation folds only
+// when its operands and its result are in [0, 2^31).
+pub function fold_constant_operations(f: SFunc): SFunc {
+  let defs = inst_defs(f);
+  let blocks = f.blocks;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for bi in 0..blocks.len() {
+      let insts = blocks[bi].insts;
+      let edited = false;
+      for k in 0..insts.len() {
+        let ins = insts[k];
+        if (ins.result < 0 || ins.result >= f.nvals) {
+          continue;
+        }
+        if let Some(c) = folded_value(ins, defs) {
+          let made = constant_inst(ins.result, c);
+          insts = insts.with(k, made);
+          defs = defs.with(ins.result, made);
+          edited = true;
+        }
+      }
+      if (edited) {
+        blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: insts });
+        changed = true;
+      }
+    }
+  }
+  return SFunc { ...f, blocks: blocks };
+}
+
+function constant_inst(result: i32, c: i64): SInst {
+  if (c >= 0i64 - 2147483648i64 && c <= 2147483647i64) {
+    return SInst { ir_kind: 0, kind_tag: CONST_INT, result: result, args: [], imm: c as i32, str: "" };
+  }
+  return SInst { ir_kind: 0, kind_tag: CONST_I64, result: result, args: [], imm: 64, str: util.i64_to_string(c) };
+}
+
+function constant_value(defs: SInst[], v: i32): Option[i64] {
+  if (v < 0 || v >= defs.len()) {
+    return None;
+  }
+  let d = defs[v];
+  if (d.kind_tag == CONST_INT) {
+    return Some(d.imm as i64);
+  }
+  if (d.kind_tag == CONST_I64 && d.str.len() > 0) {
+    return Some(util.lit_to_i64(d.str));
+  }
+  return None;
+}
+
+function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
+  if (ins.kind_tag == UNARY && ins.args.len() == 1) {
+    if let Some(a) = constant_value(defs, ins.args[0]) {
+      return folded_cast(ins.str, a);
+    }
+    return None;
+  }
+  if (ins.kind_tag != BINARY || ins.args.len() != 2) {
+    return None;
+  }
+  if let Some(a) = constant_value(defs, ins.args[0]) {
+    if let Some(b) = constant_value(defs, ins.args[1]) {
+      if (ins.imm == 64) {
+        return folded_word(ins.str, a, b);
+      }
+      if (non_negative_i32(a) && non_negative_i32(b) && !(ins.str.starts_with("sh") && b > 31i64)) {
+        if let Some(c) = folded_word(ins.str, a, b) {
+          if (non_negative_i32(c)) {
+            return Some(c);
+          }
+        }
+      }
+    }
+  }
+  return None;
+}
+
+function non_negative_i32(c: i64): boolean {
+  return c >= 0i64 && c <= 2147483647i64;
+}
+
+function folded_word(op: string, a: i64, b: i64): Option[i64] {
+  if (op == "add") {
+    return Some(a + b);
+  }
+  if (op == "sub") {
+    return Some(a - b);
+  }
+  if (op == "mul") {
+    return Some(a * b);
+  }
+  if (op == "and") {
+    return Some(a & b);
+  }
+  if (op == "or") {
+    return Some(a | b);
+  }
+  if (op == "xor") {
+    return Some(a ^ b);
+  }
+  if (b < 0i64 || b > 63i64) {
+    return None;
+  }
+  if (op == "shl") {
+    return Some(a << b);
+  }
+  if (op == "shr_s") {
+    return Some(a >> b);
+  }
+  if (op == "shr_u" && a >= 0i64) {
+    return Some(a >> b);
+  }
+  return None;
+}
+
+function folded_cast(op: string, a: i64): Option[i64] {
+  if (op == "int_cast:i32") {
+    return Some(a << 32i64 >> 32i64);
+  }
+  if (op == "int_cast:u32" || op == "u32_wrap") {
+    return Some(a & 4294967295i64);
+  }
+  if (op == "int_cast:u16") {
+    return Some(a & 65535i64);
+  }
+  if (op == "int_cast:i16") {
+    return Some(a << 48i64 >> 48i64);
+  }
+  if (op == "int_cast:u8") {
+    return Some(a & 255i64);
+  }
+  return None;
+}
+
 // x + 0, x - 0, x | 0, x ^ 0, x shifted by 0 and x * 1 are x.
 function fold_identities(f: SFunc): Formed {
   let defs = inst_defs(f);
@@ -6383,7 +6521,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 pub function form(f: SFunc): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged = merge_duplicates(folded.f, false);
-  let plain = fold_identities(share_product_operands(merged.f));
+  let plain = fold_identities(share_product_operands(fold_constant_operations(merged.f)));
   let shared = share_shape_loads(plain.f);
   let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
   let extended = fold_extensions(unwrapped.f);

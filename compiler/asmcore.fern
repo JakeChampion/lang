@@ -102,6 +102,10 @@ pub struct EmitState {
   slot_load_disp: i32,
   ssa_boxed: boolean[],
   ssa_even: boolean[],
+  // The integer constants of the function and their values. A read of a
+  // spilled constant writes the value again and does not load its slot.
+  ssa_konst: boolean[],
+  ssa_konst_value: i64[],
   reg_entries: irtables.SigReg,
   float_abi: irtables.SigReg,
   float_abi_masks: string[],
@@ -657,6 +661,8 @@ pub function new_state(): EmitState {
     slot_load_disp: 0,
     ssa_boxed: [],
     ssa_even: [],
+    ssa_konst: [],
+    ssa_konst_value: [],
     reg_entries: irtables.sig_reg_of([]),
     float_abi: irtables.sig_reg_of([]),
     float_abi_masks: [],
