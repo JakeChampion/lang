@@ -113,6 +113,42 @@ function counted_nulls(): ssa.SFunc {
   return ssa.SFunc { name: "counted_nulls", nparams: 1, nvals: 7, blocks: [b0], entry: 0, takes_env: false };
 }
 
+function wide(v: i32, args: i32[], str: string): ssa.SInst {
+  return ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: v, args: args, imm: 64, str: str };
+}
+
+// Operations of constants: 32-bit ones in range and out of it, 64-bit ones,
+// casts, and operations that read a parameter or are not plain arithmetic.
+function constant_operations(): ssa.SFunc {
+  let insts: ssa.SInst[] = [
+    inst(ssa.PARAM, 0, [], ""), konst(1, 32768), konst(2, 1), konst(3, 35), konst(4, 0), konst(5, 40), konst(6, 300),
+    inst(ssa.BINARY, 7, [1, 2], "sub"), inst(ssa.UNARY, 8, [7], "int_cast:i32"), inst(ssa.BINARY, 9, [3, 2], "shr_s"),
+    inst(ssa.BINARY, 10, [4, 2], "sub"), inst(ssa.BINARY, 11, [2, 5], "shl"),
+    wide(12, [4, 2], "sub"), wide(13, [2, 5], "shl"), inst(ssa.UNARY, 14, [6], "int_cast:u8"),
+    inst(ssa.BINARY, 15, [1, 2], "and_not"), inst(ssa.BINARY, 16, [0, 2], "add"),
+    inst(ssa.BINARY, 17, [3, 2], "div_s"),
+  ];
+  let b0 = ssa.SBlock { id: 0, insts: insts, term: ret(16), preds: [] };
+  return ssa.SFunc { name: "constant_operations", nparams: 1, nvals: 18, blocks: [b0], entry: 0, takes_env: false };
+}
+
+function const_of(f: ssa.SFunc, v: i32): string {
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result == v) {
+        if (ins.kind_tag == ssa.CONST_INT) {
+          return util.i32_to_string(ins.imm);
+        }
+        if (ins.kind_tag == ssa.CONST_I64) {
+          return ins.str;
+        }
+        return "";
+      }
+    }
+  }
+  return "";
+}
+
 function has(f: ssa.SFunc, v: i32): boolean {
   for b in f.blocks {
     for ins in b.insts {
@@ -179,6 +215,14 @@ function main(): i32 {
   failures = check(!has(nulls, 3), "a count given back on a constant null goes", failures);
   failures = check(has(nulls, 4), "a count given back on a parameter stays", failures);
   failures = check(has(nulls, 5) && has(nulls, 6) && nulls.nvals == 7, "a count on a null whose result is read stays", failures);
+  let k = ssa.fold_constant_operations(constant_operations());
+  failures = check(const_of(k, 7) == "32767" && const_of(k, 8) == "32767", "a 32-bit difference of constants and its cast fold", failures);
+  failures = check(const_of(k, 9) == "17", "a 32-bit shift of constants folds", failures);
+  failures = check(const_of(k, 10) == "", "a 32-bit difference below zero stays", failures);
+  failures = check(const_of(k, 11) == "", "a 32-bit shift by 40 stays", failures);
+  failures = check(const_of(k, 12) == "-1" && const_of(k, 13) == "1099511627776", "64-bit operations of constants fold", failures);
+  failures = check(const_of(k, 14) == "44", "a byte cast of a constant folds", failures);
+  failures = check(const_of(k, 15) == "" && const_of(k, 16) == "" && const_of(k, 17) == "", "an and_not, a sum with a parameter and a division stay", failures);
   print("failures=" + util.i32_to_string(failures));
   return failures;
 }

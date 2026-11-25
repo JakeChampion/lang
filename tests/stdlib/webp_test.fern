@@ -181,7 +181,87 @@ function test_decode_errors(): test.TestOutcome {
   let bad_signature = lossless().with(20, 0u8);
   let bad_version = lossless().with(24, 32u8);
   let got = [decoded(lossy()), decoded(lossy_alpha()), decoded(animated), decoded([1u8, 2u8, 3u8]), decoded(prefix(lossless(), 30)), decoded(prefix(palette_200(), 600)), decoded(bad_signature), decoded(bad_version)];
-  return test.assert_eq(got.join(" | "), "webp: only still lossless files can be decoded | webp: only still lossless files can be decoded | webp: only still lossless files can be decoded | webp: not a WebP file | webp: the data ends early | webp: the data ends early | webp: the header of the lossless image is not valid | webp: the header of the lossless image is not valid");
+  return test.assert_eq(got.join(" | "), "webp: only lossless images can be decoded | webp: only lossless images can be decoded | webp: the file is animated, so decode_animation must read it | webp: not a WebP file | webp: the data ends early | webp: the data ends early | webp: the header of the lossless image is not valid | webp: the header of the lossless image is not valid");
+}
+
+// Animations that the generator of the test wrote, with each frame a lossless
+// still of libwebp. The first has frames with and without blending and
+// disposal, on a canvas of 6 by 4. In the second, the first frame does not
+// cover the canvas. The CRC-32 values are of the canvases that the animation
+// decoder of libwebp 1.6.0 gives.
+function animation_6x4(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 76u8, 1u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 18u8, 0u8, 0u8, 0u8, 5u8, 0u8, 0u8, 3u8, 0u8, 0u8, 65u8, 78u8, 73u8, 77u8, 6u8, 0u8, 0u8, 0u8, 9u8, 8u8, 7u8, 255u8, 3u8, 0u8, 65u8, 78u8, 77u8, 70u8, 56u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 5u8, 0u8, 0u8, 3u8, 0u8, 0u8, 100u8, 0u8, 0u8, 2u8, 86u8, 80u8, 56u8, 76u8, 32u8, 0u8, 0u8, 0u8, 47u8, 5u8, 192u8, 0u8, 0u8, 185u8, 140u8, 232u8, 127u8, 236u8, 34u8, 162u8, 255u8, 1u8, 133u8, 108u8, 35u8, 64u8, 7u8, 118u8, 254u8, 98u8, 63u8, 194u8, 160u8, 12u8, 114u8, 76u8, 0u8, 68u8, 74u8, 14u8, 65u8, 78u8, 77u8, 70u8, 34u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 50u8, 0u8, 0u8, 1u8, 86u8, 80u8, 56u8, 76u8, 10u8, 0u8, 0u8, 0u8, 47u8, 1u8, 64u8, 0u8, 16u8, 136u8, 254u8, 71u8, 1u8, 3u8, 65u8, 78u8, 77u8, 70u8, 48u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 3u8, 0u8, 0u8, 1u8, 0u8, 0u8, 70u8, 0u8, 0u8, 0u8, 86u8, 80u8, 56u8, 76u8, 24u8, 0u8, 0u8, 0u8, 47u8, 3u8, 64u8, 0u8, 16u8, 31u8, 48u8, 255u8, 49u8, 40u8, 2u8, 129u8, 100u8, 180u8, 205u8, 83u8, 139u8, 114u8, 9u8, 37u8, 143u8, 232u8, 127u8, 0u8, 65u8, 78u8, 77u8, 70u8, 36u8, 0u8, 0u8, 0u8, 2u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 3u8, 0u8, 0u8, 30u8, 0u8, 0u8, 2u8, 86u8, 80u8, 56u8, 76u8, 12u8, 0u8, 0u8, 0u8, 47u8, 1u8, 192u8, 0u8, 16u8, 40u8, 69u8, 21u8, 234u8, 81u8, 178u8, 0u8, 65u8, 78u8, 77u8, 70u8, 38u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 5u8, 0u8, 0u8, 3u8, 0u8, 0u8, 232u8, 3u8, 0u8, 1u8, 86u8, 80u8, 56u8, 76u8, 14u8, 0u8, 0u8, 0u8, 47u8, 5u8, 192u8, 0u8, 16u8, 232u8, 127u8, 255u8, 99u8, 144u8, 163u8, 82u8, 43u8, 21u8, 65u8, 78u8, 77u8, 70u8, 36u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 20u8, 0u8, 0u8, 0u8, 86u8, 80u8, 56u8, 76u8, 11u8, 0u8, 0u8, 0u8, 47u8, 1u8, 64u8, 0u8, 0u8, 69u8, 13u8, 250u8, 159u8, 253u8, 15u8, 0u8];
+}
+
+function animation_4x4(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 188u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 18u8, 0u8, 0u8, 0u8, 3u8, 0u8, 0u8, 3u8, 0u8, 0u8, 65u8, 78u8, 73u8, 77u8, 6u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 65u8, 78u8, 77u8, 70u8, 38u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 40u8, 0u8, 0u8, 0u8, 86u8, 80u8, 56u8, 76u8, 13u8, 0u8, 0u8, 0u8, 47u8, 1u8, 64u8, 0u8, 16u8, 168u8, 101u8, 201u8, 138u8, 252u8, 225u8, 255u8, 40u8, 0u8, 65u8, 78u8, 77u8, 70u8, 36u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 3u8, 86u8, 80u8, 56u8, 76u8, 11u8, 0u8, 0u8, 0u8, 47u8, 1u8, 64u8, 0u8, 16u8, 168u8, 64u8, 118u8, 160u8, 77u8, 1u8, 0u8, 65u8, 78u8, 77u8, 70u8, 54u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 3u8, 0u8, 0u8, 3u8, 0u8, 0u8, 60u8, 0u8, 0u8, 0u8, 86u8, 80u8, 56u8, 76u8, 29u8, 0u8, 0u8, 0u8, 47u8, 3u8, 192u8, 0u8, 16u8, 185u8, 10u8, 68u8, 244u8, 63u8, 32u8, 16u8, 72u8, 66u8, 159u8, 126u8, 134u8, 209u8, 15u8, 49u8, 105u8, 26u8, 194u8, 215u8, 16u8, 203u8, 6u8, 128u8, 23u8, 0u8];
+}
+
+// The size and the loop count of an animation, and the duration and the
+// CRC-32 of the canvas of each frame.
+function animated(file: [u8]): string {
+  return match (webp.decode_animation(file)) {
+    Ok(a) => {
+      let parts: string[] = [a.width.to_string() + "x" + a.height.to_string() + " loops " + a.loop_count.to_string()];
+      for f in a.frames {
+        parts = parts.append(f.duration_ms.to_string() + "ms " + crc32.of(f.image.pixels).to_string());
+      }
+      parts.join(", ")
+    },
+    Err(e) => e.message(),
+  };
+}
+
+function test_decode_animation(): test.TestOutcome {
+  let got = [animated(animation_6x4()), animated(animation_4x4())];
+  return test.assert_eq(got.join(" | "), "6x4 loops 3, 100ms 824791207, 50ms 877785062, 70ms 3762765311, 30ms 3671574189, 1000ms 632538914, 20ms 2754903820 | 4x4 loops 0, 40ms 676721024, 0ms 1746730032, 60ms 1606861834");
+}
+
+function test_decode_animation_blend(): test.TestOutcome {
+  let a = match (webp.decode_animation(animation_6x4())) {
+    Ok(a) => a,
+    Err(e) => {
+      return test.fail(e.message());
+    },
+  };
+  // The second frame blends red with an alpha of 128 over the opaque first
+  // frame, at the third and the fourth column of the top two rows.
+  let px = a.frames[1].image.pixels;
+  let got: string[] = [];
+  for i in 8..20 {
+    got = got.append(px[i].to_string());
+  }
+  return test.assert_eq(got.join(" "), "167 0 99 255 187 0 99 255 160 0 200 255");
+}
+
+function test_decode_animation_round_trip(): test.TestOutcome {
+  let file = webp.animate(50, 20, [palette_4(), extended(), palette_4()], [10, 20, 30]).unwrap_or([]);
+  let still = decoded(palette_4());
+  let a = match (webp.decode_animation(file)) {
+    Ok(a) => a,
+    Err(e) => {
+      return test.fail(e.message());
+    },
+  };
+  let got: string[] = [a.width.to_string() + "x" + a.height.to_string() + " loops " + a.loop_count.to_string()];
+  for f in a.frames {
+    got = got.append(f.duration_ms.to_string() + " " + f.image.width.to_string() + "x" + f.image.height.to_string() + " " + crc32.of(f.image.pixels).to_string());
+  }
+  got = got.append(animated(palette_4()));
+  return test.assert_eq(got.join(" | "), "50x20 loops 0 | 10 " + still + " | 20 " + decoded(extended()) + " | 30 " + still + " | 50x20 loops 0, 0ms " + still.split(" ")[1]);
+}
+
+function test_decode_animation_errors(): test.TestOutcome {
+  let a = animation_4x4();
+  // The first frame is at 2, 2. A place of 4, 4 puts it outside the canvas.
+  let outside = a.with(52, 2u8).with(55, 2u8);
+  // At 0, 2, a frame width of 3 is inside the canvas, and it is not the width
+  // of the VP8L image of the frame.
+  let wider = a.with(52, 0u8).with(58, 2u8);
+  let lossy_frame = webp.animate(3, 2, [lossy()], [100]).unwrap_or([]);
+  let no_frame = prefix(a, 44).with(4, 36u8);
+  let got = [animated(outside), animated(wider), animated(lossy_frame), animated(no_frame), animated(prefix(a, 120)), animated([1u8])];
+  return test.assert_eq(got.join(" | "), "webp: the header of the lossless image is not valid | webp: the header of the lossless image is not valid | webp: only lossless images can be decoded | webp: the header of the lossless image is not valid | webp: the data ends early | webp: not a WebP file");
 }
 
 function main(): i32 {
@@ -192,5 +272,9 @@ function main(): i32 {
   r = r.it("decode each transform", test_decode_transforms);
   r = r.it("decode entropy images, narrow images and VP8X files", test_decode_shapes);
   r = r.it("decode errors", test_decode_errors);
+  r = r.it("decode animations", test_decode_animation);
+  r = r.it("blend a frame as libwebp does", test_decode_animation_blend);
+  r = r.it("decode the animations that animate writes", test_decode_animation_round_trip);
+  r = r.it("animation decode errors", test_decode_animation_errors);
   return r.finish();
 }

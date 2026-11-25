@@ -548,7 +548,12 @@ pub function lifted_kind(kind_tag: i32, name: string): i32 {
   if (name == "!") {
     return ir.K_NOT;
   }
-  return ir.kind_id(lane_base(name));
+  for k in 0..name.len() {
+    if (name[k] == b':') {
+      return ir.kind_id(slice_unchecked(name, 0, k).to_owned());
+    }
+  }
+  return ir.kind_id(name);
 }
 
 // The id of an instruction kind name, or 0. Semantic names are not looked up.
@@ -1581,22 +1586,9 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 
 pub struct Alloc { reg_of: i32[], def_pos: i32[], lo: i32[], hi: i32[], cold: i32[] }
 
-pub function lane_base(op: string): string {
-  for k in 0..op.len() {
-    if (op[k] == b':') {
-      return slice_unchecked(op, 0, k).to_owned();
-    }
-  }
-  return op;
-}
-
-pub function lane_op(op: string): boolean {
-  return op.len() > 1 && op[0] == b'v' && ir.is_lane_kind(ir.kind_id(lane_base(op)));
-}
-
 pub function lane_inst(ins: SInst): boolean {
   let k = ins.kind_tag;
-  return (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && lane_op(ins.str);
+  return (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ir.is_lane_kind(ins.ir_kind);
 }
 
 pub function lane_param(f: SFunc, p: i32): boolean {
@@ -1615,8 +1607,8 @@ pub function lane_param_mark(): string {
   return "v128";
 }
 
-pub function lane_memory(b: string): boolean {
-  return util.has_str(["vload", "vload_f32", "vstore", "vget", "vset"], b);
+pub function lane_memory(kind: i32): boolean {
+  return kind >= ir.K_VLOAD && kind <= ir.K_VSET || kind == ir.K_VLOAD_F32;
 }
 
 pub function lane_result(ins: SInst): boolean {
@@ -1626,8 +1618,8 @@ pub function lane_result(ins: SInst): boolean {
   if (!lane_inst(ins)) {
     return false;
   }
-  let b = lane_base(ins.str);
-  return b != "vextract" && b != "vextract_bits" && b != "vbitmask" && b != "vstore" && b != "vset" && b != "viextracts" && b != "viextractu" && b != "vibitmask";
+  let k = ins.ir_kind;
+  return k != ir.K_VEXTRACT && k != ir.K_VEXTRACT_BITS && k != ir.K_VBITMASK && k != ir.K_VSTORE && k != ir.K_VSET && k != ir.K_VIEXTRACTS && k != ir.K_VIEXTRACTU && k != ir.K_VIBITMASK;
 }
 
 pub function lane_values(f: SFunc): boolean[] {
@@ -4172,7 +4164,7 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
 
 // `stores` says the target stores an immediate to memory with one instruction.
 // `zero_stores` says it stores only a zero so.
-pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: string[], stores: boolean, zero_stores: boolean): Imms {
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[], stores: boolean, zero_stores: boolean): Imms {
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -4214,7 +4206,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: string[], left: str
 function has_swizzle(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == BINARY && ins.str.starts_with("viswizzle")) {
+      if (ins.kind_tag == BINARY && ins.ir_kind == ir.K_VISWIZZLE) {
         return true;
       }
     }
@@ -4243,20 +4235,20 @@ function lane_nibbles(f: SFunc, konst: boolean[], value: i64[]): boolean[] {
 }
 
 function nibble_result(ins: SInst, nibble: boolean[], konst: boolean[], value: i64[]): boolean {
-  let b = lane_base(ins.str);
-  if (b == "vand") {
+  let b = ins.ir_kind;
+  if (b == ir.K_VAND) {
     return nibble[ins.args[0]] || nibble[ins.args[1]];
   }
   if (ins.imm != 8) {
     return false;
   }
-  if (b == "visplat") {
+  if (b == ir.K_VISPLAT) {
     return konst[ins.args[0]] && (value[ins.args[0]] & 255i64) < 16i64;
   }
-  if (b == "vishru") {
+  if (b == ir.K_VISHRU) {
     return konst[ins.args[1]] && (value[ins.args[1]] & 7i64) >= 4i64;
   }
-  return b == "viminu" && (nibble[ins.args[0]] || nibble[ins.args[1]]);
+  return b == ir.K_VIMINU && (nibble[ins.args[0]] || nibble[ins.args[1]]);
 }
 
 // Operand `a` is the value of a store of 4 or 8 bytes.
@@ -4264,7 +4256,7 @@ pub function stored_value(ins: SInst, a: i32): boolean {
   return ins.kind_tag == ST_AT && a == 1 && ins.str != "u8";
 }
 
-function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], left: string[]): boolean {
+function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: i32[], left: i32[]): boolean {
   if ((ins.kind_tag == LD_IDX || ins.kind_tag == ST_IDX) && a == 1) {
     return c >= 0i64 && c <= 4095i64;
   }
@@ -4287,16 +4279,7 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
   if (a == 0 && konst[other]) {
     return false;
   }
-  let names = left;
-  if (a == 1) {
-    names = right;
-  }
-  for n in names {
-    if (n == ins.str) {
-      return true;
-    }
-  }
-  return false;
+  return util.has_i32(if (a == 1) { right } else { left }, ins.ir_kind);
 }
 
 // The text of each value that is the address of a string literal. `len` is
@@ -4828,6 +4811,144 @@ function same_operand(a: i32, b: i32, defs: SInst[]): boolean {
   let da = defs[a];
   let db = defs[b];
   return da.kind_tag == db.kind_tag && (da.kind_tag == CONST_INT || da.kind_tag == CONST_I64) && da.imm == db.imm && da.str == db.str;
+}
+
+// An integer operation of constants becomes a constant. The emitters do not
+// agree on the high half of a 32-bit result, so a 32-bit operation folds only
+// when its operands and its result are in [0, 2^31).
+pub function fold_constant_operations(f: SFunc): SFunc {
+  let defs = inst_defs(f);
+  let blocks = f.blocks;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for bi in 0..blocks.len() {
+      let insts = blocks[bi].insts;
+      let edited = false;
+      for k in 0..insts.len() {
+        let ins = insts[k];
+        if (ins.result < 0 || ins.result >= f.nvals) {
+          continue;
+        }
+        if let Some(c) = folded_value(ins, defs) {
+          let made = constant_inst(ins.result, c);
+          insts = insts.with(k, made);
+          defs = defs.with(ins.result, made);
+          edited = true;
+        }
+      }
+      if (edited) {
+        blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: insts });
+        changed = true;
+      }
+    }
+  }
+  return SFunc { ...f, blocks: blocks };
+}
+
+function constant_inst(result: i32, c: i64): SInst {
+  if (c >= 0i64 - 2147483648i64 && c <= 2147483647i64) {
+    return SInst { ir_kind: 0, kind_tag: CONST_INT, result: result, args: [], imm: c as i32, str: "" };
+  }
+  return SInst { ir_kind: 0, kind_tag: CONST_I64, result: result, args: [], imm: 64, str: util.i64_to_string(c) };
+}
+
+function constant_value(defs: SInst[], v: i32): Option[i64] {
+  if (v < 0 || v >= defs.len()) {
+    return None;
+  }
+  let d = defs[v];
+  if (d.kind_tag == CONST_INT) {
+    return Some(d.imm as i64);
+  }
+  if (d.kind_tag == CONST_I64 && d.str.len() > 0) {
+    return Some(util.lit_to_i64(d.str));
+  }
+  return None;
+}
+
+function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
+  if (ins.kind_tag == UNARY && ins.args.len() == 1) {
+    if let Some(a) = constant_value(defs, ins.args[0]) {
+      return folded_cast(ins.str, a);
+    }
+    return None;
+  }
+  if (ins.kind_tag != BINARY || ins.args.len() != 2) {
+    return None;
+  }
+  if let Some(a) = constant_value(defs, ins.args[0]) {
+    if let Some(b) = constant_value(defs, ins.args[1]) {
+      if (ins.imm == 64) {
+        return folded_word(ins.str, a, b);
+      }
+      if (non_negative_i32(a) && non_negative_i32(b) && !(ins.str.starts_with("sh") && b > 31i64)) {
+        if let Some(c) = folded_word(ins.str, a, b) {
+          if (non_negative_i32(c)) {
+            return Some(c);
+          }
+        }
+      }
+    }
+  }
+  return None;
+}
+
+function non_negative_i32(c: i64): boolean {
+  return c >= 0i64 && c <= 2147483647i64;
+}
+
+function folded_word(op: string, a: i64, b: i64): Option[i64] {
+  if (op == "add") {
+    return Some(a + b);
+  }
+  if (op == "sub") {
+    return Some(a - b);
+  }
+  if (op == "mul") {
+    return Some(a * b);
+  }
+  if (op == "and") {
+    return Some(a & b);
+  }
+  if (op == "or") {
+    return Some(a | b);
+  }
+  if (op == "xor") {
+    return Some(a ^ b);
+  }
+  if (b < 0i64 || b > 63i64) {
+    return None;
+  }
+  if (op == "shl") {
+    return Some(a << b);
+  }
+  if (op == "shr_s") {
+    return Some(a >> b);
+  }
+  if (op == "shr_u" && a >= 0i64) {
+    return Some(a >> b);
+  }
+  return None;
+}
+
+function folded_cast(op: string, a: i64): Option[i64] {
+  if (op == "int_cast:i32") {
+    return Some(a << 32i64 >> 32i64);
+  }
+  if (op == "int_cast:u32" || op == "u32_wrap") {
+    return Some(a & 4294967295i64);
+  }
+  if (op == "int_cast:u16") {
+    return Some(a & 65535i64);
+  }
+  if (op == "int_cast:i16") {
+    return Some(a << 48i64 >> 48i64);
+  }
+  if (op == "int_cast:u8") {
+    return Some(a & 255i64);
+  }
+  return None;
 }
 
 // x + 0, x - 0, x | 0, x ^ 0, x shifted by 0 and x * 1 are x.
@@ -6408,7 +6529,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 pub function form(f: SFunc): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged = merge_duplicates(folded.f, false);
-  let plain = fold_identities(share_product_operands(merged.f));
+  let plain = fold_identities(share_product_operands(fold_constant_operations(merged.f)));
   let shared = share_shape_loads(plain.f);
   let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
   let extended = fold_extensions(unwrapped.f);
@@ -10718,7 +10839,7 @@ function byte_unary(defs: SInst[], ins: SInst, byte: i32, fuel: i32): ByteOrigin
   if (ins.args.len() != 1) {
     return byte_unknown(fuel);
   }
-  if (ins.str.starts_with("vextract_bits:")) {
+  if (ins.ir_kind == ir.K_VEXTRACT_BITS) {
     return byte_extract(ins, byte, fuel);
   }
   if (byte_wrap_op(ins) && byte < low_wrap_bits(ins) / 8) {
@@ -10864,7 +10985,7 @@ function byte_store_transparent(ins: SInst): boolean {
     return true;
   }
   if (ins.kind_tag == UNARY) {
-    return byte_wrap_op(ins) || ins.str.starts_with("vextract_bits:");
+    return byte_wrap_op(ins) || ins.ir_kind == ir.K_VEXTRACT_BITS;
   }
   return ins.kind_tag == BINARY && (low_half_binary(ins.ir_kind) || byte_shift_op(ins.ir_kind));
 }
@@ -10922,7 +11043,7 @@ pub function combine_byte_stores(f: SFunc): SFunc {
   let stores = 0;
   for block in f.blocks {
     for ins in block.insts {
-      extracts = extracts || ins.kind_tag == UNARY && ins.str.starts_with("vextract_bits:");
+      extracts = extracts || ins.kind_tag == UNARY && ins.ir_kind == ir.K_VEXTRACT_BITS;
       if (byte_store_size(ins) > 0) {
         stores += 1;
       }

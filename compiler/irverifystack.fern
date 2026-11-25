@@ -54,6 +54,128 @@ function fn_result_slots(): i32 {
   return 1;
 }
 
+// The class of an operand slot: 0 when the pass does not know it.
+const C_INT: i32 = 1;
+
+const C_FLOAT: i32 = 2;
+
+const C_LANE: i32 = 3;
+
+function class_name(c: i32): string {
+  return if (c == C_INT) { "an integer" } else if (c == C_FLOAT) { "a float" } else { "a lane value" };
+}
+
+function int_binary_kind(t: i32): boolean {
+  return t >= ir.K_ADD && t <= ir.K_GE_U && t != ir.K_NOT || t == ir.K_MULHI_U || t == ir.K_MULHI_S;
+}
+
+function float_unary_kind(t: i32): boolean {
+  return t == ir.K_FNEG || t >= ir.K_FABS && t <= ir.K_FROUND;
+}
+
+function lane_unary_kind(t: i32): boolean {
+  return t >= ir.K_VSQRT && t <= ir.K_VROUND || t == ir.K_VINEG || t == ir.K_VIABS
+    || t >= ir.K_VIWIDENLOS && t <= ir.K_VIWIDENHIU;
+}
+
+function lane_binary_kind(t: i32): boolean {
+  return t >= ir.K_VADD && t <= ir.K_VMAX || t >= ir.K_VEQ && t <= ir.K_VANDNOT || t == ir.K_VPACK
+    || t >= ir.K_VIADD && t <= ir.K_VILTU || t == ir.K_VIMUL
+    || t >= ir.K_VINARROWS && t <= ir.K_VISWIZZLE;
+}
+
+// The classes that an op reads, from the deepest operand to the top. A 0
+// accepts each class.
+function operand_classes(t: i32): i32[] {
+  if (int_binary_kind(t)) {
+    return [C_INT, C_INT];
+  }
+  if (t == ir.K_NOT || t == ir.K_I32_TO_F64 || t == ir.K_F64_FROM_BITS || t == ir.K_VISPLAT
+    || t == ir.K_VLOAD || t == ir.K_VLOAD_F32) {
+    return [C_INT];
+  }
+  if (t >= ir.K_FADD && t <= ir.K_FGE) {
+    return [C_FLOAT, C_FLOAT];
+  }
+  if (float_unary_kind(t) || t == ir.K_F64_TO_I32 || t == ir.K_F64_TO_I64 || t == ir.K_F64_BITS || t == ir.K_VSPLAT) {
+    return [C_FLOAT];
+  }
+  if (t == ir.K_FFMA) {
+    return [C_FLOAT, C_FLOAT, C_FLOAT];
+  }
+  if (lane_unary_kind(t) || t == ir.K_VEXTRACT || t == ir.K_VBITMASK || t == ir.K_VEXTRACT_BITS
+    || t == ir.K_VIEXTRACTS || t == ir.K_VIEXTRACTU || t == ir.K_VIBITMASK) {
+    return [C_LANE];
+  }
+  if (lane_binary_kind(t)) {
+    return [C_LANE, C_LANE];
+  }
+  if (t == ir.K_VFMA || t == ir.K_VSELECT) {
+    return [C_LANE, C_LANE, C_LANE];
+  }
+  if (t == ir.K_VREPLACE) {
+    return [C_LANE, C_FLOAT];
+  }
+  if (t == ir.K_VIREPLACE || t >= ir.K_VISHL && t <= ir.K_VISHRU) {
+    return [C_LANE, C_INT];
+  }
+  if (t == ir.K_VPERMUTE) {
+    return [C_LANE, 0];
+  }
+  if (t == ir.K_VSTORE) {
+    return [C_INT, C_LANE];
+  }
+  if (t == ir.K_VGET) {
+    return [C_INT, C_INT];
+  }
+  if (t == ir.K_VSET) {
+    return [C_INT, C_INT, C_LANE];
+  }
+  return [];
+}
+
+// The class of the value that an op pushes, or 0.
+function result_class(t: i32): i32 {
+  if (t == ir.K_CONST_I32 || t == ir.K_CONST_I32_TEXT || t == ir.K_CONST_I64 || int_binary_kind(t) || t == ir.K_NOT
+    || t >= ir.K_FEQ && t <= ir.K_FGE || t == ir.K_F64_TO_I32 || t == ir.K_F64_TO_I64 || t == ir.K_F64_BITS
+    || t == ir.K_VBITMASK || t == ir.K_VEXTRACT_BITS || t == ir.K_VIEXTRACTS || t == ir.K_VIEXTRACTU || t == ir.K_VIBITMASK) {
+    return C_INT;
+  }
+  if (t == ir.K_CONST_F64 || t >= ir.K_FADD && t <= ir.K_FDIV || float_unary_kind(t) || t == ir.K_FFMA
+    || t == ir.K_I32_TO_F64 || t == ir.K_F64_FROM_BITS || t == ir.K_VEXTRACT) {
+    return C_FLOAT;
+  }
+  if (ir.is_lane_kind(t) && t != ir.K_VSTORE && t != ir.K_VSET) {
+    return C_LANE;
+  }
+  return 0;
+}
+
+function set_class(cls: i32[], at: i32, c: i32): i32[] {
+  let out = cls;
+  while (out.len() <= at) {
+    out = out.append(0);
+  }
+  return out.with(at, c);
+}
+
+// A problem for each operand whose known class is not the class that the op reads.
+function class_problems(out: irverify.Problem[], fn_name: string, at: i32, kind: string, want: i32[], cls: i32[], top: i32): irverify.Problem[] {
+  let res = out;
+  let first = top - want.len();
+  for k in 0..want.len() {
+    let have = if (first + k < cls.len()) { cls[first + k] } else { 0 };
+    if (want[k] != 0 && have != 0 && have != want[k]) {
+      res = res.append(irverify.Problem {
+        fn_name: fn_name, op: at, kind: kind,
+        msg: "operand " + util.i32_to_string(k + 1) + " of " + util.i32_to_string(want.len())
+          + " is " + class_name(have) + ", but the op reads " + class_name(want[k]),
+      });
+    }
+  }
+  return res;
+}
+
 pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackResult {
   let out: irverify.Problem[] = [];
   let none: irverify.Problem[] = [];
@@ -66,6 +188,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
   let depth = 1;
 
   let height = 0;
+  let cls: i32[] = [];
 
   for i in 0..ops.len() {
     let o = ops[i];
@@ -76,6 +199,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
     if (t == ir.K_BLOCK || t == ir.K_LOOP || t == ir.K_IF) {
       if (t == ir.K_IF) {
         if (height > base) {
+          out = class_problems(out, fn_name, i, "if", [C_INT], cls, height);
           height -= 1;
         } else if (!unreach) {
           out = out.append(irverify.Problem {
@@ -133,6 +257,7 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
     } else if (t == ir.K_BR || t == ir.K_BRIF) {
       if (t == ir.K_BRIF) {
         if (height > base) {
+          out = class_problems(out, fn_name, i, "brif", [C_INT], cls, height);
           height -= 1;
         } else if (!unreach) {
           out = out.append(irverify.Problem {
@@ -173,7 +298,15 @@ pub function verify_stack_fn(fn_name: string, ops: ir.Op[], pops: i32[]): StackR
         }
         height = base;
       } else {
+        let want = operand_classes(t);
+        if (!unreach && want.len() == np) {
+          out = class_problems(out, fn_name, i, ir.kind_name(t), want, cls, height);
+        }
         height -= np;
+      }
+      let rc = if (t == ir.K_TEE_LOCAL && np == 1 && height < cls.len()) { cls[height] } else { result_class(t) };
+      if (ir.op_pushes(o) == 1) {
+        cls = set_class(cls, height, rc);
       }
       height += ir.op_pushes(o);
       if (t == ir.K_RETURN) {

@@ -56,11 +56,11 @@ selfhost/arm64-linux/closure_call.emit	1309
 selfhost/arm64-linux/deflate_decode.emit	14642
 selfhost/arm64-linux/deflate_encode.emit	7906
 selfhost/arm64-linux/enum_match.emit	1273
-selfhost/arm64-linux/http_hello.emit	17671
+selfhost/arm64-linux/http_hello.emit	16806
 selfhost/arm64-linux/int_loop.emit	376
-selfhost/arm64-linux/map_int.emit	8808
-selfhost/arm64-linux/map_probe_chain.emit	8818
-selfhost/arm64-linux/map_string.emit	9841
+selfhost/arm64-linux/map_int.emit	8677
+selfhost/arm64-linux/map_probe_chain.emit	8687
+selfhost/arm64-linux/map_string.emit	9708
 selfhost/arm64-linux/ordmap_insert.emit	6303
 selfhost/arm64-linux/pmap_insert.emit	3990
 selfhost/arm64-linux/pvec_with.emit	3827
@@ -126,9 +126,9 @@ selfhost/x86-64-linux/deflate_encode.emit	7282
 selfhost/x86-64-linux/enum_match.emit	1036
 selfhost/x86-64-linux/http_hello.emit	15871
 selfhost/x86-64-linux/int_loop.emit	298
-selfhost/x86-64-linux/map_int.emit	8753
-selfhost/x86-64-linux/map_probe_chain.emit	8757
-selfhost/x86-64-linux/map_string.emit	9647
+selfhost/x86-64-linux/map_int.emit	8628
+selfhost/x86-64-linux/map_probe_chain.emit	8632
+selfhost/x86-64-linux/map_string.emit	9520
 selfhost/x86-64-linux/ordmap_insert.emit	5875
 selfhost/x86-64-linux/pmap_insert.emit	3636
 selfhost/x86-64-linux/pvec_with.emit	3489
@@ -143,7 +143,7 @@ selfhost/x86-64-linux/string_rfind_byte.emit	1849
 selfhost/x86-64-linux/string_scan.emit	2326
 selfhost/x86-64-linux/string_slice.emit	1043
 selfhost/x86-64-linux/struct_drop.emit	2808
-selfhost/x86-64-linux/tokenize.emit	1294
+selfhost/x86-64-linux/tokenize.emit	1270
 selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8210
 selfhost/x86-64-linux/utf8_ingest_validated.emit	8879
 selfhost/x86-64-linux/perceus_cfold.emit	2257
@@ -161,7 +161,7 @@ selfhost/wasm32-wasi/perceus_rbtree.emit	3763
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3065
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3479
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4400
-selfhost/x86-64-linux/video_qtrle.emit 5490
+selfhost/x86-64-linux/video_qtrle.emit 5567
 selfhost/arm64-linux/video_qtrle.emit 6203
 selfhost/wasm32-wasi/video_qtrle.emit 6194
 selfhost/x86-64-linux/hex_encode.emit	2132
