@@ -71,6 +71,10 @@ lowered function it:
    reads to that branch's targets, on the arm's own comparison or to the side
    its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
    caller brings its `&&` or `||` as such a phi), and prunes again; then
+   maps a multiply, divide or remainder onto the same operation in a block
+   that dominates it (`ssa.merge_duplicates` with `across`). A cheaper
+   operation stays, because it costs less to compute again than to keep live
+   across blocks. Then it
    moves each pure integer computation in a loop whose operands do not
    change in the loop to the one block that enters the loop, with the
    constants that it reads (`ssa.hoisted_invariants`). Inner loops go first.
