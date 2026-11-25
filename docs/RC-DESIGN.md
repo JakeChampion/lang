@@ -646,7 +646,14 @@ that value selects, from the token's block on, with the token and every phi
 the pruning fixes as the box or null, the box's reuse as the box and its
 shallow release as a shell where it was unique, seeded with the rows the
 walk without an assumption settled; what both walks settle is proved, and
-either walk's finding is one. A finding is a definite violation: a unit
+either walk's finding is one. Before those walks, a load in a block that the
+token's block dominates can have a different origin under each value of the
+token. Such a load starts as a twin of the token, with the count of its
+origin under each value (`token_loads`), and the walk without an assumption
+runs again. Thus a field taken under one token decides its count at the
+tests of that token. A walk under one token cannot prove a loop phi that
+several arms feed, each arm with its own token. The twins of each arm's
+loads can. A finding is a definite violation: a unit
 spent that the frame does not hold, or a unit it holds when it returns.
 
 Every compile certifies every function it emits, through a memo keyed by a
