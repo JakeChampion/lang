@@ -37,6 +37,7 @@ It does not expose tag contents or build a seek index.
 The raw budget includes codec delay and padding. This bounds work even when metadata declares a short result.
 
 The frame APIs retain at most 511 reservoir bytes, 576 overlap values, and 960 synthesis values.
+They also keep the buffer of main data of the last frame and 80 scalefactor positions, so the next frame can use their capacity again.
 After the first MPEG-1 frame they also keep 3,264 synthesis lines, 1,152 spectral values and 128 transform values, so the next frame does not allocate them again.
 They still allocate bounded scratch arrays. They do not promise zero allocations.
 
@@ -62,14 +63,14 @@ import "std/f64";
 
 pub const DECODER_DELAY: i32 = 529;
 
-pub struct Decoder { reservoir: u8[], overlap: f32[], qmf: f32[], lines: f32[], spectrum: f32[], transform: f32[], sample_rate: i32, channels: i32, version: i32, free_bytes: i32 }
+pub struct Decoder { reservoir: u8[], main: u8[], pos0: i32[], pos1: i32[], overlap: f32[], qmf: f32[], lines: f32[], spectrum: f32[], transform: f32[], sample_rate: i32, channels: i32, version: i32, free_bytes: i32 }
 
 pub struct Frame { sample_rate: i32, channels: i32, frames: i32, bytes_read: i32, needs_history: boolean, samples: f32[] }
 
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
 
 pub function decoder(): Decoder {
-  return Decoder { reservoir: [], overlap: spectral.zeros(576), qmf: spectral.zeros(960), lines: [], spectrum: [], transform: [], sample_rate: 0, channels: 0, version: 0, free_bytes: 0 };
+  return Decoder { reservoir: [], main: [], pos0: [], pos1: [], overlap: spectral.zeros(576), qmf: spectral.zeros(960), lines: [], spectrum: [], transform: [], sample_rate: 0, channels: 0, version: 0, free_bytes: 0 };
 }
 
 pub function (own d: Decoder) reset(): Decoder {
@@ -103,16 +104,41 @@ function crc16(input: [u8], own crc: i32): i32 {
   return crc;
 }
 
-function keep_reservoir(data: [u8], pos: i32): u8[] {
+// Writes the unread bytes of `data`, at most 511, into the capacity of `reservoir`.
+function keep_reservoir(own reservoir: u8[], data: [u8], pos: i32): u8[] {
   let start = (pos + 7) / 8;
   if (data.len() - start > 511) {
     start = data.len() - 511;
   }
-  let output: u8[] = [];
+  reservoir = reservoir.truncate(0);
   for i in start..data.len() {
-    output = output.append(data[i]);
+    reservoir = reservoir.append(data[i]);
   }
-  return output;
+  return reservoir;
+}
+
+// 40 zero scalefactor positions in the capacity of `positions`.
+function cleared_positions(own positions: i32[]): i32[] {
+  if (positions.len() != 40) {
+    return pcm.zeros(40);
+  }
+  for i in 0..40 {
+    positions = positions.with(i, 0);
+  }
+  return positions;
+}
+
+// Writes the last `begin` reservoir bytes and the main data of the frame into the capacity of `main`.
+function main_data(own main: u8[], reservoir: [u8], begin: i32, input: [u8], from: i32, to: i32): u8[] {
+  main = main.truncate(0);
+  let start = if (reservoir.len() > begin) { reservoir.len() - begin } else { 0 };
+  for i in start..reservoir.len() {
+    main = main.append(reservoir[i]);
+  }
+  for i in from..to {
+    main = main.append(input[i]);
+  }
+  return main;
 }
 
 function xing_position(input: [u8], at: i32, h: header.Header): i32 {
@@ -175,17 +201,10 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
   }
   let side = frame_side(input, at, h, side_start, main_start)?;
   let free_bytes = framing.extent(h, d.free_bytes);
-  let Decoder { reservoir, overlap, qmf, lines, spectrum, transform, sample_rate: _, channels: _, version: _, free_bytes: _ } = d;
-  let main: u8[] = [];
-  let start = if (reservoir.len() > side.begin) { reservoir.len() - side.begin } else { 0 };
-  for i in start..reservoir.len() {
-    main = main.append(reservoir[i]);
-  }
-  for i in main_start..at + h.bytes {
-    main = main.append(input[i]);
-  }
+  let Decoder { reservoir, main, pos0, pos1, overlap, qmf, lines, spectrum, transform, sample_rate: _, channels: _, version: _, free_bytes: _ } = d;
+  main = main_data(main, reservoir, side.begin, input, main_start, at + h.bytes);
   if (reservoir.len() < side.begin) {
-    let state = Decoder { reservoir: keep_reservoir(main, 0), overlap: overlap, qmf: qmf, lines: lines, spectrum: spectrum, transform: transform, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
+    let state = Decoder { reservoir: keep_reservoir(reservoir, main, 0), main: main, pos0: pos0, pos1: pos1, overlap: overlap, qmf: qmf, lines: lines, spectrum: spectrum, transform: transform, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
     return Ok((state, Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 0, bytes_read: h.bytes, needs_history: true, samples: output }));
   }
   let part_sum = 0;
@@ -196,8 +215,8 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
     return Err(pcm.Header);
   }
   let b = bits.new(main.len() * 8);
-  let pos0 = pcm.zeros(40);
-  let pos1 = pcm.zeros(40);
+  pos0 = cleared_positions(pos0);
+  pos1 = cleared_positions(pos1);
   let granules = if (h.version == 1) { 2 } else { 1 };
   if (granules == 2) {
     lines = synthesis.frame_lines_into(lines, qmf);
@@ -211,11 +230,17 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
     for ch in 0..h.channels {
       let g = side.granules[granule * h.channels + ch];
       let end = b.pos + g.part;
-      let s = if (ch == 0) { spectral.scales(main, b, g, h, pos0, ch)? } else { spectral.scales(main, b, g, h, pos1, ch)? };
-      let spectral.Scales { bits: scale_bits, scale, positions } = s;
+      let scale_bits = b;
+      let scale: f32[] = [];
       if (ch == 0) {
+        let spectral.Scales { bits: read, scale: values, positions } = spectral.scales(main, b, g, h, pos0, ch)?;
+        scale_bits = read;
+        scale = values;
         pos0 = positions;
       } else {
+        let spectral.Scales { bits: read, scale: values, positions } = spectral.scales(main, b, g, h, pos1, ch)?;
+        scale_bits = read;
+        scale = values;
         pos1 = positions;
       }
       if (scale_bits.pos > end) {
@@ -261,7 +286,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       return Err(pcm.Sample);
     }
   }
-  let state = Decoder { reservoir: keep_reservoir(main, b.pos), overlap: overlap, qmf: qmf, lines: lines, spectrum: spectrum, transform: transform, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
+  let state = Decoder { reservoir: keep_reservoir(reservoir, main, b.pos), main: main, pos0: pos0, pos1: pos1, overlap: overlap, qmf: qmf, lines: lines, spectrum: spectrum, transform: transform, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
   return Ok((state, Frame { sample_rate: h.sample_rate, channels: h.channels, frames: h.frames, bytes_read: h.bytes, needs_history: false, samples: output }));
 }
 
