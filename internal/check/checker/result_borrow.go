@@ -144,7 +144,7 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 		b.locals = map[string]bool{}
 	}
 	mark := func(name string, init ast.Expr) bool {
-		if name == "" || b.locals[name] || init == nil {
+		if name == "" || b.locals[name] || b.owned[name] || init == nil {
 			return false
 		}
 		if !c.exprBorrows(init, b) {
@@ -230,8 +230,10 @@ func valueElementIterable(e ast.Expr, values map[string]bool) bool {
 
 type borrowScope struct {
 	borrowed, locals, values map[string]bool
-	handlesOnly              bool
-	ownedResult              bool
+	// owned names the bindings that borrowedLocals leaves out.
+	owned       map[string]bool
+	handlesOnly bool
+	ownedResult bool
 }
 
 // binding is the scope inside a pattern that binds names. They shadow the

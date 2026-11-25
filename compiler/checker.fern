@@ -25425,7 +25425,8 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name) && !lu_unpacked_elem(fx, site, q.name)) {
     return false;
   }
-  if (astwalk.count_ident_expr(call, q.name) - lu_other_field_reads(call, q.name, fa.field) != 1) {
+  let replaced = lu_replaced_path_reads(call, q.name, fa.field);
+  if (astwalk.count_ident_expr(call, q.name) - lu_other_field_reads(call, q.name, fa.field) - replaced.len() != 1) {
     return false;
   }
   if (site.in_defer) {
@@ -25437,20 +25438,63 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
     return false;
   }
-  return lu_field_path_dead(fx, site, q, fa.field);
+  return lu_field_path_dead(fx, site, q, fa.field, replaced);
+}
+
+// The roots of the reads in e that a literal with base q.field replaces:
+// `S { ...q.field, f: g(q.field.f) }` takes q.field.f once, through its base.
+function lu_replaced_path_reads(e: ast.Expr, q: string, field: string): LuOcc[] {
+  function lits(n: ast.Expr, own acc: ast.ExprStructLit[]): ast.ExprStructLit[] {
+    if let ast.ExprStructLit(sl) = n {
+      if let ast.ExprFieldAccess(b) = sl.base {
+        if (sl.has_base && b.field == field && ow_ident_name(b.obj) == q) {
+          return acc.append(sl);
+        }
+      }
+    }
+    return acc;
+  }
+  let out: LuOcc[] = [];
+  for sl in astwalk.fold_expr(e, [], lits) {
+    for j in 0..sl.field_names.len() {
+      let scan = ow_replaced_scan(sl.field_values[j], sl.base, sl.field_names[j], q, []);
+      if (scan.found && scan.mentions == 1) {
+        out = out.append(LuOcc { name: q, line: scan.line, col: scan.col });
+      }
+    }
+  }
+  if (out.len() == 0) {
+    return out;
+  }
+  function roots(n: ast.Expr, own acc: LuOcc[]): LuOcc[] {
+    if let ast.ExprFieldAccess(fa) = n {
+      for r in out {
+        if (r.line == fa.line && r.col == fa.col) {
+          if let ast.ExprFieldAccess(mid) = fa.obj {
+            if let ast.ExprIdent(id) = mid.obj {
+              return acc.append(LuOcc { name: q, line: id.line, col: id.col });
+            }
+          }
+        }
+      }
+    }
+    return acc;
+  }
+  return astwalk.fold_expr(e, [], roots);
 }
 
 // No path after the statement that holds the call reads q.field, and the
-// statement does not read it after q. A later mention in a branch that the
-// call does not reach is not a read. No path goes on after a return.
-function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
+// statement does not read it after q, other than in the reads that skip
+// names. A later mention in a branch that the call does not reach is not a
+// read. No path goes on after a return.
+function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string, skip: LuOcc[]): boolean {
   if (site.frames.len() == 0) {
     return false;
   }
   let inner = site.frames[site.frames.len() - 1];
   let facts = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   for o in facts.occ {
-    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col) && lu_reads_path(facts, o.line, o.col, field)) {
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col) && !lu_occ_in(skip, LuOcc { name: o.name, line: o.line, col: o.col }) && lu_reads_path(facts, o.line, o.col, field)) {
       return false;
     }
   }
@@ -26129,6 +26173,12 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
         }
       },
       ast.StmtAssign(a) => {
+        // An own parameter takes the value that replaces it.
+        if (lu_own_param(fx, a.target)) {
+          for part in lu_arg_parts(a.value, []) {
+            acc = lu_own_arg(part, a.value, outer, has_outer, site, fx, acc);
+          }
+        }
         acc = lu_root(a.value, site, outer, has_outer, fx, acc);
       },
       ast.StmtReturn(r) => {
@@ -27740,6 +27790,9 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         actx = OwnCtx { ...actx, admit_fields: ow_field_move_fields(a.target, a.value, ctx) };
       }
       let rv = ru_expr(a.value, ow_retake(a.target, moved, ctx), actx);
+      if (ow_borrowed_replacement(a, actx)) {
+        rv = OwnWalk { ...rv, diags: rv.diags.append(dg_at("E051", "assignment to owned binding \"" + lexical.source_name(a.target) + "\" must take an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", ast.expr_line(a.value), ast.expr_col(a.value))) };
+      }
       let m = ow_drop_stale_loans(ow_moved_del(rv.moved, "~" + a.target), a.target);
       // A local that a callback captures is in moved only after a consume.
       if (ow_is_owned(ctx, a.target) || ow_moved_has(m, a.target)) {
@@ -27830,6 +27883,55 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: moved, diags: [] };
     }
   }
+}
+
+// An owned binding keeps ownership after an assignment, so the new value
+// must not borrow, unless it can hold no handle. A call that takes the
+// binding itself is a self-update, which the call rules check.
+function ow_borrowed_replacement(a: ast.StmtAssign, ctx: OwnCtx): boolean {
+  if (!ow_is_owned(ctx, a.target) || util.has_str(ctx.borrowed, a.target)) {
+    return false;
+  }
+  if (ow_self_update(a.target, a.value, ctx.borrowed)) {
+    return false;
+  }
+  if (ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(a.target)), ctx.decls)) {
+    return false;
+  }
+  return !ow_is_owned_expr(a.value, ctx) && ow_result_loan(a.value, ctx);
+}
+
+// value is a call with target as its receiver or as an argument, or a
+// literal with base target that sets no field to a borrowed name.
+function ow_self_update(target: string, value: ast.Expr, borrowed: string[]): boolean {
+  if let ast.ExprUnary(u) = value {
+    return u.op == "try_" && ow_self_update(target, u.operand, borrowed);
+  }
+  if let ast.ExprStructLit(sl) = value {
+    if (!sl.has_base || ow_ident_name(sl.base) != target) {
+      return false;
+    }
+    for v in sl.field_values {
+      if (util.has_str(borrowed, ow_ident_name(v))) {
+        return false;
+      }
+    }
+    return true;
+  }
+  let ast.ExprCall(c) = value else {
+    return false;
+  };
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (ow_ident_name(fa.obj) == target) {
+      return true;
+    }
+  }
+  for arg in c.args {
+    if (ow_ident_name(arg) == target) {
+      return true;
+    }
+  }
+  return false;
 }
 
 struct OwnLocalScope { parent: OwnCtx, moved: MovedEntry[], name: string }
