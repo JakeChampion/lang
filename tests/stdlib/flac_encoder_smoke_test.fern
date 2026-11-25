@@ -31,8 +31,114 @@ function roundtrip(): test.TestOutcome {
   return test.pass();
 }
 
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Push uneven chunks and compare the stream with one call of encode.
+// fern-lint: allow cyclomatic-complexity
+function writer_chunks(): test.TestOutcome {
+  let format = pcm.Format { sample_rate: 44100, channels: 2, bits_per_sample: 16 };
+  let input: i32[] = [];
+  for at in 0..83 {
+    input = input.append(at * 37 % 200 - 100);
+    input = input.append(at * at % 151 - 75);
+  }
+  let options = encoder.Options { ...encoder.default_options(), block_frames: 16 };
+  let Ok(whole) = encoder.encode(input, format, options, pcm.default_limits()) else {
+    return test.fail("encode");
+  };
+  let Ok((state, start)) = encoder.writer(format, options, pcm.default_limits()) else {
+    return test.fail("writer");
+  };
+  if (start.len() != 42) {
+    return test.fail("writer header length");
+  }
+  let bytes = start;
+  let at = 0;
+  for count in [1, 0, 7, 8, 33, 3, 29, 0, 2] {
+    let before = bytes.len();
+    let Ok((next, appended)) = state.push(input[at * 2:(at + count) * 2], bytes) else {
+      return test.fail("push " + count.to_string());
+    };
+    if (at / 16 == (at + count) / 16 && appended.len() != before) {
+      return test.fail("push wrote a frame before a block was complete");
+    }
+    state = next;
+    bytes = appended;
+    at += count;
+  }
+  if (at != 83) {
+    return test.fail("chunk total");
+  }
+  let unknown = bytes;
+  let Ok((complete, header)) = state.finish(bytes) else {
+    return test.fail("finish");
+  };
+  let Ok(decoded) = flac.decode(complete, pcm.default_limits()) else {
+    return test.fail("decode of a stream with an unknown total");
+  };
+  if (decoded.samples.len() != input.len()) {
+    return test.fail("unknown-total stream length");
+  }
+  for i in 0..header.len() {
+    complete = complete.with(i, header[i]);
+  }
+  if (!same(complete, whole)) {
+    return test.fail("chunked stream differs from encode");
+  }
+  if (unknown.len() > complete.len()) {
+    return test.fail("finish lost bytes");
+  }
+  return test.pass();
+}
+
+function writer_errors(): test.TestOutcome {
+  let format = pcm.Format { sample_rate: 8000, channels: 2, bits_per_sample: 8 };
+  let options = encoder.Options { ...encoder.default_options(), block_frames: 16 };
+  if let Err(pcm.Header) = encoder.writer(format, encoder.Options { ...options, block_frames: 15 }, pcm.default_limits()) {} else {
+    return test.fail("block size below 16");
+  }
+  if let Err(pcm.Limit) = encoder.writer(format, options, pcm.Limits { max_input_bytes: 41, max_samples: 64 }) {} else {
+    return test.fail("budget below STREAMINFO");
+  }
+  let Ok((state, start)) = encoder.writer(format, options, pcm.Limits { max_input_bytes: 44, max_samples: 64 }) else {
+    return test.fail("writer");
+  };
+  if let Err(pcm.Header) = state.push([1, 2, 3], start) {} else {
+    return test.fail("partial frame");
+  }
+  let Ok((again, header)) = encoder.writer(format, options, pcm.Limits { max_input_bytes: 44, max_samples: 64 }) else {
+    return test.fail("writer");
+  };
+  if let Err(pcm.Sample) = again.push([0, 128], header) {} else {
+    return test.fail("sample out of range");
+  }
+  let Ok((full, bytes)) = encoder.writer(format, options, pcm.Limits { max_input_bytes: 44, max_samples: 64 }) else {
+    return test.fail("writer");
+  };
+  let block: i32[] = [];
+  for i in 0..32 {
+    block = block.append(i * 3 - 40);
+  }
+  if let Err(pcm.Limit) = full.push(block, bytes) {} else {
+    return test.fail("frame beyond the stream budget");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("Native FLAC encoder smoke");
   runner = runner.it("fixed predictors, Rice partitions, stereo transforms, final short blocks, and MD5", roundtrip);
+  runner = runner.it("a writer gives the bytes of encode for uneven chunks and keeps less than one block", writer_chunks);
+  runner = runner.it("a writer refuses bad options, misaligned and out-of-range samples, and frames beyond its budget", writer_errors);
   return runner.finish();
 }

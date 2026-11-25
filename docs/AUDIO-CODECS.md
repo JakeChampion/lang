@@ -131,8 +131,13 @@ It writes frame checksums, the total sample count, and the PCM MD5.
 
 The default block size is 4096 frames. The encoded byte budget is `max_input_bytes`.
 `encode_frame` bounds each block and accepts a fixed frame number or a variable sample position.
-For incremental output, the caller supplies STREAMINFO and maintains the stream count and PCM digest.
-The complete-stream API requires at least one frame and computes that metadata itself.
+For incremental output, `encoder.writer` returns a `Writer` and a STREAMINFO block with no total count and no PCM MD5.
+`push` takes PCM in chunks of whole frames. It appends the frames of each complete block to an output buffer.
+The writer keeps less than one block of PCM between calls.
+`finish` appends the final short block and returns the STREAMINFO block with the total count and PCM MD5.
+To complete the stream, write that block over the first 42 bytes. A stream with the first STREAMINFO block also decodes.
+`max_samples` bounds each chunk, and `max_input_bytes` bounds the complete stream.
+The complete-stream API uses the same writer. It requires at least one frame.
 
 The default `max_lpc_order` is zero and preserves fixed-only output.
 An explicit order from 1 through 32 enables Welch-window autocorrelation and stable Levinson-Durbin analysis.
