@@ -827,7 +827,7 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	addMerge := g.git("commit-tree", "-p", addLeft, "-p", addRight, "-m", "both add module", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", addMerge)
 
-	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--format=%s", "-1", rightMerge)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
 	// With the commits available locally, either parent order picks s2.
 	g.git("-C", "module", "fetch", "-q", dir, "module-history")
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")

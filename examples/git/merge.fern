@@ -775,7 +775,7 @@ function submodule_absent(repo: refs.Repo, path: string): boolean {
   return stat(repo.common + "/modules").is_err() && stat(repo.dir + "/modules").is_err();
 }
 
-enum SubmoduleHistory { FastForward(Version), Rewind, Unresolved }
+enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit, Unresolved }
 
 // Compare the commits of a checked-out submodule with their base.
 function submodule_history(sub: refs.Repo, base: Version, a: Version, b: Version): SubmoduleHistory {
@@ -786,6 +786,21 @@ function submodule_history(sub: refs.Repo, base: Version, a: Version, b: Version
   for h in [base.hash, a.hash, b.hash] {
     let (next, n) = walk.node(g, h);
     if (!n.ok) {
+      // An alternate store or a partial clone may still supply this object.
+      if (h == base.hash && stat(next.store.objects + "/info/alternates").is_err() && sub.config.all("extensions.partialclone").len() == 0) {
+        // Partial histories can also produce object-read diagnostics.
+        for hash in [base.hash, a.hash, b.hash] {
+          if (store.info(next.store, hash).why != "missing") {
+            return Unresolved;
+          }
+        }
+        for entry in sub.config.entries {
+          if (entry.name.ends_with(".promisor")) {
+            return Unresolved;
+          }
+        }
+        return MissingCommit;
+      }
       return Unresolved;
     }
     g = next;
@@ -849,6 +864,10 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
             },
             Rewind => {
               st = message(st, path, "Failed to merge submodule " + path + " (commits don't follow merge-base)");
+              return (st, false, if (st.depth > 0) { o } else { a });
+            },
+            MissingCommit => {
+              st = message(st, path, "Failed to merge submodule " + path + " (commits not present)");
               return (st, false, if (st.depth > 0) { o } else { a });
             },
             Unresolved => {}
