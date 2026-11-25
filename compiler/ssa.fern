@@ -6,7 +6,9 @@ import "./ssafixed";
 import "./ir";
 import "std/string";
 
-pub struct SInst { kind_tag: i32, result: i32, args: i32[], imm: i32, str: string }
+// `ir_kind` is the IR kind of a lifted binary or lane instruction. It is 0
+// when the instruction has no IR kind.
+pub struct SInst { kind_tag: i32, result: i32, args: i32[], imm: i32, str: string, ir_kind: i32 }
 
 pub struct STerm { kind_tag: i32, cond: i32, target: i32, t: i32, f: i32, value: i32 }
 
@@ -147,7 +149,7 @@ pub const FRAME_CELL: i32 = 63;
 pub const BOUND: i32 = 64;
 
 pub function frame_cell(result: i32, cell: i32, offset: i32): SInst {
-  return SInst { kind_tag: FRAME_CELL, result: result, args: [], imm: cell * 4096 + offset, str: "" };
+  return SInst { ir_kind: 0, kind_tag: FRAME_CELL, result: result, args: [], imm: cell * 4096 + offset, str: "" };
 }
 
 pub function cell_number(ins: SInst): i32 {
@@ -528,6 +530,11 @@ pub function kind_name(id: i32): string {
   return KIND_NAMES[id];
 }
 
+// A binary instruction of the lifted form, with the IR kind `kind`.
+pub function binary_inst(result: i32, args: i32[], imm: i32, kind: i32): SInst {
+  return SInst { kind_tag: BINARY, result: result, args: args, imm: imm, str: ir.kind_name(kind), ir_kind: kind };
+}
+
 // The id of an instruction kind name, or 0. Semantic names are not looked up.
 pub function kind_id(name: string): i32 {
   if (name == "") {
@@ -581,7 +588,7 @@ function rewrite_args(ins: SInst, resolved: i32[]): SInst {
     // An argument below zero names no value.
     na = na.append(if (a >= 0) { resolved[a] } else { a });
   }
-  return SInst { kind_tag: ins.kind_tag, result: ins.result, args: na, imm: ins.imm, str: ins.str };
+  return SInst { ...ins, args: na };
 }
 
 function rewrite_term(t: STerm, resolved: i32[]): STerm {
@@ -2659,7 +2666,7 @@ function copy_loop_index(f: SFunc, at: i32[], head: i32, last: i32, param: i32, 
   }
   let blocks = f.blocks;
   let source = blocks[pre];
-  let copy = SInst { kind_tag: COPY, result: f.nvals, args: [param], imm: 0, str: "" };
+  let copy = SInst { ir_kind: 0, kind_tag: COPY, result: f.nvals, args: [param], imm: 0, str: "" };
   blocks = blocks.with(pre, SBlock { ...source, insts: source.insts.append(copy) });
   for b in sites {
     if (b < head || b > last) {
@@ -2913,7 +2920,7 @@ function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i
       made = made.append(head_v);
     }
     let pre = blocks[p.pre];
-    blocks = blocks.with(p.pre, SBlock { ...pre, insts: pre.insts.append(frame_cell(stored, cell, 0)).append(SInst { kind_tag: ST_AT, result: wrote, args: [stored, p.v], imm: 0, str: "" }) });
+    blocks = blocks.with(p.pre, SBlock { ...pre, insts: pre.insts.append(frame_cell(stored, cell, 0)).append(SInst { ir_kind: 0, kind_tag: ST_AT, result: wrote, args: [stored, p.v], imm: 0, str: "" }) });
     cost += split_cost(p, weights, cold);
     // The value in each block of the loop: the phi before the inner loop,
     // and the load in each block that the load dominates. Other blocks
@@ -2929,12 +2936,12 @@ function split_by(f: SFunc, at: i32[], idom: i32[], plans: SplitPlan[], cells: i
     if (p.early) {
       let h = blocks[p.head];
       let head_args = h.preds.map((id: i32): i32 => if (position_of(at, id) < p.head) { p.v } else if (position_of(at, id) < p.inner) { head_v } else { back });
-      blocks = blocks.with(p.head, SBlock { ...h, insts: [SInst { kind_tag: PHI, result: head_v, args: head_args, imm: 0, str: "" }].concat(h.insts) });
+      blocks = blocks.with(p.head, SBlock { ...h, insts: [SInst { ir_kind: 0, kind_tag: PHI, result: head_v, args: head_args, imm: 0, str: "" }].concat(h.insts) });
     }
     let e = blocks[exit];
     let phis = e.insts.filter((ins: SInst): boolean => ins.kind_tag == PHI);
     let rest = e.insts.filter((ins: SInst): boolean => ins.kind_tag != PHI);
-    blocks = blocks.with(exit, SBlock { ...e, insts: phis.append(frame_cell(addr, cell, 0)).append(SInst { kind_tag: LD_AT, result: back, args: [addr], imm: 0, str: "" }).concat(rest) });
+    blocks = blocks.with(exit, SBlock { ...e, insts: phis.append(frame_cell(addr, cell, 0)).append(SInst { ir_kind: 0, kind_tag: LD_AT, result: back, args: [addr], imm: 0, str: "" }).concat(rest) });
     for b in p.head..p.last + 1 {
       if (cur[b] >= 0) {
         blocks = blocks.with(b, renamed_in(blocks[b], p.v, cur[b], head_v));
@@ -3049,7 +3056,7 @@ function with_array_home(f: SFunc, w: LoopHome, read: i32, use_at: i32): SFunc {
   let k = load.insts.len() - 2;
   let left = load.insts[k];
   let right = next.insts[use_at];
-  let copy = SInst { kind_tag: COPY, result: f.nvals, args: [w.value], imm: 0, str: "" };
+  let copy = SInst { ir_kind: 0, kind_tag: COPY, result: f.nvals, args: [w.value], imm: 0, str: "" };
   let blocks = f.blocks.with(w.head - 1, SBlock { ...pre, insts: [copy] });
   blocks = blocks.with(read, SBlock { ...load, insts: load.insts.with(k, SInst { ...left, args: left.args.with(0, f.nvals) }) });
   blocks = blocks.with(read + 1, SBlock { ...next, insts: next.insts.with(use_at, SInst { ...right, args: right.args.with(0, f.nvals) }) });
@@ -4476,7 +4483,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaves): SFunc {
         }
       }
       if (ins.result >= 0) {
-        insts = insts.append(SInst { kind_tag: COPY, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
+        insts = insts.append(SInst { ir_kind: 0, kind_tag: COPY, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
       }
       k += 1;
     }
@@ -5709,7 +5716,7 @@ function token_split(f: SFunc, sp: TokenSplit): SFunc {
   let eb = f.blocks[sp.e];
   let fast = token_copy(f, sp, defs, sp.fast_arms, sp.box, [], f.nvals);
   let zero = fast.nvals;
-  let slow = token_copy(f, sp, defs, sp.slow_arms, zero, [SInst { kind_tag: CONST_INT, result: zero, args: [], imm: 0, str: "" }], zero + 1);
+  let slow = token_copy(f, sp, defs, sp.slow_arms, zero, [SInst { ir_kind: 0, kind_tag: CONST_INT, result: zero, args: [], imm: 0, str: "" }], zero + 1);
   let join = token_joined(f, sp, region, fast, slow);
   let after = token_renamed(eb, join.map, true);
   let sunk = write_backs(after.insts, join.insts, sp.box, defs, fast.insts);
@@ -5821,7 +5828,7 @@ function token_joined(f: SFunc, sp: TokenSplit, region: boolean[], fast: TokenCo
   let read = token_read_outside(f, region, sp.e);
   for v in 0..f.nvals {
     if (read[v] && fast.map[v] >= 0 && slow.map[v] >= 0) {
-      insts = insts.append(SInst { kind_tag: PHI, result: nvals, args: [fast.map[v], slow.map[v]], imm: 0, str: "" });
+      insts = insts.append(SInst { ir_kind: 0, kind_tag: PHI, result: nvals, args: [fast.map[v], slow.map[v]], imm: 0, str: "" });
       map = map.with(v, nvals);
       nvals += 1;
     }
@@ -6011,7 +6018,7 @@ function flatten_diamond(f: SFunc, d: Diamond, r: Flattening): Flattening {
   if (vt == vf) {
     return Flattening { ...r, blocks: r.blocks.with(d.head, SBlock { ...head, insts: insts, term: t_ret(vt) }) };
   }
-  let pick = SInst { kind_tag: SELECT, result: r.nvals, args: [head.term.cond, vt, vf], imm: 0, str: "" };
+  let pick = SInst { ir_kind: 0, kind_tag: SELECT, result: r.nvals, args: [head.term.cond, vt, vf], imm: 0, str: "" };
   return Flattening { ...r, blocks: r.blocks.with(d.head, SBlock { ...head, insts: insts.append(pick), term: t_ret(r.nvals) }), nvals: r.nvals + 1 };
 }
 
@@ -6229,9 +6236,9 @@ function join_selects(j: SBlock, cond: i32, from_t: i32, from_f: i32): SInst[] {
       let vt = ins.args[pred_slot(j, from_t)];
       let vf = ins.args[pred_slot(j, from_f)];
       if (vt == vf) {
-        copies = copies.append(SInst { kind_tag: COPY, result: ins.result, args: [vt], imm: 0, str: "" });
+        copies = copies.append(SInst { ir_kind: 0, kind_tag: COPY, result: ins.result, args: [vt], imm: 0, str: "" });
       } else {
-        picks = picks.append(SInst { kind_tag: SELECT, result: ins.result, args: [cond, vt, vf], imm: 0, str: "" });
+        picks = picks.append(SInst { ir_kind: 0, kind_tag: SELECT, result: ins.result, args: [cond, vt, vf], imm: 0, str: "" });
       }
     }
   }
@@ -6411,8 +6418,8 @@ function rejoined_words(f: SFunc, defs: SInst[], parts0: Parts): SFunc {
       parts = with_placed(parts, ins.result, j.word, j.mask);
       let mask = f.nvals + masks.len();
       masks = masks.append(j.mask);
-      insts = insts.append(SInst { kind_tag: CONST_I64, result: mask, args: [], imm: 0, str: util.i64_to_string(j.mask) });
-      insts = insts.append(SInst { kind_tag: BINARY, result: ins.result, args: [j.word, mask], imm: 0, str: "and" });
+      insts = insts.append(SInst { ir_kind: 0, kind_tag: CONST_I64, result: mask, args: [], imm: 0, str: util.i64_to_string(j.mask) });
+      insts = insts.append(binary_inst(ins.result, [j.word, mask], 0, ir.K_AND));
     }
     blocks = blocks.append(SBlock { ...blk, insts: insts });
   }
@@ -6534,7 +6541,7 @@ function part_of(word: SInst, at: i32, mark: string): SInst {
   if (word.kind_tag != LD_AT || word.str != "" || word.imm < 0) {
     return no_inst();
   }
-  return SInst { kind_tag: LD_AT, result: word.result, args: word.args, imm: word.imm + at, str: mark };
+  return SInst { ir_kind: 0, kind_tag: LD_AT, result: word.result, args: word.args, imm: word.imm + at, str: mark };
 }
 
 // The value of a constant, or -1 for a value that is not a constant.
@@ -7065,9 +7072,9 @@ pub function unsigned_group_checks(f: SFunc): SFunc {
       if (signed_extension(def_of(defs, src))) {
         src = def_of(defs, src).args[0];
       }
-      insts = insts.append(SInst { kind_tag: UNARY, result: nvals, args: [src], imm: 0, str: "int_cast:u32" });
-      insts = insts.append(SInst { kind_tag: CONST_INT, result: nvals + 1, args: [], imm: g.span, str: "" });
-      insts = insts.append(SInst { kind_tag: BINARY, result: nvals + 2, args: [nvals, nvals + 1], imm: 64, str: "add" });
+      insts = insts.append(SInst { ir_kind: 0, kind_tag: UNARY, result: nvals, args: [src], imm: 0, str: "int_cast:u32" });
+      insts = insts.append(SInst { ir_kind: 0, kind_tag: CONST_INT, result: nvals + 1, args: [], imm: g.span, str: "" });
+      insts = insts.append(binary_inst(nvals + 2, [nvals, nvals + 1], 64, ir.K_ADD));
       insts = insts.append(SInst { ...ins, args: ins.args.with(1, nvals + 2) });
       if (reads_of(blk.insts, k + 1, g.lo) == uses[g.lo] - g.chain) {
         lo = g.lo;
@@ -7137,16 +7144,18 @@ function lane_constant_fact(ins: SInst): i32 {
 function lane_identity(ins: SInst, facts: i32[]): SInst {
   if (ins.kind_tag == TERNARY && ins.str == "vselect" && ins.args.len() == 3) {
     if (facts[ins.args[1]] == 1) {
-      return SInst { ...ins, kind_tag: BINARY, str: "vand", args: [ins.args[0], ins.args[2]] };
+      return SInst { ...ins, kind_tag: BINARY, str: "vand", ir_kind: ir.K_VAND, args: [ins.args[0], ins.args[2]] };
     }
     if (facts[ins.args[0]] == 1) {
-      return SInst { ...ins, kind_tag: BINARY, str: "vandnot", args: [ins.args[1], ins.args[2]] };
+      return SInst { ...ins, kind_tag: BINARY, str: "vandnot", ir_kind: ir.K_VANDNOT, args: [ins.args[1], ins.args[2]] };
     }
   }
   if (ins.kind_tag == BINARY && (ins.str == "vmul" || ins.str == "fmul") && (facts[ins.args[0]] == 2 || facts[ins.args[1]] == 2)) {
     let a = if (facts[ins.args[0]] == 2) { ins.args[1] } else { ins.args[0] };
-    let op = if (ins.str == "fmul") { "fadd" } else { "vadd" };
-    return SInst { ...ins, str: op, args: [a, a] };
+    if (ins.str == "fmul") {
+      return SInst { ...ins, str: "fadd", ir_kind: ir.K_FADD, args: [a, a] };
+    }
+    return SInst { ...ins, str: "vadd", ir_kind: ir.K_VADD, args: [a, a] };
   }
   return ins;
 }
@@ -7360,9 +7369,9 @@ pub function shared_lengths(f: SFunc): SFunc {
       if (lens[w] < 0) {
         lens = lens.with(w, f.nvals + made.len());
         made = made.append(w);
-        insts = insts.append(SInst { kind_tag: LD_AT, result: lens[w], args: [ins.args[0]], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
+        insts = insts.append(SInst { ir_kind: 0, kind_tag: LD_AT, result: lens[w], args: [ins.args[0]], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
       }
-      insts = insts.append(SInst { kind_tag: BOUND, result: -1, args: [ins.args[1], lens[w]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
+      insts = insts.append(SInst { ir_kind: 0, kind_tag: BOUND, result: -1, args: [ins.args[1], lens[w]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
       if (ins.kind_tag == ARR_ST || ins.imm == 0) {
         insts = insts.append(SInst { ...ins, imm: 1 });
       }
@@ -7421,9 +7430,9 @@ pub function hoisted_lengths(f: SFunc): SFunc {
           made = made.append(b);
           lens = lens.append(id);
           datas = datas.append(-1);
-          loads = loads.append(SInst { kind_tag: LD_AT, result: id, args: [b], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
+          loads = loads.append(SInst { ir_kind: 0, kind_tag: LD_AT, result: id, args: [b], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
         }
-        insts = insts.append(SInst { kind_tag: BOUND, result: -1, args: [ins.args[1], lens[k]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
+        insts = insts.append(SInst { ir_kind: 0, kind_tag: BOUND, result: -1, args: [ins.args[1], lens[k]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
         // A byte read loads from the address of the elements, which the
         // block before the loop forms one time.
         if (ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
@@ -7431,10 +7440,10 @@ pub function hoisted_lengths(f: SFunc): SFunc {
             let eight = f.nvals + made.len();
             made = made.append(b).append(b);
             datas = datas.with(k, eight + 1);
-            loads = loads.append(SInst { kind_tag: CONST_INT, result: eight, args: [], imm: 8, str: "" });
-            loads = loads.append(SInst { kind_tag: BINARY, result: eight + 1, args: [b, eight], imm: 64, str: "add" });
+            loads = loads.append(SInst { ir_kind: 0, kind_tag: CONST_INT, result: eight, args: [], imm: 8, str: "" });
+            loads = loads.append(binary_inst(eight + 1, [b, eight], 64, ir.K_ADD));
           }
-          insts = insts.append(SInst { kind_tag: LD_SUM, result: ins.result, args: [datas[k], ins.args[1]], imm: 0, str: "" });
+          insts = insts.append(SInst { ir_kind: 0, kind_tag: LD_SUM, result: ins.result, args: [datas[k], ins.args[1]], imm: 0, str: "" });
         } else if (ins.kind_tag == ARR_ST || ins.imm == 0) {
           insts = insts.append(SInst { ...ins, imm: 1 });
         }
@@ -8118,7 +8127,7 @@ pub function fold_sum_access(f: SFunc): Formed {
         if (ins.kind_tag == ST_BYTE) {
           ins = SInst { ...ins, args: [a, b, ins.args[2]] };
         } else {
-          ins = SInst { kind_tag: LD_SUM, result: ins.result, args: [a, b], imm: imm, str: read.str };
+          ins = SInst { ir_kind: 0, kind_tag: LD_SUM, result: ins.result, args: [a, b], imm: imm, str: read.str };
         }
         changed = true;
       }
@@ -9105,7 +9114,7 @@ function rotate_of(defs: SInst[], ins: SInst): SInst {
 }
 
 pub function no_inst(): SInst {
-  return SInst { kind_tag: NONE, result: -1, args: [], imm: 0, str: "" };
+  return SInst { ir_kind: 0, kind_tag: NONE, result: -1, args: [], imm: 0, str: "" };
 }
 
 pub function inst_defs(f: SFunc): SInst[] {
@@ -9190,7 +9199,7 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   if (n <= 0i64 || k <= 0i64 || n + k != w as i64) {
     return no;
   }
-  return SInst { kind_tag: UNARY, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
+  return SInst { ir_kind: 0, kind_tag: UNARY, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
 }
 
 pub function fuse_and_not(f: SFunc): SFunc {
@@ -9228,11 +9237,11 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
   }
   let v = not_of(defs, ins.args[1]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[0], v], str: "and_not" };
+    return SInst { ...ins, args: [ins.args[0], v], str: "and_not", ir_kind: 0 };
   }
   v = not_of(defs, ins.args[0]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[1], v], str: "and_not" };
+    return SInst { ...ins, args: [ins.args[1], v], str: "and_not", ir_kind: 0 };
   }
   return no_inst();
 }
@@ -9782,7 +9791,7 @@ function carry_of_halves(defs: SInst[], join: SInst, first: SInst, second: SInst
       continue;
     }
     if (copy_root(defs, inner.args[0]) == x && copy_root(defs, inner.args[1]) == y || first.imm == 0 && same_pair(defs, inner.args[0], inner.args[1], x, y)) {
-      return SInst { kind_tag: CARRY, result: join.result, args: [x, y, second.args[1 - k]], imm: first.imm, str: "" };
+      return SInst { ir_kind: 0, kind_tag: CARRY, result: join.result, args: [x, y, second.args[1 - k]], imm: first.imm, str: "" };
     }
   }
   return no_inst();
@@ -9818,12 +9827,12 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
     return no_inst();
   }
   if (same_pair(defs, s.args[0], s.args[1], x, y)) {
-    return SInst { kind_tag: CARRY, result: shr.result, args: [copy_root(defs, s.args[0]), copy_root(defs, s.args[1])], imm: 0, str: "" };
+    return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [copy_root(defs, s.args[0]), copy_root(defs, s.args[1])], imm: 0, str: "" };
   }
   for k in 0..2 {
     let inner = wide_of(defs, s.args[k], "add");
     if (inner.kind_tag != NONE && same_pair(defs, inner.args[0], inner.args[1], x, y) && zero_one(defs, s.args[1 - k])) {
-      return SInst { kind_tag: CARRY, result: shr.result, args: [copy_root(defs, inner.args[0]), copy_root(defs, inner.args[1]), copy_root(defs, s.args[1 - k])], imm: 0, str: "" };
+      return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [copy_root(defs, inner.args[0]), copy_root(defs, inner.args[1]), copy_root(defs, s.args[1 - k])], imm: 0, str: "" };
     }
   }
   return zero_add_carry(defs, shr, s, x, y);
@@ -9845,7 +9854,7 @@ function zero_add_carry(defs: SInst[], shr: SInst, s: SInst, x: i32, y: i32): SI
     }
     for j in 0..2 {
       if (copy_root(defs, s.args[j]) == o && zero_one(defs, s.args[1 - j])) {
-        return SInst { kind_tag: CARRY, result: shr.result, args: [o, copy_root(defs, s.args[1 - j])], imm: 0, str: "" };
+        return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [o, copy_root(defs, s.args[1 - j])], imm: 0, str: "" };
       }
     }
   }
@@ -9877,15 +9886,15 @@ function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SIns
     return no_inst();
   }
   if (copy_root(defs, d.args[0]) == x && same_value(defs, d.args[1], y)) {
-    return SInst { kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, d.args[1])], imm: 1, str: "" };
+    return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, d.args[1])], imm: 1, str: "" };
   }
   let inner = wide_of(defs, d.args[0], "sub");
   if (inner.kind_tag != NONE && copy_root(defs, inner.args[0]) == x && same_value(defs, inner.args[1], y) && zero_one(defs, d.args[1])) {
-    return SInst { kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, inner.args[1]), copy_root(defs, d.args[1])], imm: 1, str: "" };
+    return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, inner.args[1]), copy_root(defs, d.args[1])], imm: 1, str: "" };
   }
   // `x - 0 - c` folds to `x - c`, which has the same borrow.
   if (is_const(defs, y, 0i64) && copy_root(defs, d.args[0]) == x && zero_one(defs, d.args[1])) {
-    return SInst { kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, d.args[1])], imm: 1, str: "" };
+    return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, d.args[1])], imm: 1, str: "" };
   }
   return no_inst();
 }

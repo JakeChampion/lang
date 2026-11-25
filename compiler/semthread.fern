@@ -1137,7 +1137,7 @@ function arm_values(s0: Split, g: ssa.SFunc, defs: ssa.SInst[], c: Join, ti: i32
       // a constant of its own.
       consts = consts.append(ssa.SInst { ...through_copies(defs, args[0]), result: id, args: [] });
     } else {
-      phis = phis.append(ssa.SInst { kind_tag: ssa.PHI, result: id, args: args, imm: 0, str: "" });
+      phis = phis.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: id, args: args, imm: 0, str: "" });
     }
   }
   let insts = phis;

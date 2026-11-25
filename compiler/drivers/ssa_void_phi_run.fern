@@ -11,9 +11,9 @@ function returned(value: i32): ssa.STerm {
 function graph(value: i32, trivial: boolean): ssa.SFunc {
   let entry: ssa.SBlock = ssa.SBlock {
     id: 0, preds: [], insts: [
-      ssa.SInst { kind_tag: ssa.CONST_INT, result: 0, args: [], imm: 7, str: "" },
-      ssa.SInst { kind_tag: ssa.CONST_BOOL, result: 1, args: [], imm: 1, str: "" },
-      ssa.SInst { kind_tag: ssa.CONST_INT, result: 3, args: [], imm: 9, str: "" },
+      ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 0, args: [], imm: 7, str: "" },
+      ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_BOOL, result: 1, args: [], imm: 1, str: "" },
+      ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 3, args: [], imm: 9, str: "" },
     ],
     term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: 1, target: 0, t: 1, f: 2, value: 0 },
   };
@@ -22,8 +22,8 @@ function graph(value: i32, trivial: boolean): ssa.SFunc {
   let other: i32 = if (trivial) { 0 } else { 3 };
   let join: ssa.SBlock = ssa.SBlock {
     id: 3, preds: [1, 2], insts: [
-      ssa.SInst { kind_tag: ssa.PHI, result: 2, args: [0, other], imm: 0, str: "" },
-      ssa.SInst { kind_tag: ssa.CALL, result: -1, args: [2], imm: 0, str: "observe" },
+      ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: 2, args: [0, other], imm: 0, str: "" },
+      ssa.SInst { ir_kind: 0, kind_tag: ssa.CALL, result: -1, args: [2], imm: 0, str: "observe" },
     ],
     term: returned(value),
   };

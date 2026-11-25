@@ -20,9 +20,9 @@ function fixture(name: string, callee: string, slot: i32): ssasem.Func {
     arguments = [slot];
   }
   let insts: ssa.SInst[] = [
-    ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" },
-    ssa.SInst { kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" },
-    ssa.SInst { kind_tag: ssasem.call(), result: 2, args: arguments, imm: 0, str: callee },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: 2, args: arguments, imm: 0, str: callee },
   ];
   return ssasem.Func {
     graph: ssa.SFunc { name: name, nparams: 2, nvals: 3, entry: 0, takes_env: false, blocks: [
@@ -58,8 +58,8 @@ function returned_storage(): void {
     graph: ssa.SFunc { name: "make", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [
       ssa.SBlock {
         id: 0, preds: [], insts: [
-          ssa.SInst { kind_tag: ssa.CONST_INT, result: 0, args: [], imm: 0, str: "" },
-          ssa.SInst { kind_tag: ssasem.array_new(), result: 1, args: [0, 0], imm: 0, str: "" },
+          ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 0, args: [], imm: 0, str: "" },
+          ssa.SInst { ir_kind: 0, kind_tag: ssasem.array_new(), result: 1, args: [0, 0], imm: 0, str: "" },
         ],
         term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 1 },
       },
@@ -70,8 +70,8 @@ function returned_storage(): void {
     graph: ssa.SFunc { name: "caller", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [
       ssa.SBlock {
         id: 0, preds: [], insts: [
-          ssa.SInst { kind_tag: ssasem.call(), result: 0, args: [], imm: 0, str: "make" },
-          ssa.SInst { kind_tag: ssasem.call(), result: 1, args: [0], imm: 0, str: "__raw_arr_ptr" },
+          ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: 0, args: [], imm: 0, str: "make" },
+          ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: 1, args: [0], imm: 0, str: "__raw_arr_ptr" },
         ],
         term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 1 },
       },
@@ -87,7 +87,7 @@ function returned_storage(): void {
   let cached_plan = ssaunits.plan(literal, [], cached);
   require(cached_plan.ok && cached_plan.constants[1] == "", 45);
   let read_block = caller.graph.blocks[0];
-  let length = ssa.SInst { kind_tag: ssasem.length(), result: 1, args: [0], imm: 0, str: "" };
+  let length = ssa.SInst { ir_kind: 0, kind_tag: ssasem.length(), result: 1, args: [0], imm: 0, str: "" };
   let reader = ssasem.Func { ...caller, graph: ssa.SFunc { ...caller.graph, blocks: [ssa.SBlock { ...read_block, insts: read_block.insts.with(1, length) }] } };
   let pure = ssaunits.write_rows(names, [reader, literal]);
   require(!pure.results.has("make"), 42);

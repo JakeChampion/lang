@@ -110,7 +110,7 @@ pub function compact(f: ssa.SFunc): Dense {
       for arg in ins.args {
         args = args.append(renamed(ids, arg));
       }
-      insts = insts.append(ssa.SInst { kind_tag: ins.kind_tag, result: renamed(ids, ins.result), args: args, imm: ins.imm, str: ins.str });
+      insts = insts.append(ssa.SInst { ...ins, result: renamed(ids, ins.result), args: args });
     }
     let term = ssa.STerm { ...b.term, value: renamed_field(ids, b.term.value) };
     if (term.kind_tag == ssa.TERM_BRIF) {

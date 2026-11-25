@@ -53,7 +53,7 @@ function outcome_controls(f: ssa.SFunc): void {
   for b in f.blocks {
     let insts = b.insts;
     if (b.id == f.entry) {
-      insts = insts.append(ssa.SInst { kind_tag: ssa.RT_CALL, result: f.nvals, args: [1], imm: 0, str: "exit" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.RT_CALL, result: f.nvals, args: [1], imm: 0, str: "exit" });
     }
     forced = forced.append(ssa.SBlock { ...b, insts: insts });
   }
@@ -61,12 +61,12 @@ function outcome_controls(f: ssa.SFunc): void {
   let dead_effect = scalar.outcomes(changed(ssa.SFunc { ...f, blocks: forced, nvals: f.nvals + 1 }, 6));
   require(!dead_effect.proof.ok && dead_effect.proof.message == "scalar helper return not proven zero", 49);
 
-  let params = [ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" }, ssa.SInst { kind_tag: ssa.CONST_INT, result: 2, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: ssa.CONST_INT, result: 3, args: [], imm: -2147483648, str: "" }];
+  let params = [ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 2, args: [], imm: 0, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 3, args: [], imm: -2147483648, str: "" }];
   let branch = ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: 0, target: 0, t: 1, f: 2, value: 0 };
   let jump = ssa.STerm { ...branch, kind_tag: ssa.TERM_BR, target: 3 };
   let ret = ssa.STerm { ...branch, kind_tag: ssa.TERM_RET, value: 2 };
-  let selected = ssa.SInst { kind_tag: ssa.PHI, result: 4, args: [3, 2], imm: 0, str: "" };
-  let leave = ssa.SInst { kind_tag: ssa.RT_CALL, result: 5, args: [1], imm: 0, str: "exit" };
+  let selected = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: 4, args: [3, 2], imm: 0, str: "" };
+  let leave = ssa.SInst { ir_kind: 0, kind_tag: ssa.RT_CALL, result: 5, args: [1], imm: 0, str: "exit" };
   let blocks = [ssa.SBlock { id: 0, insts: params, preds: [], term: branch }, ssa.SBlock { id: 1, insts: [], preds: [0], term: jump }, ssa.SBlock { id: 2, insts: [], preds: [0], term: jump }, ssa.SBlock { id: 3, insts: [selected], preds: [1, 2], term: ssa.STerm { ...branch, cond: 4, t: 4, f: 5 } }, ssa.SBlock { id: 4, insts: [], preds: [3], term: ret }, ssa.SBlock { id: 5, insts: [leave], preds: [3], term: ret }];
   let joined = ssa.SFunc { ...f, blocks: blocks, entry: 0, nvals: 6 };
   expect_outcomes(joined, [false, true], [true, false], 44);
@@ -78,17 +78,17 @@ function outcome_controls(f: ssa.SFunc): void {
 }
 
 function select_controls(f: ssa.SFunc): void {
-  let params = [ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" }, ssa.SInst { kind_tag: ssa.CONST_INT, result: 2, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: ssa.CONST_INT, result: 3, args: [], imm: -2147483648, str: "" }];
-  let pick = ssa.SInst { kind_tag: ssa.SELECT, result: 4, args: [0, 3, 2], imm: 0, str: "" };
+  let params = [ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 2, args: [], imm: 0, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 3, args: [], imm: -2147483648, str: "" }];
+  let pick = ssa.SInst { ir_kind: 0, kind_tag: ssa.SELECT, result: 4, args: [0, 3, 2], imm: 0, str: "" };
   let branch = ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: 4, target: 0, t: 1, f: 2, value: 0 };
   let ret = ssa.STerm { ...branch, kind_tag: ssa.TERM_RET, value: 2 };
-  let leave = ssa.SInst { kind_tag: ssa.RT_CALL, result: 5, args: [1], imm: 0, str: "exit" };
+  let leave = ssa.SInst { ir_kind: 0, kind_tag: ssa.RT_CALL, result: 5, args: [1], imm: 0, str: "exit" };
   let blocks = [ssa.SBlock { id: 0, insts: params.append(pick), preds: [], term: branch }, ssa.SBlock { id: 1, insts: [], preds: [0], term: ret }, ssa.SBlock { id: 2, insts: [leave], preds: [0], term: ret }];
   let picked = ssa.SFunc { ...f, blocks: blocks, entry: 0, nvals: 6 };
   expect_outcomes(picked, [false, true], [true, false], 53);
   let unknown = ssa.SBlock { ...blocks[0], insts: params.append(ssa.SInst { ...pick, args: [1, 3, 2] }) };
   expect_outcomes(ssa.SFunc { ...picked, blocks: blocks.with(0, unknown) }, [true, true], [true, true], 54);
-  let zeros = ssa.SInst { kind_tag: ssa.SELECT, result: 4, args: [0, 2, 2], imm: 0, str: "" };
+  let zeros = ssa.SInst { ir_kind: 0, kind_tag: ssa.SELECT, result: 4, args: [0, 2, 2], imm: 0, str: "" };
   let returned = [ssa.SBlock { id: 0, insts: params.append(zeros), preds: [], term: ssa.STerm { ...ret, value: 4 } }];
   expect(ssa.SFunc { ...f, blocks: returned, entry: 0, nvals: 5 }, true, "proved scalar zero-or-exit effects", 55);
   let mixed = [ssa.SBlock { ...returned[0], insts: params.append(ssa.SInst { ...zeros, args: [0, 2, 3] }) }];
@@ -164,7 +164,7 @@ function with_join_phi(f: ssa.SFunc): ssa.SFunc {
   let added = 0;
   for b in f.blocks {
     if (b.preds.len() == 2) {
-      let phi = ssa.SInst { kind_tag: ssa.PHI, result: f.nvals, args: join_phi_args(b.preds, ex), imm: 0, str: "" };
+      let phi = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: f.nvals, args: join_phi_args(b.preds, ex), imm: 0, str: "" };
       blocks = blocks.append(ssa.SBlock { ...b, insts: prepended(phi, b.insts) });
       added += 1;
     } else {
@@ -325,7 +325,7 @@ function target_checks(target: string): void {
     broken = broken.append(ssa.SBlock { ...b, term: term });
   }
   expect(ssa.SFunc { ...f, blocks: broken }, false, "unavailable scalar helper condition", 37);
-  let params = [ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" }];
+  let params = [ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" }];
   let jump = ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: 1, t: 0, f: 0, value: 0 };
   let cycle = [ssa.SBlock { id: 0, insts: params, preds: [], term: jump }, ssa.SBlock { id: 1, insts: [], preds: [0, 1], term: jump }];
   expect(ssa.SFunc { ...f, blocks: cycle, entry: 0, nvals: 2 }, false, "unsupported scalar helper cycle", 38);

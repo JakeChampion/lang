@@ -764,7 +764,7 @@ function may_have_copy_loop(g: ssa.SFunc): boolean {
 }
 
 function copy(result: i32, v: i32): ssa.SInst {
-  return ssa.SInst { kind_tag: ssa.COPY, result: result, args: [v], imm: 0, str: "" };
+  return ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: result, args: [v], imm: 0, str: "" };
 }
 
 function replacement(v: i32, l: Loop, fresh: i32): i32 {
@@ -809,7 +809,7 @@ function wide(): typeinfo.Type {
 }
 
 function emit(sp: Span, kind: i32, args: i32[], text: string, t: typeinfo.Type, next: i32): Span {
-  let ins = ssa.SInst { kind_tag: kind, result: next + sp.insts.len(), args: args, imm: 0, str: text };
+  let ins = ssa.SInst { ir_kind: 0, kind_tag: kind, result: next + sp.insts.len(), args: args, imm: 0, str: text };
   return Span { ...sp, insts: sp.insts.append(ins), types: sp.types.append(t) };
 }
 
@@ -882,7 +882,7 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
     if (!ssasem.is_byte_view(values[src])) {
       src = values.len();
       values = values.append(contracts[1].params[2]);
-      distance = distance.append(ssa.SInst { kind_tag: ssasem.array_lend(), result: src, args: [l.src], imm: 0, str: "" });
+      distance = distance.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.array_lend(), result: src, args: [l.src], imm: 0, str: "" });
     }
     args = [receiver, at, src, from, sp.count];
     ci = 1;
@@ -908,8 +908,8 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
       b = outside(b, l, fresh);
       if (b.id == l.exit) {
         let phis = [
-          ssa.SInst { kind_tag: ssa.PHI, result: l.array.result, args: [receiver, copied], imm: 0, str: "" },
-          ssa.SInst { kind_tag: ssa.PHI, result: fresh, args: [zero, l.count], imm: 0, str: "" },
+          ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: l.array.result, args: [receiver, copied], imm: 0, str: "" },
+          ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: fresh, args: [zero, l.count], imm: 0, str: "" },
         ];
         b = ssa.SBlock { ...b, preds: [l.head, l.body], insts: util.append_all(phis, b.insts) };
       }
@@ -971,11 +971,11 @@ function rebased_distance(l: Loop, receiver: i32, next: i32): ssa.SInst[] {
   if (!l.rebased) {
     return [];
   }
-  let len = ssa.SInst { kind_tag: ssasem.length(), result: next, args: [receiver], imm: 0, str: "" };
+  let len = ssa.SInst { ir_kind: 0, kind_tag: ssasem.length(), result: next, args: [receiver], imm: 0, str: "" };
   if (l.from < 0) {
     return [len];
   }
-  return [len, ssa.SInst { kind_tag: ssa.BINARY, result: next + 1, args: [next, l.from], imm: 0, str: "-" }];
+  return [len, ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: next + 1, args: [next, l.from], imm: 0, str: "-" }];
 }
 
 // The header keeps its test, so an empty range makes no call. The

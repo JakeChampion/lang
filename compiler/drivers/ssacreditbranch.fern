@@ -69,7 +69,7 @@ function condition(f: ssa.SFunc, mode: i32): ssa.SFunc {
       let id = f.nvals;
       let insts = b.insts;
       if (mode < 3) {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: id, args: [], imm: mode, str: "" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: id, args: [], imm: mode, str: "" });
         nvals += 1;
       } else if (mode == 3) {
         id = 0;
@@ -103,7 +103,7 @@ function topology(f: ssa.SFunc, mode: i32): ssa.SFunc {
         changed = ssa.SBlock { ...b, preds: [] };
       } else {
         let args: i32[] = if (mode == 2) { [0, 0] } else { [0] };
-        let phi = ssa.SInst { kind_tag: ssa.PHI, result: f.nvals, args: args, imm: 0, str: "" };
+        let phi = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: f.nvals, args: args, imm: 0, str: "" };
         let insts = [phi];
         for op in b.insts {
           insts = insts.append(op);
@@ -126,7 +126,7 @@ function infeasible(f: ssa.SFunc, value: i32): ssa.SFunc {
       id = b.id + 1;
     }
   }
-  let zero = ssa.SInst { kind_tag: ssa.CONST_INT, result: f.nvals, args: [], imm: 0, str: "" };
+  let zero = ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: f.nvals, args: [], imm: 0, str: "" };
   let bad = ssa.SInst { ...zero, result: f.nvals + 1, imm: value };
   let guard = ssa.SBlock { id: id, preds: [selected.id], insts: [zero], term: ssa.STerm { ...selected.term, cond: zero.result, t: id + 1, f: selected.term.t } };
   let dead = ssa.SBlock { id: id + 1, preds: [id], insts: [bad], term: ssa.STerm { ...selected.term, cond: bad.result } };
@@ -175,7 +175,7 @@ function credit(f: ssa.SFunc): ssa.SFunc {
     for op in b.insts {
       let changed = op;
       if (op.kind_tag == ssa.CALL && op.str == "__fern_rc_inc" && op.args[0] == 1) {
-        changed = ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" };
+        changed = ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" };
         hits += 1;
       }
       insts = insts.append(changed);

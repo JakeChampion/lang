@@ -3,7 +3,7 @@ import "../ssasame";
 import "../util";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.SInst {
-  return ssa.SInst { kind_tag: kind, result: result, args: args, imm: imm, str: str };
+  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: result, args: args, imm: imm, str: str };
 }
 
 function param(i: i32): ssa.SInst {

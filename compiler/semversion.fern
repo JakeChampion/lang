@@ -342,7 +342,7 @@ function handed_on(f: ssasem.Func, ix: Index, s: Shape, a: i32): boolean {
 struct Built { insts: ssa.SInst[], values: typeinfo.Type[], next: i32 }
 
 function add(own b: Built, kind: i32, args: i32[], imm: i32, text: string, t: typeinfo.Type): Built {
-  let ins = ssa.SInst { kind_tag: kind, result: b.next, args: args, imm: imm, str: text };
+  let ins = ssa.SInst { ir_kind: 0, kind_tag: kind, result: b.next, args: args, imm: imm, str: text };
   return Built { insts: b.insts.append(ins), values: b.values.append(t), next: b.next + 1 };
 }
 
@@ -587,7 +587,7 @@ function live_out(f: ssasem.Func, s: Shape, vmap: i32[], own values: typeinfo.Ty
         let m = values.len();
         values = values.append(f.values[v]);
         renamed = renamed.with(v, m);
-        phis = phis.append(ssa.SInst { kind_tag: ssa.PHI, result: m, args: [v, vmap[v]], imm: 0, str: "" });
+        phis = phis.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: m, args: [v, vmap[v]], imm: 0, str: "" });
       }
     }
   }

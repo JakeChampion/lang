@@ -2022,7 +2022,7 @@ function reuse_construct(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SI
         r = emit(r, ir.op_load_local(ins.result));
         if (util.index_of_i32(k.late[at], ins.args[ki]) >= 0) {
           r = emit(r, ir.op_load_local(k.donors[at]));
-          r = field_get(r, f, ssa.SInst { kind_tag: ssasem.record_get(), result: ins.args[ki], args: [k.donors[at]], imm: ki, str: "" });
+          r = field_get(r, f, ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: ins.args[ki], args: [k.donors[at]], imm: ki, str: "" });
           if (ssasem.counted(f, fields[ki].ty)) {
             r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
           }
@@ -3260,7 +3260,7 @@ function send_map(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func):
   r = send_map_slot(r, key, kt);
   r = send_map_slot(r, val, vt);
   let fh: ssasem.Func = ssasem.Func { ...f, values: [t, typeinfo.t_i32(), t, kt, vt, keys_t, vals_t, typeinfo.t_i32()] };
-  let put: ssa.SInst = ssa.SInst { kind_tag: ssasem.map_insert(), result: out, args: [out, key, val], imm: 0, str: "" };
+  let put: ssa.SInst = ssa.SInst { ir_kind: 0, kind_tag: ssasem.map_insert(), result: out, args: [out, key, val], imm: 0, str: "" };
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_call_direct("__map_len_impl", 1));
   r = emit(r, ir.op_const_i32(routed_key_tag(kt)));

@@ -574,7 +574,7 @@ function bound_phi(cp: Copy, phi: ssa.SInst, value: i32, iv: boolean, at: i32, l
       next = fresh(cp, phi.result);
       r = next.nvals - 1;
     }
-    return emitted(next, ssa.SInst { kind_tag: ssa.CONST_INT, result: r, args: [], imm: at, str: "" }, true, at);
+    return emitted(next, ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: r, args: [], imm: at, str: "" }, true, at);
   }
   return Copy { ...cp, map: cp.map.with(phi.result, value) };
 }
@@ -645,7 +645,7 @@ function folded_phi(ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
 function folded_negation(f: ssasem.Func, ins: ssa.SInst, known: boolean[], konst: i32[]): Folded {
   if (ins.args.len() == 1 && is_marked(known, ins.args[0]) && ssasem.is_i32(f.values[ins.result])) {
     if let Some(v) = folded_i32(ins.str, 0, konst[ins.args[0]]) {
-      return Folded { ins: ssa.SInst { kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
+      return Folded { ins: ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
     }
   }
   return unfolded(ins);
@@ -666,11 +666,11 @@ function folded_binary(f: ssasem.Func, ins: ssa.SInst, konst: i32[]): Folded {
     if (compared(ins.str, a, b)) {
       yes = 1;
     }
-    return Folded { ins: ssa.SInst { kind_tag: ssa.CONST_BOOL, result: ins.result, args: [], imm: yes, str: "" }, known: false, value: 0 };
+    return Folded { ins: ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_BOOL, result: ins.result, args: [], imm: yes, str: "" }, known: false, value: 0 };
   }
   if (ssasem.is_i32(f.values[ins.result])) {
     if let Some(v) = folded_i32(ins.str, konst[ins.args[0]], konst[ins.args[1]]) {
-      return Folded { ins: ssa.SInst { kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
+      return Folded { ins: ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: v, str: "" }, known: true, value: v };
     }
   }
   return unfolded(ins);
@@ -743,7 +743,7 @@ function fold_block(f: ssasem.Func, d: ssa.DefSites, st: Fold, bi: i32): Fold {
     }
     let lane = lane_operand(f, d, ins);
     if (lane >= 0) {
-      insts = insts.with(ii, ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [lane], imm: 0, str: "" });
+      insts = insts.with(ii, ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [lane], imm: 0, str: "" });
       touched = true;
       st = Fold { ...st, folded: st.folded + 1, changed: true };
       continue;

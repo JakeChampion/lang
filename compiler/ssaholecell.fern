@@ -377,8 +377,8 @@ function returns_carrier(f: ssa.SFunc, fills: Fill[], web: i32[]): boolean {
 function start_of(site: Loop, number: i32, id: i32): ssa.SInst[] {
   let out = [ssa.frame_cell(id, number, site.offset)];
   if (site.starts) {
-    out = out.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: id + 1, args: [], imm: 0, str: "" });
-    out = out.append(ssa.SInst { kind_tag: ssa.ST_AT, result: id + 2, args: [id, id + 1], imm: site.offset, str: "" });
+    out = out.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: id + 1, args: [], imm: 0, str: "" });
+    out = out.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.ST_AT, result: id + 2, args: [id, id + 1], imm: site.offset, str: "" });
   }
   return out;
 }
@@ -450,7 +450,7 @@ function with_cell(f: ssa.SFunc, site: Loop, number: i32): ssa.SFunc {
     if (term.kind_tag == ssa.TERM_RET && util.index_of_i32(site.web, term.value) >= 0) {
       let cell = reads + 2 * bi;
       insts = insts.append(ssa.frame_cell(cell, number, site.offset));
-      insts = insts.append(ssa.SInst { kind_tag: ssa.LD_AT, result: cell + 1, args: [cell], imm: site.offset, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.LD_AT, result: cell + 1, args: [cell], imm: site.offset, str: "" });
       term = ssa.STerm { ...term, value: cell + 1 };
     }
     blocks = blocks.append(ssa.SBlock { id: b.id, insts: insts, term: term, preds: preds });
