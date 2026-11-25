@@ -59,11 +59,11 @@ x86_64/closure_call.text	1065
 x86_64/closure_call.ir	41178167
 x86_64/deflate_decode.ir	26430409
 x86_64/deflate_decode.text	13652
-x86_64/deflate_encode.ir	39149067
+x86_64/deflate_encode.ir	38573623
 x86_64/deflate_encode.text	7282
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
-x86_64/http_hello.text	16393
+x86_64/http_hello.text	16665
 x86_64/http_hello.ir	21960372
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
@@ -103,9 +103,9 @@ x86_64/struct_drop.text	2808
 x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1294
 x86_64/tokenize.ir	31710112
-x86_64/utf8_ingest_unchecked.text	8862
+x86_64/utf8_ingest_unchecked.text	8441
 x86_64/utf8_ingest_unchecked.ir	2100062
-x86_64/utf8_ingest_validated.text	9544
+x86_64/utf8_ingest_validated.text	9132
 x86_64/utf8_ingest_validated.ir	3823463
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -142,8 +142,8 @@ aarch64/deflate_encode.ir	40167832
 aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
-aarch64/http_hello.text	17377
-aarch64/http_hello.ir	24052553
+aarch64/http_hello.text	17671
+aarch64/http_hello.ir	24320562
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8808
@@ -182,9 +182,9 @@ aarch64/struct_drop.text	3075
 aarch64/struct_drop.ir	220180757
 aarch64/tokenize.text	1531
 aarch64/tokenize.ir	33490121
-aarch64/utf8_ingest_unchecked.text	9300
+aarch64/utf8_ingest_unchecked.text	8949
 aarch64/utf8_ingest_unchecked.ir	2561266
-aarch64/utf8_ingest_validated.text	9976
+aarch64/utf8_ingest_validated.text	9630
 aarch64/utf8_ingest_validated.ir	4802868
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	34837730
@@ -245,13 +245,13 @@ aarch64/byte_copy_append.dr	6298434
 aarch64/byte_copy_with.dr	6199460
 aarch64/call_overhead.dr	1187566
 aarch64/closure_call.dr	4842023
-aarch64/deflate_decode.dr	3039902
-aarch64/deflate_encode.dr	6617247
+aarch64/deflate_decode.dr	2941435
+aarch64/deflate_encode.dr	6453577
 aarch64/enum_match.dr	1125004
 aarch64/gather_many.dr	10348475
 aarch64/hex_decode.dr	15885910
 aarch64/hex_encode.dr	3287599
-aarch64/http_hello.dr	4476098
+aarch64/http_hello.dr	4524096
 aarch64/int_loop.dr	3000003
 aarch64/map_int.dr	4529519
 aarch64/map_probe_chain.dr	38841894
@@ -291,8 +291,8 @@ x86_64/byte_copy_append.dr	3244438
 x86_64/byte_copy_with.dr	3124467
 x86_64/call_overhead.dr	187564
 x86_64/closure_call.dr	4878023
-x86_64/deflate_decode.dr	5142382
-x86_64/deflate_encode.dr	12676876
+x86_64/deflate_decode.dr	5061432
+x86_64/deflate_encode.dr	12368542
 x86_64/enum_match.dr	225002
 x86_64/gather_many.dr	10701857
 x86_64/hex_decode.dr	25270109

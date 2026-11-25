@@ -364,7 +364,7 @@ function node_remove[K: cmp.Hash + cmp.Eq, V](n: PMap[K, V], h: i32, shift: i32,
   }
 }
 
-function node_keys_into[K, V](n: PMap[K, V], own acc: K[]): K[] {
+function node_keys_into[K, V](n: PMap[K, V], acc: K[]): K[] {
   match (n) {
     Empty => {
       return acc;
@@ -384,7 +384,7 @@ function node_keys_into[K, V](n: PMap[K, V], own acc: K[]): K[] {
   }
 }
 
-function node_keys_kids[K, V](kids: PMap[K, V][], i: i32, own acc: K[]): K[] {
+function node_keys_kids[K, V](kids: PMap[K, V][], i: i32, acc: K[]): K[] {
   if (i >= kids.len()) {
     return acc;
   }
@@ -393,7 +393,7 @@ function node_keys_kids[K, V](kids: PMap[K, V][], i: i32, own acc: K[]): K[] {
   return acc;
 }
 
-function node_values_into[K, V](n: PMap[K, V], own acc: V[]): V[] {
+function node_values_into[K, V](n: PMap[K, V], acc: V[]): V[] {
   match (n) {
     Empty => {
       return acc;
@@ -413,7 +413,7 @@ function node_values_into[K, V](n: PMap[K, V], own acc: V[]): V[] {
   }
 }
 
-function node_values_kids[K, V](kids: PMap[K, V][], i: i32, own acc: V[]): V[] {
+function node_values_kids[K, V](kids: PMap[K, V][], i: i32, acc: V[]): V[] {
   if (i >= kids.len()) {
     return acc;
   }
@@ -422,7 +422,7 @@ function node_values_kids[K, V](kids: PMap[K, V][], i: i32, own acc: V[]): V[] {
   return acc;
 }
 
-function node_entries_into[K, V](n: PMap[K, V], own acc: (K, V)[]): (K, V)[] {
+function node_entries_into[K, V](n: PMap[K, V], acc: (K, V)[]): (K, V)[] {
   match (n) {
     Empty => {
       return acc;
@@ -442,7 +442,7 @@ function node_entries_into[K, V](n: PMap[K, V], own acc: (K, V)[]): (K, V)[] {
   }
 }
 
-function node_entries_kids[K, V](kids: PMap[K, V][], i: i32, own acc: (K, V)[]): (K, V)[] {
+function node_entries_kids[K, V](kids: PMap[K, V][], i: i32, acc: (K, V)[]): (K, V)[] {
   if (i >= kids.len()) {
     return acc;
   }
@@ -801,15 +801,9 @@ pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) merge(other: PMap[K, V]): PMap[K
 }
 
 pub function (m: PMap[K, V]) entries(): (K, V)[] {
-  let out: (K, V)[] = [];
-  let ks = m.keys();
-  let vs = m.values();
-  let i = 0;
-  while (i < ks.len()) {
-    out = out.append((ks[i], vs[i]));
-    i += 1;
-  }
-  return out;
+  let acc: (K, V)[] = [];
+  acc = node_entries_into(m, acc);
+  return acc;
 }
 
 pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) intersection(other: PMap[K, V]): PMap[K, V] {

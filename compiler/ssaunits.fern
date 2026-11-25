@@ -3298,16 +3298,16 @@ struct Receivers { unique: boolean[], linked: boolean[] }
 
 function receivers_of(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, defs: ssa.SInst[], owned: boolean[], kept: boolean[]): Receivers {
   let lent = lent_withs(f, defs, owned, kept);
-  let unique = unique_receivers(f, steps, consts, fresh, loans, lent);
+  let unique = unique_receivers(f, steps, consts, fresh, loans, lent, owned);
   if (!util.any_true(lent)) {
     return Receivers { unique: unique, linked: unique };
   }
-  return Receivers { unique: unique, linked: unique_receivers(f, steps, consts, fresh, loans, __alloc_bool(f.graph.nvals)) };
+  return Receivers { unique: unique, linked: unique_receivers(f, steps, consts, fresh, loans, __alloc_bool(f.graph.nvals), owned) };
 }
 
-function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, lent: boolean[]): boolean[] {
+function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, lent: boolean[], owned: boolean[]): boolean[] {
   let out = __alloc_bool(f.graph.nvals);
-  let sole = sole_boxes(f, steps, consts, fresh, loans, -1, lent);
+  let sole = sole_boxes(f, steps, consts, fresh, loans, -1, lent, owned);
   let at = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
@@ -3369,11 +3369,11 @@ pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[], loa
 
 function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows, loans: LoanRows): i32 {
   let lent = lent_withs(f, p.defs, p.owned, p.kept);
-  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, loans, -1, lent))) {
+  if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, loans, -1, lent, p.owned))) {
     return -1;
   }
   for k in 0..f.graph.nparams {
-    if (typeinfo.is_array(f.values[k]) && p.modes[k] == counted_mode() && returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, loans, k, lent))) {
+    if (typeinfo.is_array(f.values[k]) && p.modes[k] == counted_mode() && returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, loans, k, lent, p.owned))) {
       return k;
     }
   }
@@ -3464,13 +3464,15 @@ function passed_slot(ins: ssa.SInst, fresh: FreshRows): i32 {
   return -1;
 }
 
-function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, seed: i32, lent: boolean[]): boolean[] {
+function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: FreshRows, loans: LoanRows, seed: i32, lent: boolean[], owned: boolean[]): boolean[] {
   let sole = __alloc_bool(f.graph.nvals);
   if (seed >= 0) {
     sole = sole.with(seed, true);
   }
   let pass = util.minus_ones(f.graph.nvals);
   let links = SoleLinks { from: [], to: [] };
+  let linkable = linkable_values(f, owned);
+  let own_push = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
       if (ins.result < 0) {
@@ -3511,9 +3513,55 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       if (ins.result >= 0 && pass[ins.result] >= 0 && !moved_at(st, ins.args[pass[ins.result]], pass[ins.result])) {
         sole = sole.with(ins.result, false);
       }
+      if (ins.kind_tag == ssasem.append() && moved_at(st, ins.args[0], 0) && !linkable[ins.args[0]]) {
+        own_push = own_push.with(ins.result, true);
+      }
     }
   }
-  return settled(sole, links);
+  return settled(sole, unlinked(links, own_push));
+}
+
+// A push that takes its receiver tests the receiver and copies it when the
+// receiver has another holder, so its result is sole whatever the receiver
+// is. A receiver that can be the box of a borrowed array parameter is
+// excluded, because a linked push can keep that box.
+function unlinked(links: SoleLinks, cut: boolean[]): SoleLinks {
+  let out = SoleLinks { from: [], to: [] };
+  for i in 0..links.from.len() {
+    if (!cut[links.to[i]]) {
+      out = SoleLinks { from: out.from.append(links.from[i]), to: out.to.append(links.to[i]) };
+    }
+  }
+  return out;
+}
+
+// The values that can hold the box of an array parameter that is not owned.
+function linkable_values(f: ssasem.Func, owned: boolean[]): boolean[] {
+  let out = __alloc_bool(f.graph.nvals);
+  for v in 0..f.graph.nparams {
+    if (typeinfo.is_array(f.values[v]) && !(v < owned.len() && owned[v])) {
+      out = out.with(v, true);
+    }
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.result < 0 || out[ins.result] || !typeinfo.is_array(f.values[ins.result])) {
+          continue;
+        }
+        for a in ins.args {
+          if (a >= 0 && out[a]) {
+            out = out.with(ins.result, true);
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // LoanRows has one row for each function of the module, with one flag for

@@ -580,6 +580,46 @@ function width_checks(): i32 {
   if (gate_odd.len() != 1 || !util.contains(irverify.problem_str(gate_odd[0]), "element width 7")) {
     return 236;
   }
+  return int_width_checks();
+}
+
+function bin_ops(kind: string, w: i32): ir.Op[] {
+  return [ir.op_load_local(0), ir.op_load_local(1), ir.op_bin(kind, w, false), ir.op_return()];
+}
+
+function bits_ops(o: ir.Op): ir.Op[] {
+  return [ir.op_load_local(0), o, ir.op_return()];
+}
+
+function int_width_checks(): i32 {
+  let widths: i32[] = [0, 32, 64, ir.width_ptr()];
+  let kinds: string[] = ["add", "shr_u", "lt_s", "ge_u", "mulhi_u"];
+  for k in kinds {
+    for w in widths {
+      if (count_problems(bin_ops(k, w), 2, 2) != 0) {
+        return 237;
+      }
+    }
+  }
+  for w in [32, 64] {
+    for o in [ir.op_clz(w), ir.op_ctz(w), ir.op_popcount(w), ir.op_bswap(w)] {
+      if (count_problems(bits_ops(o), 1, 1) != 0) {
+        return 238;
+      }
+    }
+  }
+  if (!util.contains(first_msg(bin_ops("add", 16), 2, 2), "op 2 (add): width 16 is not 0, 32, 64 or the pointer width")) {
+    return 239;
+  }
+  if (count_problems(bin_ops("eq", 128), 2, 2) != 1) {
+    return 240;
+  }
+  if (!util.contains(first_msg(bits_ops(ir.op_clz(16)), 1, 1), "op 1 (clz): width 16 is not 32 or 64")) {
+    return 241;
+  }
+  if (count_problems(bits_ops(ir.op_popcount(ir.width_ptr())), 1, 1) != 1 || count_problems(bits_ops(ir.op_bswap(0)), 1, 1) != 1) {
+    return 242;
+  }
   return 0;
 }
 

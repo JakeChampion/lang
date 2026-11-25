@@ -1033,12 +1033,7 @@ function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
 }
 
 function user_func_exists(name: string, funcs: Funcs): boolean {
-  for at in funcs.named(name) {
-    if (funcs.decls[at].name == name && funcs.decls[at].receiver_type.len() == 0) {
-      return true;
-    }
-  }
-  return false;
+  return declared_at(funcs, name) >= 0;
 }
 
 function v_variant(name: string, args: Value[]): Value {
@@ -1155,23 +1150,8 @@ function name_qualifier(name: string): string {
   return "";
 }
 
-// The positions of the functions that a call of `name` can reach, in
-// declaration order: those declared or called as `name`.
-function (f: Funcs) named(name: string): i32[] {
-  if (name == "__iterator") {
-    return f.iterator_decls;
-  }
-  let out: i32[] = [];
-  let i = f.first_named(name);
-  while (i >= 0) {
-    out = out.append(i);
-    i = f.after_named(name, i);
-  }
-  return out;
-}
-
-// The first position of `named(name)`, or -1. With `after_named`, a walk of
-// the positions that builds no array.
+// The first position of the functions that a call of `name` can reach, in
+// declaration order, or -1. With `after_named`, a walk of the positions.
 function (f: Funcs) first_named(name: string): i32 {
   if (name == "__iterator") {
     return f.iterator_after(-1);
@@ -1179,7 +1159,7 @@ function (f: Funcs) first_named(name: string): i32 {
   return f.named_from(name, f.runtime_names.chain(name));
 }
 
-// The position of `named(name)` that follows `at`, or -1.
+// The position of a function that a call of `name` can reach after `at`, or -1.
 function (f: Funcs) after_named(name: string, at: i32): i32 {
   if (name == "__iterator") {
     return f.iterator_after(at);
@@ -1299,18 +1279,19 @@ function (e: Env) static_type_of(x: ast.Expr): string {
 function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   let found = "";
   let seen = false;
-  for at in funcs.named(name) {
+  let at = funcs.first_named(name);
+  while (at >= 0) {
     let fd = funcs.decls[at];
-    if (fd.name != name) {
-      continue;
-    }
-    if let Some(rt) = matched_method_result(fd, recv_ty) {
-      if (seen && rt != found) {
-        return "";
+    if (fd.name == name) {
+      if let Some(rt) = matched_method_result(fd, recv_ty) {
+        if (seen && rt != found) {
+          return "";
+        }
+        found = rt;
+        seen = true;
       }
-      found = rt;
-      seen = true;
     }
+    at = funcs.after_named(name, at);
   }
   return found;
 }
@@ -1352,22 +1333,21 @@ function (e: Env) binds_name(name: string): boolean {
 // func_ret_type is the declared result type of function `name`, with the
 // call's written type arguments put in.
 function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
-  for at in funcs.named(name) {
-    let fd = funcs.decls[at];
-    if (fd.name == name && fd.receiver_type.len() == 0) {
-      if (targs.len() == 0 || targs.len() != fd.all_type_params.len()) {
-        return fd.ret_type;
-      }
-      let concrete = targs;
-      for i in 0..targs.len() {
-        if (!parser.plain_type_spelling(targs[i])) {
-          concrete = concrete.with(i, parser.render_type_ref(parser.parse_type_ref(targs[i])));
-        }
-      }
-      return parser.subst_ty(fd.ret_type, fd.all_type_params, concrete);
+  let at = declared_at(funcs, name);
+  if (at < 0) {
+    return "";
+  }
+  let fd = funcs.decls[at];
+  if (targs.len() == 0 || targs.len() != fd.all_type_params.len()) {
+    return fd.ret_type;
+  }
+  let concrete = targs;
+  for i in 0..targs.len() {
+    if (!parser.plain_type_spelling(targs[i])) {
+      concrete = concrete.with(i, parser.render_type_ref(parser.parse_type_ref(targs[i])));
     }
   }
-  return "";
+  return parser.subst_ty(fd.ret_type, fd.all_type_params, concrete);
 }
 
 function (e: Env) lookup(name: string): Value {
@@ -5633,18 +5613,21 @@ function eval_number_literal(n: ast.ExprNumber): Value {
 function resolve_ident_value(name: string, env: Env): Value {
   let idv = env.lookup(name);
   if (is_err(idv)) {
-    for ci in env.funcs.named(name) {
+    let ci = env.funcs.first_named(name);
+    while (ci >= 0) {
       let cfd = env.funcs.decls[ci];
       if (cfd.name == name && cfd.receiver_type.len() == 0 && cfd.params.len() == 0 && cfd.is_const) {
         let no_args: Value[] = [];
         return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
+      ci = env.funcs.after_named(name, ci);
     }
     if (!user_func_exists(name, env.funcs) && variant_arity(name, env.type_decls) == 0) {
       let none_args: Value[] = [];
       return v_variant_of(variant_owner(name, env.type_decls), name, none_args);
     }
-    for vfi in env.funcs.named(name) {
+    let vfi = env.funcs.first_named(name);
+    while (vfi >= 0) {
       let vfd = env.funcs.decls[vfi];
       if (vfd.name == name && vfd.receiver_type.len() == 0) {
         let no_names: string[] = [];
@@ -5668,6 +5651,7 @@ function resolve_ident_value(name: string, env: Env): Value {
           tynames: false,
         };
       }
+      vfi = env.funcs.after_named(name, vfi);
     }
   }
   return idv;
@@ -6168,11 +6152,13 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
 }
 
 function free_target_index(name: string, env: Env): i32 {
-  for at in env.funcs.named(name) {
+  let at = env.funcs.first_named(name);
+  while (at >= 0) {
     let fd = env.funcs.decls[at];
     if (fd.name == name && fd.receiver_name.len() == 0 && fd.receiver_type.len() == 0) {
       return at;
     }
+    at = env.funcs.after_named(name, at);
   }
   return -1;
 }
@@ -6201,11 +6187,13 @@ function type_binding(name: string, env: Env): Value {
       return bound;
     }
   }
-  for ci in env.funcs.named(name) {
+  let ci = env.funcs.first_named(name);
+  while (ci >= 0) {
     let cfd = env.funcs.decls[ci];
     if (cfd.name == name && cfd.receiver_type.len() == 0 && cfd.params.len() == 0 && cfd.is_const) {
       return call_func(env.heap, name, [], env.funcs, env.aliases, env.type_decls);
     }
+    ci = env.funcs.after_named(name, ci);
   }
   return v_absent();
 }
@@ -6663,11 +6651,13 @@ function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], func
 
 function assoc_index(funcs: Funcs, type_name: string, name: string): i32 {
   let base = util.base_type_name(type_name);
-  for at in funcs.named(name) {
+  let at = funcs.first_named(name);
+  while (at >= 0) {
     let fd = funcs.decls[at];
     if (fd.name == name && fd.receiver_name.len() == 0 && util.base_type_name(fd.receiver_type) == base) {
       return at;
     }
+    at = funcs.after_named(name, at);
   }
   return -1;
 }
@@ -7046,12 +7036,14 @@ function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: Funcs, a
 // the compiled code does, whether an impl declares it or the type itself.
 function has_eq_method(v: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = v {
-    for at in funcs.named("eq") {
+    let at = funcs.first_named("eq");
+    while (at >= 0) {
       let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && (base == sv.type_name || variant_of_enum(v, base, aliases))) {
         return true;
       }
+      at = funcs.after_named("eq", at);
     }
   }
   return false;
@@ -7059,12 +7051,14 @@ function has_eq_method(v: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boo
 
 function has_key_eq(k: Value, funcs: Funcs, aliases: parser.TypeAlias[]): boolean {
   if let VStruct(sv) = k {
-    for at in funcs.named("eq") {
+    let at = funcs.first_named("eq");
+    while (at >= 0) {
       let fd = funcs.decls[at];
       let base = util.base_type_name(fd.receiver_type);
       if (fd.name == "eq" && fd.impl_trait == "Eq" && (base == sv.type_name || variant_of_enum(k, base, aliases))) {
         return true;
       }
+      at = funcs.after_named("eq", at);
     }
   }
   return false;
@@ -9842,20 +9836,24 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
 
 // The function with no receiver whose name no builtin takes, or -1.
 function plain_at(funcs: Funcs, name: string): i32 {
-  for at in funcs.named(name) {
+  let at = funcs.first_named(name);
+  while (at >= 0) {
     if (funcs.plain[at] && funcs.decls[at].name == name) {
       return at;
     }
+    at = funcs.after_named(name, at);
   }
   return -1;
 }
 
 // The function with no receiver that `name` declares, or -1.
 function declared_at(funcs: Funcs, name: string): i32 {
-  for at in funcs.named(name) {
+  let at = funcs.first_named(name);
+  while (at >= 0) {
     if (funcs.decls[at].name == name && funcs.decls[at].receiver_type.len() == 0) {
       return at;
     }
+    at = funcs.after_named(name, at);
   }
   return -1;
 }
@@ -10925,7 +10923,7 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   let all_variants = module_type_decls(mod.structs);
   let all_aliases = aliases_with_enums(mod.aliases, all_variants, mod.enums);
   let funcs = funcs_of(mod.funcs);
-  if (funcs.named("main").len() > 0) {
+  if (funcs.first_named("main") >= 0) {
     let empty_args: Value[] = [];
     return call_func(heap, "main", empty_args, funcs, all_aliases, all_variants);
   }

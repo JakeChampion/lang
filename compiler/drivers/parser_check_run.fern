@@ -27,6 +27,7 @@ function main(): i32 {
   r = r.it("type aliases", check_type_aliases);
   r = r.it("match statements", check_match_statements);
   r = r.it("let-else in a value branch", check_let_else_value_tail);
+  r = r.it("let-else in a lambda body", check_let_else_lambda_tail);
   r = r.it("var annotations", check_var_annotations);
   r = r.it("receiver methods", check_receiver_methods);
   r = r.it("imports", check_imports);
@@ -823,11 +824,11 @@ function check_type_aliases(): test.TestOutcome {
   if (fmtGen.aliases[0].type_params.len() != 1 || fmtGen.aliases[0].type_params[0] != "T") {
     return test.fail("fmtGen.aliases[0].type_params.len() != 1 || fmtGen.aliases[0].type_params[0] != \"T\"");
   }
-  if (fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0] != "T" || fmtGen.aliases[0].variant_args[1] != "") {
-    return test.fail("fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0] != \"T\" || fmtGen.aliases[0].variant_args[1] != \"\"");
+  if (fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0].join(", ") != "T" || fmtGen.aliases[0].variant_args[1].join(", ") != "") {
+    return test.fail("fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0].join(\", \") != \"T\" || fmtGen.aliases[0].variant_args[1].join(\", \") != \"\"");
   }
-  if (fmtGen.aliases[1].variant_args[0] != "i32") {
-    return test.fail("fmtGen.aliases[1].variant_args[0] != \"i32\"");
+  if (fmtGen.aliases[1].variant_args[0].join(", ") != "i32") {
+    return test.fail("fmtGen.aliases[1].variant_args[0].join(\", \") != \"i32\"");
   }
   let srcBad = "struct Leaf[T] { v: T } struct Lit { v: i32 } type Tree = Leaf | Lit; function main(): i32 { return 0; }";
   let modBad = parser.parse_module(lexer.tokenize(srcBad));
@@ -979,6 +980,37 @@ function check_let_else_value_tail(): test.TestOutcome {
   };
   if (sm.origin != "let_else" || sm.arms[0].body.len() != 1) {
     return test.fail("a let-else statement does not keep its rest as statements");
+  }
+  return test.pass();
+}
+
+// The rest of a lambda body after a let-else keeps its tail as the return
+// value of the lambda.
+function check_let_else_lambda_tail(): test.TestOutcome {
+  let prog = parser.parse_program(lexer.tokenize("let f = (): i32 => { let Some(s) = t else { return 0; }; s + 2 }; return f();"));
+  let ast.StmtVar(v) = prog[0] else {
+    return test.fail("prog[0] is not a let");
+  };
+  let ast.ExprLambda(lm) = v.init else {
+    return test.fail("the initializer is not a lambda");
+  };
+  if (lm.body.len() != 1) {
+    return test.fail("the lambda body is not one let-else");
+  }
+  let ast.StmtMatch(m) = lm.body[0] else {
+    return test.fail("the lambda body holds no match");
+  };
+  if (m.origin != "let_else" || m.arms[0].body.len() != 1) {
+    return test.fail("the match is not a let-else with one statement after it");
+  }
+  let ast.StmtReturn(r) = m.arms[0].body[0] else {
+    return test.fail("the success arm does not return the tail");
+  };
+  let ast.ExprBinary(sum) = r.value else {
+    return test.fail("the success arm returns a value that is not the tail");
+  };
+  if (sum.op != "+") {
+    return test.fail("the success arm returns a value that is not s + 2");
   }
   return test.pass();
 }

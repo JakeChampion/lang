@@ -169,6 +169,97 @@ function main(): i32 {
 	}
 }
 
+// A let-else in a lambda body keeps the tail of the body as its return value.
+func TestSelfHostLetElseLambdaBody(t *testing.T) {
+	const source = `
+function one(t: Option[i32]): i32 {
+  let f = (): i32 => {
+    let Some(s) = t else {
+      return 0;
+    };
+    s + 2
+  };
+  return f();
+}
+function two(a: Option[i32], b: Option[string]): string {
+  let f = (): string => {
+    let Some(x) = a else {
+      return "no a";
+    };
+    let Some(y) = b else {
+      return "no b";
+    };
+    y + x.to_string()
+  };
+  return f();
+}
+function each(xs: Option[i32][]): i32 {
+  let total = 0;
+  let add = (o: Option[i32]): void => {
+    let Some(v) = o else {
+      return;
+    };
+    total += v;
+  };
+  for x in xs {
+    add(x);
+  }
+  return total;
+}
+function inner(t: Option[i32]): i32 {
+  let f = (): i32 => {
+    let Some(s) = t else {
+      return -1;
+    };
+    let r = {
+      let Some(q) = t else {
+        return -2;
+      };
+      q * 3
+    };
+    r + s
+  };
+  return f();
+}
+function main(): i32 {
+  if (one(Some(5)) != 7 || one(None) != 0) { return 1; }
+  if (two(Some(1), Some("b")) != "b1" || two(None, Some("b")) != "no a" || two(Some(1), None) != "no b") { return 2; }
+  if (each([Some(7), None, Some(8)]) != 15) { return 3; }
+  if (inner(Some(2)) != 8 || inner(None) != -1) { return 4; }
+  return 0;
+}`
+	cli := buildSelfHostCLI(t)
+	oracle := buildLangBinForInterp(t)
+	path := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, cmd := range map[string]*exec.Cmd{
+		"Go-check":    exec.Command(oracle, "-check", path),
+		"Go-interp":   exec.Command(oracle, "-interp", path),
+		"self-check":  runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib),
+		"self-interp": runX86_64Bin(cli.runner, cli.bin, "-interp", path, cli.stdlib),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if out, err := cmd.CombinedOutput(); err != nil || len(out) != 0 {
+				t.Fatalf("lambda let-else: %v\n%s", err, out)
+			}
+		})
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("lambda let-else: exit %d\n%s", code, stderr)
+			}
+			var allocs, frees, live int64
+			if _, err := fmtSscan(leakSummaryLine(stderr), &allocs, &frees, &live); err != nil || allocs != frees || live != 0 {
+				t.Fatalf("allocation census: %v\n%s", err, stderr)
+			}
+		})
+	}
+}
+
 // The else branch of a value let-else must diverge, and the rest of its
 // block must end in a value.
 func TestSelfHostLetElseValueBranchDiagnostics(t *testing.T) {
