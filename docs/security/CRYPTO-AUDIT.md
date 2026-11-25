@@ -32,14 +32,14 @@ The random source is `random_bytes`, which reads the kernel's entropy service an
 
 ## Wycheproof
 
-The five `tests/stdlib/wycheproof_*_test.fern` suites run the Wycheproof `testvectors_v1` files for AES-GCM, ChaCha20-Poly1305, X25519, Ed25519 and ECDSA over P-256 with SHA-256.
+The suites below run the Wycheproof `testvectors_v1` files.
 `scripts/gen-wycheproof.py` writes them from the JSON files, and the header of each suite names its source and vector count.
 The module must accept every valid vector and refuse every invalid vector. An acceptable vector runs for its verdict alone.
 A module refuses a key, nonce or tag size it does not take. The AEAD suites check that a valid vector of such a size answers an error.
 
-The ECDSA suite uses the DER signatures, which the module reads as strict DER, so every BER variant is refused.
+The ECDSA suites use the DER signatures, which the module reads as strict DER, so every BER variant is refused.
 The std test gate runs the first four suites on both native targets and under the oracle.
-The oracle interprets the P-256 arithmetic and takes about 25 minutes on the ECDSA suite, so `TestSelfHostWycheproofEcdsaP256` runs that suite natively on both targets alone.
+The oracle takes about 25 minutes for ECDSA P-256 with SHA-256. `TestSelfHostWycheproofNative` runs the remaining suites on both native targets.
 
 | Suite | Vectors | Groups |
 |---|---|---|
@@ -48,6 +48,18 @@ The oracle interprets the P-256 arithmetic and takes about 25 minutes on the ECD
 | `wycheproof_x25519` | 518 | 9 |
 | `wycheproof_ed25519` | 210 | 111 |
 | `wycheproof_ecdsa_p256` | 484 | 113 |
+| `wycheproof_ecdh_p256` | 355 | 12 |
+| `wycheproof_ecdsa_p256_sha512` | 554 | 113 |
+| `wycheproof_ecdsa_p384_sha384` | 504 | 105 |
+| `wycheproof_hkdf_sha256` | 86 | 6 |
+| `wycheproof_hmac_sha256` | 174 | 10 |
+| `wycheproof_mlkem768` | 201 | 8 |
+| `wycheproof_mlkem768_encaps` | 265 | 9 |
+| `wycheproof_mlkem768_keygen` | 100 | 4 |
+| `wycheproof_rsa_oaep` | 37 | 2 |
+| `wycheproof_rsa_pkcs1v15` | 259 | 11 |
+| `wycheproof_rsa_pss` | 108 | 4 |
+| `wycheproof_xchacha20poly1305` | 315 | 10 |
 
 ## Constant time
 
@@ -72,5 +84,5 @@ Memcheck must report the control programs that branch or index on a secret, whic
 - `crypto.erase` wipes an owned array the caller passes. The key records of `std/crypto` are `@secret`, and their drop zeroes the arrays that they hold alone ([SECRET-TYPES.md](../SECRET-TYPES.md)). A copy the compiler made is not wiped.
 - The primitives zero the key material they copy. HMAC zeroes its two pad blocks and a hashed long key. HKDF and PBKDF2 zero each output block and each message that carries one. ChaCha20-Poly1305 zeroes the one-time Poly1305 key. X25519 zeroes the clamped scalar of `public_key`. Ed25519 zeroes the nonce hash and the nonce scalar of a signature, and the limb array of each reduction. The ECDSA signer zeroes each nonce, and the key, the value and every message of its HMAC-DRBG. `TestSelfHostPrimitivesEraseKeyMaterial` scans the arena after each primitive for the copy it used to leave.
 - The limb arithmetic of P-256, the generic Weierstrass curves and ML-KEM allocates an array for each intermediate product. A product of a secret is not zeroed. In the release build they stay in their released blocks until the allocator reuses them. Under `-harden` the allocator zeroes each block at its release ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
-- The Wycheproof suites cover the five primitives above. RSA, ML-KEM-768, the hashes and the key derivation functions check their standards' vectors and the listed negative cases alone.
+- Wycheproof RSA coverage uses 2048-bit keys and SHA-256. Other RSA parameter sets and the standalone hash functions rely on the standards vectors and negative cases listed above.
 - TLS trusts the root store it is given. Revocation checking is not implemented.
