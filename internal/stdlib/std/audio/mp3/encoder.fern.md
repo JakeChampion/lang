@@ -13,12 +13,15 @@ The granules of one frame share the main data bytes of that frame.
 Quantization selects the smallest global gain whose Huffman code fits the bits of its granule.
 `std/audio/mp3/codes` selects the Huffman tables and the region split for each granule.
 
-The encoder does not write a Xing, Info, or ID3 tag.
-A decoded stream starts with `DELAY` samples of delay in each channel, and ends with the padding of the final frame.
-`std/audio/mp3.decode_raw` returns those samples. A container must account for the delay and the padding.
+`encode` writes an Info frame before the audio frames. Its LAME tag gives the encoder delay and the final padding.
+Thus `std/audio/mp3.decode` and FFmpeg give each input sample and no other sample.
+The tag also holds the frame count, the byte count, and the CRC-16 of the audio frames.
+`std/audio/mp3.decode_raw` decodes the Info frame as silence. The input then starts after `DELAY + 1152` samples.
+The encoder does not write an ID3 tag.
 
 `encoder` creates bounded state. `push` appends each complete frame to the caller's output buffer.
 It keeps less than one frame of PCM. `finish` codes the remaining PCM and enough silence to flush the delay.
+After `finish`, `tag` gives the Info frame. The caller writes it before the first frame that `push` gave.
 `encode` codes a complete input through the same state.
 
 Each sample must be finite and between -1 and 1. Interleaved input must hold whole frames.
@@ -36,6 +39,7 @@ import "std/audio/mp3/tables";
 import "std/audio/mp3/window";
 import "std/f32";
 import "std/f64";
+import "std/string";
 
 // The first input sample is sample DELAY of the raw decoded output.
 pub const DELAY: i32 = 1057;
@@ -48,7 +52,7 @@ pub struct Options { bitrate: i32 }
 
 struct Transform { analysis: f32[], matrix: f32[], mdct: f32[], cs: f32[], ca: f32[], codes: codes.Codes, bounds: i32[] }
 
-pub opaque struct Encoder { sample_rate: i32, channels: i32, bitrate_index: i32, rate_index: i32, transform: Transform, history: f32[], offset: i32, previous: f32[], pending: f32[], remainder: i32, consumed: i64, coded: i64 }
+pub opaque struct Encoder { sample_rate: i32, channels: i32, bitrate_index: i32, rate_index: i32, transform: Transform, history: f32[], offset: i32, previous: f32[], pending: f32[], remainder: i32, consumed: i64, coded: i64, audio_bytes: i64, crc: i32 }
 
 pub function default_options(): Options {
   return Options { bitrate: 128 };
@@ -114,7 +118,7 @@ pub function encoder(sample_rate: i32, channels: i32, options: Options): Result[
   if (rate_index == 3) {
     return Err(pcm.Unsupported);
   }
-  return Ok(Encoder { sample_rate: sample_rate, channels: channels, bitrate_index: index, rate_index: rate_index, transform: transform(sample_rate), history: f32_zeros(512 * channels), offset: 0, previous: f32_zeros(576 * channels), pending: [], remainder: 0, consumed: 0i64, coded: 0i64 });
+  return Ok(Encoder { sample_rate: sample_rate, channels: channels, bitrate_index: index, rate_index: rate_index, transform: transform(sample_rate), history: f32_zeros(512 * channels), offset: 0, previous: f32_zeros(576 * channels), pending: [], remainder: 0, consumed: 0i64, coded: 0i64, audio_bytes: 0i64, crc: 0 });
 }
 
 // Window the ring of one channel, and fold the 64 sums into the 32 inputs of the cosine matrix.
@@ -288,7 +292,8 @@ function frame(own e: Encoder, input: [f32], start: i32, own output: u8[]): (Enc
   for byte in b.data {
     output = output.append(byte);
   }
-  return (Encoder { ...e, history: history, offset: offset, previous: previous, remainder: remainder, coded: e.coded + 1152i64 }, output);
+  let crc = crc16(b.data, e.crc);
+  return (Encoder { ...e, history: history, offset: offset, previous: previous, remainder: remainder, coded: e.coded + 1152i64, audio_bytes: e.audio_bytes + bytes as i64, crc: crc }, output);
 }
 
 function valid(samples: [f32], channels: i32): boolean {
@@ -356,10 +361,79 @@ pub function (own e: Encoder) finish(own output: u8[], limits: pcm.Limits): Resu
   return Ok((Encoder { ...e, pending: [] }, output));
 }
 
+// CRC-16/ARC, the checksum of the LAME tag and of the audio frames that it describes.
+function crc16(bytes: [u8], own crc: i32): i32 {
+  for byte in bytes {
+    crc ^= byte as i32;
+    for _ in 0..8 {
+      crc = if ((crc & 1) == 1) { crc >> 1 ^ 40961 } else { crc >> 1 };
+    }
+  }
+  return crc;
+}
+
+function put_be(own data: u8[], at: i32, value: i64, count: i32): u8[] {
+  for i in 0..count {
+    data = data.with(at + i, (value >> (8 * (count - 1 - i)) as i64 & 255i64) as u8);
+  }
+  return data;
+}
+
+// The Info frame of a finished stream. It goes before the first audio frame.
+// fern-lint: allow cyclomatic-complexity
+pub function (e: Encoder) tag(): Result[u8[], pcm.AudioError] {
+  let trailing = e.coded - e.consumed - DELAY as i64;
+  if (e.pending.len() != 0 || trailing < 0i64) {
+    return Err(pcm.Truncated);
+  }
+  let bytes = 144000 * BITRATES[e.bitrate_index] / e.sample_rate;
+  let b = codes.Bits { data: __alloc_u8(bytes), pos: 0 };
+  b = b.put(65531, 16).put(e.bitrate_index, 4).put(e.rate_index, 2).put(0, 1).put(0, 1);
+  b = b.put(if (e.channels == 1) { 3 } else { 0 }, 2).put(0, 2).put(0, 1).put(1, 1).put(0, 2);
+  let data = b.data;
+  let at = 4 + (if (e.channels == 1) { 17 } else { 32 });
+  let total = e.audio_bytes + bytes as i64;
+  for c in "Info".bytes() {
+    data = data.with(at, c);
+    at += 1;
+  }
+  // The frame count and the byte count are present.
+  data = put_be(data, at, 3i64, 4);
+  data = put_be(data, at + 4, e.coded / 1152i64, 4);
+  data = put_be(data, at + 8, total, 4);
+  at += 12;
+  // Decoders read the gapless fields only from a tag whose name starts with "LAME".
+  for c in "LAMEFern".bytes() {
+    data = data.with(at, c);
+    at += 1;
+  }
+  let lame = at - 8;
+  // Tag revision 0, constant bitrate.
+  data = data.with(lame + 9, 1u8);
+  let bitrate = BITRATES[e.bitrate_index];
+  data = data.with(lame + 20, (if (bitrate > 255) { 255 } else { bitrate }) as u8);
+  // The decoder adds DECODER_DELAY (529) samples to the delay and to the padding of the tag.
+  data = put_be(data, lame + 21, (DELAY - 529) as i64 << 12i64 | trailing + 529i64, 3);
+  let source = if (e.sample_rate == 32000) { 0 } else if (e.sample_rate == 44100) { 1 } else { 2 };
+  data = data.with(lame + 24, (source << 6 | (if (e.channels == 2) { 1 } else { 0 }) << 2) as u8);
+  data = put_be(data, lame + 28, total, 4);
+  data = put_be(data, lame + 32, e.crc as i64, 2);
+  let check = crc16(data[:lame + 34], 0);
+  data = put_be(data, lame + 34, check as i64, 2);
+  return Ok(data);
+}
+
 pub function encode(samples: [f32], sample_rate: i32, channels: i32, options: Options, limits: pcm.Limits): Result[u8[], pcm.AudioError] {
   let e = encoder(sample_rate, channels, options)?;
   let (next, output) = e.push(samples, [], limits)?;
-  let (_, done) = next.finish(output, limits)?;
-  return Ok(done);
+  let (done, frames) = next.finish(output, limits)?;
+  let stream = done.tag()?;
+  if (stream.len() as i64 + frames.len() as i64 > limits.max_input_bytes as i64) {
+    return Err(pcm.Limit);
+  }
+  for byte in frames {
+    stream = stream.append(byte);
+  }
+  return Ok(stream);
 }
 ```
