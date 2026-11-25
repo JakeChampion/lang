@@ -40,7 +40,7 @@ func semanticEnumCases() []struct{ name, change, want string } {
 		{"enum-missing-schema", "enums = [];", "missing variant schema"},
 		{"enum-unknown-variant", `graph = change(graph, 1, variant_test(1, 0, "Blob"));`, "unknown variant"},
 		{"enum-test-type", "types = types.with(1, i32t);", "variant test type"},
-		{"enum-test-arity", `graph = change(graph, 1, ssa.SInst { kind_tag: ssasem.variant_is(), result: 1, args: [0, 0], imm: 0, str: "Full" });`, "variant test arity"},
+		{"enum-test-arity", `graph = change(graph, 1, ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_is(), result: 1, args: [0, 0], imm: 0, str: "Full" });`, "variant test arity"},
 		{"enum-projection-index", `let b = graph.blocks[1]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(1, ssa.SBlock { ...b, insts: b.insts.with(0, variant_field(2, 0, 1, "Full")) }) };`, "variant projection index"},
 		{"enum-projection-type", "types = types.with(2, sa);", "variant projection type"},
 		{"enum-construction-arity", `let b = graph.blocks[2]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: b.insts.with(1, variant_make(6, "Dot", [5])) }) };`, "variant construction arity"},

@@ -345,7 +345,7 @@ The same is true of `__b64_decode_char`.
 | 72 | Grapheme iteration | `std/unicode` | `graphemes` / `grapheme_count` / `reverse_graphemes` | UAX #29 | **SHIPPED** | — |
 | 72a | Word segmentation | `std/unicode` | `word_segments` (lossless) / `words` / `word_count` | UAX #29 | **SHIPPED** | — |
 | 73 | Case folding | `std/unicode` | `case_fold`, `eq_ignore_case`, packed tables | Unicode tables | **SHIPPED** | — |
-| 74 | NFC | `std/unicode` | `nfc`, `is_nfc` with a quick-check range table | UAX #15 | **SHIPPED** | — |
+| 74 | NFC | `std/unicode` | `nfc`, `is_nfc` with a quick-check table | UAX #15 | **SHIPPED** | — |
 | 75 | NFD | `std/unicode` | `nfd`, `is_nfd` | UAX #15 | **SHIPPED** | — |
 | 76 | NFKC | — | Absent | UAX #15 | GAP, narrow | 3 |
 | 77 | NFKD | — | Absent | UAX #15 | GAP, narrow | 3 |

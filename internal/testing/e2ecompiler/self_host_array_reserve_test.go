@@ -31,8 +31,8 @@ function main(): i32 {
     if (row == 2) { capacity = typeinfo.TypeBool { tag: 0 }; kind = 2; }
     let args = [0];
     if (row == 3) { args = []; }
-    let ops = [ssa.SInst { kind_tag: kind, result: 0, args: [], imm: 0, str: "" },
-      ssa.SInst { kind_tag: ssasem.array_reserve(), result: 1, args: args, imm: 0, str: "" }];
+    let ops = [ssa.SInst { ir_kind: 0, kind_tag: kind, result: 0, args: [], imm: 0, str: "" },
+      ssa.SInst { ir_kind: 0, kind_tag: ssasem.array_reserve(), result: 1, args: args, imm: 0, str: "" }];
     let block = ssa.SBlock { id: 0, preds: [], insts: ops,
       term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 1 } };
     let graph = ssa.SFunc { name: "reserve", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [block] };
