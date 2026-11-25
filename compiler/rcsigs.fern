@@ -125,7 +125,7 @@ pub function table(): Table {
   rows = add(rows, ["__map_set_impl", "__map_set_keyed_impl"], sig_also(0, effect_move(), result_fresh(), [2], [1]));
   rows = add(rows, ["__map_put_impl", "__map_put_keyed"], sig_also(2, effect_release(), result_unknown(), [], [1]));
   rows = add(rows, ["__map_cow_inplace"], sig(0, effect_unsure(), result_fresh()));
-  rows = add(rows, ["__map_get_or_impl", "__map_get_or_keyed_impl"], inert(result_marked()));
+  rows = add(rows, ["__map_get_or_impl", "__map_get_or_keyed_impl", "__map_get_ref_impl", "__map_get_ref_keyed_impl"], inert(result_marked()));
   rows = add(rows, ["__map_has_impl", "__map_has_keyed_impl", "__map_len_impl", "__map_hash_seed", "__map_cell_load", "__map_delete_impl", "__map_delete_keyed_impl"], inert(result_none()));
   rows = add(rows, ["__map_lookup_val", "__map_lookup_val_keyed", "__map_key_of", "__map_key_of_keyed", "__map_get_cell_impl", "__map_get_cell_keyed_impl", "__map_get_cell_f64_impl", "__map_get_cell_f64_keyed_impl"], inert(result_unknown()));
   return Table { names: util.name_index(rows.names), sigs: rows.sigs };
