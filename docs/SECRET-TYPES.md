@@ -71,9 +71,6 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 
 - The drop does not wipe a string from `map_file_unchecked`.
   Its bytes are the pages of the file, mapped read-only, so the secret stays in the file.
-- The drop wipes one level of a recursive type, such as the first node of a list.
-  A value of the same type inside that level is dropped as usual and keeps its fields.
-  Give the record of each node the attribute `@secret`, and its own drop then wipes each node.
 - A copy of the elements into another array, such as a slice that a program copies out, is not wiped.
 - The wasm allocator does not give a released block to a raw allocation of the same size.
   The read-back test therefore runs on the native targets only.
@@ -89,3 +86,5 @@ Its control is the same record without the attribute, which must read the secret
 
 `TestSelfHostSecretRecordWipesItsDeepFinalizedValues` does the same for a deeper value with a finalizer.
 Its record holds such a value in a nested record, a tuple, an array, an enum and a recursive enum.
+
+`TestSelfHostSecretRecordWipesItsRecursiveValues` does the same for each level of a recursive type: a list, a tree and a list of 100,000 nodes.

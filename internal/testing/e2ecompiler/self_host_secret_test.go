@@ -950,6 +950,108 @@ function main(): i32 {
 }
 `
 
+// The drop of a @secret record wipes each level of a recursive type: each node
+// of a list, which the chain loop takes, and each node of a tree, which the
+// wipe helper takes through a call for each level.
+const secretRecursiveSrc = `enum List { Node(u64, u64, List), Nil }
+
+struct Tree { a: u64, b: u64, kids: Tree[] }
+
+@secret
+struct Key { list: List, tree: Tree, n: i32 }
+
+struct Plain { list: List, tree: Tree, n: i32 }
+
+@noinline
+function list(v: u64, n: i32): List {
+  let l: List = Nil;
+  for i in 0..n {
+    l = Node(v, v, l);
+  }
+  return l;
+}
+
+@noinline
+function tree(v: u64, depth: i32): Tree {
+  if (depth == 0) {
+    return Tree { a: v, b: v, kids: [] };
+  }
+  return Tree { a: v, b: v, kids: [tree(v, depth - 1), tree(v, depth - 1)] };
+}
+
+function whole(l: List, v: u64): i32 {
+  let n = 0;
+  let at = l;
+  while (true) {
+    match (at) {
+      Node(a, b, rest) => {
+        if (a != v || b != v) {
+          return -1;
+        }
+        n += 1;
+        at = rest;
+      },
+      Nil => {
+        return n;
+      },
+    }
+  }
+  return n;
+}
+
+@noinline
+function key(v: u64, n: i32): i32 {
+  let k = Key { list: list(v, n), tree: tree(v, 3), n: 1 };
+  return k.n;
+}
+
+@noinline
+function plain(v: u64, n: i32): i32 {
+  let k = Plain { list: list(v, n), tree: tree(v, 3), n: 1 };
+  return k.n;
+}
+
+@noinline
+function shared(v: u64): List {
+  let tail = list(v, 3);
+  let k = Key { list: Node(v, v, tail), tree: tree(v, 0), n: 1 };
+  let n = k.n;
+  return tail;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 3..10 {
+      for k in 0..12 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size {
+          if (__load_i64(p + ((i * 8) as usize)) == 4702111234474983745) { found += 8; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word, 4);
+  } else if (mode == "deep") {
+    let n = key(word, 100000);
+  } else if (mode == "shared") {
+    let tail = shared(word);
+    print(whole(tail, word).to_string());
+  } else {
+    let n = plain(word, 4);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
@@ -1189,6 +1291,26 @@ func TestSelfHostSecretRecordWipesItsDeepFinalizedValues(t *testing.T) {
 			}
 			if got := run("shared"); strings.Join(got[:len(got)-1], " ") != "res true res true true" {
 				t.Fatalf("shared printed %q; the record that the caller still holds must keep its fields, and each finalizer must run once", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsRecursiveValues(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretRecursiveSrc)
+			if got := secretCount(t, "plain", run("plain")); got < 160 {
+				t.Fatalf("plain read %d secret bytes back, want at least 160; the raw allocations no longer observe the released nodes", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its deeper nodes back, want 0", got)
+			}
+			if got := secretCount(t, "deep", run("deep")); got != 0 {
+				t.Fatalf("after the release of a @secret record with a list of 100000 nodes the raw allocations read %d secret bytes back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 2 || got[0] != "3" {
+				t.Fatalf("shared printed %q; the nodes that the caller still holds must keep their fields", got)
 			}
 		})
 	}
