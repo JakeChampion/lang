@@ -110,7 +110,7 @@ function main(): i32 { unsafe {
 
 const threeReferenceMetadata = `import "./physicalbody"; import "./ssasem"; import "./semrecords"; import "./typeinfo";
 import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util"; import "std/string";
-function inst(kind: i32,result: i32,args: i32[],imm: i32,str: string): ssa.SInst {return ssa.SInst {kind_tag:kind,result:result,args:args,imm:imm,str:str};}
+function inst(kind: i32,result: i32,args: i32[],imm: i32,str: string): ssa.SInst {return ssa.SInst {ir_kind:if (kind == ssa.BINARY) { ir.kind_id(str) } else { 0 },kind_tag:kind,result:result,args:args,imm:imm,str:str};}
 function call(result: i32,name: string,args: i32[]): ssa.SInst {return inst(11,result,args,0,name);}
 function ret(v: i32): ssa.STerm {return ssa.STerm {kind_tag:1,cond:0,target:0,t:0,f:0,value:v};}
 function array_type(): typeinfo.Type {return typeinfo.TypeArray {elem:typeinfo.TypeString {tag:0},view:false};}

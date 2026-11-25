@@ -10,9 +10,9 @@ import (
 func TestSelfHostSSARegisterConstraints(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	const src = `import "./ssa"; import "./ssafixed"; import "./util";
+	const src = `import "./ir"; import "./ssa"; import "./ssafixed"; import "./util";
 function inst(kind: i32, result: i32, args: i32[], imm: i32): ssa.SInst {
-  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: result, args: args, imm: imm, str: "add" };
+  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.K_ADD } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: "add" };
 }
 function graph(): ssa.SFunc {
   let code = [inst(1, 0, [], 40), inst(1, 1, [], 2), inst(9, 2, [0, 1], 32)];
