@@ -70,10 +70,10 @@ Unscheduled; it constrains design choices today, it is not work in flight.
 - **WASI / WebAssembly** — exercised via wasmtime. `wasm32-wasi` is a
   component; `wasm32-wasi-http` is a `wasi:http` proxy component.
 - **x86-64 / amd64 Linux ELF** — System V AMD64 ABI. Baseline is
-  **x86-64-v3 plus AES-NI**, Haswell-class 2013 (AMD: Excavator 2015, Zen
-  2017), so `popcnt` / `lzcnt` / `tzcnt`, `pshufb`, `pclmulqdq`, AES-NI and
-  **AVX2** are all assumable — the byte-scan kernels emit 32-byte AVX2 loops
-  with no cpuid check. Binaries are static with no runtime dispatch, so a
+  **x86-64-v3 plus AES-NI and the SHA extensions** (Intel Ice Lake 2019, AMD
+  Zen 2017), so `popcnt` / `lzcnt` / `tzcnt`, `pshufb`, `pclmulqdq`, AES-NI,
+  `sha256rnds2` / `sha1rnds4` and **AVX2** are all assumable — the byte-scan
+  kernels emit 32-byte AVX2 loops with no cpuid check. Binaries are static with no runtime dispatch, so a
   selected instruction is a hard requirement, not a fast path. Note LZCNT/TZCNT fail
   **silently** below the baseline (same opcodes as bsr/bsf plus an F3 the older
   CPU ignores) where POPCNT faults. No Darwin x86-64.

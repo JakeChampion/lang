@@ -6123,9 +6123,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    mov x0, #8\n    str x0, [sp, #-16]!\n");
   } else if (ir.is_sha_hw_op(o.kind_tag)) {
     s = s.write("    mov x0, #1\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_SHA1_HW_BLOCKS) {
-    s = s.need("sha1").need("heap");
-    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha1_hw_blocks\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_MEMCPY) {
     s = emit_arm64_op_memcpy(s);
   } else if (o.kind_tag == ir.K_MEMSET) {
