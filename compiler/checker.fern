@@ -5658,13 +5658,17 @@ function bound_arg_accepts(e: ast.Expr, actual: typeinfo.Type, want: typeinfo.Ty
 
 function call_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
   let (bn, bt) = call_bindings(sig, c, s);
+  return (bn, call_literal_binding_types(sig, c, s, bn, bt));
+}
+
+function call_literal_binding_types(sig: FuncSig, c: ast.ExprCall, s: Scope, bn: string[], bt: typeinfo.Type[]): typeinfo.Type[] {
   for wbi in 0..bn.len() {
     let (wty, wok) = shared_literal_typevar_width(sig, c, bn[wbi], s);
     if (wok) {
       bt = bt.with(wbi, wty);
     }
   }
-  return (bn, bt);
+  return bt;
 }
 
 function elemless_array(t: typeinfo.Type): boolean {
@@ -15238,10 +15242,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
           } else {
             let cbn: string[] = [];
             let cbt: typeinfo.Type[] = [];
+            let inferred_types = cbt;
             if (sig.all_type_params.len() > 0) {
-              let (bn0, bt0) = call_type_bindings(sig, c, s);
+              let (bn0, bt0) = call_bindings(sig, c, s);
               cbn = bn0;
-              cbt = bt0;
+              inferred_types = bt0;
+              cbt = call_literal_binding_types(sig, c, s, cbn, inferred_types);
             }
             for ai in 0..c.args.len() {
               let at = check_expr(c.args[ai], s);
@@ -15259,9 +15265,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
             }
             if (sig.all_type_params.len() > 0) {
               out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
-              let (fbn, fbt) = call_bindings(sig, c, s);
-              out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
-              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name, s, dest));
+              out = util.append_diags(out, bound_arg_diags(sig, c, cbn, inferred_types, s));
+              out = util.append_diags(out, uninferred_call_diags(sig, c, cbn, id.name, s, dest));
             }
           }
         } else {
