@@ -25,6 +25,7 @@ Every other engine runs the worker on the `Inline` scheduler, which runs the bod
 A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 `join` consumes the worker and returns its result. A second join is refused (E051).
 `poll` never waits. It consumes the worker and returns `Finished` with the result, or `Running` with the worker, which the caller polls or joins later.
+`wait_any` takes a list of workers and waits until one of them finishes. It returns the index of that worker in the list, its result, and the other workers in their order. A process worker wakes the call when it ends, so the call does not poll. The list must not be empty.
 A worker that exits with a signal or without a result stops the program with exit 134. A call of `exit` in a worker body is such a worker. A body on the `Inline` scheduler runs in the process of the program, and the program stops the same way: `exit_status` gives each `exit` the status 134 while such a body runs. A native program takes that path when the kernel refuses the fork.
 A process worker ends when its parent ends: it gets SIGTERM. On Linux and Android the kernel sends it. macOS has no such signal, so a watchdog process sends it. The watchdog waits for the exit of the parent or of the worker, with kqueue.
 
@@ -51,6 +52,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
+<<16 dependencies>>
+
 <<2 pub struct Worker[T]>>
 
 <<12 pub trait Send>>
@@ -68,6 +71,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<6 function __join_process[T: Send](own w: Worker[T], status: i32): T>>
 
 <<13 pub function (own w: Worker[T: Send]) poll(): Polled[T]>>
+
+<<17 pub function wait_any[T: Send](own ws: Worker[T][]): Waited[T]>>
 
 <<7 function __wait_worker(pid: i32): i32>>
 
@@ -330,6 +335,114 @@ pub function (own w: Worker[T: Send]) poll(): Polled[T] {
     }
   }
   return Finished(w.join());
+}
+```
+
+### `16 dependencies`
+
+`wait_any` sleeps on the exit signal of a child with the driver of `std/async`.
+
+```fern
+<<16 dependencies>>=
+import "std/async";
+import "std/signal";
+```
+
+### `17 pub function wait_any[T: Send](own ws: Worker[T][]): Waited[T]`
+
+A program that keeps more workers than it joins at one time gets the first one that finishes. Each scan polls the workers in their order and stops at the first one that finished. The others stay as they are, so a later call returns them.
+
+When no worker finished, the call watches the exit signal of a child, scans again, and then waits for the signal. The watch starts before the second scan, so a worker that ends after that scan leaves the signal pending, and the wait returns. A signal of another child only starts one more scan. Where the driver cannot watch the signal, the call joins the first worker. On the `Inline` scheduler each worker has finished at `spawn`, so the first scan finds one.
+
+```fern
+<<17 pub function wait_any[T: Send](own ws: Worker[T][]): Waited[T]>>=
+/// The worker that `wait_any` found finished: its index in the list, its
+/// result, and the other workers of the list in their order.
+pub struct Waited[T] { index: i32, value: T, rest: Worker[T][] }
+
+/// Waits until one of `ws` finishes, and returns its index, its result and
+/// the other workers. The list must not be empty.
+pub function wait_any[T: Send](own ws: Worker[T][]): Waited[T] {
+  if (ws.len() == 0) {
+    eprint("worker: wait_any of no workers");
+    exit(134);
+  }
+  let (found, value, rest) = __scan(ws);
+  if (found >= 0) {
+    return __waited(found, value, rest);
+  }
+  if (target_os() == "linux" || target_os() == "android" || target_os() == "darwin") {
+    let drv = async.real_driver();
+    let sig = signal.sigchld();
+    if (drv.watch_signal(sig) >= 0) {
+      let (f, v, r) = __wait_signal(drv, rest);
+      drv.unwatch_signal(sig);
+      drv.close();
+      return __waited(f, v, r);
+    }
+    drv.close();
+  }
+  return __join_first(rest);
+}
+
+function __waited[T](found: i32, own value: Option[T], own rest: Worker[T][]): Waited[T] {
+  let Some(v) = value else {
+    exit(134);
+  };
+  return Waited { index: found, value: v, rest: rest };
+}
+
+// Scans, and waits for the signal between two scans, until one worker
+// finished. Each wait ends at the exit of a child.
+function __wait_signal[T: Send](drv: async.RealDriver, own ws: Worker[T][]): (i32, Option[T], Worker[T][]) {
+  let (found, value, rest) = __scan(ws);
+  if (found >= 0) {
+    return (found, value, rest);
+  }
+  let _ = drv.wait(1, None);
+  return __wait_signal(drv, rest);
+}
+
+// Polls the workers in their order up to the first one that finished: its
+// index or -1, its result, and the other workers.
+function __scan[T: Send](own ws: Worker[T][]): (i32, Option[T], Worker[T][]) {
+  let rest: Worker[T][] = [];
+  let found = -1;
+  let value: Option[T] = None;
+  let k = 0;
+  for w in ws {
+    if (found >= 0) {
+      rest = rest.append(w);
+    } else {
+      match (w.poll()) {
+        Finished(v) => {
+          found = k;
+          value = Some(v);
+        },
+        Running(still) => {
+          rest = rest.append(still);
+        }
+      }
+    }
+    k += 1;
+  }
+  return (found, value, rest);
+}
+
+function __join_first[T: Send](own ws: Worker[T][]): Waited[T] {
+  let rest: Worker[T][] = [];
+  let value: Option[T] = None;
+  for w in ws {
+    if (value.is_none()) {
+      value = Some(w.join());
+    } else {
+      rest = rest.append(w);
+    }
+  }
+  let Some(v) = value else {
+    exit(134);
+  };
+  return Waited { index: 0, value: v, rest: rest };
 }
 ```
 

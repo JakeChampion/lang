@@ -233,6 +233,39 @@ function test_an_event_loop_holds_a_worker(): test.TestOutcome {
   return test.assert_eq(got, "loop!");
 }
 
+// wait_any returns the workers in the order they finish, each with its
+// index in the list it got. A worker that runs apart from the program
+// finishes after the fast ones. On an engine that runs each body at `spawn`,
+// every worker has finished, so they come back in their order.
+function test_wait_any_returns_the_first_to_finish(): test.TestOutcome {
+  let names: string[] = ["slow", "fast", "quick"];
+  let ws: worker.Worker[string][] = [];
+  ws = ws.append(worker.spawn((): string => "slow " + spin(SPIN_STEPS).to_string()));
+  ws = ws.append(worker.spawn((): string => "fast"));
+  ws = ws.append(worker.spawn((): string => "quick"));
+  let order: string[] = [];
+  while (ws.len() > 0) {
+    let got = worker.wait_any(ws);
+    let name = names[got.index];
+    if (!got.value.starts_with(name)) {
+      return test.fail("index " + got.index.to_string() + " names " + name + ", and the result is " + got.value);
+    }
+    order = order.append(name);
+    let left: string[] = [];
+    for k in 0..names.len() {
+      if (k != got.index) {
+        left = left.append(names[k]);
+      }
+    }
+    names = left;
+    ws = got.rest;
+  }
+  if (worker.parallel()) {
+    return test.assert_eq(order[2], "slow");
+  }
+  return test.assert_eq(order.join(" "), "slow fast quick");
+}
+
 function main(): i32 {
   let r = test.new("std/worker");
   r = r.it("spawn and join a scalar", test_spawn_join_scalar);
@@ -247,5 +280,6 @@ function main(): i32 {
   r = r.it("poll returns the result of a finished worker", test_poll_returns_the_result);
   r = r.it("poll gives a running worker back", test_poll_gives_a_running_worker_back);
   r = r.it("an event loop holds a worker across polls", test_an_event_loop_holds_a_worker);
+  r = r.it("wait_any returns the first worker to finish", test_wait_any_returns_the_first_to_finish);
   return r.finish();
 }

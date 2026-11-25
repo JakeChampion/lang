@@ -99,13 +99,26 @@ function procs(o: gz.Options): i32 {
   return n;
 }
 
-// The input bytes of one job of parallel_compress: whole blocks, about
-// 1 MiB, so that the start of a worker is a small part of the time of a job.
+// The input bytes of the first jobs of parallel_compress: whole blocks,
+// about 1 MiB, so that a small input still runs on each process.
 function job_size(block: i32): i32 {
   if (block >= 1048576) {
     return block;
   }
   return 1048576 / block * block;
+}
+
+// The largest job that `grown` makes.
+const MAX_JOB: i32 = 8388608;
+
+// The size of the job after a job of `size` bytes. Each job is a process,
+// whose start costs about 3 ms of kernel time, so the jobs after the first
+// ones double up to MAX_JOB. The output does not depend on the size.
+function grown(size: i32): i32 {
+  if (size > MAX_JOB / 2) {
+    return size;
+  }
+  return size * 2;
 }
 
 // readn(): up to `n` bytes, fewer only at the end of the input.
@@ -305,16 +318,25 @@ function start_job(s: layout.Settings, zlib: boolean, t: Taken): worker.Worker[J
   });
 }
 
-function drain(own jobs: worker.Worker[JobOut][]): void {
-  for job in jobs {
-    let _ = job.join();
+function index_of(xs: i32[], x: i32): i32 {
+  for k in 0..xs.len() {
+    if (xs[k] == x) {
+      return k;
+    }
   }
+  return -1;
+}
+
+function without[T](xs: T[], at: i32): T[] {
+  return array.slice(xs, 0, at).concat(array.slice(xs, at + 1, xs.len()));
 }
 
 // parallel_compress: a job for each `job_size` bytes of the input, each with
 // the 32 KiB before it as its dictionary. Up to `procs` jobs run in workers
-// at a time. The parent reads the input, starts a job when one ends, and
-// writes the output of the jobs in order, as pigz does.
+// at a time. The parent reads the input and starts a job when any job ends.
+// It writes the output of the jobs in order, as pigz does, and keeps at most
+// 2 * procs jobs between the next one to write and the last one started.
+// fern-lint: allow cyclomatic-complexity
 function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path: string, outf: string, c0: Check): Result[Written, gz.Fail] {
   let size = job_size(s.block);
   let first = readn(rd, size, path)?;
@@ -323,18 +345,37 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
   let check = c0;
   let clen = 0i64;
   let failed: Option[gz.Fail] = None;
-  let queue: worker.Worker[JobOut][] = [];
-  while (!feed.ended && queue.len() < procs) {
-    let t = take(feed, rd, size, s.setdict, path);
-    feed = t.feed;
-    if (feed.failed.is_none()) {
-      queue = queue.append(start_job(s, c0.zlib, t));
-    }
-  }
+  let running: worker.Worker[JobOut][] = [];
+  // The number of each running job, and the outputs that wait for their turn.
+  let numbers: i32[] = [];
+  let done_numbers: i32[] = [];
+  let done: JobOut[] = [];
+  let started = 0;
+  let written = 0;
   loop {
-    let later: worker.Worker[JobOut][] = [];
-    for job in queue {
-      let out = job.join();
+    while (!feed.ended && failed.is_none() && running.len() < procs && started - written < 2 * procs) {
+      if (started >= procs) {
+        size = grown(size);
+      }
+      let t = take(feed, rd, size, s.setdict, path);
+      feed = t.feed;
+      if (feed.failed.is_none()) {
+        running = running.append(start_job(s, c0.zlib, t));
+        numbers = numbers.append(started);
+        started += 1;
+      }
+    }
+    if (running.len() == 0) {
+      break;
+    }
+    let got = worker.wait_any(running);
+    running = got.rest;
+    done_numbers = done_numbers.append(numbers[got.index]);
+    done = done.append(got.value);
+    numbers = without(numbers, got.index);
+    let at = index_of(done_numbers, written);
+    while (at >= 0) {
+      let out = done[at];
       check = check_add(check, out.check, out.len);
       if (failed.is_none()) {
         if let Err(e) = put(w, out.bytes, outf) {
@@ -342,19 +383,11 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
         }
         clen += out.bytes.len() as i64;
       }
-      if (!feed.ended && failed.is_none()) {
-        let t = take(feed, rd, size, s.setdict, path);
-        feed = t.feed;
-        if (feed.failed.is_none()) {
-          later = later.append(start_job(s, c0.zlib, t));
-        }
-      }
+      done_numbers = without(done_numbers, at);
+      done = without(done, at);
+      written += 1;
+      at = index_of(done_numbers, written);
     }
-    if (later.len() == 0) {
-      drain(later);
-      break;
-    }
-    queue = later;
   }
   if let Some(e) = failed {
     return Err(e);
@@ -485,37 +518,47 @@ function rsync_parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer
   let ended = false;
   let clen = 0i64;
   let failed: Option[gz.Fail] = None;
-  let queue: worker.Worker[u8[]][] = [];
-  while (!ended && queue.len() < procs) {
-    let (g1, l1, grp) = rsync_group(s, g, l, size);
-    g = g1;
-    l = l1;
-    ended = grp.last;
-    queue = queue.append(start_group(s, grp));
-  }
+  let running: worker.Worker[u8[]][] = [];
+  let numbers: i32[] = [];
+  let done_numbers: i32[] = [];
+  let done: u8[][] = [];
+  let started = 0;
+  let written = 0;
   loop {
-    let later: worker.Worker[u8[]][] = [];
-    for job in queue {
-      let bytes = job.join();
+    while (!ended && failed.is_none() && inp.err.get().is_none() && running.len() < procs && started - written < 2 * procs) {
+      if (started >= procs) {
+        size = grown(size);
+      }
+      let (g1, l1, grp) = rsync_group(s, g, l, size);
+      g = g1;
+      l = l1;
+      ended = grp.last;
+      running = running.append(start_group(s, grp));
+      numbers = numbers.append(started);
+      started += 1;
+    }
+    if (running.len() == 0) {
+      break;
+    }
+    let got = worker.wait_any(running);
+    running = got.rest;
+    done_numbers = done_numbers.append(numbers[got.index]);
+    done = done.append(got.value);
+    numbers = without(numbers, got.index);
+    let at = index_of(done_numbers, written);
+    while (at >= 0) {
+      let bytes = done[at];
       if (failed.is_none() && inp.err.get().is_none()) {
         if let Err(e) = put(w, bytes, outf) {
           failed = Some(e);
         }
         clen += bytes.len() as i64;
       }
-      if (!ended && failed.is_none() && inp.err.get().is_none()) {
-        let (g1, l1, grp) = rsync_group(s, g, l, size);
-        g = g1;
-        l = l1;
-        ended = grp.last;
-        later = later.append(start_group(s, grp));
-      }
+      done_numbers = without(done_numbers, at);
+      done = without(done, at);
+      written += 1;
+      at = index_of(done_numbers, written);
     }
-    if (later.len() == 0) {
-      drain_groups(later);
-      break;
-    }
-    queue = later;
   }
   if let Some(e) = inp.err.get() {
     return Err(e);
@@ -524,12 +567,6 @@ function rsync_parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer
     return Err(e);
   }
   return Ok(Written { check: inp.check.get(), clen: clen });
-}
-
-function drain_groups(own jobs: worker.Worker[u8[]][]): void {
-  for job in jobs {
-    let _ = job.join();
-  }
 }
 
 // The name in the header: the name of a file without its directory, for -N
