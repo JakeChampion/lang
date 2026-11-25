@@ -22,12 +22,17 @@ The walk without an assumption reads the field as a borrow: 0 units. With
 the retain on one edge, the join meets 0 and 1 as maybe.
 
 The walks under each value of a token prove such a field. But each walk
-assumes one token, and each arm of the loop has its own token. Under one assumption, the other
-arms still bring maybe round the loop. So the loop phi `stack` and the chain
-of phis that joins the arms stayed unproved.
+assumes one token, and each arm of the loop has its own token. Under one
+assumption, the other arms still bring maybe round the loop. So the loop phi
+`stack` and the chain of phis that joins the arms stayed unproved.
 
-The lead of the entry before this one was the twin rule of `phi_input`. That
-rule is not the cause.
+`2026-11-25-a-the-stack-of-lift-impl-waits-on-token-fields.md` calls this
+shape A, and shows that the twin rule of `phi_input` is not the cause. It
+also records a trap: a twin of the token at the join made the certifier
+refuse `checker__qualify_at` with a false finding. The twin of this change
+is on the load, and its counts come from the origins of the walks under
+each value of the token. The compiler, its census and the programs below
+give no finding with it.
 
 ## The change
 
@@ -93,5 +98,8 @@ has not certified before.
 
 Of the 10 values left in `lift_impl`, the first is `v7533`. It is a reuse
 token of the box `v4196`, which the loop carries, and `__fern_alloc_reuse`
-takes it after the join of `b923`. Examine how the loop phi of `v4196`
-meets the token.
+takes it after the join of `b923`. This is shape B of
+`2026-11-25-a-the-stack-of-lift-impl-waits-on-token-fields.md`: `v4196`
+starts as a literal, so it is free or 1, and `token_fed` needs a plain
+count. Its second trap applies: model the free part on both arms of the
+uniqueness test, not on one.
