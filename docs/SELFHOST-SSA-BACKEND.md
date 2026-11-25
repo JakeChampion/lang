@@ -75,7 +75,8 @@ lowered function it:
    change in the loop to the one block that enters the loop, with the
    constants that it reads (`ssa.hoisted_invariants`). Inner loops go first.
    A loop with a second way in keeps its instructions. A division moves
-   only when its divisor is a constant other than 0 and -1;
+   only when its divisor is a constant other than 0 and -1. Equal
+   computations that move to the same block become one value;
 4. once the certifier has read that form, gives each side of a uniqueness
    test its own copy of the blocks that test the reuse token again, with
    each of those tests decided (`ssa.split_tokens`), gives each other reuse
