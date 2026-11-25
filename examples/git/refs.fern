@@ -135,6 +135,19 @@ function repo_at(dir: string, prefix: string, shown: string, top: string): Resul
   return Ok(Repo { dir: dir, common: common, prefix: prefix, shown: shown, top: top, config: cfg, width: width, packed: packed_refs(common, width) });
 }
 
+// Open the repository at this exact worktree. A submodule can have a
+// .git directory or a .git file that points into the parent's module store.
+pub function checkout_at(top: string): Option[Repo] {
+  let dir = git_dir_of(top);
+  if (dir == "" || !is_file(dir + "/HEAD")) {
+    return None;
+  }
+  return match (repo_at(dir, "", dir, top)) {
+    Ok(r) => Some(r),
+    Err(_) => None,
+  };
+}
+
 const NOT_A_REPOSITORY: string = "fatal: not a git repository (or any of the parent directories): .git";
 
 // The repository of the current directory: `GIT_DIR`, or the `.git` of the

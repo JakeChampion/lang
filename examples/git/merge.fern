@@ -775,6 +775,33 @@ function submodule_absent(repo: refs.Repo, path: string): boolean {
   return stat(repo.common + "/modules").is_err() && stat(repo.dir + "/modules").is_err();
 }
 
+// Fast-forward a checked-out submodule when both sides descend from the
+// base and the later side contains the earlier one.
+function submodule_fast_forward(sub: refs.Repo, base: Version, a: Version, b: Version): Option[Version] {
+  if (kind_of(base.mode) != KIND_COMMIT || a.hash.len() != 2 * sub.width) {
+    return None;
+  }
+  let g = walk.graph_of(sub.store());
+  for h in [base.hash, a.hash, b.hash] {
+    let (next, n) = walk.node(g, h);
+    if (!n.ok) {
+      return None;
+    }
+    g = next;
+  }
+  let (ga, forward_a) = walk.reaches(g, a.hash, base.hash);
+  let (gb, forward_b) = walk.reaches(ga, b.hash, base.hash);
+  if (!forward_a || !forward_b) {
+    return None;
+  }
+  let (gab, includes_a) = walk.reaches(gb, b.hash, a.hash);
+  if (includes_a) {
+    return Some(b);
+  }
+  let (_, includes_b) = walk.reaches(gab, a.hash, b.hash);
+  return if (includes_b) { Some(a) } else { None };
+}
+
 // The merge of the versions `o`, `a` and `b` of one path
 // (`handle_content_merge` of git): true for a merge with no conflict, and
 // the version of the result.
@@ -802,6 +829,13 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
     // Git first opens the checkout, then tries its stored module. When
     // both are absent it records a conflict and keeps the first parent.
     if let Some(repo) = st.o.repo {
+      if (repo.top != "") {
+        if let Some(sub) = refs.checkout_at(repo.top + "/" + path) {
+          if let Some(later) = submodule_fast_forward(sub, o, a, b) {
+            return (st, clean, later);
+          }
+        }
+      }
       if (submodule_absent(repo, path)) {
         st = message(st, path, "Failed to merge submodule " + path + " (not checked out)");
         return (st, false, if (st.depth > 0) { o } else { a });

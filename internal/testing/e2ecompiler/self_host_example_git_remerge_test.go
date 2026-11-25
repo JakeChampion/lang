@@ -788,8 +788,8 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	g.commit("base")
 	g.git("tag", "base")
 	var links []string
+	g.git("checkout", "-q", "-B", "module-history", "base")
 	for _, name := range []string{"s0", "s1", "s2"} {
-		g.git("checkout", "-q", "-B", "tmp", "base")
 		g.write(name, name+"\n")
 		g.commit("the commit of a submodule " + name)
 		links = append(links, g.git("rev-parse", "HEAD"))
@@ -819,8 +819,13 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	rightTree := g.git("rev-parse", "module-2^{tree}")
 	rightMerge := g.git("commit-tree", "-p", "module-1", "-p", "module-2", "-m", "take second parent", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
-	g.git("init", "-q", "module")
+	g.git("init", "-q", "--object-format="+run.format, "module")
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--format=%s", "-1", rightMerge)
+	// With the commits available locally, either parent order picks s2.
+	g.git("-C", "module", "fetch", "-q", dir, "module-history")
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
+	reversed := g.git("commit-tree", "-p", "module-2", "-p", "module-1", "-m", "swapped parents", rightTree)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
 	// With no form of the diff, the port does not do the merge.
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-s", "--format=%s", "module-merge")
 	g.git("config", "merge.custom.name", "custom merge")
