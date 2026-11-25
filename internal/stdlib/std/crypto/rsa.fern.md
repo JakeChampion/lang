@@ -847,6 +847,7 @@ function __oaep_unpad(em: [u8], l_hash: [u8]): (boolean, i32) {
   while (i < em.len()) {
     let zero = __zero_mask(em[i]);
     let one = __zero_mask(em[i] ^ 1 as u8);
+    good &= (looking ^ 1 as i64) | zero | one;
     index |= 0 as i64 - (looking & one) & i as i64;
     looking &= zero;
     i += 1;
