@@ -241,10 +241,6 @@ function defined_reg(mod: parser.Module, extra: irtables.LowerResult[]): irtable
   return irtables.sig_reg_of(rows);
 }
 
-pub function is_int_cmp_kind(id: i32): boolean {
-  return id >= 35 && id <= 44;
-}
-
 pub function flip_int_cmp_kind(id: i32): i32 {
   return match (id) {
     37 => 39,

@@ -1,3 +1,4 @@
+import "./ir";
 import "./ssa";
 import "./ssacreditguard" as guard;
 import "./ssacreditphi" as phi;
@@ -275,7 +276,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     if (kind == 1) {
       out = reference_copy(out, v);
     }
-  } else if (op.kind_tag == ssa.BINARY && op.args.len() == 2 && op.str == "add" && op.imm == 0) {
+  } else if (op.kind_tag == ssa.BINARY && op.args.len() == 2 && op.ir_kind == ir.K_ADD && op.imm == 0) {
     if (!narrow_number(out.values[op.args[0]]) || !narrow_number(out.values[op.args[1]])) {
       return failed(out, "integer add requires numeric operands");
     }
@@ -286,7 +287,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       return failed(out, "integer cast requires numeric operand");
     }
     kind = 3;
-  } else if (op.kind_tag == ssa.BINARY && op.args.len() == 2 && op.str == "gt_s" && op.imm == 0) {
+  } else if (op.kind_tag == ssa.BINARY && op.args.len() == 2 && op.ir_kind == ir.K_GT_S && op.imm == 0) {
     if (!narrow_number(out.values[op.args[0]]) || !narrow_number(out.values[op.args[1]])) {
       return failed(out, "signed comparison requires narrowed numeric operands");
     }
@@ -294,7 +295,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     out = arena_result(out, p);
     kind = 0;
     identity = match (p) { Ok(value) => value.id, Err(_) => -1 };
-  } else if (op.kind_tag == ssa.BINARY && op.args.len() == 2 && (op.str == "eq" || op.str == "ne")) {
+  } else if (op.kind_tag == ssa.BINARY && op.args.len() == 2 && (op.ir_kind == ir.K_EQ || op.ir_kind == ir.K_NE)) {
     let a = out.values[op.args[0]];
     let b = out.values[op.args[1]];
     kind = 0;
@@ -317,7 +318,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     } else {
       return failed(out, "unsupported pointer comparison");
     }
-    if (op.str == "ne") {
+    if (op.ir_kind == ir.K_NE) {
       out = calc(out, 1, 1, identity);
       identity = out.temp;
     }

@@ -1,4 +1,5 @@
 import "./util";
+import "./ir";
 import "./ssa";
 
 // A cons-tail loop builds its result from the front. Each turn fills the
@@ -190,7 +191,7 @@ function hole_loop(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], uses: i32[], head
 
 // The compare `ins` tests the hole h against null, and b branches on it.
 function null_branch(defs: ssa.SInst[], uses: i32[], b: ssa.SBlock, ins: ssa.SInst, h: i32): boolean {
-  if (ins.kind_tag != ssa.BINARY || ins.str != "eq" || ins.args.len() != 2 || ins.args[0] != h || !is_zero(defs, ins.args[1])) {
+  if (ins.kind_tag != ssa.BINARY || ins.ir_kind != ir.K_EQ || ins.args.len() != 2 || ins.args[0] != h || !is_zero(defs, ins.args[1])) {
     return false;
   }
   return b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == ins.result && uses[ins.result] == 1 && b.term.t != b.term.f;

@@ -1,3 +1,4 @@
+import "./ir";
 import "./ssa";
 import "./ssacreditguard" as guard;
 import "./ssacredithelper" as helper;
@@ -151,7 +152,7 @@ function compare(c: Context, op: ssa.SInst): Context {
     return failed(out, "unsupported containment operation");
   }
   out = calc(out, 2, left, right);
-  if (op.str == "ne") {
+  if (op.ir_kind == ir.K_NE) {
     out = calc(out, 1, 1, out.temp);
   }
   return out;
@@ -201,7 +202,7 @@ function transfer(c: Context, op: ssa.SInst, offset: i32, release: string, preds
     out = Context { ...out, state: State { ...out.state, child: out.temp } };
     out = calc(out, 1, out.state.slot, out.state.path);
     out = Context { ...out, state: State { ...out.state, slot: out.temp } };
-  } else if (op.kind_tag == ssa.BINARY && (op.str == "eq" || op.str == "ne") && op.args.len() == 2) {
+  } else if (op.kind_tag == ssa.BINARY && (op.ir_kind == ir.K_EQ || op.ir_kind == ir.K_NE) && op.args.len() == 2) {
     out = compare(out, op);
     number = out.temp;
   } else if (op.kind_tag == ssa.CALL && op.args.len() == 1) {
