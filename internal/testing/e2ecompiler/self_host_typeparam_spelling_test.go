@@ -104,19 +104,22 @@ function main(): i32 { return at([10, 20, 30], 2) + pass(5); }
 function at[T](xs: T[]): T { return xs[T]; }
 function main(): i32 { return at([5, 6, 7, 8]); }
 `, 7},
-	{"module-enum-shadows-type-param-qualifier", `enum T { Red, Blue }
-function pick[T](n: T): i32 {
-    match (T.Red) { Red => { return 1; }, Blue => { return 2; } }
+	{"type-param-shadows-module-enum-qualifier", `enum T { Red, Blue }
+trait C { const Red: i32; }
+impl C for i32 { const Red: i32 = 3; }
+function pick[T: C](n: T): i32 { return T.Red; }
+function main(): i32 {
+    match (T.Blue) { Red => { return 1; }, Blue => { return pick(1); } }
     return 0;
 }
-function main(): i32 { return pick(1); }
-`, 1},
-	{"module-struct-shadows-type-param-assoc-call", `struct T { x: i32 }
+`, 3},
+	{"type-param-shadows-module-struct-assoc-call", `struct T { x: i32 }
 trait G { function get(): i32; }
 impl G for T { function get(): i32 { return 1; } }
-function pick[T](n: T): i32 { return T.get(); }
-function main(): i32 { return pick(1); }
-`, 1},
+impl G for i32 { function get(): i32 { return 2; } }
+function pick[T: G](n: T): i32 { return T.get(); }
+function main(): i32 { return pick(1) + T.get(); }
+`, 3},
 	{"type-param-object-after-shadow-scope", `import "core/cmp";
 function mk[T: cmp.Default](x: T): T {
     if (true) { let T: i32 = 3; }
