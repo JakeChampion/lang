@@ -41,7 +41,9 @@ def mont_mul(name, p, n0, special):
             m = g.let("%s * %s" % (t[0], lit(n0)), "m")
             c, _ = g.mac(t[0], m, lit(pl[0]), None)
         for j in range(1, 4):
-            if pl[j] == 0:
+            if special and j == 1:
+                c, t[0] = shifted_mac(g, t[1], m)
+            elif pl[j] == 0:
                 t[j - 1], k = g.add(t[j], c)
                 c = k
             else:
@@ -51,6 +53,58 @@ def mont_mul(name, p, n0, special):
         t[5] = None
     # t < 2p: subtract p, keep t when that borrows past the top limb.
     return finish(g, name, "a: Fe, b: Fe", t[:5], pl)
+
+# (hi, lo) = x + m * 2^32. With P-256's p, the limb product m * (2^32 - 1)
+# and the carry m of the limb below make this sum, and two shifts give it.
+def shifted_mac(g, x, m):
+    lo, k = g.add(x, g.let("%s << 32u64" % m, "lo"))
+    return g.let("(%s >> 32u64) + %s" % (m, k), "hi"), lo
+
+# The Montgomery square a * a / R mod P. The 512-bit square takes 10 limb
+# products, against 16 for a product of two values: each cross product
+# counts twice. Then the low half reduces in four rounds, and the high half
+# adds to that, because REDC(lo + hi R) = REDC(lo) + hi.
+def mont_sqr(name, p):
+    g = Gen()
+    pl = limbs(p)
+    a = g.params("a")
+    t = [None] * 8
+    c = None
+    for j in range(1, 4):
+        c, t[j] = g.mac(None, a[0], a[j], c)
+    t[4] = c
+    c = None
+    for j in range(2, 4):
+        c, t[1 + j] = g.mac(t[1 + j], a[1], a[j], c)
+    t[5] = c
+    t[6], t[5] = g.mac(t[5], a[2], a[3], None)
+    k = None
+    for j in range(1, 7):
+        t[j], k = g.add(t[j], t[j], k)
+    t[7] = k
+    d = []
+    for i in range(4):
+        hi, lo = g.mac(None, a[i], a[i], None)
+        d += [lo, hi]
+    t[0] = d[0]
+    k = None
+    for j in range(1, 7):
+        t[j], k = g.add(t[j], d[j], k)
+    t[7] = g.let("%s + %s + %s" % (t[7], d[7], k))
+    w = t[:4]
+    for _ in range(4):
+        m = w[0]
+        c, w1 = shifted_mac(g, w[1], m)
+        w2, c = g.add(w[2], c)
+        c, w3 = g.mac(w[3], m, lit(pl[3]), c)
+        w = [w1, w2, w3, c]
+    out = []
+    k = None
+    for j in range(4):
+        x, k = g.add(w[j], t[4 + j], k)
+        out.append(x)
+    out.append(k)
+    return finish(g, name, "a: Fe", out, pl)
 
 def finish(g, name, params, t, pl):
     d = []
@@ -152,6 +206,7 @@ def check(fns):
         a = edge[k % len(edge)] if k < 49 else rnd.randrange(P)
         b = edge[k // len(edge) % len(edge)] if k < 49 else rnd.randrange(P)
         assert run(fns["__fp_mul"], {"a": a, "b": b}) == a * b * rinv % P
+        assert run(fns["__fp_sqr"], {"a": a}) == a * a * rinv % P
         assert run(fns["__fp_add"], {"a": a, "b": b}) == (a + b) % P
         assert run(fns["__fp_sub"], {"a": a, "b": b}) == (a - b) % P
         assert run(fns["__borrow"], {"a": a, "b": b}) == (1 if a < b else 0)
@@ -164,6 +219,7 @@ def check(fns):
 def region():
     fns = {
         "__fp_mul": mont_mul("__fp_mul", P, n0_of(P), True),
+        "__fp_sqr": mont_sqr("__fp_sqr", P),
         "__fp_add": mod_add("__fp_add", P),
         "__fp_sub": mod_sub("__fp_sub", P),
         "__fn_mul": mont_mul("__fn_mul", N, n0_of(N), False),
@@ -171,7 +227,7 @@ def region():
         "__borrow": borrow_fn(),
     }
     check(fns)
-    parts = [fns[k] for k in ("__fp_mul", "__fp_add", "__fp_sub", "__fn_mul", "__fn_add", "__borrow")]
+    parts = [fns[k] for k in ("__fp_mul", "__fp_sqr", "__fp_add", "__fp_sub", "__fn_mul", "__fn_add", "__borrow")]
     parts.append(fe_fn("__fp_one", R % P))
     parts.append(fe_fn("__fp_r2", R * R % P))
     parts.append(fe_fn("__fp_b", B * R % P))
