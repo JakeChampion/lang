@@ -30,7 +30,7 @@ func TestSelfHostStackOperandMoveCycles(t *testing.T) {
 
 const stackOperandCycleDriver = `
 function probe(homes: i32[]): void {
-  let ins = ssa.SInst { kind_tag: 0, result: 0, args: [3,2,1,0], imm: 0, str: "" };
+  let ins = ssa.SInst { ir_kind: 0, kind_tag: 0, result: 0, args: [3,2,1,0], imm: 0, str: "" };
   let destinations = ["%rax", "%rsi", "%rdi", "%r8"];
   let moves = ssa_arg_moves(ins, homes, destinations, asmcore.new_state());
   write("    movq $11, %rax\n    movq $22, %rsi\n    movq $33, %rdi\n    movq $44, %r8\n    movq $55, -8(%rbp)\n");

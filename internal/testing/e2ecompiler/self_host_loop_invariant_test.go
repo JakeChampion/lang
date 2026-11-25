@@ -14,7 +14,7 @@ func TestSelfHostLoopInvariantHoist(t *testing.T) {
 	const src = `import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  return ssa.SInst { kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 function graph(side_entry: boolean): ssa.SFunc {

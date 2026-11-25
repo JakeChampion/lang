@@ -3,7 +3,7 @@ import "./ssalive";
 function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return false; } let i: i32 = 0; while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; } return true; }
 function main(): i32 {
 let blocks: ssa.SBlock[] = [];
-blocks = blocks.append(ssa.SBlock { id: 17, insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "" },ssa.SInst { kind_tag: 1, result: 1, args: [], imm: 0, str: "" },ssa.SInst { kind_tag: 9, result: 2, args: [1,1], imm: 0, str: "" },ssa.SInst { kind_tag: 1, result: 3, args: [], imm: 0, str: "" }], preds: [], term: ssa.STerm { kind_tag: 3, cond: 3, target: 0, t: 27, f: 37, value: -1 } });
+blocks = blocks.append(ssa.SBlock { id: 17, insts: [ssa.SInst { ir_kind: 0, kind_tag: 1, result: 0, args: [], imm: 0, str: "" },ssa.SInst { ir_kind: 0, kind_tag: 1, result: 1, args: [], imm: 0, str: "" },ssa.SInst { ir_kind: 0, kind_tag: 9, result: 2, args: [1,1], imm: 0, str: "" },ssa.SInst { ir_kind: 0, kind_tag: 1, result: 3, args: [], imm: 0, str: "" }], preds: [], term: ssa.STerm { kind_tag: 3, cond: 3, target: 0, t: 27, f: 37, value: -1 } });
 blocks = blocks.append(ssa.SBlock { id: 27, insts: [], preds: [17], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 0 } });
 blocks = blocks.append(ssa.SBlock { id: 37, insts: [], preds: [17], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } });
 let f = ssa.SFunc { name: "fixture", nparams: 0, nvals: 4, blocks: blocks, entry: 17, takes_env: false };
