@@ -36,6 +36,21 @@ function main(): i32 {
   if (text != "hi") { return 7; }
   let back = text.as_bytes();
   if (back.len() != 2 || back[1] != 105) { return 8; }
+  let original = __alloc_u8(4);
+  let changed = original.with(0, 9u8);
+  let grown = original.append(7u8);
+  let short = original.truncate(3);
+  let same = original.truncate(4);
+  let long = original.truncate(8);
+  unsafe {
+    __arr_set_len(changed, 2);
+    __arr_set_len(grown, 2);
+    __arr_set_len(short, 2);
+    __arr_set_len(same, 2);
+    __arr_set_len(long, 2);
+  }
+  if (original.len() != 4 || original[0] != 0 || changed[0] != 9) { return 9; }
+  if (original.truncate(-1).len() != 0) { return 10; }
   print("ok");
   return 0;
 }

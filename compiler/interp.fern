@@ -7223,7 +7223,7 @@ function array_with(heap: interpheap.Heap, own av: VArr, args: Value[]): Value {
   let reserve = interpheap.get(av.store).words;
   if (av.packed && reserve.len() == 0 && is_int_like(args[1])) {
     let b = (vint_as_i64(args[1]) & 255i64) as u8;
-    return VArr { ...av, bytes: av.bytes.with(wi, b) };
+    return v_bytes_of(heap, av.bytes.with(wi, b), elem);
   }
   let items = arr_take_els(av);
   return arr_reserved(heap, reserve, items.with(wi, args[1]), elem);
@@ -7238,9 +7238,9 @@ function array_truncate(heap: interpheap.Heap, own av: VArr, args: Value[]): Val
   let reserve = interpheap.get(av.store).words;
   if (av.packed && reserve.len() == 0) {
     if (n < av.bytes.len()) {
-      return VArr { ...av, bytes: sub_bytes(av.bytes, 0, n) };
+      return v_bytes_of(heap, sub_bytes(av.bytes, 0, if (n < 0) { 0 } else { n }), elem);
     }
-    return VArr { ...av };
+    return v_bytes_of(heap, av.bytes, elem);
   }
   let items = arr_take_els(av);
   let keep = n;
@@ -7300,7 +7300,7 @@ function array_method(heap: interpheap.Heap, own av: VArr, name: string, args: V
     let reserve = interpheap.get(av.store).words;
     if (av.packed && reserve.len() == 0 && is_int_like(args[0])) {
       let b = (vint_as_i64(args[0]) & 255i64) as u8;
-      return Some(VArr { ...av, bytes: av.bytes.append(b) });
+      return Some(v_bytes_of(heap, av.bytes.append(b), elem));
     }
     let items = arr_take_els(av);
     return Some(arr_reserved(heap, reserve, items.append(args[0]), elem));
