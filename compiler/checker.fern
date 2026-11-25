@@ -8756,8 +8756,9 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
         out = util.append_diags(out, ret_diags(fr.body, for_body_scope(fr, cur), ret_ty, unions));
       },
       ast.StmtMatch(m) => {
+        let whole = check_expr(m.scrutinee, cur);
         for arm in m.arms {
-          out = util.append_diags(out, ret_diags(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), ret_ty, unions));
+          out = util.append_diags(out, ret_diags(arm.body, annotate_arm_scope(arm, cur, whole), ret_ty, unions));
         }
       },
       ast.StmtDefer(d) => {
@@ -8856,8 +8857,9 @@ function vb_ret_diags(body: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions:
     },
     ast.StmtMatch(m) => {
       out = util.append_diags(out, ret_diags_in_exprs(body[i], cur, ret_ty, unions, is_void));
+      let whole = check_expr(m.scrutinee, cur);
       for arm in m.arms {
-        out = util.append_diags(out, vb_ret_diags(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), ret_ty, unions, is_void));
+        out = util.append_diags(out, vb_ret_diags(arm.body, annotate_arm_scope(arm, cur, whole), ret_ty, unions, is_void));
       }
       return out;
     },
@@ -8912,8 +8914,9 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
         out = util.append_diags(out, void_ret_diags(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
+        let whole = check_expr(m.scrutinee, cur);
         for arm in m.arms {
-          out = util.append_diags(out, void_ret_diags(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), unions));
+          out = util.append_diags(out, void_ret_diags(arm.body, annotate_arm_scope(arm, cur, whole), unions));
         }
       },
       ast.StmtDefer(d) => {
@@ -10976,8 +10979,9 @@ function lret_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[
       },
       ast.StmtMatch(m) => {
         out = util.append_diags(out, lret_expr(m.scrutinee, cur, unions, ""));
+        let whole = check_expr(m.scrutinee, cur);
         for arm in m.arms {
-          out = util.append_diags(out, lret_stmts(arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), unions));
+          out = util.append_diags(out, lret_stmts(arm.body, annotate_arm_scope(arm, cur, whole), unions));
         }
       },
       ast.StmtDefer(d) => {
