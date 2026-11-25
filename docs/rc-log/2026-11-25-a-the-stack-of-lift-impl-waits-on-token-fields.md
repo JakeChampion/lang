@@ -49,6 +49,22 @@ so the refusal is false.
 A twin keyed on the token tells which edge holds the unit. It does not tell
 that the box still holds the unit of the field where the token is the box.
 
+## A second trap
+
+Shape B is a reuse token on `v4196`, the current `STerm`, which also starts
+as a literal (`v4076 = agg_lit ssa__STerm|...`). `token_fed` needs the
+state of the box to be a plain count, and the box is free or 1.
+
+A uniqueness test skips an immortal box, so a literal is never unique. A
+test added this rule on the edge where `__fern_rc_is_unique` is true: a
+value that is free or c holds c units. The census went from 937 to 941
+unproved values, and the mutant rows did not move.
+
+On the other edge, the
+release leaves the box free or 0. The zero arm of the token also needs a
+plain count, so it falls back as before, and the two arms now meet worse.
+Model the free part on both arms, not on one.
+
 ## How to read the walk
 
 The certifier walks the function after `rcccompact.compact`, so its value
@@ -61,5 +77,6 @@ census line are already mapped.
 Model shape A. Where the token is the box, the box keeps the unit of the
 field until `__fern_alloc_reuse` or the release of the box. Give the field
 a twin of the token that tells this. Then the reuse or a test of the token
-decides the twin. Shape B does not depend on A, so examine B first if A is
-too large.
+decides the twin. Shapes A and B both start from a box that is a literal on
+some paths. A twin cannot hold a side that is free, so a model of that side
+is likely to settle both.
