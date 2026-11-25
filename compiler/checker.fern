@@ -37906,11 +37906,16 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
         callee = qualified_variant_ref(id, want, s);
         dests = member_payload_dests(member, want, c, s);
       } else if (s.ident_binding(id) < 0) {
-        dests = match (s.lookup_sig(id.name)) { Some(sig) => sig.param_types, None => variant_payload_dests(c, want, s, []) };
+        dests = match (s.lookup_sig(id.name)) { Some(sig) => generic_arg_dests(sig, want, s), None => variant_payload_dests(c, want, s, []) };
       }
     },
     ast.ExprFieldAccess(fa) => {
-      callee = qualify_expr(c.callee, none, s, coll);
+      let recv_want = if (qual_enum_name(fa.obj, s).len() == 0) { receiver_dest(fa, check_expr(fa.obj, s), want, s) } else { none };
+      if (is_unknown(recv_want)) {
+        callee = qualify_expr(c.callee, none, s, coll);
+      } else {
+        callee = ast.ExprFieldAccess { ...fa, obj: qualify_expr(fa.obj, recv_want, s, coll) };
+      }
       if (args_name_shared(c.args, coll) && qual_enum_name(fa.obj, s).len() == 0) {
         dests = method_arg_dests(fa.field, check_expr(fa.obj, s), s);
       }
@@ -37924,6 +37929,24 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
     args = args.append(qualify_expr(c.args[k], dest_slot(dests, k), s, coll));
   }
   return ast.ExprCall { ...c, callee: callee, args: args };
+}
+
+// generic_arg_dests is the parameter types of sig, with each type parameter
+// that the result type takes from want filled in.
+function generic_arg_dests(sig: FuncSig, want: typeinfo.Type, s: Scope): typeinfo.Type[] {
+  if (sig.type_params.len() == 0 || is_unknown(want)) {
+    return sig.param_types;
+  }
+  let (bn, bt) = gc_bind_param(sig_ret_ref(sig), want, sig.type_params, s.type_names(), [], []);
+  if (bn.len() == 0) {
+    return sig.param_types;
+  }
+  let out: typeinfo.Type[] = [];
+  for i in 0..sig.param_types.len() {
+    let t = type_from_ref_subst(sig_param_ref(sig, i), bn, bt, s.type_names());
+    out = out.append(if (type_contains_unknown(t)) { sig.param_types[i] } else { t });
+  }
+  return out;
 }
 
 // method_arg_dests is the types a method call's arguments are expected to
