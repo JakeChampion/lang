@@ -198,6 +198,11 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 		{"value cell callback payload", `function f(x: () => i32): own Cell[() => i32] { return cell_new(x); }`, "E051"},
 		{"value cell local shadow", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(borrowed: Cell[i32]): i32 { let cell_new = (n: i32): Cell[i32] => borrowed; return take_cell(cell_new(7)); }`, "E051"},
 		{"value cell parameter shadow", `function take_cell(own c: Cell[i32]): i32 { return c.get(); } function f(cell_new: (i32) => Cell[i32]): i32 { return take_cell(cell_new(7)); }`, "E051"},
+		{"own cell owned set", `function eat(own c: Cell[Box]): void {} function f(own s: Cell[Box], own b: Box): void { s.set(b); eat(s); }`, ""},
+		{"own cell borrowed snapshot", `function f(own s: Cell[Box], b: Box): i32 { s.set(b); return s.get().values.len() as i32; }`, ""},
+		{"own cell borrowed set", `function eat(own c: Cell[Box]): void {} function f(own s: Cell[Box], b: Box): void { s.set(b); eat(s); }`, "E051"},
+		{"own cell borrowed set in a branch", `function eat(own c: Cell[Box]): void {} function f(own s: Cell[Box], b: Box): void { if (b.values.len() > 0) { s.set(b); } eat(s); }`, "E051"},
+		{"own cell borrowed set own result", `function f(own s: Cell[Box], b: Box): own Cell[Box] { s.set(b); return s; }`, "E051"},
 		{"strengthen callback", `function pass(own x: Box): Box { return x; } function run(): void { let f: (own Box) => own Box = pass; }`, "E003"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
