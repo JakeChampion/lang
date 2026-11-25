@@ -1531,7 +1531,10 @@ function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, l
   }
   let base = w.root[ld.args[0]];
   for k in st.by_base[base] {
-    if (st.zero[k] || !same_slot(w, st, k, ld) || stores_back(w, st, k, ld)) {
+    if (!same_slot(w, st, k, ld) || stores_back(w, st, k, ld)) {
+      continue;
+    }
+    if (st.zero[k] && !spent_before(w, bi, pos, st.block[k], st.at[k], w.root[ld.result])) {
       continue;
     }
     if (st.block[k] == bi) {
@@ -2086,7 +2089,7 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
   let avoided = !after0[lb];
   for li in 0..stop {
     let ld = w.f.blocks[lb].insts[li];
-    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
+    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st) && !spent_before(w, lb, li, sb, si, w.root[ld.result])) {
       pick = Picked { ...pick, any: nearer(w, dom, sb, pick.any, ld.result) };
       if (!avoided) {
         after = reached_avoiding(w, sb, lb);
@@ -2098,6 +2101,24 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
     }
   }
   return pick;
+}
+
+// Whether the code between the load at (lb, li) and the store at (sb, si)
+// spends `root`. Then null in the slot is the `None` of a niche option that
+// overwrites the slot, and not a take of the load.
+function spent_before(w: Walk, lb: i32, li: i32, sb: i32, si: i32, root: i32): boolean {
+  let t = Touch { touched: __alloc_bool(w.f.nvals) };
+  let insts = w.f.blocks[lb].insts;
+  let end = if (lb == sb) { si } else { insts.len() };
+  for k in li + 1..end {
+    t = touch_inst(t, w, insts[k]);
+  }
+  if (lb != sb) {
+    for k in 0..si {
+      t = touch_inst(t, w, w.f.blocks[sb].insts[k]);
+    }
+  }
+  return t.touched[root];
 }
 
 function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
