@@ -54,8 +54,8 @@ profile/arm64-linux/http_hello.diagnostic.bytes	138088
 profile/arm64-linux/http_hello.diagnostic.emit	18471
 profile/arm64-linux/http_hello.hardened.bytes	79784
 profile/arm64-linux/http_hello.hardened.emit	17976
-profile/arm64-linux/http_hello.minimal.bytes	67048
-profile/arm64-linux/http_hello.minimal.emit	14679
+profile/arm64-linux/http_hello.minimal.bytes	66104
+profile/arm64-linux/http_hello.minimal.emit	14452
 profile/arm64-linux/http_hello.safe.bytes	75080
 profile/arm64-linux/http_hello.safe.emit	16806
 profile/arm64-linux/int_loop.diagnostic.bytes	5608
@@ -66,14 +66,14 @@ profile/arm64-linux/int_loop.minimal.bytes	2104
 profile/arm64-linux/int_loop.minimal.emit	314
 profile/arm64-linux/int_loop.safe.bytes	2344
 profile/arm64-linux/int_loop.safe.emit	376
-profile/arm64-linux/map_string.diagnostic.bytes	146320
-profile/arm64-linux/map_string.diagnostic.emit	11902
-profile/arm64-linux/map_string.hardened.bytes	51448
-profile/arm64-linux/map_string.hardened.emit	11761
-profile/arm64-linux/map_string.minimal.bytes	42232
-profile/arm64-linux/map_string.minimal.emit	9500
-profile/arm64-linux/map_string.safe.bytes	43464
-profile/arm64-linux/map_string.safe.emit	9708
+profile/arm64-linux/map_string.diagnostic.bytes	144568
+profile/arm64-linux/map_string.diagnostic.emit	11754
+profile/arm64-linux/map_string.hardened.bytes	50680
+profile/arm64-linux/map_string.hardened.emit	11571
+profile/arm64-linux/map_string.minimal.bytes	41784
+profile/arm64-linux/map_string.minimal.emit	9346
+profile/arm64-linux/map_string.safe.bytes	42856
+profile/arm64-linux/map_string.safe.emit	9587
 profile/arm64-linux/startup.diagnostic.bytes	5144
 profile/arm64-linux/startup.diagnostic.emit	555
 profile/arm64-linux/startup.hardened.bytes	2744
@@ -126,10 +126,10 @@ profile/x86-64-linux/deflate_decode.hardened.emit	14035
 profile/x86-64-linux/deflate_decode.hardened.ir	26892529
 profile/x86-64-linux/deflate_decode.minimal.bytes	49168
 profile/x86-64-linux/deflate_decode.minimal.emit	11857
-profile/x86-64-linux/deflate_decode.minimal.ir	29945009
+profile/x86-64-linux/deflate_decode.minimal.ir	29326858
 profile/x86-64-linux/deflate_decode.safe.bytes	56192
 profile/x86-64-linux/deflate_decode.safe.emit	13652
-profile/x86-64-linux/deflate_decode.safe.ir	26701238
+profile/x86-64-linux/deflate_decode.safe.ir	26280225
 profile/x86-64-linux/enum_match.diagnostic.bytes	11920
 profile/x86-64-linux/enum_match.diagnostic.emit	1496
 profile/x86-64-linux/enum_match.diagnostic.ir	29250233
@@ -147,13 +147,13 @@ profile/x86-64-linux/http_hello.diagnostic.emit	16646
 profile/x86-64-linux/http_hello.diagnostic.ir	50893942
 profile/x86-64-linux/http_hello.hardened.bytes	71936
 profile/x86-64-linux/http_hello.hardened.emit	16302
-profile/x86-64-linux/http_hello.hardened.ir	31595404
+profile/x86-64-linux/http_hello.hardened.ir	30044805
 profile/x86-64-linux/http_hello.minimal.bytes	59440
-profile/x86-64-linux/http_hello.minimal.emit	14173
-profile/x86-64-linux/http_hello.minimal.ir	23180352
+profile/x86-64-linux/http_hello.minimal.emit	14011
+profile/x86-64-linux/http_hello.minimal.ir	23752364
 profile/x86-64-linux/http_hello.safe.bytes	67152
 profile/x86-64-linux/http_hello.safe.emit	15871
-profile/x86-64-linux/http_hello.safe.ir	21184352
+profile/x86-64-linux/http_hello.safe.ir	21800364
 profile/x86-64-linux/int_loop.diagnostic.bytes	5872
 profile/x86-64-linux/int_loop.diagnostic.emit	550
 profile/x86-64-linux/int_loop.diagnostic.ir	12000230
@@ -166,18 +166,18 @@ profile/x86-64-linux/int_loop.minimal.ir	12000077
 profile/x86-64-linux/int_loop.safe.bytes	2176
 profile/x86-64-linux/int_loop.safe.emit	298
 profile/x86-64-linux/int_loop.safe.ir	12000077
-profile/x86-64-linux/map_string.diagnostic.bytes	140312
-profile/x86-64-linux/map_string.diagnostic.emit	11453
-profile/x86-64-linux/map_string.diagnostic.ir	57485402	2
-profile/x86-64-linux/map_string.hardened.bytes	43392
-profile/x86-64-linux/map_string.hardened.emit	10179
-profile/x86-64-linux/map_string.hardened.ir	49537517	2
-profile/x86-64-linux/map_string.minimal.bytes	37584
-profile/x86-64-linux/map_string.minimal.emit	9266
-profile/x86-64-linux/map_string.minimal.ir	50973594	2
-profile/x86-64-linux/map_string.safe.bytes	38592
-profile/x86-64-linux/map_string.safe.emit	9520
-profile/x86-64-linux/map_string.safe.ir	47895339	2
+profile/x86-64-linux/map_string.diagnostic.bytes	135952
+profile/x86-64-linux/map_string.diagnostic.emit	11283
+profile/x86-64-linux/map_string.diagnostic.ir	55480588	2
+profile/x86-64-linux/map_string.hardened.bytes	42288
+profile/x86-64-linux/map_string.hardened.emit	9995
+profile/x86-64-linux/map_string.hardened.ir	47642489	2
+profile/x86-64-linux/map_string.minimal.bytes	36368
+profile/x86-64-linux/map_string.minimal.emit	9074
+profile/x86-64-linux/map_string.minimal.ir	49502934	2
+profile/x86-64-linux/map_string.safe.bytes	37376
+profile/x86-64-linux/map_string.safe.emit	9349
+profile/x86-64-linux/map_string.safe.ir	45707482	2
 profile/x86-64-linux/startup.diagnostic.bytes	5424
 profile/x86-64-linux/startup.diagnostic.emit	527
 profile/x86-64-linux/startup.diagnostic.ir	213
