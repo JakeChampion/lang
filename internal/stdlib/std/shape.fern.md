@@ -1669,7 +1669,7 @@ function syllable_from(cats: i32[], i: i32): (i32, i32) {
 function step(cats: i32[], xs: i32[], set: i64): i32[] {
   let out: i32[] = [];
   for x in xs {
-    if (x < cats.len() && (set >> cats[x] as i64 & 1i64) != 0i64) {
+    if (steps_at(cats, x, set)) {
       out = out.append(x + 1);
     }
   }
@@ -1703,7 +1703,29 @@ function either(xs: i32[], ys: i32[]): i32[] {
 
 // The positions of `xs`, and those after one character of `set`.
 function optional(cats: i32[], xs: i32[], set: i64): i32[] {
-  return either(xs, step(cats, xs, set));
+  let first = 0;
+  while (first < xs.len() && !steps_at(cats, xs[first], set)) {
+    first += 1;
+  }
+  if (first == xs.len()) {
+    return xs;
+  }
+  let out: i32[] = [];
+  for k in 0..xs.len() {
+    let x = xs[k];
+    if (out.len() == 0 || out[out.len() - 1] != x) {
+      out = out.append(x);
+    }
+    if (k >= first && steps_at(cats, x, set)) {
+      out = out.append(x + 1);
+    }
+  }
+  return out;
+}
+
+// Whether the character at `x` is of a category of `set`.
+function steps_at(cats: i32[], x: i32, set: i64): boolean {
+  return x < cats.len() && (set >> cats[x] as i64 & 1i64) != 0i64;
 }
 
 // The positions after any count of characters of `set`.
