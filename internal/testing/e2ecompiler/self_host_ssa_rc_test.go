@@ -190,7 +190,7 @@ func physicalRCSource(setup, modes string) string {
 import "./sourcepos"; import "./ssaunits"; import "./ssa";
 import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irtables";
 import "./ir"; import "./util"; import "./ssadeps";
-import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc"; import "./physicalbody";
+import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc"; import "./rcsigs"; import "./physicalbody";
 import "./semlower";
 ` + source
 }
@@ -1267,7 +1267,7 @@ function main(): i32 {
         for o in keepLowered.ops { eprint(ir.render_op(o) + "\n"); }
         return 242;
     }
-    let keepVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("keep", keepLowered.ops);
+    let keepVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("keep", keepLowered.ops, rcsigs.table());
     if (keepVerified.checked != 1 || keepVerified.problems.len() != 0) { if (keepVerified.skips.len() > 0) { eprint(keepVerified.skips[0]); } return 240; }
     // Cover the unfused spelling too, and do not let recognition of either
     // spelling hide a gate/token disagreement or a release of another donor.
@@ -1280,10 +1280,10 @@ function main(): i32 {
         } else { separate = separate.append(o); }
         ko = ko + 1;
     }
-    let separateVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("separate", separate);
+    let separateVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("separate", separate, rcsigs.table());
     if (separateVerified.checked != 1 || separateVerified.problems.len() != 0) { return 243; }
     let wrongToken: ir.Op[] = keepLowered.ops.with(keepUnique + 2, ir.op_load_local(1));
-    let tokenVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_token", wrongToken);
+    let tokenVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_token", wrongToken, rcsigs.table());
     if (tokenVerified.checked != 1 || tokenVerified.problems.len() == 0) { return 244; }
     let releaseAt: i32 = 0 - 1;
     ko = keepEnd + 1;
@@ -1293,10 +1293,10 @@ function main(): i32 {
     }
     if (releaseAt < 1) { return 245; }
     let wrongRelease: ir.Op[] = keepLowered.ops.with(releaseAt - 1, ir.op_load_local(1));
-    let releaseVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_release", wrongRelease);
+    let releaseVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_release", wrongRelease, rcsigs.table());
     if (releaseVerified.checked != 1 || releaseVerified.problems.len() == 0) { return 246; }
     let wrongResult: ir.Op[] = keepLowered.ops.with(keepElse + 2, ir.op_store_local(1));
-    let resultVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_result", wrongResult);
+    let resultVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_result", wrongResult, rcsigs.table());
     if (resultVerified.checked != 0 || resultVerified.skips.len() != 1) { return 247; }
     // The reuse tokens are units of the plan, made once it is final
     // (with_reuse), and the replay holds the plan's tables to the token

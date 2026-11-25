@@ -110,7 +110,7 @@ pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_loc
   for i in 0..sr.problems.len() {
     out = out.append(sr.problems[i]);
   }
-  let rr = irverifyrc.verify_rc_fn(fn_name, ops);
+  let rr = irverifyrc.verify_rc_fn(fn_name, ops, g.rc);
   for j in 0..rr.problems.len() {
     out = out.append(rr.problems[j]);
   }
