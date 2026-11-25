@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[[package]]\nname = \"li\xfe\"\nversion =`#1.\x80.3\"\np\xf4th = \"../lib\"\n")

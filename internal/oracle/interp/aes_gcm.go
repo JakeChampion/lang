@@ -39,6 +39,9 @@ func byteView(name string, v Value) ([]byte, error) {
 	case String:
 		return []byte(string(x)), nil
 	case Array:
+		if b, ok := x.Bytes(); ok {
+			return append([]byte(nil), b...), nil
+		}
 		out := make([]byte, len(x.Elems()))
 		for at, e := range x.Elems() {
 			b, ok := e.(Number)
@@ -53,11 +56,7 @@ func byteView(name string, v Value) ([]byte, error) {
 }
 
 func byteArray(b []byte) Array {
-	out := newArray(len(b))
-	for at, c := range b {
-		out.Elems()[at] = Number(c)
-	}
-	return out
+	return bytesBox(append(make([]byte, 0, len(b)), b...))
 }
 
 func byteViews(name string, args []Value, n int) ([][]byte, error) {

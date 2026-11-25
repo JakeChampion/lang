@@ -198,5 +198,31 @@ function main(): i32 {
 				"zero64": {`and`, `\$0,`},
 			},
 		},
+		{
+			name: "carry-through-zero",
+			src: `const ALL: u64 = 0xffffffffffffffffu64;
+@noinline function add_masked(a0: u64, a1: u64, a2: u64, b0: u64, b2: u64, m: u64): u64 {
+    let s0: u64 = a0 + b0;
+    let c0: u64 = (a0 & b0 | (a0 | b0) & (s0 ^ ALL)) >> 63u64;
+    let q: u64 = 0u64 & m;
+    let s1: u64 = a1 + q + c0;
+    let c1: u64 = (a1 & q | (a1 | q) & (s1 ^ ALL)) >> 63u64;
+    let s2: u64 = a2 + b2 + c1;
+    return s0 ^ s1 ^ s2;
+}
+function main(): i32 {
+    let r: i32 = 0;
+    if (add_masked(ALL, ALL, 5u64, 1u64, 7u64, ALL) == 13u64) { r = r + 1; }
+    if (add_masked(ALL, 3u64, 5u64, 1u64, 7u64, ALL) == 8u64) { r = r + 2; }
+    return r;
+}`,
+			want: 3,
+			has: map[string][]string{
+				"add_masked": {`\n    adcq \$0, %r[a-z0-9]+\n`},
+			},
+			lacks: map[string][]string{
+				"add_masked": {`setb`, `btq`, `and`},
+			},
+		},
 	})
 }

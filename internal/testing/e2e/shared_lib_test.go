@@ -1448,11 +1448,27 @@ func sharedImageCheck(t *testing.T, so []byte, machine elf.Machine) {
 		t.Errorf("PT_DYNAMIC present = %v, non-executable PT_GNU_STACK = %v; a loader needs both", dynamic, stack)
 	}
 	sharedSectionCheck(t, f, so)
-	if len(so) > 256<<10 {
-		t.Errorf("a seven-function library is %d bytes; its .bss is being written into the file", len(so))
-	}
+	sharedBssCheck(t, f)
 	if bytes.Contains(so, []byte("fern: stack overflow")) {
 		t.Errorf("the shared object carries the stack-overflow handler, which would take its host's SIGSEGV")
+	}
+}
+
+// The .bss of a shared object takes memory and no bytes of the file: the
+// PT_LOAD that maps it ends its file bytes at or before the .bss.
+func sharedBssCheck(t *testing.T, f *elf.File) {
+	t.Helper()
+	bss := f.Section(".bss")
+	if bss == nil {
+		t.Fatal("the shared object has no .bss")
+	}
+	if bss.Type != elf.SHT_NOBITS {
+		t.Errorf(".bss is %v, want SHT_NOBITS", bss.Type)
+	}
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_LOAD && bss.Addr >= p.Vaddr && bss.Addr < p.Vaddr+p.Memsz && p.Vaddr+p.Filesz > bss.Addr {
+			t.Errorf("the PT_LOAD at %#x has %#x bytes in the file, so it writes the .bss at %#x into the file", p.Vaddr, p.Filesz, bss.Addr)
+		}
 	}
 }
 

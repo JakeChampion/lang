@@ -2460,10 +2460,7 @@ function field_request(ctx: usize, r: UiRequest): void {
     }
     if (r.op == FIELD_SHOW) {
       // TYPE_TEXT_FLAG_MULTI_LINE is 131072.
-      let lines = 1 - (r.a >> 17 & 1);
-      let single = jni.call_void(e, field, "setSingleLine", "(Z)V", [lines as usize]);
-      let typed = jni.call_void(e, field, "setInputType", "(I)V", [r.a as usize]);
-      let options = jni.call_void(e, field, "setImeOptions", "(I)V", [(r.b | NO_EXTRACT_UI) as usize]);
+      let kind = set_field_kind(e, bindings.TextView { ref: field }, (r.a >> 17 & 1) == 0, r.a, r.b | NO_EXTRACT_UI);
     }
     if (r.data != 0 as usize) {
       let cursor = -1;
@@ -2473,68 +2470,100 @@ function field_request(ctx: usize, r: UiRequest): void {
       field_text(ctx, e, field, text_of_buffer(r.data), cursor);
     }
     if (r.op == FIELD_SHOW) {
-      let focused = call_bool(e, field, "requestFocus", "()Z", []);
-      input_method(e, obj, "showSoftInput", "(Landroid/view/View;I)Z", field);
+      let shown = show_input(e, bindings.Activity { ref: obj }, bindings.View { ref: field });
     } else if (r.op == FIELD_HIDE) {
-      let token: usize = jni.call_object(e, field, "getWindowToken", "()Landroid/os/IBinder;", []);
-      input_method(e, obj, "hideSoftInputFromWindow", "(Landroid/os/IBinder;I)Z", token);
-      let cleared = jni.call_void(e, field, "clearFocus", "()V", []);
-      let a: usize = jni.delete_local_ref(e, token);
+      let hidden = hide_input(e, bindings.Activity { ref: obj }, bindings.View { ref: field });
     }
-    let cleared: usize = jni.exception_clear(e);
   }
 }
 
-// Calls the method `name` of the InputMethodManager with `target` and the
-// flags 0.
-function input_method(e: usize, obj: usize, name: string, sig: string, target: usize): void {
-  let service: usize = jni.new_string(e, "input_method");
-  let imm: usize = jni.call_object(e, obj, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;", [service]);
-  if (imm != 0 as usize) {
-    let done = call_bool(e, imm, name, sig, [target, 0 as usize]);
+// Sets the field to one line or to more, with the input type `kind` and the
+// IME options `options`.
+function set_field_kind(e: usize, field: bindings.TextView, one_line: boolean, kind: i32, options: i32): Result[void, jni.JavaError] {
+  let texts = bindings.text_view_class(e)?;
+  defer texts.release(e);
+  texts.set_single_line(e, field, one_line)?;
+  texts.set_input_type(e, field, kind)?;
+  return texts.set_ime_options(e, field, options);
+}
+
+// Gives the focus to the field and shows the keyboard on it.
+function show_input(e: usize, activity: bindings.Activity, field: bindings.View): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Err(jni.JavaError { text: "no local frame" });
   }
-  let a: usize = jni.delete_local_ref(e, imm);
-  let b: usize = jni.delete_local_ref(e, service);
+  defer end_frame(e);
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  let managers = bindings.input_method_manager_class(e)?;
+  defer managers.release(e);
+  let focused = views.request_focus(e, field)?;
+  let shown = managers.show_soft_input(e, input_methods(e, activity)?, field, 0)?;
+  return Ok(());
+}
+
+// Hides the keyboard of the window of the field, and takes the focus from the
+// field.
+function hide_input(e: usize, activity: bindings.Activity, field: bindings.View): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Err(jni.JavaError { text: "no local frame" });
+  }
+  defer end_frame(e);
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  let managers = bindings.input_method_manager_class(e)?;
+  defer managers.release(e);
+  let hidden = managers.hide_soft_input_from_window(e, input_methods(e, activity)?, views.get_window_token(e, field)?, 0)?;
+  return views.clear_focus(e, field);
+}
+
+// The InputMethodManager of the activity `activity`.
+function input_methods(e: usize, activity: bindings.Activity): Result[bindings.InputMethodManager, jni.JavaError] {
+  let contexts = bindings.context_class(e)?;
+  defer contexts.release(e);
+  let service = contexts.get_system_service(e, bindings.Context { ref: activity.ref }, bindings.CONTEXT_INPUT_METHOD_SERVICE)?;
+  if (service.is_null()) {
+    return Err(jni.JavaError { text: "no input method service" });
+  }
+  return Ok(bindings.InputMethodManager { ref: service.ref });
 }
 
 // The hidden EditText of the activity, as a global reference, or 0. It is one
 // pixel, and NativeActivity draws no view, so it shows nothing.
 function new_field(ctx: usize, e: usize, obj: usize): usize {
-  let class: usize = jni.find_class(e, "android/widget/EditText");
-  let args: usize = jni.jvalues([obj]);
-  let edit: usize = jni.new_object_a(e, class, jni.get_method_id(e, class, "<init>", "(Landroid/content/Context;)V"), args);
-  jni.free_buffer(args);
-  let a: usize = jni.delete_local_ref(e, class);
-  if (edit == 0 as usize) {
-    let cleared: usize = jni.exception_clear(e);
+  if (!jni.push_local_frame(e, 16)) {
     return 0 as usize;
   }
-  let lp_class: usize = jni.find_class(e, "android/view/ViewGroup$LayoutParams");
-  let lp_args: usize = jni.jvalues([1 as usize, 1 as usize]);
-  let lp: usize = jni.new_object_a(e, lp_class, jni.get_method_id(e, lp_class, "<init>", "(II)V"), lp_args);
-  jni.free_buffer(lp_args);
-  let single = jni.call_void(e, edit, "setSingleLine", "(Z)V", [1 as usize]);
-  let added = jni.call_void(e, obj, "addContentView", "(Landroid/view/View;Landroid/view/ViewGroup$LayoutParams;)V", [edit, lp]);
-  let watcher_class: usize = jni.load_class(e, obj, "dev.fern.android.TextField");
-  let out = 0 as usize;
-  if (added && watcher_class != 0 as usize) {
-    let none: usize = jni.jvalue_alloc(0);
-    let watcher: usize = jni.new_object_a(e, watcher_class, jni.get_method_id(e, watcher_class, "<init>", "()V"), none);
-    jni.free_buffer(none);
-    let set: usize = jni.set_static_long_field(e, watcher_class, jni.get_static_field_id(e, watcher_class, "fern", "J"), ctx);
-    let watching = jni.call_void(e, edit, "addTextChangedListener", "(Landroid/text/TextWatcher;)V", [watcher]);
-    let listening = jni.call_void(e, edit, "setOnEditorActionListener", "(Landroid/widget/TextView$OnEditorActionListener;)V", [watcher]);
-    out = jni.new_global_ref(e, edit);
-    unsafe {
-      Context.c_store_watcher(ctx, jni.new_global_ref(e, watcher_class));
-    }
-    let w: usize = jni.delete_local_ref(e, watcher);
+  defer end_frame(e);
+  return match (made_field(ctx, e, bindings.Activity { ref: obj })) {
+    Ok(field) => field,
+    Err(_) => 0 as usize,
+  };
+}
+
+function made_field(ctx: usize, e: usize, activity: bindings.Activity): Result[usize, jni.JavaError] {
+  let edits = bindings.edit_text_class(e)?;
+  defer edits.release(e);
+  let texts = bindings.text_view_class(e)?;
+  defer texts.release(e);
+  let params = bindings.view_group_layout_params_class(e)?;
+  defer params.release(e);
+  let activities = bindings.activity_class(e)?;
+  defer activities.release(e);
+  let edit = edits.new(e, bindings.Context { ref: activity.ref })?;
+  let text = bindings.TextView { ref: edit.ref };
+  texts.set_single_line(e, text, true)?;
+  activities.add_content_view(e, activity, bindings.View { ref: edit.ref }, params.new(e, 1, 1)?)?;
+  let (watcher, class) = context_object(e, activity.ref, "dev.fern.android.TextField", ctx);
+  if (class == 0 as usize) {
+    return Err(jni.JavaError { text: "the APK has no dev.fern.android.TextField" });
   }
-  let cleared: usize = jni.exception_clear(e);
-  for r in [watcher_class, lp, lp_class, edit] {
-    let d: usize = jni.delete_local_ref(e, r);
+  unsafe {
+    Context.c_store_watcher(ctx, class);
   }
-  return out;
+  texts.add_text_changed_listener(e, text, bindings.TextWatcher { ref: watcher })?;
+  texts.set_on_editor_action_listener(e, text, bindings.TextView_OnEditorActionListener { ref: watcher })?;
+  return Ok(jni.new_global_ref(e, edit.ref));
 }
 
 // Gives the field the text `text` with the cursor before the UTF-16 code
@@ -2543,40 +2572,50 @@ function new_field(ctx: usize, e: usize, obj: usize): usize {
 function field_text(ctx: usize, e: usize, field: usize, text: string, cursor: i32): void {
   unsafe {
     Context.c_store_quiet(ctx, 1);
-    let s: usize = jni.new_string(e, text);
-    let class: usize = jni.get_object_class(e, field);
-    let none: usize = jni.jvalue_alloc(0);
-    let length = jni.get_method_id(e, class, "length", "()I");
-    let replaced = false;
-    if (cursor >= 0) {
-      // Keep the editable object that the keyboard uses during a key repeat.
-      let editable = jni.call_object(e, field, "getText", "()Landroid/text/Editable;", []);
-      if (editable != 0 as usize) {
-        let before = jni.call_int_method_a(e, field, length, none);
-        let updated = jni.call_object(e, editable, "replace", "(IILjava/lang/CharSequence;)Landroid/text/Editable;", [0 as usize, before as usize, s]);
-        if let Ok(_) = jni.check(e) {
-          replaced = updated != 0 as usize;
-        }
-        let drop_updated = jni.delete_local_ref(e, updated);
-        let drop_editable = jni.delete_local_ref(e, editable);
-      } else {
-        let cleared = jni.check(e);
-      }
-    }
-    if (!replaced) {
-      let set = jni.call_void(e, field, "setText", "(Ljava/lang/CharSequence;)V", [s]);
-    }
-    let n = jni.call_int_method_a(e, field, length, none);
-    jni.free_buffer(none);
-    let at = n;
-    if (cursor >= 0 && cursor < n) {
-      at = cursor;
-    }
-    let moved = jni.call_void(e, field, "setSelection", "(I)V", [at as usize]);
-    let a: usize = jni.delete_local_ref(e, class);
-    let b: usize = jni.delete_local_ref(e, s);
+  }
+  if (jni.push_local_frame(e, 8)) {
+    let set = set_field_text(e, bindings.EditText { ref: field }, text, cursor);
+    end_frame(e);
+  }
+  unsafe {
     Context.c_store_quiet(ctx, 0);
   }
+}
+
+function set_field_text(e: usize, field: bindings.EditText, text: string, cursor: i32): Result[void, jni.JavaError] {
+  let edits = bindings.edit_text_class(e)?;
+  defer edits.release(e);
+  let texts = bindings.text_view_class(e)?;
+  defer texts.release(e);
+  let view = bindings.TextView { ref: field.ref };
+  let s = bindings.CharSequence { ref: jni.new_string(e, text) };
+  let replaced = false;
+  if (cursor >= 0) {
+    replaced = match (replaced_text(e, edits, texts, field, s)) {
+      Ok(done) => done,
+      Err(_) => false,
+    };
+  }
+  if (!replaced) {
+    texts.set_text(e, view, s)?;
+  }
+  let n = texts.length(e, view)?;
+  let at = if (cursor >= 0 && cursor < n) { cursor } else { n };
+  return edits.set_selection(e, field, at);
+}
+
+// Puts `s` in the Editable of the field, which the keyboard keeps during a
+// key repeat. It tells whether the Editable took the text.
+function replaced_text(e: usize, edits: bindings.EditTextClass, texts: bindings.TextViewClass, field: bindings.EditText, s: bindings.CharSequence): Result[boolean, jni.JavaError] {
+  let editable = edits.get_text(e, field)?;
+  if (editable.ref == 0 as usize) {
+    return Ok(false);
+  }
+  let editables = bindings.editable_class(e)?;
+  defer editables.release(e);
+  let before = texts.length(e, bindings.TextView { ref: field.ref })?;
+  let updated = editables.replace(e, editable, 0, before, s)?;
+  return Ok(updated.ref != 0 as usize);
 }
 
 function call_bool(e: usize, obj: usize, name: string, sig: string, values: usize[]): boolean {

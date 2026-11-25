@@ -537,7 +537,7 @@ pub function binary_inst(result: i32, args: i32[], imm: i32, kind: i32): SInst {
 
 // The IR kind that the lift gives an op of kind `kind_tag` named `name`, or 0.
 // A UNARY or TERNARY name can carry operands after a colon, as in
-// "int_cast:u8". The lift spells `not` as "!".
+// "int_cast:u8". The lift spells `not` as "!" and the 16-bit `load` as "load_u16".
 pub function lifted_kind(kind_tag: i32, name: string): i32 {
   if (kind_tag == BINARY) {
     return ir.kind_id(name);
@@ -547,6 +547,9 @@ pub function lifted_kind(kind_tag: i32, name: string): i32 {
   }
   if (name == "!") {
     return ir.K_NOT;
+  }
+  if (name == "load_u16") {
+    return ir.K_LOAD;
   }
   for k in 0..name.len() {
     if (name[k] == b':') {
@@ -5085,14 +5088,15 @@ function fold_f32_round_trips(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks };
 }
 
-// x + 0, x - 0, x | 0, x ^ 0, x shifted by 0 and x * 1 are x.
+// x + 0, x - 0, x | 0, x ^ 0, x & -1, x shifted by 0 and x * 1 are x.
+// x & 0 is 0 and x | -1 is -1.
 function fold_identities(f: SFunc): Formed {
   let defs = inst_defs(f);
   let flat = identity_repl(f.nvals);
   let changed = false;
   for blk in f.blocks {
     for ins in blk.insts {
-      let kept = identity_operand(ins, defs);
+      let kept = identity_operand(rewrite_args(ins, flat), defs);
       if (kept >= 0 && ins.result >= 0) {
         flat = flat.with(ins.result, flat[kept]);
         changed = true;
@@ -5109,8 +5113,21 @@ function identity_operand(ins: SInst, defs: SInst[]): i32 {
   if (ins.kind_tag != BINARY || ins.args.len() != 2) {
     return -1;
   }
+  let k = ins.ir_kind;
+  if (k == ir.K_AND || k == ir.K_OR) {
+    let unit: i64 = if (k == ir.K_AND) { -1i64 } else { 0i64 };
+    for i in 0..2 {
+      if (const_is(defs, ins.args[i], unit)) {
+        return ins.args[1 - i];
+      }
+      if (const_is(defs, ins.args[i], -1i64 - unit)) {
+        return ins.args[i];
+      }
+    }
+    return -1;
+  }
   let unit: i64 = 0i64;
-  if (ins.ir_kind == ir.K_MUL) {
+  if (k == ir.K_MUL) {
     unit = 1i64;
   }
   if (right_identity(ins.ir_kind) && const_is(defs, ins.args[1], unit)) {
@@ -5124,7 +5141,8 @@ function identity_operand(ins: SInst, defs: SInst[]): i32 {
 
 // x & -1 is x and x & 0 is 0. An identity that one of these folds exposes, such
 // as x + (y & 0), also folds. The pass runs after fuse_carries, because the
-// carry formulas of a chain with a constant limb hold these ANDs.
+// carry formulas of a chain with a constant limb hold these ANDs. The carry of
+// x + 0 + c is then the carry of x + c, so the chain continues through the add.
 pub function fold_and_identities(f: SFunc): SFunc {
   let defs = inst_defs(f);
   let flat = identity_repl(f.nvals);
@@ -5145,7 +5163,22 @@ pub function fold_and_identities(f: SFunc): SFunc {
   if (!changed) {
     return f;
   }
-  return prune_dead(rewrite_through(f, flat));
+  let g = prune_dead(rewrite_through(f, flat));
+  let t = rewrite_insts(g, inst_defs(g), carry_without_zero);
+  return if (t.changed) { gather_carries(prune_dead(t.f)) } else { g };
+}
+
+function carry_without_zero(defs: SInst[], c: SInst): SInst {
+  if (c.kind_tag != CARRY || c.args.len() != 3) {
+    return no_inst();
+  }
+  if (const_is(defs, c.args[1], 0i64)) {
+    return SInst { ...c, args: [c.args[0], c.args[2]] };
+  }
+  if (c.imm == 0 && const_is(defs, c.args[0], 0i64)) {
+    return SInst { ...c, args: [c.args[1], c.args[2]] };
+  }
+  return no_inst();
 }
 
 // The all-ones constant -1 has each of the 64 bits set, so the fold is correct at each width.
@@ -5165,7 +5198,7 @@ function and_operand(ins: SInst, defs: SInst[]): i32 {
 }
 
 function left_identity(kind: i32): boolean {
-  return kind == ir.K_ADD || kind == ir.K_OR || kind == ir.K_XOR || kind == ir.K_MUL;
+  return kind == ir.K_ADD || kind == ir.K_XOR || kind == ir.K_MUL;
 }
 
 function right_identity(kind: i32): boolean {
@@ -5196,7 +5229,7 @@ function mergeable(ins: SInst): boolean {
   }
   if (ins.kind_tag == UNARY) {
     return ins.ir_kind == ir.K_NOT || int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP
-      || ins.ir_kind == ir.K_INT_CAST || ins.str.starts_with("rotr:");
+      || ins.ir_kind == ir.K_INT_CAST || ins.ir_kind == ir.K_ROTR;
   }
   return false;
 }
@@ -6567,7 +6600,7 @@ function speculable(ins: SInst): boolean {
 function int_unary(ins: SInst): boolean {
   let k = ins.ir_kind;
   return k == ir.K_NOT || int_resize(k) || k == ir.K_U32_WRAP || k == ir.K_INT_CAST
-    || k == ir.K_BSWAP || k == ir.K_CLZ || k == ir.K_CTZ || k == ir.K_POPCOUNT || ins.str.starts_with("rotr:");
+    || k == ir.K_BSWAP || k == ir.K_CLZ || k == ir.K_CTZ || k == ir.K_POPCOUNT || k == ir.K_ROTR;
 }
 
 function select_join(f: SFunc, fl: boolean[], j: SBlock, from_t: i32, from_f: i32): boolean {
@@ -8507,8 +8540,8 @@ struct SumRead { found: boolean, at: i32, imm: i32, str: string }
 // them is a compare.
 function sum_read(ins: SInst, integer: i32[], uses: i32[]): SumRead {
   let none = SumRead { found: false, at: -1, imm: 0, str: "" };
-  if (ins.kind_tag == UNARY && ins.args.len() == 1 && is_unary_load(ins.str)) {
-    return SumRead { found: true, at: ins.args[0], imm: 0, str: if (ins.str == "load_u16") { "u16" } else { "i32" } };
+  if (ins.args.len() == 1 && is_unary_load(ins)) {
+    return SumRead { found: true, at: ins.args[0], imm: 0, str: if (ins.ir_kind == ir.K_LOAD) { "u16" } else { "i32" } };
   }
   if (ins.kind_tag != LD_AT || ins.args.len() != 1 || ins.result < 0 || ins.result >= integer.len() || sum_offset_of(0i64, ins.imm) < 0) {
     return none;
@@ -8644,7 +8677,7 @@ function sum_offset_of(c: i64, imm: i32): i32 {
 function has_sum_access(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == LD_SUM || ins.kind_tag == ST_BYTE || ins.kind_tag == LD_AT || ins.kind_tag == UNARY && is_unary_load(ins.str)) {
+      if (ins.kind_tag == LD_SUM || ins.kind_tag == ST_BYTE || ins.kind_tag == LD_AT || is_unary_load(ins)) {
         return true;
       }
     }
@@ -8952,14 +8985,15 @@ function shifted_facts(f: SFunc, def_b: i32[], def_k: i32[], count: i32): i32 {
   return 0;
 }
 
-// A unary that loads from its operand's address: a sign-extended i32, or a 16-bit word.
-pub function is_unary_load(what: string): boolean {
-  return what == "load_i32" || what == "load_u16";
+// A unary that loads from its operand's address: a sign-extended i32
+// (`load_i32`), or a 16-bit word (`load`, which the lift makes unary only at width 16).
+pub function is_unary_load(ins: SInst): boolean {
+  return ins.kind_tag == UNARY && (ins.ir_kind == ir.K_LOAD_I32 || ins.ir_kind == ir.K_LOAD);
 }
 
 function unary_facts(ins: SInst, held: i32): i32 {
-  if (is_unary_load(ins.str)) {
-    return if (ins.str == "load_u16") { EXT_I32 | EXT_U32 } else { EXT_I32 };
+  if (is_unary_load(ins)) {
+    return if (ins.ir_kind == ir.K_LOAD) { EXT_I32 | EXT_U32 } else { EXT_I32 };
   }
   if (signed_extension(ins)) {
     if ((held & EXT_I32) != 0) {
@@ -9477,7 +9511,7 @@ function operand_bits(ins: SInst, k: i32, result: i32, f: SFunc, def_b: i32[], d
       }
       return result;
     }
-    if (ins.str.starts_with("rotr:") && rotr_width(ins.str) == 32 || ins.str == "bswap:32") {
+    if (ins.ir_kind == ir.K_ROTR && rotr_width(ins) == 32 || ins.ir_kind == ir.K_BSWAP && op_width(ins) == 32) {
       return 32;
     }
   }
@@ -9673,7 +9707,7 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   if (n <= 0i64 || k <= 0i64 || n + k != w as i64) {
     return no;
   }
-  return SInst { ir_kind: 0, kind_tag: UNARY, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
+  return SInst { ir_kind: ir.K_ROTR, kind_tag: UNARY, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
 }
 
 // The most bytes that one fused append takes. Each emitter moves the array
@@ -10492,13 +10526,60 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
   }
   let o = bin_of(defs, shr.args[0], ir.K_OR);
   if (o.kind_tag == NONE) {
-    return no_inst();
+    return zero_operand_carry(defs, shr);
   }
   let m = carry_halves(defs, shr, o.args[0], o.args[1]);
   if (m.kind_tag == NONE) {
     m = carry_halves(defs, shr, o.args[1], o.args[0]);
   }
-  return m;
+  return if (m.kind_tag == NONE) { ones_operand_carry(defs, shr, o) } else { m };
+}
+
+// With `x & -1` and `x | -1` folded, the carry of `x + -1 (+ c)` is `x | ~s`
+// and the borrow of `x - -1 (- c)` is `~x | d`.
+function ones_operand_carry(defs: SInst[], shr: SInst, o: SInst): SInst {
+  for k in 0..2 {
+    let x = copy_root(defs, o.args[k]);
+    let m = ones_carry(defs, shr, wide_of(defs, not_of(defs, o.args[1 - k]), ir.K_ADD), x, 0);
+    if (m.kind_tag == NONE) {
+      let nx = not_of(defs, o.args[k]);
+      if (nx >= 0) {
+        m = ones_carry(defs, shr, wide_of(defs, o.args[1 - k], ir.K_SUB), nx, 1);
+      }
+    }
+    if (m.kind_tag != NONE) {
+      return m;
+    }
+  }
+  return no_inst();
+}
+
+// `t` is `x op -1`, or `(x op -1) op c` with `c` 0 or 1. `op` is the add for
+// `sub` 0 and the subtract for `sub` 1, and only an add has its operands in
+// either order.
+function ones_carry(defs: SInst[], shr: SInst, t: SInst, x: i32, sub: i32): SInst {
+  if (t.kind_tag == NONE) {
+    return no_inst();
+  }
+  let ends = if (sub == 1) { 1 } else { 2 };
+  let kind = if (sub == 1) { ir.K_SUB } else { ir.K_ADD };
+  for j in 0..ends {
+    let a = copy_root(defs, t.args[j]);
+    let b = t.args[1 - j];
+    if (a == x && is_const(defs, b, -1i64)) {
+      return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, b)], imm: sub, str: "" };
+    }
+    let inner = wide_of(defs, t.args[j], kind);
+    if (inner.kind_tag == NONE || !zero_one(defs, b)) {
+      continue;
+    }
+    for i in 0..ends {
+      if (copy_root(defs, inner.args[i]) == x && is_const(defs, inner.args[1 - i], -1i64)) {
+        return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, inner.args[1 - i]), copy_root(defs, b)], imm: sub, str: "" };
+      }
+    }
+  }
+  return no_inst();
 }
 
 // `carry(x, y) | carry(x + y, c)` is the carry of `x + y + c` when `c` is 0
@@ -10559,7 +10640,7 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
   let x = copy_root(defs, p.args[0]);
   let y = copy_root(defs, p.args[1]);
   let e = bin_of(defs, either, ir.K_OR);
-  if (e.kind_tag == NONE && !or_zero(defs, either, x, y) || e.kind_tag != NONE && !same_pair(defs, e.args[0], e.args[1], x, y)) {
+  if (e.kind_tag == NONE || !same_pair(defs, e.args[0], e.args[1], x, y)) {
     return no_inst();
   }
   let s = wide_of(defs, not_of(defs, inv), ir.K_ADD);
@@ -10575,27 +10656,28 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
       return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [copy_root(defs, inner.args[0]), copy_root(defs, inner.args[1]), copy_root(defs, s.args[1 - k])], imm: 0, str: "" };
     }
   }
-  return zero_add_carry(defs, shr, s, x, y);
+  return no_inst();
 }
 
-// `x | 0` folds to `x`.
-function or_zero(defs: SInst[], v: i32, x: i32, y: i32): boolean {
-  let r = copy_root(defs, v);
-  return r == x && is_const(defs, y, 0i64) || r == y && is_const(defs, x, 0i64);
-}
-
-// `x + 0 + c` folds to `x + c`, which has the same carry.
-function zero_add_carry(defs: SInst[], shr: SInst, s: SInst, x: i32, y: i32): SInst {
+// With `x & 0` folded, the carry of `x + 0 + c` is `x & ~s` and the borrow
+// of `x - 0 - c` is `~x & d`, for `s = x + c` and `d = x - c`.
+function zero_operand_carry(defs: SInst[], shr: SInst): SInst {
+  let a = bin_of(defs, shr.args[0], ir.K_AND);
+  if (a.kind_tag == NONE) {
+    return no_inst();
+  }
   for k in 0..2 {
-    let z = if (k == 0) { y } else { x };
-    let o = if (k == 0) { x } else { y };
-    if (!is_const(defs, z, 0i64)) {
-      continue;
-    }
+    let x = copy_root(defs, a.args[k]);
+    let s = wide_of(defs, not_of(defs, a.args[1 - k]), ir.K_ADD);
     for j in 0..2 {
-      if (copy_root(defs, s.args[j]) == o && zero_one(defs, s.args[1 - j])) {
-        return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [o, copy_root(defs, s.args[1 - j])], imm: 0, str: "" };
+      if (s.kind_tag != NONE && copy_root(defs, s.args[j]) == x && zero_one(defs, s.args[1 - j])) {
+        return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, s.args[1 - j])], imm: 0, str: "" };
       }
+    }
+    let nx = not_of(defs, a.args[k]);
+    let d = wide_of(defs, a.args[1 - k], ir.K_SUB);
+    if (nx >= 0 && d.kind_tag != NONE && copy_root(defs, d.args[0]) == nx && zero_one(defs, d.args[1])) {
+      return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [nx, copy_root(defs, d.args[1])], imm: 1, str: "" };
     }
   }
   return no_inst();
@@ -10614,10 +10696,7 @@ function sub_borrow(defs: SInst[], shr: SInst, p: SInst, either: i32, diff: i32)
 
 function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
   let e = bin_of(defs, v, ir.K_OR);
-  if (e.kind_tag == NONE) {
-    return is_const(defs, y, 0i64) && not_of(defs, v) == x;
-  }
-  return not_of(defs, e.args[0]) == x && same_value(defs, e.args[1], y) || not_of(defs, e.args[1]) == x && same_value(defs, e.args[0], y);
+  return e.kind_tag != NONE && (not_of(defs, e.args[0]) == x && same_value(defs, e.args[1], y) || not_of(defs, e.args[1]) == x && same_value(defs, e.args[0], y));
 }
 
 function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SInst {
@@ -10631,10 +10710,6 @@ function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SIns
   let inner = wide_of(defs, d.args[0], ir.K_SUB);
   if (inner.kind_tag != NONE && copy_root(defs, inner.args[0]) == x && same_value(defs, inner.args[1], y) && zero_one(defs, d.args[1])) {
     return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, inner.args[1]), copy_root(defs, d.args[1])], imm: 1, str: "" };
-  }
-  // `x - 0 - c` folds to `x - c`, which has the same borrow.
-  if (is_const(defs, y, 0i64) && copy_root(defs, d.args[0]) == x && zero_one(defs, d.args[1])) {
-    return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, d.args[1])], imm: 1, str: "" };
   }
   return no_inst();
 }
@@ -10713,19 +10788,20 @@ pub function cast_target(ins: SInst): string {
   return slice_unchecked(ins.str, 9, ins.str.len()).to_owned();
 }
 
-pub function rotr_width(what: string): i32 {
-  if (what.starts_with("rotr:64:")) {
+pub function rotr_width(ins: SInst): i32 {
+  if (ins.str.starts_with("rotr:64:")) {
     return 64;
   }
   return 32;
 }
 
-// A rotate immediate is a decimal bit index in its operand width.
-pub function rotr_count(what: string): i32 {
-  if (what.len() <= 8 || !(what.starts_with("rotr:32:") || what.starts_with("rotr:64:"))) {
+// The count of the rotate `ins`, a decimal bit index in its operand width, or -1 for another op.
+pub function rotr_count(ins: SInst): i32 {
+  let what = ins.str;
+  if (ins.ir_kind != ir.K_ROTR || what.len() <= 8 || !(what.starts_with("rotr:32:") || what.starts_with("rotr:64:"))) {
     return -1;
   }
-  let width = rotr_width(what);
+  let width = rotr_width(ins);
   let n = 0;
   for i in 8..what.len() {
     let digit = what[i];
