@@ -766,19 +766,34 @@ function feature_tables(b: [u8], t: i32, script: string, feature: string): i32[]
 // `zero_context` a chain context with glyphs before or after its input does
 // not apply.
 pub function (f: Font) would_substitute(script: string, feature: string, gs: i32[], zero_context: boolean): boolean {
-  return f.would_substitute_lookups(f.feature_lookups(script, feature), gs, zero_context);
+  return would_substitute_lookups(f.prepared_substitutions(script, feature), gs, zero_context);
 }
 
-// Test GSUB lookup indices already selected for a font and script.
-pub function (f: Font) would_substitute_lookups(lookups: i32[], gs: i32[], zero_context: boolean): boolean {
+// A prepared lookup for each GSUB lookup of the feature `feature` for the
+// script `script`.
+pub function (f: Font) prepared_substitutions(script: string, feature: string): PreparedLookup[] {
+  let out: PreparedLookup[] = [];
+  for li in f.feature_lookups(script, feature) {
+    out = out.append(f.prepare_lookup(li, false));
+  }
+  return out;
+}
+
+// Whether one of the prepared GSUB lookups `ps` applies to the glyphs `gs`,
+// as `would_substitute` tells it.
+pub function would_substitute_lookups(ps: PreparedLookup[], gs: i32[], zero_context: boolean): boolean {
   if (gs.len() == 0) {
     return false;
   }
-  for li in lookups {
-    let l = lookup_of(f, f.gsub, false, li);
-    for s in 0..l.count {
-      let (st, kind) = subtable(f.data, l, s);
-      if (would_apply(f.data, st, kind, gs, zero_context)) {
+  let g = gs[0];
+  for p in ps {
+    let ds = p.digests;
+    if (!digest_has(ds, 0, g)) {
+      continue;
+    }
+    let subs = p.lookup.subs;
+    for s in 0..p.lookup.count {
+      if (digest_has(ds, 3 + 3 * s, g) && would_apply(p.font.data, subs[3 * s], subs[3 * s + 1], subs[3 * s + 2], gs, zero_context)) {
         return true;
       }
     }
@@ -786,9 +801,10 @@ pub function (f: Font) would_substitute_lookups(lookups: i32[], gs: i32[], zero_
   return false;
 }
 
-// Whether the GSUB subtable `st` of type `kind` applies to the glyphs `gs`.
-function would_apply(b: [u8], st: i32, kind: i32, gs: i32[], zero_context: boolean): boolean {
-  let cov = first_coverage(b, st, kind, gs[0]);
+// Whether the GSUB subtable `st` of type `kind`, with its first coverage
+// table at `table`, applies to the glyphs `gs`.
+function would_apply(b: [u8], st: i32, kind: i32, table: i32, gs: i32[], zero_context: boolean): boolean {
+  let cov = if (table < 0) { -1 } else { coverage(b, table, gs[0]) };
   if (cov < 0) {
     return false;
   }
@@ -1734,6 +1750,7 @@ function digest_bits(lo: i32, hi: i32, shift: i32): u64 {
 
 // Whether the digest at `at` of `ds` can hold the glyph `g`. A digest that
 // `ds` does not have holds each glyph.
+@inline
 function digest_has(ds: [u64], at: i32, g: i32): boolean {
   if (at + 2 >= ds.len()) {
     return true;
