@@ -11,7 +11,8 @@ import (
 // The two bytes of a little-endian word, from an array and from a string. A
 // read past the end still aborts.
 const word16Program = `@noinline
-function le16(data: u8[], at: i32): i32 {
+function le16(data: u8[], cur: i32, best: i32): i32 {
+  let at = cur + best - 1;
   return data[at] as i32 | data[at + 1] as i32 << 8;
 }
 
@@ -26,7 +27,8 @@ function le32(data: u8[], at: i32): u32 {
 }
 
 @noinline
-function mix64(data: u8[], at: i32): u64 {
+function mix64(data: u8[], cur: i32, best: i32): u64 {
+  let at = cur + best - 1;
   let w = data[at] as u64 | data[at + 1] as u64 << 8 | data[at + 2] as u64 << 16 | data[at + 3] as u64 << 24
     | data[at + 4] as u64 << 32 | data[at + 5] as u64 << 40 | data[at + 6] as u64 << 48 | data[at + 7] as u64 << 56;
   return w ^ 5u64;
@@ -36,13 +38,14 @@ function main(): i32 {
   let d: u8[] = [1u8, 2u8, 255u8, 128u8, 7u8, 9u8, 11u8, 13u8, 200u8];
   let sum = 0;
   for i in 0..4 {
-    sum = sum * 7 + le16(d, i);
+    sum = sum * 7 + le16(d, i, 1);
   }
   if (sum != 3607858) { return 1; }
   if (text16("ab\u{ff}", 1) != 50018) { return 2; }
   if (le32(d, 1) != 125894402u32) { return 3; }
-  if (mix64(d, 1) != 14415190115691331335u64) { return 4; }
-  if (args().len() > 1) { return le16(d, 8); }
+  if (mix64(d, 1, 1) != 14415190115691331335u64) { return 4; }
+  if (le16(d, -2147483647, -2147483647 - 1) != 513) { return 5; }
+  if (args().len() > 1) { return le16(d, 8, 1); }
   return 0;
 }
 `
@@ -106,6 +109,15 @@ func TestSelfHostWord16Load(t *testing.T) {
 				body := asmFuncBody(t, string(text), "__fn_"+name+".r")
 				if !regexp.MustCompile(want).MatchString(body) {
 					t.Errorf("%s: %s lacks %q:\n%s", target, name, want, body)
+				}
+				if name != "le32" {
+					check := map[string]string{"x86-64-linux": "cmpq ", "arm64-linux": "cmp "}
+					if strings.Count(body, check[target]) != 1 {
+						t.Errorf("%s: %s needs one grouped bounds comparison:\n%s", target, name, body)
+					}
+					if target == "x86-64-linux" && !regexp.MustCompile(`leal -1\(%r\w+,%r\w+\), %\w+`).MatchString(body) {
+						t.Errorf("%s: %s lacks the wrapping index calculation:\n%s", target, name, body)
+					}
 				}
 				if addOfEight[target].MatchString(body) {
 					t.Errorf("%s: %s adds 8 to the array before the load:\n%s", target, name, body)

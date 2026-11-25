@@ -461,7 +461,7 @@ function main(): i32 {
     show("crlfvalue", fetch.send(fetch.get(base() + "/plain").with_header("X-A", "1\r\nX-Injected: 1")));
     show("badname", fetch.send(fetch.get(base() + "/plain").with_header("X A", "1")));
     show("badmethod", fetch.send(fetch.request("GE T", base() + "/plain")));
-    show("filebody", fetch.send(fetch.request("POST", base() + "/echo").with_body(BodyFile("/etc/hostname"))));
+    show("filebody", fetch.send(fetch.request("POST", base() + "/echo").with_body(BodyFile(%q))));
     show("redir", fetch.send(fetch.get(base() + "/redir")));
     show("noredir", fetch.send(fetch.get(base() + "/redir").with_redirects(0)));
     show("chain10", fetch.send(fetch.get(base() + "/chain/10")));
@@ -493,7 +493,7 @@ function main(): i32 {
     }
     return 0;
 }
-`, port, closedPort)
+`, port, closedPort, RepoPath("internal", "testing", "e2eharness", "testdata", "fetch-body.txt"))
 }
 
 func FetchHostedSource(port, port2, closedPort int) string {
@@ -595,7 +595,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     out = out + line("crlfvalue", plat.http(fetch.get(base() + "/plain").with_header("X-A", "1\r\nX-Injected: 1")));
     out = out + line("badname", plat.http(fetch.get(base() + "/plain").with_header("X A", "1")));
     out = out + line("badmethod", plat.http(fetch.request("GE T", base() + "/plain")));
-    out = out + line("filebody", plat.http(fetch.request("POST", base() + "/echo").with_body(BodyFile("/etc/hostname"))));
+    out = out + line("filebody", plat.http(fetch.request("POST", base() + "/echo").with_body(BodyFile("upload.txt"))));
     out = out + line("redir", plat.http(fetch.get(base() + "/redir")));
     out = out + line("noredir", plat.http(fetch.get(base() + "/redir").with_redirects(0)));
     out = out + line("chain10", plat.http(fetch.get(base() + "/chain/10")));
@@ -654,7 +654,7 @@ crlfurl: error invalid URL: a path or query that cannot be written on a request 
 crlfvalue: error invalid request: a header value has a byte that cannot be written
 badname: error invalid request: a header name is not a token
 badmethod: error invalid request: the method is not a token
-filebody: error invalid request: a file body cannot be sent
+filebody: error invalid request: wasi:http has no filesystem to read a file body from
 redir: 200 [hello] headers: content-length=5 x-up=1 trailers:
 noredir: 302 [] headers: location=/plain content-length=0 trailers:
 chain10: 200 [end] headers: content-length=3 trailers:
@@ -749,7 +749,7 @@ crlfurl: error invalid URL: a path or query that cannot be written on a request 
 crlfvalue: error invalid request: a header value has a byte that cannot be written
 badname: error invalid request: a header name is not a token
 badmethod: error invalid request: the method is not a token
-filebody: error invalid request: a file body cannot be sent
+filebody: 201 [FILEBODY] headers: Content-Length=FILEBODYLEN trailers:
 redir: 200 [hello] headers: Content-Length=5 X-Up=1 trailers:
 noredir: 302 [] headers: Location=/plain Content-Length=0 trailers:
 chain10: 200 [end] headers: Content-Length=3 trailers:
@@ -781,6 +781,7 @@ func CheckFetchClient(t *testing.T, up *FetchUpstream, stdout string, exit int) 
 	for name, line := range map[string]string{
 		"ECHO":       echoLine("POST", "/echo?q=1", host, "payload", "t1", "", "", "gzip, zstd, br"),
 		"PUT":        echoLine("PUT", "/echo", host, "raw", "", "", "", "gzip, zstd, br"),
+		"FILEBODY":   echoLine("POST", "/echo", host, "Fern file upload\n", "", "", "", "gzip, zstd, br"),
 		"VIAPOST":    proxyLine("POST", "http://origin.invalid:81/via?x=1", "origin.invalid:81", "body", "p1", "Basic dTo="),
 		"VIAGET":     proxyLine("GET", "http://8.8.8.8/via", "8.8.8.8", "", "", "Basic dTo="),
 		"POST303":    echoLine("GET", "/echo", host, "", "", "", "", "gzip, zstd, br"),

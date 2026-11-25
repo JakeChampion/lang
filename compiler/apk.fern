@@ -84,6 +84,19 @@ pub function car_desc(): androidxml.Element {
   return androidxml.element("automotiveApp", [], [androidxml.element("uses", [name], [])]);
 }
 
+const EXTRACTION_PATH: string = "res/xml/data_extraction_rules.xml";
+
+const BACKUP_PATH: string = "res/xml/full_backup_content.xml";
+
+function backup_exclusions(): androidxml.Element[] {
+  let out: androidxml.Element[] = [];
+  let path = androidxml.text_attr("path", 0, ".");
+  for domain in ["root", "file", "database", "sharedpref", "external", "device_root", "device_file", "device_database", "device_sharedpref"] {
+    out = out.append(androidxml.element("exclude", [androidxml.text_attr("domain", 0, domain), path], []));
+  }
+  return out;
+}
+
 // An XML file of the resources of the app, and its place in the archive.
 pub struct XmlFile { path: string, root: androidxml.Element }
 
@@ -96,6 +109,12 @@ pub function xml_files(app: App): XmlFile[] {
   }
   if (for_car(app)) {
     out = out.append(XmlFile { path: CAR_PATH, root: car_desc() });
+  }
+  if (!app.backup) {
+    let excludes = backup_exclusions();
+    let rules = androidxml.element("data-extraction-rules", [], [androidxml.element("cloud-backup", [], excludes), androidxml.element("device-transfer", [], excludes)]);
+    out = out.append(XmlFile { path: EXTRACTION_PATH, root: rules });
+    out = out.append(XmlFile { path: BACKUP_PATH, root: androidxml.element("full-backup-content", [], excludes) });
   }
   return out;
 }
@@ -184,9 +203,9 @@ function prefixed(b: [u8]): u8[] {
 }
 
 // The framework attributes of the files of an app, and their resource IDs.
-const ATTR_NAMES: string[] = ["theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "authorities", "grantUriPermissions", "launchMode", "configChanges", "value", "resource", "textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "minWidth", "minHeight", "text", "maxLines", "layout_weight", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "updatePeriodMillis", "initialLayout", "targetSdkVersion", "allowBackup", "required", "resizeMode", "banner", "resumeWhilePausing", "extractNativeLibs", "usesCleartextTraffic", "resizeableActivity", "supportsPictureInPicture", "foregroundServiceType", "enableOnBackInvokedCallback"];
+const ATTR_NAMES: string[] = ["theme", "label", "icon", "name", "permission", "hasCode", "debuggable", "exported", "taskAffinity", "clearTaskOnLaunch", "stateNotNeeded", "excludeFromRecents", "authorities", "grantUriPermissions", "launchMode", "configChanges", "value", "resource", "textSize", "textColor", "gravity", "orientation", "id", "background", "padding", "layout_width", "layout_height", "minWidth", "minHeight", "text", "maxLines", "layout_weight", "minSdkVersion", "versionCode", "versionName", "windowSoftInputMode", "updatePeriodMillis", "initialLayout", "targetSdkVersion", "allowBackup", "required", "resizeMode", "banner", "resumeWhilePausing", "extractNativeLibs", "fullBackupContent", "usesCleartextTraffic", "resizeableActivity", "supportsPictureInPicture", "foregroundServiceType", "dataExtractionRules", "enableOnBackInvokedCallback"];
 
-const ATTR_IDS: i32[] = [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842776, 16842779, 16842781, 16842783, 16842788, 16842789, 16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843071, 16843072, 16843087, 16843091, 16843137, 16843276, 16843291, 16843292, 16843307, 16843344, 16843345, 16843376, 16843392, 16843406, 16843619, 16843762, 16843954, 16844010, 16844012, 16844022, 16844023, 16844185, 16844396];
+const ATTR_IDS: i32[] = [16842752, 16842753, 16842754, 16842755, 16842758, 16842764, 16842767, 16842768, 16842770, 16842773, 16842774, 16842775, 16842776, 16842779, 16842781, 16842783, 16842788, 16842789, 16842901, 16842904, 16842927, 16842948, 16842960, 16842964, 16842965, 16842996, 16842997, 16843071, 16843072, 16843087, 16843091, 16843137, 16843276, 16843291, 16843292, 16843307, 16843344, 16843345, 16843376, 16843392, 16843406, 16843619, 16843762, 16843954, 16844010, 16844011, 16844012, 16844022, 16844023, 16844185, 16844350, 16844396];
 
 // An attribute of the android namespace.
 function attr(name: string, kind: i32, data: i32): androidxml.Attr {
@@ -302,11 +321,17 @@ pub function manifest_tree(app: App): androidxml.Element {
     app_attrs = app_attrs.append(attr("banner", androidxml.REFERENCE, banner_id(app)));
   }
   app_attrs = app_attrs.append(flag("extractNativeLibs", app.compress));
+  if (!app.backup) {
+    app_attrs = app_attrs.append(attr("fullBackupContent", androidxml.REFERENCE, resource_id(app, "xml", "full_backup_content")));
+  }
   if (app.cleartext) {
     app_attrs = app_attrs.append(flag("usesCleartextTraffic", true));
   }
   // The back key goes to the OnBackInvokedCallback of std/android from
   // Android 13, as it must for an app that targets Android 16.
+  if (!app.backup) {
+    app_attrs = app_attrs.append(attr("dataExtractionRules", androidxml.REFERENCE, resource_id(app, "xml", "data_extraction_rules")));
+  }
   app_attrs = app_attrs.append(flag("enableOnBackInvokedCallback", true));
   activity_attrs = activity_attrs.append(text_attr("name", app.activity)).append(flag("exported", true));
   if (app.home) {
@@ -442,6 +467,9 @@ pub function res_types(app: App): ResType[] {
   if (for_car(app)) {
     xml = xml.append(Res { key: "automotive_app_desc", path: CAR_PATH });
   }
+  if (!app.backup) {
+    xml = xml.append(Res { key: "data_extraction_rules", path: EXTRACTION_PATH }).append(Res { key: "full_backup_content", path: BACKUP_PATH });
+  }
   if (xml.len() > 0) {
     names = names.append("xml");
     all = all.append(xml);
@@ -472,7 +500,7 @@ pub function resource_id(app: App, kind: string, key: string): i32 {
 
 // True when the app has a resource.
 pub function has_resources(app: App): boolean {
-  return app.icon.len() > 0 || app.banner.len() > 0 || app.widget.provider.len() > 0 || for_car(app);
+  return !app.backup || app.icon.len() > 0 || app.banner.len() > 0 || app.widget.provider.len() > 0 || for_car(app);
 }
 
 // The spec chunk and the type chunk of `t` in the default configuration.

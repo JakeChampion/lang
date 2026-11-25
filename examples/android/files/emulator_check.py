@@ -104,6 +104,12 @@ def nodes(xml):
     return out
 
 
+def preview_shows(xml, text):
+    """Fern Files exposes each rendered line of a text preview as a separate node."""
+    lines = (name.strip() for name, _, _ in nodes(xml))
+    return text in " ".join(lines)
+
+
 def point_of(xml, label):
     """The middle of the first node with the name `label`, or None."""
     for name, x, y in nodes(xml):
@@ -334,7 +340,7 @@ def check_home(out):
 def check_text(out):
     if not taps(out, "text", ["Downloads", NOTE, "Preview as text"]):
         return
-    if not until(lambda: any(NOTE_TEXT in name for name, _, _ in nodes(dump(out, "text-shown")))):
+    if not until(lambda: preview_shows(dump(out, "text-shown"), NOTE_TEXT)):
         screen(out, "text-shown")
         fail("the text file does not show its text")
     screen(out, "text-shown")
@@ -427,7 +433,7 @@ def round_trip(out, kind, server, note, text, share_dir):
     computer. The names of the steps start with `kind`."""
     if not tap(out, f"{kind}-open", server, scroll=True) or not taps(out, f"{kind}-text", [note, "Preview as text"]):
         return
-    if not until(lambda: any(text in name for name, _, _ in nodes(dump(out, f"{kind}-text-shown")))):
+    if not until(lambda: preview_shows(dump(out, f"{kind}-text-shown"), text)):
         screen(out, f"{kind}-text-shown")
         fail(f"{kind}: the file of the server does not show its text")
     screen(out, f"{kind}-text-shown")

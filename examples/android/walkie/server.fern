@@ -116,7 +116,7 @@ function open_udp(port: i32): Option[Socket] {
 
 // The config that serves `id` to new clients.
 function config_of(id: identity.Identity): server.Config {
-  return server.config(id, rand.bytes(32)).without_tickets();
+  return server.config_without_tickets(id);
 }
 
 // The server with the certificate and key that the files hold now. A pair

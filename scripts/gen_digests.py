@@ -146,6 +146,8 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
     p(f"// === {doc} ===")
     p("")
     emit_collision_warning(p, tag)
+    if struct == "Sha256":
+        p("@secret")
     p(f"pub struct {struct} {{")
     for i in range(nwords):
         p(f"    h{i}: {ty},")
@@ -459,6 +461,7 @@ def rotl_const(v, n):
 def emit_blake2b(p):
     p("// === BLAKE2b (RFC 7693), unkeyed, digest length 1..64 bytes ===")
     p("")
+    p("@secret")
     p("pub struct Blake2b {")
     for i in range(8):
         p(f"    h{i}: u64,")
