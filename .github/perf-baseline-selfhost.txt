@@ -56,7 +56,7 @@ selfhost/arm64-linux/closure_call.emit	1309
 selfhost/arm64-linux/deflate_decode.emit	14642
 selfhost/arm64-linux/deflate_encode.emit	7906
 selfhost/arm64-linux/enum_match.emit	1273
-selfhost/arm64-linux/http_hello.emit	17377
+selfhost/arm64-linux/http_hello.emit	17671
 selfhost/arm64-linux/int_loop.emit	376
 selfhost/arm64-linux/map_int.emit	8808
 selfhost/arm64-linux/map_probe_chain.emit	8818
@@ -76,8 +76,8 @@ selfhost/arm64-linux/string_scan.emit	2660
 selfhost/arm64-linux/string_slice.emit	1291
 selfhost/arm64-linux/struct_drop.emit	3075
 selfhost/arm64-linux/tokenize.emit	1531
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	9300
-selfhost/arm64-linux/utf8_ingest_validated.emit	9976
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	8949
+selfhost/arm64-linux/utf8_ingest_validated.emit	9630
 selfhost/wasm32-wasi/array_append.emit	498
 selfhost/wasm32-wasi/array_index.emit	499
 selfhost/wasm32-wasi/array_scale_f64.emit	554
@@ -88,7 +88,7 @@ selfhost/wasm32-wasi/byte_copy_with.emit	977
 selfhost/wasm32-wasi/call_overhead.emit	184
 selfhost/wasm32-wasi/closure_call.emit	523
 selfhost/wasm32-wasi/deflate_decode.emit	24946
-selfhost/wasm32-wasi/deflate_encode.emit	12563
+selfhost/wasm32-wasi/deflate_encode.emit	12704
 selfhost/wasm32-wasi/enum_match.emit	570
 selfhost/wasm32-wasi/http_hello.emit	20070
 selfhost/wasm32-wasi/int_loop.emit	76
@@ -111,7 +111,7 @@ selfhost/wasm32-wasi/string_slice.emit	599
 selfhost/wasm32-wasi/struct_drop.emit	1706
 selfhost/wasm32-wasi/tokenize.emit	948
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	10034
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	11337
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	11847
 selfhost/x86-64-linux/array_append.emit	1227
 selfhost/x86-64-linux/array_index.emit	1231
 selfhost/x86-64-linux/array_scale_f64.emit	1415
@@ -124,7 +124,7 @@ selfhost/x86-64-linux/closure_call.emit	1065
 selfhost/x86-64-linux/deflate_decode.emit	13652
 selfhost/x86-64-linux/deflate_encode.emit	7282
 selfhost/x86-64-linux/enum_match.emit	1036
-selfhost/x86-64-linux/http_hello.emit	16393
+selfhost/x86-64-linux/http_hello.emit	16665
 selfhost/x86-64-linux/int_loop.emit	298
 selfhost/x86-64-linux/map_int.emit	8753
 selfhost/x86-64-linux/map_probe_chain.emit	8757
@@ -144,8 +144,8 @@ selfhost/x86-64-linux/string_scan.emit	2326
 selfhost/x86-64-linux/string_slice.emit	1043
 selfhost/x86-64-linux/struct_drop.emit	2808
 selfhost/x86-64-linux/tokenize.emit	1294
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8862
-selfhost/x86-64-linux/utf8_ingest_validated.emit	9544
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8441
+selfhost/x86-64-linux/utf8_ingest_validated.emit	9132
 selfhost/x86-64-linux/perceus_cfold.emit	2257
 selfhost/arm64-linux/perceus_cfold.emit	2561
 selfhost/wasm32-wasi/perceus_cfold.emit	2084
