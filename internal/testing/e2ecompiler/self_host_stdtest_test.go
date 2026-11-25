@@ -210,7 +210,7 @@ var interpSlowStdTests = map[string]bool{
 	// The full M4A ALAC bank uses compiled gates. Its exact integer smoke stays here.
 	"mp4_alac": true, "mp4_alac_reader": true,
 	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
-	"aac": true, "aac_boundary": true, "aac_kernel": true,
+	"aac": true, "aac_boundary": true, "aac_crc": true, "aac_kernel": true,
 	// The two conformance files of UAX #9 run each of their cases. The compiled gates run them.
 	"bidi": true,
 	// The HarfBuzz cases shape each word of each script with two fonts, for
@@ -554,6 +554,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"mp4_smoke", langSrcAbs(t, "tests/stdlib/mp4_smoke_test.fern"), ""},
 		{"aac", langSrcAbs(t, "tests/stdlib/aac_test.fern"), ""},
 		{"aac_boundary", langSrcAbs(t, "tests/stdlib/aac_boundary_test.fern"), ""},
+		{"aac_crc", langSrcAbs(t, "tests/stdlib/aac_crc_test.fern"), ""},
 		{"aac_kernel", langSrcAbs(t, "tests/stdlib/aac_kernel_test.fern"), ""},
 		{"aac_smoke", langSrcAbs(t, "tests/stdlib/aac_smoke_test.fern"), ""},
 		{"audio", langSrcAbs(t, "tests/stdlib/audio_test.fern"), ""},

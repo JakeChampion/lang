@@ -153,8 +153,8 @@ function limits(): test.TestOutcome {
 function malformed(): test.TestOutcome {
   let limits = pcm.default_limits();
   let bytes = adts(1);
-  if let Err(pcm.Unsupported) = aac.decode([255u8, 240u8, 80u8, 64u8, 1u8, 191u8, 252u8, 0u8, 0u8, 0u8, 0u8, 0u8, 7u8], limits) {} else {
-    return test.fail("protected ADTS requires CRC verification");
+  if let Err(pcm.Checksum) = aac.decode([255u8, 240u8, 80u8, 64u8, 1u8, 191u8, 252u8, 0u8, 0u8, 0u8, 0u8, 0u8, 7u8], limits) {} else {
+    return test.fail("protected ADTS with a wrong CRC");
   }
   for bad in [bytes.with(0, 0u8), bytes.with(1, 243u8), bytes.with(2, 124u8), bytes.with(3, 0u8), bytes.with(4, 0u8).with(5, 0u8), bytes.with(10, 39u8)] {
     if let Err(_) = aac.decode(bad, limits) {} else {
