@@ -36,7 +36,7 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 		{"name:string", "args:Type[]"}, {"elements:Type[]"},
 		{"param_types:Type[]", "param_own:boolean[]", "ret_own:boolean", "ret_type:Type", "params_known:boolean", "once:boolean"},
 		{"key:Type", "value:Type"}, {"name:string", "args:Type[]"},
-		{"traits:string"}, {"resource:string", "borrowed:boolean"}, {"tag:i32"}, {"reason:string"}, {"name:string", "declared:boolean"}, {"name:string"}, {"tag:i32"},
+		{"traits:string"}, {"resource:string", "borrowed:boolean"}, {"tag:i32"}, {"reason:string", "unbound:boolean"}, {"name:string", "declared:boolean"}, {"name:string"}, {"tag:i32"},
 		{"value:string"},
 	}
 	if len(p.Structs) != len(wantNames) || len(p.Unions) != 1 || p.Unions[0].Name != "Type" {

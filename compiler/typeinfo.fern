@@ -89,7 +89,9 @@ pub struct TypeHandle { resource: string, borrowed: boolean }
 
 pub struct TypeVoid { tag: i32 }
 
-pub struct TypeUnknown { reason: string }
+// `unbound` marks an argument of an enum that no value binds yet: the `T` of
+// `None`.
+pub struct TypeUnknown { reason: string, unbound: boolean }
 
 // TypeVar is a type variable: a type parameter when `declared`, and a type
 // name that no declaration resolves when not.
@@ -264,7 +266,7 @@ pub function depth(t: Type, limit: i32): i32 {
 }
 
 pub function unchecked(): Type {
-  return TypeUnknown { reason: "not yet checked" };
+  return TypeUnknown { reason: "not yet checked", unbound: false };
 }
 
 pub function is_array(t: Type): boolean {
@@ -889,7 +891,7 @@ pub function mixed_integer_join(left: Type, right: Type): Type {
       }
     }
   }
-  return TypeUnknown { reason: "integer operands have no lossless common type" };
+  return TypeUnknown { reason: "integer operands have no lossless common type", unbound: false };
 }
 
 function fixed_integer(t: TypeI32): boolean {

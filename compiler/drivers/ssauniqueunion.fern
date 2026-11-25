@@ -31,7 +31,7 @@ function variants(row: ssaprepare.Emitted, e: semrecords.Enum): void {
   require(e.variants.len() >= 2 && e.variants[0].fields.len() > 0);
   let v = e.variants[0];
   let f = v.fields[0];
-  let unknown: typeinfo.Type = typeinfo.TypeUnknown { reason: "unresolved union field" };
+  let unknown: typeinfo.Type = typeinfo.TypeUnknown { reason: "unresolved union field", unbound: false };
   let bad = [
     semrecords.Variant { ...v, name: "" },
     semrecords.Variant { ...v, fields: [semrecords.Field { ...f, name: "" }] },

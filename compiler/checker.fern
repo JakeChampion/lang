@@ -238,7 +238,7 @@ function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
 
 pub function unbound_enum_argument(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(u) = t {
-    return u.reason.starts_with("unbound ");
+    return u.unbound;
   }
   return false;
 }
@@ -484,7 +484,11 @@ function t_dyn(traits: string): typeinfo.Type {
 }
 
 function t_unknown(reason: string): typeinfo.Type {
-  return typeinfo.TypeUnknown { reason: reason };
+  return typeinfo.TypeUnknown { reason: reason, unbound: false };
+}
+
+function t_unbound(name: string): typeinfo.Type {
+  return typeinfo.TypeUnknown { reason: "unbound " + name, unbound: true };
 }
 
 function t_var(name: string, declared: boolean): typeinfo.Type {
@@ -3663,7 +3667,7 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
         return u.args[arg];
       }
       if (index == 0 && bare == "Some" && u.args.len() == 0) {
-        return t_unknown("unbound T");
+        return t_unbound("T");
       }
       return t_unknown("unresolved generic pattern payload");
     }
@@ -3686,7 +3690,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   let args = u.args;
   if (args.len() == 0) {
     for tp in us.type_params {
-      args = args.append(t_unknown("unbound " + tp));
+      args = args.append(t_unbound(tp));
     }
   }
   if (us.type_params.len() == 0 || us.type_params.len() != args.len()) {
@@ -3720,7 +3724,7 @@ function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.Ex
   }
   let args: typeinfo.Type[] = [];
   for tp in us.type_params {
-    args = args.append(t_unknown("unbound " + tp));
+    args = args.append(t_unbound(tp));
   }
   for k in 0..c.args.len() {
     let ti = payload_type_param(s, us, name, k);
@@ -5109,10 +5113,10 @@ function builtin_ctor_type(en: string, name: string, c: ast.ExprCall, s: Scope):
     return t_union_g(en, [inferred_payload(c.args[0], s)]);
   }
   if (name == "Ok" && c.args.len() == 1) {
-    return t_union_g(en, [inferred_payload(c.args[0], s), t_unknown("unbound E")]);
+    return t_union_g(en, [inferred_payload(c.args[0], s), t_unbound("E")]);
   }
   if (name == "Err" && c.args.len() == 1) {
-    return t_union_g(en, [t_unknown("unbound T"), inferred_payload(c.args[0], s)]);
+    return t_union_g(en, [t_unbound("T"), inferred_payload(c.args[0], s)]);
   }
   return t_union(en);
 }
@@ -6076,7 +6080,7 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
     if (bi >= 0) {
       args = args.append(literal_bound_width(sl, ssig, tp, bt[bi], s));
     } else {
-      args = args.append(t_unknown("unbound " + tp));
+      args = args.append(t_unbound(tp));
     }
   }
   return args;
@@ -7693,7 +7697,7 @@ function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
 
 function enum_argument_from_ref(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (parser.render_type_ref(r) == "$unbound") {
-    return t_unknown("unbound lifted enum argument");
+    return t_unbound("lifted enum argument");
   }
   return type_from_ref_names(r, tn);
 }
@@ -37621,7 +37625,7 @@ function open_call_type(e: ast.Expr, s: Scope): (typeinfo.Type, boolean) {
   for tp in sig.all_type_params {
     if (util.index_of_str(bn, tp) < 0) {
       bn = bn.append(tp);
-      bt = bt.append(t_unknown("unbound " + tp));
+      bt = bt.append(t_unbound(tp));
       open = true;
     }
   }

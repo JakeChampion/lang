@@ -16,7 +16,7 @@ func TestSelfHostDeclTypesX86_64(t *testing.T) {
 		{"nested partial enum capture", `decltypes.param_from_type("capture", typeinfo.TypeArray { elem: partial(), view: false })`, "Result[string, $unbound][]||"},
 		{"partial callable capture", `tp([partial()], partial())`, "fn|Result[str, $unbound]|Result[str, $unbound]"},
 		{"unrelated unknown enum argument", `decltypes.param_from_type("capture", typeinfo.TypeUnion { name: "Result", args: [view(), typeinfo.unchecked()] })`, "||"},
-		{"absent argument outside enum", `decltypes.param_from_type("capture", typeinfo.TypeUnknown { reason: "unbound T" })`, "||"},
+		{"absent argument outside enum", `decltypes.param_from_type("capture", typeinfo.TypeUnknown { reason: "unbound T", unbound: true })`, "||"},
 		{"scalar widths", `sp("(i64, f32) => u64")`, "fn|i64,f32|u64"},
 		{"grouped signature", `sp("((str) => Box[str])")`, "fn|str|Box[str]"},
 		{"nested grouping", `sp("((((str) => Box[str])))")`, "fn|str|Box[str]"},
@@ -47,7 +47,7 @@ func TestSelfHostDeclTypesX86_64(t *testing.T) {
 import "./decltypes";
 import "./typeinfo";
 function view(): typeinfo.Type { return typeinfo.TypeString { tag: 1 }; }
-function partial(): typeinfo.Type { return typeinfo.TypeUnion { name: "Result", args: [view(), typeinfo.TypeUnknown { reason: "unbound E" }] }; }
+function partial(): typeinfo.Type { return typeinfo.TypeUnion { name: "Result", args: [view(), typeinfo.TypeUnknown { reason: "unbound E", unbound: true }] }; }
 function fraction(): typeinfo.Type { return typeinfo.TypeFloat { width: 32, polymorphic: false }; }
 function box(): typeinfo.Type { return typeinfo.TypeStruct { name: "Box", args: [view()] }; }
 function callback(params: typeinfo.Type[], ret: typeinfo.Type): typeinfo.Type { return typeinfo.TypeFunc { param_types: params, param_own: [], ret_own: false, ret_type: ret, params_known: true, once: false }; }

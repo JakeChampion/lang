@@ -23,7 +23,7 @@ function retained_type(t: typeinfo.Type): typeinfo.Type {
       for arg in u.args {
         let kept = retained_type(arg);
         if let typeinfo.TypeUnknown(missing) = arg {
-          if (missing.reason.starts_with("unbound ")) {
+          if (missing.unbound) {
             kept = typeinfo.TypeStruct { name: "$unbound", args: [] };
           }
         }

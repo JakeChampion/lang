@@ -231,7 +231,7 @@ function value_members(v: checker.QueryView, toks: lspquery.Tok[], m: i32, dot: 
 }
 
 function bound_type(bs: Bound[], name: lspquery.Tok, at: lspquery.Tok): typeinfo.Type {
-  let t: typeinfo.Type = typeinfo.TypeUnknown { reason: "unbound" };
+  let t: typeinfo.Type = typeinfo.TypeUnknown { reason: "unbound", unbound: false };
   for b in bs {
     if (b.name == name.text && (b.let_line == 0 || lspquery.before(b.let_line, b.let_col, at.line, at.col))) {
       t = b.t;
