@@ -19,7 +19,7 @@ var oobBranchRangeCases = []struct {
 	runtime    bool
 }{
 	{"arr-get", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let i: i32 = 2; return xs[i]; }", "main", false, 3, false},
-	{"arr-set", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let i: i32 = 1; xs = xs.with(i, 9); return xs[1]; }", "main", true, 9, false},
+	{"arr-set", "function main(): i32 { let xs: i32[] = [1, 2, 3]; let i: i32 = 1; xs = xs.with(i, 9); return xs[1]; }", "main", false, 9, false},
 	{"runtime-arr-get", `@noinline function probe(i: i32): i32 {
     let xs: i32[] = [1, 2, 3];
     return xs[i];
