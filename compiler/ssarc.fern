@@ -1529,6 +1529,9 @@ function drop_tuple_fields(own r: irtables.LowerState, slot: i32, tup: typeinfo.
 // A record of a `@secret` struct zeroes each scalar field, and each child
 // that it holds alone before the child goes back to the allocator.
 function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, env: boolean, takes: boolean, secret: boolean): irtables.LowerState {
+  if (secret && !env) {
+    return drop_secret_fields(r, slot, fields, scratch, f, []);
+  }
   let child = scratch;
   r = reserve(r, child + 1);
   for i in 0..fields.len() {
@@ -1544,15 +1547,25 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
       r = emit(r, ir.op_store_local(child));
-      if (secret && finalized_plain(fields[i].ty, f)) {
-        r = drop_finalized_secret(r, child, fields[i].ty, child + 1, f);
-      } else {
-        if (secret) {
-          r = wipe_child(r, child, fields[i].ty, child + 1, f);
-        }
-        r = drop_value(r, child, fields[i].ty, child + 1, f);
-      }
-    } else if (secret && ssasem.is_scalar(fields[i].ty)) {
+      r = drop_value(r, child, fields[i].ty, child + 1, f);
+    }
+  }
+  return r;
+}
+
+// The drop of the fields of a record that a `@secret` drop takes apart. It
+// zeroes each scalar field and gives each child to `drop_secret_child`.
+// `path` holds the types that the walk is inside.
+function drop_secret_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
+  let child = scratch;
+  r = reserve(r, child + 1);
+  for i in 0..fields.len() {
+    if (ssasem.counted(f, fields[i].ty)) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
+      r = emit(r, ir.op_store_local(child));
+      r = drop_secret_child(r, child, fields[i].ty, child + 1, f, path);
+    } else if (ssasem.is_scalar(fields[i].ty)) {
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, zero(fields[i].ty));
       r = field_store(r, fields, i);
@@ -1561,80 +1574,72 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
   return r;
 }
 
-// Zeroes the secret storage of the child in `slot` when no other value holds
-// the child: the elements of a numeric array, the bytes of a string, the
-// elements of an array of boxes, and the scalars and the children of a
-// record, a tuple or an enum. A record or an enum with a finalizer keeps its
-// fields, because the finalizer reads them later. The loads here borrow, so
-// they are not marked counted.
-function wipe_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
-  if (!wipes(t, f)) {
-    return r;
-  }
+// The drop of a child that a `@secret` record holds. When no other value
+// holds the child, the drop zeroes its secret storage: the elements of a
+// numeric array, the bytes of a string, and the scalars and the children of
+// an array of boxes, a record, a tuple or an enum. A child with a finalizer
+// runs it before the walk zeroes its fields. `path` holds the types that the
+// walk is inside, so a recursive type is dropped as usual at its second level.
+function drop_secret_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
   let shift = ssasem.elem_shift(t);
   if (shift >= 0) {
-    return wipe_sole(r, slot, shift);
+    r = wipe_sole(r, slot, shift);
+  } else if (ssasem.is_string(t)) {
+    r = wipe_sole_string(r, slot);
+  } else if (walks(t, f) && !on_path(t, path)) {
+    return drop_secret_box(r, slot, t, scratch, f, path.append(t));
   }
-  if (ssasem.is_string(t)) {
-    return wipe_sole_string(r, slot);
-  }
-  r = emit(r, ir.op_load_local(slot));
-  r = emit(r, aligned_unique_of(t, f));
-  r = emit(r, ir.op_if(0));
-  if let typeinfo.TypeArray(a) = t {
-    r = wipe_elements(r, slot, a.elem, scratch, f);
-  } else if (typeinfo.is_record(t)) {
-    r = wipe_record_fields(r, slot, ssasem.record_fields(t, f), scratch, f);
-  } else if (typeinfo.is_tuple(t)) {
-    r = wipe_tuple_fields(r, slot, typeinfo.tuple_elements(t), scratch, f);
-  } else {
-    r = wipe_variant_fields(r, slot, t, scratch, f);
-  }
-  return emit(r, ir.op_end());
+  return drop_value(r, slot, t, scratch, f);
 }
 
-// Whether a value of `t` has storage that `wipe_child` zeroes. A nested
-// `@secret` record is left to its own drop.
-function wipes(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if (ssasem.elem_shift(t) >= 0 || ssasem.is_string(t) || typeinfo.is_tuple(t)) {
+function on_path(t: typeinfo.Type, path: typeinfo.Type[]): boolean {
+  for p in path {
+    if (semtypes.equal(p, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Whether `drop_secret_child` takes a value of `t` apart. A nested `@secret`
+// record is left to its own drop.
+function walks(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if (typeinfo.is_tuple(t)) {
     return true;
   }
   if let typeinfo.TypeArray(a) = t {
-    return !a.view && ssasem.counted(f, a.elem) && wipes(a.elem, f);
+    let elem = a.elem;
+    return !a.view && ssasem.counted(f, elem)
+      && (ssasem.elem_shift(elem) >= 0 || ssasem.is_string(elem) || walks(elem, f));
   }
-  let plain = ssasem.box_shape(t) && ssasem.finalizer_of(f, t) == "";
-  return plain && (typeinfo.is_record(t) && !ssasem.secret_record(t, f) || wiped_enum(t, f));
+  return ssasem.box_shape(t) && (typeinfo.is_record(t) && !ssasem.secret_record(t, f) || wiped_enum(t, f));
 }
 
-// A record that is not `@secret`, or an enum of boxes, with a finalizer.
-function finalized_plain(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if (!ssasem.box_shape(t) || ssasem.finalizer_of(f, t) == "") {
-    return false;
-  }
-  return typeinfo.is_record(t) && !ssasem.secret_record(t, f) || wiped_enum(t, f);
-}
-
-// The drop of a child of `finalized_plain` type that a `@secret` record
-// holds. When no other value holds the child, its finalizer runs first, and
-// then its fields are wiped and dropped before its box is freed.
-function drop_finalized_secret(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+// When no other value holds the child, its finalizer runs first. Then its
+// scalars are zeroed and its children are dropped by the same walk, before
+// its box is freed.
+function drop_secret_box(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_if(0));
-  r = helper(r, slot, ssasem.finalizer_of(f, t));
-  if (typeinfo.is_record(t)) {
-    r = drop_record_fields(r, slot, ssasem.record_fields(t, f), scratch, f, false, false, true);
+  if (ssasem.box_shape(t) && ssasem.finalizer_of(f, t) != "") {
+    r = helper(r, slot, ssasem.finalizer_of(f, t));
+  }
+  if let typeinfo.TypeArray(a) = t {
+    r = drop_secret_elements(r, slot, a.elem, scratch, f, path);
+  } else if (typeinfo.is_record(t)) {
+    r = drop_secret_fields(r, slot, ssasem.record_fields(t, f), scratch, f, path);
+  } else if (typeinfo.is_tuple(t)) {
+    r = drop_secret_tuple(r, slot, typeinfo.tuple_elements(t), scratch, f, path);
   } else {
-    r = wipe_variant_fields(r, slot, t, scratch, f);
-    r = drop_variant_fields(r, slot, t, scratch, f);
+    r = drop_secret_variants(r, slot, t, scratch, f, path);
   }
   r = emit(r, ir.op_end());
   r = release(r, slot, t, f);
-  return mark_release(r, ir.box_release);
+  return if (ssasem.box_shape(t)) { mark_release(r, ir.box_release) } else { r };
 }
 
-// Wipes each element of the array of boxes in `slot`.
-function wipe_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+function drop_secret_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
   let index = scratch;
   let child = index + 1;
   r = reserve(r, child + 1);
@@ -1649,9 +1654,9 @@ function wipe_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Typ
   r = emit(r, ir.op_brif(1));
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_arr_get_nc(ir.width_ptr()));
+  r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(child));
-  r = wipe_child(r, child, elem, child + 1, f);
+  r = drop_secret_child(r, child, elem, child + 1, f, path);
   r = emit(r, ir.op_load_local(index));
   r = emit(r, ir.op_const_i32(1));
   r = emit(r, ir.op_bin("add", 0, false));
@@ -1661,28 +1666,57 @@ function wipe_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Typ
   return emit(r, ir.op_end());
 }
 
-// An enum whose value is a box: not an immediate enum.
-function wiped_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if let typeinfo.TypeUnion(_) = t {
-    return ssasem.counted(f, t) && enum_layout(f, t) != 0;
+function drop_secret_tuple(own r: irtables.LowerState, slot: i32, elems: typeinfo.Type[], scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
+  let child = scratch;
+  r = reserve(r, child + 1);
+  for i in 0..elems.len() {
+    if (ssasem.counted(f, elems[i])) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, ir.counted(ir.op_tuple_get(i)));
+      r = emit(r, ir.op_store_local(child));
+      r = drop_secret_child(r, child, elems[i], child + 1, f, path);
+    } else if (ssasem.is_scalar(elems[i])) {
+      r = emit(r, ir.op_load_local(slot));
+      r = emit(r, zero(elems[i]));
+      r = tuple_store(r, elems[i], i);
+    }
   }
-  return false;
+  return r;
 }
 
-function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+// The member of a `type A | B` union runs its own finalizer first, as in
+// `drop_member_fields`.
+function drop_secret_variants(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
-  if (e.layout != semrecords.layout_option()) {
-    for v in e.variants {
-      if (semrecords.inhabited(v) && v.fields.len() > 0 && !finalized_member(f, t, v)) {
-        r = emit(r, ir.op_load_local(slot));
-        r = variant_test(r, f, t, v.name);
-        r = emit(r, ir.op_if(0));
-        r = wipe_record_fields(r, slot, v.fields, scratch, f);
-        r = emit(r, ir.op_end());
-      }
-    }
-    return r;
+  if (e.layout == semrecords.layout_option()) {
+    return drop_secret_payload(r, slot, e, scratch, f, path);
   }
+  let taken: semrecords.Variant[] = [];
+  for v in e.variants {
+    if (semrecords.inhabited(v) && (v.fields.len() > 0 || member_finalizer(f, t, v) != "")) {
+      taken = taken.append(v);
+    }
+  }
+  for k in 0..taken.len() {
+    r = else_if_open(r, k);
+    r = emit(r, ir.op_load_local(slot));
+    r = variant_test(r, f, t, taken[k].name);
+    r = emit(r, ir.op_if(0));
+    let finalizer = member_finalizer(f, t, taken[k]);
+    if (finalizer != "") {
+      r = helper(r, slot, finalizer);
+    }
+    r = drop_secret_fields(r, slot, taken[k].fields, scratch, f, path);
+  }
+  return close_ifs(r, taken.len());
+}
+
+function member_finalizer(f: ssasem.Func, t: typeinfo.Type, v: semrecords.Variant): string {
+  let at = member_record(f, t, v);
+  return if (at >= 0) { ssasem.finalizer_of(f, f.records.list[at].ty) } else { "" };
+}
+
+function drop_secret_payload(own r: irtables.LowerState, slot: i32, e: semrecords.Enum, scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
   let child = scratch;
   r = reserve(r, child + 1);
   for tag in 0..e.variants.len() {
@@ -1695,9 +1729,9 @@ function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
       r = emit(r, ir.op_if(0));
       r = emit(r, ir.op_load_local(slot));
       if (ssasem.counted(f, fields[0].ty)) {
-        r = emit(r, ir.op_opt_payload());
+        r = emit(r, ir.counted(ir.op_opt_payload()));
         r = emit(r, ir.op_store_local(child));
-        r = wipe_child(r, child, fields[0].ty, child + 1, f);
+        r = drop_secret_child(r, child, fields[0].ty, child + 1, f, path);
       } else if (wide_or_float(fields[0].ty)) {
         r = emit(r, ir.op_const_i64(0));
         r = emit(r, ir.op_opt_set_payload_w(64, true));
@@ -1711,47 +1745,12 @@ function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
   return r;
 }
 
-// A member with a finalizer keeps its fields for the finalizer, and a
-// `@secret` member is wiped by its own drop.
-function finalized_member(f: ssasem.Func, t: typeinfo.Type, v: semrecords.Variant): boolean {
-  let at = member_record(f, t, v);
-  return at >= 0 && ssasem.has_finalizer(f, f.records.list[at].ty);
-}
-
-function wipe_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irtables.LowerState {
-  let child = scratch;
-  r = reserve(r, child + 1);
-  for i in 0..fields.len() {
-    if (ssasem.counted(f, fields[i].ty)) {
-      r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_struct_get(i, 0));
-      r = emit(r, ir.op_store_local(child));
-      r = wipe_child(r, child, fields[i].ty, child + 1, f);
-    } else if (ssasem.is_scalar(fields[i].ty)) {
-      r = emit(r, ir.op_load_local(slot));
-      r = emit(r, zero(fields[i].ty));
-      r = field_store(r, fields, i);
-    }
+// An enum whose value is a box: not an immediate enum.
+function wiped_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if let typeinfo.TypeUnion(_) = t {
+    return ssasem.counted(f, t) && enum_layout(f, t) != 0;
   }
-  return r;
-}
-
-function wipe_tuple_fields(own r: irtables.LowerState, slot: i32, elems: typeinfo.Type[], scratch: i32, f: ssasem.Func): irtables.LowerState {
-  let child = scratch;
-  r = reserve(r, child + 1);
-  for i in 0..elems.len() {
-    if (ssasem.counted(f, elems[i])) {
-      r = emit(r, ir.op_load_local(slot));
-      r = emit(r, ir.op_tuple_get(i));
-      r = emit(r, ir.op_store_local(child));
-      r = wipe_child(r, child, elems[i], child + 1, f);
-    } else if (ssasem.is_scalar(elems[i])) {
-      r = emit(r, ir.op_load_local(slot));
-      r = emit(r, zero(elems[i]));
-      r = tuple_store(r, elems[i], i);
-    }
-  }
-  return r;
+  return false;
 }
 
 // Zeroes the elements of the array in `slot` when no other value holds it.
