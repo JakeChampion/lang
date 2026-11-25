@@ -32,6 +32,7 @@ import "std/crypto/ecdsa";
 import "std/crypto/x25519";
 import "std/crypto/hpke";
 import "std/crypto/mlkem768";
+import "std/crypto/mldsa";
 // Bytes that differ from each other, so a part of them matches at one place only.
 function mixed(n: i32): u8[] {
   let b: u8[] = __alloc_u8(n);
@@ -187,6 +188,10 @@ function run(mode: string, key: [u8], msg: [u8], nonce12: [u8]): i32 {
     let Ok(k) = mlkem768.keygen_derand(key, msg[0:32]) else { return 9; };
     return k.decapsulation_key.len() - 2400;
   }
+  if (mode == "mldsa-key-drop") {
+    let Ok(k) = mldsa.keygen_derand(key) else { return 9; };
+    return k.private_key.len() - 4032;
+  }
   if (mode == "aes-key") { return aes_key(true); }
   if (mode == "aes-key-drop") { return aes_key(false); }
   if (mode == "ed25519-key") { return ed25519_key(true); }
@@ -258,6 +263,10 @@ function needles_of(mode: string, key: [u8], msg: [u8], nonce12: [u8]): u8[][] {
   if (mode == "mlkem-key-drop") {
     let Ok(k) = mlkem768.keygen_derand(key, msg[0:32]) else { return []; };
     return [copy_of(k.decapsulation_key, 0, 32)];
+  }
+  if (mode == "mldsa-key-drop") {
+    let Ok(k) = mldsa.keygen_derand(key) else { return []; };
+    return [copy_of(k.private_key, 128, 32)];
   }
   if (mode == "aes-key" || mode == "aes-key-drop") {
     return [__aes_expand_key(filled(16, 65 as u8))];
@@ -347,7 +356,7 @@ func TestSelfHostPrimitivesEraseKeyMaterial(t *testing.T) {
 					t.Errorf("%s: %d copies of the erased key's secret in the arena, want 0", mode, got)
 				}
 			}
-			for _, mode := range []string{"chacha-key-drop", "aes-cipher-drop", "des-cipher-drop", "p256-key-drop", "mlkem-key-drop", "aes-key-drop", "ed25519-key-drop", "ecdsa-key-drop"} {
+			for _, mode := range []string{"chacha-key-drop", "aes-cipher-drop", "des-cipher-drop", "p256-key-drop", "mlkem-key-drop", "mldsa-key-drop", "aes-key-drop", "ed25519-key-drop", "ecdsa-key-drop"} {
 				if got := run(mode); got != 0 {
 					t.Errorf("%s: a dropped @secret key left %d copies of its secret in the arena, want 0", mode, got)
 				}

@@ -1,0 +1,196 @@
+import "std/test";
+import "std/hex";
+import "std/crypto" as crypto;
+import "std/crypto/mldsa";
+
+// The expected digests come from crypto/mldsa of Go 1.27.
+
+function seq(n: i32, start: i32): u8[] {
+  let b = __alloc_u8(n);
+  let i = 0;
+  while (i < n) {
+    b = b.with(i, (start + i) as u8);
+    i += 1;
+  }
+  return b;
+}
+
+function digest(b: [u8]): string {
+  return hex.encode(crypto.sha3_256(b));
+}
+
+function flip(b: [u8], at: i32, bit: u8): u8[] {
+  let out = seq(b.len(), 0);
+  let i = 0;
+  while (i < b.len()) {
+    out = out.with(i, b[i]);
+    i += 1;
+  }
+  return out.with(at, out[at] ^ bit);
+}
+
+function keys(seed: [u8]): mldsa.KeyPair {
+  let Ok(k) = mldsa.keygen_derand(seed) else {
+    return mldsa.KeyPair { public_key: [], private_key: [] };
+  };
+  return k;
+}
+
+function shown(r: Result[u8[], mldsa.MlDsaError]): string {
+  return match (r) {
+    Ok(s) => digest(s),
+    Err(e) => e.message(),
+  };
+}
+
+function refusal_of_keygen(r: Result[mldsa.KeyPair, mldsa.MlDsaError]): string {
+  return match (r) {
+    Ok(_) => "accepted",
+    Err(e) => e.message(),
+  };
+}
+
+function signature(r: Result[u8[], mldsa.MlDsaError]): u8[] {
+  return match (r) {
+    Ok(s) => s,
+    Err(_) => [],
+  };
+}
+
+function test_keygen(): test.TestOutcome {
+  let k = keys(seq(32, 0));
+  if (k.public_key.len() != 1952 || k.private_key.len() != 4032) {
+    return test.fail("key lengths");
+  }
+  if (digest(k.public_key) != "1800725067e388d837d911fe4f66101cc1961b1bb755030dc574272cfb00013f") {
+    return test.fail("first public key");
+  }
+  return test.assert_eq(digest(keys(seq(32, 200)).public_key), "f988f50c3fd1c5bbc80a6a9f7df3200b4f187190108f72c5d1076271b3c54375");
+}
+
+function test_deterministic(): test.TestOutcome {
+  let sk = keys(seq(32, 0)).private_key;
+  if (shown(mldsa.sign_deterministic(sk, seq(11, 100), seq(3, 7))) != "8240b0b087d08566b1da675d85e05495ee89394a137724da712ad387486a3d93") {
+    return test.fail("message and context");
+  }
+  if (shown(mldsa.sign_deterministic(sk, [], [])) != "3d898cfb0bf18f60808db6bbd64e4924ce76b1e5459b8d27c0efabdb147fe103") {
+    return test.fail("empty message and context");
+  }
+  if (shown(mldsa.sign_deterministic(sk, seq(11, 100), seq(255, 1))) != "c997ec3522bd7186cc35b4d7f67d88bcf0b53268e87fc289c18e350d813fad6b") {
+    return test.fail("context of 255 bytes");
+  }
+  let sig = signature(mldsa.sign_deterministic(sk, seq(11, 100), seq(3, 7)));
+  if (shown(mldsa.sign_derand(sk, seq(11, 100), seq(3, 7), seq(32, 1))) == digest(sig)) {
+    return test.fail("non-zero randomness gave the deterministic signature");
+  }
+  return test.assert_eq(shown(mldsa.sign_deterministic(keys(seq(32, 200)).private_key, "hello, fern".as_bytes(), [])), "a97a816f7c821370ac03a975879ef79b590653adc7a54a972489c36abb68622d");
+}
+
+function test_verify(): test.TestOutcome {
+  let k = keys(seq(32, 0));
+  let msg = seq(11, 100);
+  let sig = signature(mldsa.sign_deterministic(k.private_key, msg, seq(3, 7)));
+  if (!mldsa.verify(k.public_key, msg, seq(3, 7), sig)) {
+    return test.fail("valid signature refused");
+  }
+  if (mldsa.verify(k.public_key, msg, seq(3, 8), sig)) {
+    return test.fail("other context accepted");
+  }
+  if (mldsa.verify(k.public_key, msg, [], sig)) {
+    return test.fail("empty context accepted");
+  }
+  if (mldsa.verify(k.public_key, flip(msg, 0, 1 as u8), seq(3, 7), sig)) {
+    return test.fail("modified message accepted");
+  }
+  if (mldsa.verify(k.public_key, msg, seq(3, 7), flip(sig, 0, 1 as u8))) {
+    return test.fail("modified challenge accepted");
+  }
+  if (mldsa.verify(k.public_key, msg, seq(3, 7), flip(sig, 1000, 4 as u8))) {
+    return test.fail("modified z accepted");
+  }
+  if (mldsa.verify(k.public_key, msg, seq(3, 7), sig[0:3308])) {
+    return test.fail("short signature accepted");
+  }
+  if (mldsa.verify(k.public_key[0:1951], msg, seq(3, 7), sig)) {
+    return test.fail("short public key accepted");
+  }
+  if (mldsa.verify(keys(seq(32, 200)).public_key, msg, seq(3, 7), sig)) {
+    return test.fail("other public key accepted");
+  }
+  return test.assert_eq(mldsa.verify(k.public_key, msg, seq(256, 0), sig), false);
+}
+
+function test_hedged(): test.TestOutcome {
+  let k = keys(seq(32, 0));
+  let msg = seq(11, 100);
+  let a = signature(mldsa.sign(k.private_key, msg, []));
+  let b = signature(mldsa.sign(k.private_key, msg, []));
+  if (a.len() != 3309 || b.len() != 3309) {
+    return test.fail("signature lengths");
+  }
+  if (digest(a) == digest(b)) {
+    return test.fail("two hedged signatures are the same");
+  }
+  if (!mldsa.verify(k.public_key, msg, [], a)) {
+    return test.fail("first signature refused");
+  }
+  return test.assert_eq(mldsa.verify(k.public_key, msg, [], b), true);
+}
+
+// mu = H(H(pk) || 0 || |ctx| || ctx || msg), as FIPS 204 algorithm 2 makes it.
+function test_mu(): test.TestOutcome {
+  let k = keys(seq(32, 0));
+  let msg = seq(11, 100);
+  let tr = crypto.shake256_new().update(k.public_key).reader().squeeze(64).0;
+  let mu = crypto.shake256_new().update(tr).update([0 as u8, 3 as u8]).update(seq(3, 7)).update(msg).reader().squeeze(64).0;
+  let rnd = seq(32, 50);
+  let sig = signature(mldsa.sign_mu_derand(k.private_key, mu, rnd));
+  if (shown(mldsa.sign_derand(k.private_key, msg, seq(3, 7), rnd)) != digest(sig)) {
+    return test.fail("mu and message signatures differ");
+  }
+  if (!mldsa.verify_mu(k.public_key, mu, sig)) {
+    return test.fail("mu signature refused");
+  }
+  if (mldsa.verify_mu(k.public_key, flip(mu, 63, 1 as u8), sig)) {
+    return test.fail("other mu accepted");
+  }
+  return test.assert_eq(mldsa.verify(k.public_key, msg, seq(3, 7), sig), true);
+}
+
+function test_refusals(): test.TestOutcome {
+  let sk = keys(seq(32, 0)).private_key;
+  if (refusal_of_keygen(mldsa.keygen_derand(seq(31, 0))) != "mldsa: the seed is 31 bytes, want 32") {
+    return test.fail("seed");
+  }
+  if (shown(mldsa.sign_deterministic(sk[0:4031], [], [])) != "mldsa: the private key is 4031 bytes, want 4032") {
+    return test.fail("private key");
+  }
+  if (shown(mldsa.sign_deterministic(sk, [], seq(256, 0))) != "mldsa: the context is 256 bytes, want at most 255") {
+    return test.fail("context");
+  }
+  if (shown(mldsa.sign_derand(sk, [], [], seq(31, 0))) != "mldsa: the randomness is 31 bytes, want 32") {
+    return test.fail("randomness");
+  }
+  if (shown(mldsa.sign_mu_derand(sk, seq(63, 0), seq(32, 0))) != "mldsa: mu is 63 bytes, want 64") {
+    return test.fail("mu");
+  }
+  let range = "mldsa: the private key has a coefficient of s1 or s2 out of range";
+  if (shown(mldsa.sign_deterministic(flip(sk, 128, sk[128] & 15 ^ 9), [], [])) != range) {
+    return test.fail("s1 coefficient of 9");
+  }
+  if (shown(mldsa.sign_deterministic(flip(sk, 1535, sk[1535] & 0xf0 ^ 0xf0), [], [])) != range) {
+    return test.fail("s2 coefficient of 15");
+  }
+  return test.assert_eq(mldsa.verify_mu(keys(seq(32, 0)).public_key, seq(63, 0), seq(3309, 0)), false);
+}
+
+function main(): i32 {
+  let r = test.new("std/crypto/mldsa");
+  r = r.it("keygen", test_keygen);
+  r = r.it("deterministic signatures", test_deterministic);
+  r = r.it("verification", test_verify);
+  r = r.it("hedged signatures", test_hedged);
+  r = r.it("signatures of mu", test_mu);
+  r = r.it("refusals", test_refusals);
+  return r.finish();
+}

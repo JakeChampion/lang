@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Run the larger Wycheproof suites on the native targets. The oracle alone
+// Run the larger vector suites on the native targets. The oracle alone
 // takes about 25 minutes for the P-256 signature vectors.
 func TestSelfHostWycheproofNative(t *testing.T) {
 	cli := buildSelfHostCLI(t)
@@ -24,6 +24,9 @@ func TestSelfHostWycheproofNative(t *testing.T) {
 		"wycheproof_mlkem768_test.fern",
 		"wycheproof_mlkem768_encaps_test.fern",
 		"wycheproof_mlkem768_keygen_test.fern",
+		"wycheproof_mldsa65_sign_test.fern",
+		"wycheproof_mldsa65_verify_test.fern",
+		"mldsa_acvp_test.fern",
 		"wycheproof_rsa_oaep_test.fern",
 		"wycheproof_rsa_pkcs1v15_test.fern",
 		"wycheproof_rsa_pss_test.fern",

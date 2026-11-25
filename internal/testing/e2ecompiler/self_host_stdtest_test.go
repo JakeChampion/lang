@@ -818,6 +818,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"field25519", langSrcAbs(t, "tests/stdlib/field25519_test.fern"), ""},
 		{"x25519", langSrcAbs(t, "tests/stdlib/x25519_test.fern"), ""},
 		{"mlkem768", langSrcAbs(t, "tests/stdlib/mlkem768_test.fern"), ""},
+		{"mldsa", langSrcAbs(t, "tests/stdlib/mldsa_test.fern"), ""},
 		{"hpke", langSrcAbs(t, "tests/stdlib/hpke_test.fern"), ""},
 		{"montgomery", langSrcAbs(t, "tests/stdlib/montgomery_test.fern"), ""},
 		{"p256", langSrcAbs(t, "tests/stdlib/p256_test.fern"), ""},

@@ -23,6 +23,7 @@ No module defines a cipher, a hash or a signature scheme of its own.
 | `std/crypto/ecdsa`, `std/crypto/p256` | ECDSA over P-256 and P-384 with SHA-2, ECDH | `ecdsa`, `p256` | a flipped bit, another message, another key, another digest and malformed keys are refused |
 | `std/crypto/rsa` | RSASSA-PKCS1-v1_5 and RSASSA-PSS verification, RSAES-OAEP encryption and decryption | `rsa` | malformed keys, invalid signatures and OAEP decoding failures |
 | `std/crypto/mlkem768` | ML-KEM-768 (FIPS 203) | `mlkem768` | implicit rejection of a changed ciphertext, modulus and hash checks on the keys |
+| `std/crypto/mldsa` | ML-DSA-65 (FIPS 204), hedged and deterministic signing | `mldsa`, `mldsa_acvp`, `wycheproof_mldsa65_*` | a changed message, context, challenge or `z`, another key, wrong lengths, a long context, and an `s1` or `s2` coefficient out of range |
 | `std/crypto/hpke` | HPKE base mode with X-Wing, MLKEM768-P256 or DHKEM(P-256), HKDF-SHA256 and ChaCha20-Poly1305 | `hpke` | invalid public keys, lengths and ciphertexts |
 | `std/tls` | TLS 1.3 and client-side TLS 1.2 | the `tls_*` suites | the record, handshake and certificate suites refuse malformed and unauthenticated input |
 
@@ -40,6 +41,8 @@ A module refuses a key, nonce or tag size it does not take. The AEAD suites chec
 The ECDSA suites use the DER signatures, which the module reads as strict DER, so every BER variant is refused.
 The std test gate runs the first four suites on both native targets and under the oracle.
 The oracle takes about 25 minutes for ECDSA P-256 with SHA-256. `TestSelfHostWycheproofNative` runs the remaining suites on both native targets.
+
+`scripts/gen-mldsa-vectors.py` writes the ML-DSA-65 suites. `wycheproof_mldsa65_sign` and `wycheproof_mldsa65_verify` hold the Wycheproof signing and verification vectors. `mldsa_acvp` holds the ML-DSA-65 groups of the NIST ACVP keyGen, sigGen and sigVer files, without the HashML-DSA groups. The signing suites keep the SHA3-256 of each expected key and signature. `TestSelfHostWycheproofNative` runs the three suites on both native targets.
 
 | Suite | Vectors | Groups |
 |---|---|---|
@@ -60,6 +63,9 @@ The oracle takes about 25 minutes for ECDSA P-256 with SHA-256. `TestSelfHostWyc
 | `wycheproof_rsa_pkcs1v15` | 259 | 11 |
 | `wycheproof_rsa_pss` | 108 | 4 |
 | `wycheproof_xchacha20poly1305` | 315 | 10 |
+| `wycheproof_mldsa65_sign` | 183 | 65 |
+| `wycheproof_mldsa65_verify` | 210 | 35 |
+| `mldsa_acvp` | 160 | 10 |
 
 ## Constant time
 
@@ -69,7 +75,10 @@ The AEAD open folds the tag difference into one byte, marks that byte public wit
 
 `__ct_secret(b)` tells Valgrind's memcheck that the bytes of `b` are undefined, and `__ct_public(b)` that they are defined again.
 Memcheck then reports every branch and every address that depends on a secret byte.
-`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, HOTP-SHA256, XChaCha20-Poly1305, and RSA private-key construction with RSA-OAEP decryption.
+`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck.
+They require a clean run for AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH and HOTP-SHA256.
+They also require a clean run for HPKE on the X-Wing path, ML-DSA-65 key generation and signatures, and RSA private-key construction with RSA-OAEP decryption.
+
 The gate also checks equal-length matching and mismatching inputs to `consteq`, multi-block PBKDF2-HMAC-SHA256 and HKDF-SHA256/SHA384 outputs, and scrypt with a secret password. In ROMix the implementation marks the password-dependent lookup index public before reading its table.
 
 The gate checks SHA-256 of a secret message, in one call and in parts.
@@ -80,9 +89,10 @@ Memcheck must report the control programs that branch or index on a secret, whic
 ## Remaining limits
 
 - The constant-time gate observes one execution under memcheck. It does not prove the absence of a data-dependent timing in the processor's own instructions, such as a variable-latency multiply.
+- ML-DSA-65 signing repeats its rejection loop a count of times that depends on the secret, as FIPS 204 permits. The challenge of each try is marked public. HashML-DSA and the parameter sets ML-DSA-44 and ML-DSA-87 are not implemented.
 - RSA supports signature verification and OAEP encryption and decryption. RSA signing is unavailable.
 - `crypto.erase` wipes an owned array the caller passes. The key records of `std/crypto` are `@secret`, and their drop zeroes the arrays that they hold alone ([SECRET-TYPES.md](../SECRET-TYPES.md)). A copy the compiler made is not wiped.
 - The primitives zero the key material they copy. HMAC zeroes its two pad blocks and a hashed long key. HKDF and PBKDF2 zero each output block and each message that carries one. ChaCha20-Poly1305 zeroes the one-time Poly1305 key. X25519 zeroes the clamped scalar of `public_key`. Ed25519 zeroes the nonce hash and the nonce scalar of a signature, and the limb array of each reduction. The ECDSA signer zeroes each nonce, and the key, the value and every message of its HMAC-DRBG. `TestSelfHostPrimitivesEraseKeyMaterial` scans the arena after each primitive for the copy it used to leave.
-- The limb arithmetic of P-256, the generic Weierstrass curves and ML-KEM allocates an array for each intermediate product. A product of a secret is not zeroed. In the release build they stay in their released blocks until the allocator reuses them. Under `-harden` the allocator zeroes each block at its release ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
+- The limb arithmetic of P-256, the generic Weierstrass curves, ML-KEM and ML-DSA allocates an array for each intermediate product. A product of a secret is not zeroed. In the release build they stay in their released blocks until the allocator reuses them. Under `-harden` the allocator zeroes each block at its release ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
 - Wycheproof RSA coverage uses 2048-bit keys and SHA-256. Other RSA parameter sets and the standalone hash functions rely on the standards vectors and negative cases listed above.
 - TLS trusts the root store it is given. Revocation checking is not implemented.
