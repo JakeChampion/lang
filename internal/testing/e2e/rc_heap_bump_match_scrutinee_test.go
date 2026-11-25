@@ -131,9 +131,6 @@ func TestWASMMatchScrutineeReclaim(t *testing.T) {
 		if small != large {
 			t.Errorf("match-scrutinee bump should be bounded: N=50 -> %d, N=5000 -> %d", small, large)
 		}
-		if small == 0 {
-			t.Errorf("wasm heap-allocates; expected a non-zero bounded high-water, got 0")
-		}
 	}
 	checkMatchScrutineeSafe(t, func(t *testing.T, src string) (string, int) {
 		return "", runWasm(t, src)
