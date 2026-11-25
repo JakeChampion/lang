@@ -4643,6 +4643,8 @@ function emit_ir_runtime_part_1(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .align 8\n");
   s = s.write("__fern_large_freelist: .skip 20480\n");
   s = s.write("    .align 8\n");
+  s = s.write("__fern_fork_mark: .quad 0\n");
+  s = s.write("    .align 8\n");
   s = s.write("__fern_freelist_shadow: .skip 524288\n");
   s = s.write("    .align 8\n");
   s = s.write("__fern_large_freelist_shadow: .skip 20480\n");
@@ -4744,10 +4746,16 @@ function emit_ir_runtime_part_1(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rdi\n");
     s = s.write("    testq %rax, %rax\n");
     s = s.write("    jz .Lalloc_nofl\n");
+    if (fork_reclaim(s)) {
+      s = s.write("    movq %rax, %rcx\n    call __fern_large_reclaim\n");
+    }
   } else {
     s = s.write("    movq (%rdx,%rax,8), %rcx\n");
     s = s.write("    testq %rcx, %rcx\n");
     s = s.write("    jz .Lalloc_nofl\n");
+    if (fork_reclaim(s)) {
+      s = s.write("    call __fern_large_reclaim\n");
+    }
     s = s.write("    movq (%rcx), %rdi\n");
     s = s.write("    movq %rdi, (%rdx,%rax,8)\n");
     s = s.write("    movq $0, (%rcx)\n");
@@ -13225,8 +13233,9 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    call __fn___fern_random_i32\n    pushq %rax\n");
     s = s.need("random_i32");
   } else if (o.kind_tag == ir.K_PROC_FORK) {
-    s = s.write("    call __fn___fern_proc_fork\n    pushq %rax\n");
-    s = s.need("proc_fork");
+    s = s.write("    call __fn___fern_proc_fork\n");
+    s = fork_mark(s.need("proc_fork").need("heap"));
+    s = s.write("    pushq %rax\n");
   } else if (o.kind_tag == ir.K_WORKER_REGION) {
     s = s.write("    call __fn___fern_worker_region\n    movq (%rsp), %rdx\n    addq $8, %rsp\n");
     s = worker_region_size(s);
@@ -13788,6 +13797,7 @@ function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
   s = s.write(keep.name + ":\n");
   s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    movq %rdx, __fern_heap_end(%rip)\n");
+  s = s.write("    movq $0, __fern_fork_mark(%rip)\n");
   s = s.write("    pushq %rcx\n    pushq %rdi\n");
   s = zero_freelist(s);
   s = s.write("    xorl %eax, %eax\n");
@@ -13796,6 +13806,41 @@ function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
   s = s.write("    popq %rdi\n    popq %rcx\n");
   s = s.write("    pushq %rax\n");
   return s;
+}
+
+// After a fork, the pages of a block below __fern_fork_mark are shared with
+// the other process, and each write to one of them copies a 4 KiB page.
+function fork_reclaim(s: asmcore.EmitState): boolean {
+  return s.has_need("proc_fork") && asmcore.process_entry(s);
+}
+
+// eax holds the result of the fork. Each process that the fork gives records
+// the bump cursor, because each block below it can share its pages.
+function fork_mark(s: asmcore.EmitState): asmcore.EmitState {
+  let failed = asmcore.fresh_label(s);
+  s = failed.state;
+  s = s.write("    testl %eax, %eax\n    js " + failed.name + "\n");
+  s = s.write("    movq __fern_heap_ptr(%rip), %rcx\n    movq %rcx, __fern_fork_mark(%rip)\n");
+  return s.write(failed.name + ":\n");
+}
+
+// rcx holds a large block that the allocator takes from its free list, and rdi
+// its size in bytes. When the block is below __fern_fork_mark, MADV_DONTNEED
+// gives back its whole pages after the first, so that a write to them takes a
+// fault for a zero page in place of a copy. The first page keeps the link of
+// the free list. All registers keep their values.
+function emit_large_reclaim(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .text\n__fern_large_reclaim:\n");
+  s = s.write("    cmpq __fern_fork_mark(%rip), %rcx\n    jae .Lreclaim_ret\n");
+  s = s.write("    pushq %rax\n    pushq %rcx\n    pushq %rdi\n    pushq %rsi\n    pushq %rdx\n    pushq %r11\n");
+  s = s.write("    leaq (%rcx,%rdi), %rsi\n    andq $-4096, %rsi\n");
+  s = s.write("    leaq 4096(%rcx), %rdi\n    andq $-4096, %rdi\n");
+  s = s.write("    subq %rdi, %rsi\n    jbe .Lreclaim_kept\n");
+  s = s.write("    movl $4, %edx\n    movl $28, %eax\n");
+  s = s.syscall(28);
+  s = s.write(".Lreclaim_kept:\n");
+  s = s.write("    popq %r11\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    popq %rcx\n    popq %rax\n");
+  return s.write(".Lreclaim_ret:\n    ret\n");
 }
 
 // Zeroes __fern_freelist, 512 KiB. A worker zeroes it after its fork, when
@@ -15304,6 +15349,9 @@ function emit_entry_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("proc_fork")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_proc_fork", s);
+  }
+  if (fork_reclaim(s)) {
+    s = emit_large_reclaim(s);
   }
   s = emit_proc_wait_runtime(s);
   if (s.has_need("worker_region")) {
