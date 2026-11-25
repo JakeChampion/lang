@@ -81,6 +81,44 @@ function main(): i32 {
 }
 `
 
+// Each element of `code` is 0 to 27, and `bits` has 29 elements, so
+// `bits_of` reads both with no check. `fill` gives back elements at most its
+// parameter, so `small` reads `u` with no check.
+const elemProg = `struct Codes { code: i32[], bits: i32[], wide: i32[] }
+@noinline function fill(n: i32, v: i32): i32[] {
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, v);
+  }
+  return out;
+}
+@noinline function codes(): Codes {
+  let code = fill(256, 0);
+  for c in 0..28 {
+    code = code.with(c * 9, c);
+  }
+  let bits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0];
+  return Codes { code: code, bits: bits, wide: fill(64, 1).with(3, 40) };
+}
+@noinline function bits_of(t: Codes, x: i32): i32 {
+  return t.bits[t.code[x & 255]];
+}
+@noinline function small(x: i32): i32 {
+  let t = fill(16, 3);
+  let u = __alloc_i32(4).with(3, 7);
+  return u[t[x & 15]];
+}
+@noinline function wide_of(t: Codes, x: i32): i32 {
+  return t.bits[t.wide[x & 63]];
+}
+function main(): i32 {
+  let t = codes();
+  print((bits_of(t, 243) + small(5) + wide_of(t, 0)).to_string());
+  print(wide_of(t, 3).to_string());
+  return 0;
+}
+`
+
 func TestSelfHostFieldLength(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -92,6 +130,7 @@ func TestSelfHostFieldLength(t *testing.T) {
 	}{
 		{"filled", fieldLenProg, map[string]bool{"step": false, "pick": false, "sized": false}, "1010\n", false},
 		{"short", fieldLenShortProg, map[string]bool{"step": true, "pick": true, "sized": true}, "0\n", true},
+		{"elems", elemProg, map[string]bool{"bits_of": false, "small": false, "wide_of": true}, "12\n", true},
 	}
 	for _, c := range cases {
 		src := filepath.Join(dir, c.name+".fern")
