@@ -6901,9 +6901,9 @@ function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
 // 64 KiB parts in it, whole pages for a page of 4, 16 or 64 KiB, and they
 // read as zero with no page fault. The stores zero the bytes before and
 // after those parts, and all of them where the call fails, on macOS, and on
-// a target with no kernel.
+// a target with no host.
 function arm64_zero_freelist(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.runtime_target == "arm64-darwin" || s.runtime_target.ends_with("-freestanding")) {
+  if (s.runtime_target == "arm64-darwin" || !asmcore.process_entry(s)) {
     return arm64_zero_words(s, "__fern_freelist", 65536);
   }
   s = s.write("    adrp x10, __fern_freelist\n    add x10, x10, :lo12:__fern_freelist\n");

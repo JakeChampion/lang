@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -327,6 +328,24 @@ func TestSelfHostWorkerResultAfterFullFreeLists(t *testing.T) {
 			stderr, code := cli.exitOf(t, workerFreeListsProg, target)
 			if code != 0 {
 				t.Fatalf("exit %d: %s", code, stderr)
+			}
+		})
+	}
+}
+
+// A kernel image has no host, so the zeroing of the free list in its runtime
+// makes no madvise call. Each build refuses a syscall in its output.
+func TestSelfHostKernelFreeListMakesNoSyscall(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, k := range []struct{ target, ram, board, main string }{
+		{"arm64-kernel", kernelRAM, dmaBoardSrc, userModeMainSrc},
+		{"x86-64-kernel", kernelX86RAM, userModeX86BoardSrc, userModeX86MainSrc},
+	} {
+		t.Run(k.target, func(t *testing.T) {
+			src := writeTickProgram(t, k.board, k.main)
+			out := filepath.Join(t.TempDir(), "kernel.elf")
+			if msg, err := cli.compileCmd(k.target, out, src, "-ram", k.ram).CombinedOutput(); err != nil {
+				t.Fatalf("build: %v\n%s", err, msg)
 			}
 		})
 	}

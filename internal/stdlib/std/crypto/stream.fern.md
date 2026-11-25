@@ -36,6 +36,8 @@ function main(): i32 {
 <<*>>=
 // Chunked XChaCha20-Poly1305 streams and envelopes for wrapped data keys.
 
+import "core/cmp";
+import "core/error";
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
 import "std/binary";
@@ -50,6 +52,34 @@ const FRAME_BYTES: i32 = CHUNK_BYTES + 17;
 const LAST_COUNTER: u64 = 72057594037927935u64;
 
 pub enum StreamError { KeyLength, Format, Authentication, Limit, Wrap }
+
+pub function (e: StreamError) to_string(): string {
+  return e.message();
+}
+
+pub function (e: StreamError) message(): string {
+  match (e) {
+    KeyLength => {
+      return "stream: the key is not 32 bytes";
+    },
+    Format => {
+      return "stream: the data is not in the stream format";
+    },
+    Authentication => {
+      return "stream: a chunk does not verify";
+    },
+    Limit => {
+      return "stream: the data is larger than the stream format allows";
+    },
+    Wrap => {
+      return "stream: the wrap or unwrap of the data key failed";
+    }
+  }
+}
+
+impl error.Error for StreamError {}
+
+impl cmp.Display for StreamError {}
 
 @secret
 opaque struct State { key: chacha20poly1305.Key, prefix: u8[], aad: u8[], counter: u64, done: boolean }

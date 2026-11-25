@@ -13701,9 +13701,9 @@ function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
 // most of its pages are not mapped. MADV_DONTNEED gives back the whole pages
 // in it, so they read as zero and take no page fault. The stores zero the
 // bytes before and after those pages, and all of them where the call fails
-// or the target has no kernel.
+// or the target has no host.
 function zero_freelist(s: asmcore.EmitState): asmcore.EmitState {
-  if (s.runtime_target.ends_with("-freestanding")) {
+  if (!asmcore.process_entry(s)) {
     return s.write("    xorl %eax, %eax\n    leaq __fern_freelist(%rip), %rdi\n    movl $65536, %ecx\n    rep stosq\n");
   }
   let kept = asmcore.fresh_label(s);
