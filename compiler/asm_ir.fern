@@ -7312,7 +7312,7 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   if (ins.str == "and_not") {
     return 0;
   }
-  let tag = ir.kind_id(ins.str);
+  let tag = ins.ir_kind;
   if (ircore.is_int_cmp_kind(tag)) {
     return 7;
   }
@@ -8549,7 +8549,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
 
 // A 32-bit operation writes `v` zero-extended.
 function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
-  let tag = ir.kind_id(ins.str);
+  let tag = ins.ir_kind;
   let a = ins.args[0];
   let b = ins.args[1];
   let dh = ssa_dst(reg_of, v);
@@ -8980,7 +8980,7 @@ function ssa_lane_sfx(width: i32): string {
 // The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
 // bits. An op that a width does not have is a refusal that names the op.
 function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
-  let id = ir.kind_id(b);
+  let id = ins.ir_kind;
   let w = ins.imm;
   if (w != 8 && w != 16 && w != 32) {
     ircore.unsupported_op_refuse(id, "x86-64");
@@ -9064,7 +9064,7 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
   // Lanes of 32 bits have no saturating form and no average. Lanes of 8
   // bits have no multiply.
   if (w == 32 && i >= 2 && i <= 5 || w == 32 && b == "viavg" || w == 8 && b == "vimul") {
-    ircore.unsupported_op_refuse(ir.kind_id(b), "x86-64");
+    ircore.unsupported_op_refuse(ins.ir_kind, "x86-64");
   }
   let sfx = ssa_vint_sfx(w);
   let op = mnems[i] + sfx;
@@ -9177,7 +9177,7 @@ function x86_lane_widen(b: string, w: i32, a: string, d: string): string {
 // The ops that change the shape of integer lanes. `ins.imm` is the width
 // of a lane of the first value. %xmm0 is the scratch register.
 function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
-  let id = ir.kind_id(b);
+  let id = ins.ir_kind;
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "%xmm1", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm1");
@@ -9213,10 +9213,10 @@ function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms,
 
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
-  if (ir.is_lane_int_kind(ir.kind_id(b))) {
+  if (ir.is_lane_int_kind(ins.ir_kind)) {
     return ssa_vint(ins, b, reg_of, imm, s);
   }
-  if (ir.is_lane_shape_kind(ir.kind_id(b))) {
+  if (ir.is_lane_shape_kind(ins.ir_kind)) {
     return ssa_vint_shape(ins, b, reg_of, imm, s);
   }
   if (b == "vpermute") {
@@ -9693,7 +9693,7 @@ function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], mode: i32, s: asmcore.EmitSta
       s = s.write("    movslq " + ssa_r32(d) + ", " + d + "\n");
     }
   } else {
-    s = s.write("    " + ssa_shiftx_mnem(ir.kind_id(ins.str)) + " " + count + ", " + src + ", " + d + "\n");
+    s = s.write("    " + ssa_shiftx_mnem(ins.ir_kind) + " " + count + ", " + src + ", " + d + "\n");
   }
   return ssa_store(reg_of, ins.result, d, s);
 }
@@ -9708,8 +9708,7 @@ function ssa_shiftx_mnem(tag: i32): string {
   return "shrxq";
 }
 
-function ssa_bin_work(op: string): string {
-  let tag = ir.kind_id(op);
+function ssa_bin_work(tag: i32): string {
   if (tag == ir.K_DIV_S || tag == ir.K_DIV_U || tag == ir.K_REM_S || tag == ir.K_REM_U || tag == ir.K_MULHI_U || tag == ir.K_MULHI_S) {
     return "%rax";
   }
@@ -9717,7 +9716,7 @@ function ssa_bin_work(op: string): string {
 }
 
 function ssa_binary(ins: ssa.SInst, fr: SsaFrame, lp: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
-  let tag = ir.kind_id(ins.str);
+  let tag = ins.ir_kind;
   if (tag == ir.K_DIV_S || tag == ir.K_DIV_U || tag == ir.K_REM_S || tag == ir.K_REM_U) {
     let b = ins.args[1];
     if (fr.imm.konst[b]) {
@@ -11098,21 +11097,17 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     return ssa_no_fuse();
   }
   if (ssa.float_cmp(cmp.str)) {
-    let tag = cmp.str;
-    if (tag == "flt" || tag == "fle") {
-      if (tag == "flt") {
-        tag = "fgt";
-      } else {
-        tag = "fge";
-      }
-      return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
+    let tag = cmp.ir_kind;
+    if (tag == ir.K_FLT || tag == ir.K_FLE) {
+      let flipped = if (tag == ir.K_FLT) { ir.K_FGT } else { ir.K_FGE };
+      return SsaFuse { n: n, tag: flipped, inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
     }
-    return SsaFuse { n: n, tag: ir.kind_id(tag), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
+    return SsaFuse { n: n, tag: tag, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return ssa_int_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
+    return ssa_int_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
   }
-  return ssa_int_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
+  return ssa_int_fuse(fv, blk, cmp, SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false });
 }
 
 function ssa_int_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
@@ -11217,7 +11212,7 @@ function ssa_zero_compare(fv: FuseView, fu: SsaFuse): boolean {
 }
 
 function ssa_single_and(fv: FuseView, ins: ssa.SInst, v: i32): boolean {
-  return ins.result == v && ins.kind_tag == ssa.BINARY && ir.kind_id(ins.str) == 28 && fv.uses[ins.result] == 1;
+  return ins.result == v && ins.kind_tag == ssa.BINARY && ins.ir_kind == 28 && fv.uses[ins.result] == 1;
 }
 
 // Which operand of the `and` is a mask testq can take, or -1.
@@ -11234,7 +11229,7 @@ function ssa_mask_at(fv: FuseView, ins: ssa.SInst): i32 {
 }
 
 function ssa_fusable_cmp(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(ir.kind_id(ins.str)) || ssa.float_cmp(ins.str));
+  return ins.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(ins.ir_kind) || ssa.float_cmp(ins.str));
 }
 
 // An add and an immediate adjustment truncated to u32 fit in one LEA.
@@ -11351,7 +11346,7 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
     return none;
   }
   let cmp = blk.insts[run[0] - 1];
-  if (cmp.result != c || cmp.kind_tag != ssa.BINARY || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
+  if (cmp.result != c || cmp.kind_tag != ssa.BINARY || !ircore.is_int_cmp_kind(cmp.ir_kind)) {
     return none;
   }
   return SelectCond { fu: ssa_cmp_flags(fv, cmp), first: ii == run[0] };
@@ -11359,9 +11354,9 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
   }
-  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
+  return SsaFuse { n: 1, tag: cmp.ir_kind, inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -11721,12 +11716,12 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = s.write("    movabsq $" + ins.str + ", " + d + "\n");
   } else if (k == ssa.COPY) {
     s = ssa_load(reg_of, ins.args[0], d, s);
-  } else if (k == ssa.BINARY && ssa_direct_bin(ir.kind_id(ins.str))) {
+  } else if (k == ssa.BINARY && ssa_direct_bin(ins.ir_kind)) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == ssa.BINARY && asmcore.ssa_shift_tag(ir.kind_id(ins.str))) {
+  } else if (k == ssa.BINARY && asmcore.ssa_shift_tag(ins.ir_kind)) {
     return ssa_shift(ins, reg_of, fr, s);
   } else if (k == ssa.BINARY) {
-    d = ssa_bin_work(ins.str);
+    d = ssa_bin_work(ins.ir_kind);
     if (!fr.imm.is_imm[ins.args[1]]) {
       s = ssa_load(reg_of, ins.args[1], "%rcx", s);
     }
@@ -12885,7 +12880,7 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: so
   }
   s = ssa_parallel_moves(srcs, dsts, asmcore.ssa_x0_forget(s));
   if (pos.line > 0) {
-    s = asmcore.ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+    s = asmcore.ssa_line_loc(ssa.SInst { ir_kind: 0, kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
   }
   return ssa_emit_exit(fr, s, target);
 }

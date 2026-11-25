@@ -161,10 +161,10 @@ function replace(f: ssasem.Func, c: semunroll.Counted, phi: i32, original: i32, 
     }
   }
   let value = f.values.len();
-  let condition = ssa.SInst { kind_tag: ssa.BINARY, result: value, args: [bound, zero], imm: 0, str: ">" };
-  let allocation = ssa.SInst { kind_tag: ssasem.array_zero(), result: value + 1, args: [bound], imm: 0, str: "" };
+  let condition = ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: value, args: [bound, zero], imm: 0, str: ">" };
+  let allocation = ssa.SInst { ir_kind: 0, kind_tag: ssasem.array_zero(), result: value + 1, args: [bound], imm: 0, str: "" };
   let fresh = ssa.SBlock { id: next, insts: [allocation], term: jump(next + 1), preds: [f.graph.blocks[before].id] };
-  let joined = ssa.SInst { kind_tag: ssa.PHI, result: phi, args: [original, value + 1], imm: 0, str: "" };
+  let joined = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: phi, args: [original, value + 1], imm: 0, str: "" };
   let join = ssa.SBlock { id: next + 1, insts: [joined], term: jump(c.exit), preds: [f.graph.blocks[before].id, next] };
   let blocks: ssa.SBlock[] = [];
   for i in 0..f.graph.blocks.len() {

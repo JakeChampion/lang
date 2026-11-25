@@ -2,7 +2,7 @@ import "../ssa";
 import "../util";
 
 function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
-  return ssa.SInst { kind_tag: kind, result: v, args: args, imm: 0, str: str };
+  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: v, args: args, imm: 0, str: str };
 }
 
 function jump(to: i32): ssa.STerm {
@@ -29,7 +29,7 @@ function counted(): ssa.SFunc {
 }
 
 function konst(v: i32, c: i32): ssa.SInst {
-  return ssa.SInst { kind_tag: ssa.CONST_INT, result: v, args: [], imm: c, str: "" };
+  return ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: v, args: [], imm: c, str: "" };
 }
 
 // Blocks 3 and 4 each end two loops. Block 3 also branches to itself.

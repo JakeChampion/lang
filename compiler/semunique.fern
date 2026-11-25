@@ -41,7 +41,7 @@ pub function hoisted(f: ssasem.Func, modes: i32[]): Hoisted {
         }
         let pi = at[h.preds[entry]];
         let pre = blocks[pi];
-        blocks = blocks.with(pi, ssa.SBlock { ...pre, insts: pre.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [e], imm: 0, str: check }) });
+        blocks = blocks.with(pi, ssa.SBlock { ...pre, insts: pre.insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: v, args: [e], imm: 0, str: check }) });
         let hb = blocks[hi];
         blocks = blocks.with(hi, ssa.SBlock { ...hb, insts: hb.insts.with(k, ssa.SInst { ...phi, args: phi.args.with(entry, v) }) });
         changed = true;

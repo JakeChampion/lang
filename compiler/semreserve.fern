@@ -282,13 +282,13 @@ function reserved(f: ssasem.Func, p: Plan): ssasem.Func {
   let bound = p.bound;
   if (p.length_of >= 0) {
     bound = value;
-    before = ssa.SBlock { ...before, insts: before.insts.append(ssa.SInst { kind_tag: ssasem.length(), result: bound, args: [p.length_of], imm: 0, str: "" }) };
+    before = ssa.SBlock { ...before, insts: before.insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.length(), result: bound, args: [p.length_of], imm: 0, str: "" }) };
     values = values.append(f.values[p.bound]);
     value += 1;
   }
-  let cond = ssa.SInst { kind_tag: ssa.BINARY, result: value, args: [bound, p.zero], imm: 0, str: ">" };
+  let cond = ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: value, args: [bound, p.zero], imm: 0, str: ">" };
   before = ssa.SBlock { ...before, insts: before.insts.append(cond), term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: value, target: 0, t: next, f: next + 1, value: 0 } };
-  let reserve = ssa.SInst { kind_tag: ssasem.array_reserve(), result: value + 1, args: [bound], imm: 0, str: "" };
+  let reserve = ssa.SInst { ir_kind: 0, kind_tag: ssasem.array_reserve(), result: value + 1, args: [bound], imm: 0, str: "" };
   let fresh = ssa.SBlock { id: next, insts: [reserve], term: jump(next + 1), preds: [before.id] };
   let insts: ssa.SInst[] = [];
   let original = -1;
@@ -299,7 +299,7 @@ function reserved(f: ssasem.Func, p: Plan): ssasem.Func {
     }
     insts = insts.append(ins);
   }
-  let joined = ssa.SInst { kind_tag: ssa.PHI, result: value + 2, args: [original, value + 1], imm: 0, str: "" };
+  let joined = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: value + 2, args: [original, value + 1], imm: 0, str: "" };
   let entry = ssa.SBlock { id: next + 1, insts: [joined], term: jump(h.id), preds: [before.id, next] };
   h = ssa.SBlock { ...h, insts: insts, preds: h.preds.with(p.counted.entry, entry.id) };
   let blocks: ssa.SBlock[] = [];

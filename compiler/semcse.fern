@@ -121,11 +121,11 @@ struct Word { insts: ssa.SInst[], values: typeinfo.Type[] }
 function owned_word(own insts: ssa.SInst[], own values: typeinfo.Type[], ins: ssa.SInst, arr: i32): Word {
   let v = values.len();
   let addr = typeinfo.t_usize();
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [arr], imm: 0, str: "__raw_arr_ptr" });
-  insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v + 1, args: [], imm: 8, str: "" });
-  insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 2, args: [v, v + 1], imm: 0, str: "+" });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: v + 3, args: [ins.args[1]], imm: 0, str: "" });
-  insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 4, args: [v + 2, v + 3], imm: 0, str: "+" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: v, args: [arr], imm: 0, str: "__raw_arr_ptr" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: v + 1, args: [], imm: 8, str: "" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: v + 2, args: [v, v + 1], imm: 0, str: "+" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.cast(), result: v + 3, args: [ins.args[1]], imm: 0, str: "" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: v + 4, args: [v + 2, v + 3], imm: 0, str: "+" });
   insts = insts.append(ssa.SInst { ...ins, args: [v + 4], str: ssabounds.word_loader(ssabytes.word_bytes(ins.str)) });
   return Word { insts: insts, values: values.append(addr).append(addr).append(addr).append(addr).append(addr) };
 }

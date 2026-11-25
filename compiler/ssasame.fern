@@ -203,7 +203,7 @@ function below(f: ssa.SFunc, dom: ssadeps.Dom, first: First, b: i32, target: i32
     for ins in blocks[k].insts {
       if (ssa.reuse_alloc_call(ins) && ins.args[0] == first.test.value) {
         if (!changed) {
-          insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: f.nvals + k, args: [], imm: 0, str: "" });
+          insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: f.nvals + k, args: [], imm: 0, str: "" });
         }
         insts = insts.append(ssa.SInst { ...ins, args: [f.nvals + k, ins.args[1]] });
         changed = true;

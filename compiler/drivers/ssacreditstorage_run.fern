@@ -78,17 +78,17 @@ function reference_id(f: ssa.SFunc, allocation: boolean): i32 {
 function extra_use(op: ssa.SInst, old: i32, mode: i32, id: i32): ssa.SInst {
   return match (mode) {
     4 => ssa.SInst { ...op, result: id },
-    5 => ssa.SInst { kind_tag: ssa.COPY, result: id, args: [old], imm: 0, str: "" },
-    6 => ssa.SInst { kind_tag: ssa.LD_AT, result: id, args: [old], imm: 0, str: "" },
-    7 => ssa.SInst { kind_tag: ssa.CALL, result: id, args: [old], imm: 0, str: "__fern_rc_is_unique" },
-    _ => ssa.SInst { kind_tag: ssa.CALL, result: id, args: [old], imm: 0, str: "__sem_release_Parent" },
+    5 => ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: id, args: [old], imm: 0, str: "" },
+    6 => ssa.SInst { ir_kind: 0, kind_tag: ssa.LD_AT, result: id, args: [old], imm: 0, str: "" },
+    7 => ssa.SInst { ir_kind: 0, kind_tag: ssa.CALL, result: id, args: [old], imm: 0, str: "__fern_rc_is_unique" },
+    _ => ssa.SInst { ir_kind: 0, kind_tag: ssa.CALL, result: id, args: [old], imm: 0, str: "__sem_release_Parent" },
   };
 }
 
 struct Edit { op: ssa.SInst, changed: boolean }
 
 function erased(op: ssa.SInst): Edit {
-  return Edit { op: ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" }, changed: true };
+  return Edit { op: ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" }, changed: true };
 }
 
 function call_edit(op: ssa.SInst, old: i32, mode: i32, count: i32): Edit {
@@ -96,7 +96,7 @@ function call_edit(op: ssa.SInst, old: i32, mode: i32, count: i32): Edit {
     return erased(op);
   }
   if (mode == 3 && op.str == "__fern_rc_is_unique") {
-    return Edit { op: ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 1, str: "" }, changed: true };
+    return Edit { op: ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 1, str: "" }, changed: true };
   }
   return Edit { op: op, changed: false };
 }
@@ -174,16 +174,16 @@ function controls(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): void {
 }
 
 function unsafe_storage(name: string, unique: boolean): ssa.SFunc {
-  let p = ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" };
+  let p = ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" };
   let c = ssa.SInst { ...p, result: 1, imm: 1 };
-  let size = ssa.SInst { kind_tag: ssa.CONST_INT, result: 2, args: [], imm: 3, str: "" };
-  let alloc = ssa.SInst { kind_tag: ssa.CALL, result: 3, args: [0, 2], imm: 0, str: "__fern_alloc_reuse" };
+  let size = ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 2, args: [], imm: 3, str: "" };
+  let alloc = ssa.SInst { ir_kind: 0, kind_tag: ssa.CALL, result: 3, args: [0, 2], imm: 0, str: "__fern_alloc_reuse" };
   let ret = ssa.STerm { kind_tag: ssa.TERM_RET, value: 3, target: 0, cond: 0, t: 0, f: 0 };
   let entry = ssa.SBlock { id: 0, insts: [p, c, size, alloc], term: ret, preds: [] };
   if (!unique) {
     return ssa.SFunc { name: name, nparams: 2, nvals: 4, blocks: [entry], entry: 0, takes_env: false };
   }
-  let test = ssa.SInst { kind_tag: ssa.CALL, result: 4, args: [0], imm: 0, str: "__fern_rc_is_unique" };
+  let test = ssa.SInst { ir_kind: 0, kind_tag: ssa.CALL, result: 4, args: [0], imm: 0, str: "__fern_rc_is_unique" };
   entry = ssa.SBlock { ...entry, insts: [p, c, size, test], term: ssa.STerm { ...ret, kind_tag: ssa.TERM_BRIF, cond: 4, t: 1, f: 2 } };
   let yes = ssa.SBlock { id: 1, insts: [alloc], term: ret, preds: [0] };
   let no = ssa.SBlock { id: 2, insts: [], term: ssa.STerm { ...ret, value: 0 }, preds: [0] };

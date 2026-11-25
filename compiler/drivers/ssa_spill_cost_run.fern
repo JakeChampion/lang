@@ -3,7 +3,7 @@ import "../ssafixed";
 import "../util";
 
 function inst(kind: i32, v: i32, args: i32[]): ssa.SInst {
-  return ssa.SInst { kind_tag: kind, result: v, args: args, imm: 7, str: "clz" };
+  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: v, args: args, imm: 7, str: "clz" };
 }
 
 function probe(reads: i32): ssa.Alloc {
@@ -15,7 +15,7 @@ function probe_costs(reads: i32, folded: boolean, rhs: boolean): ssa.Alloc {
   for i in 5..100 {
     if (i < 5 + reads) {
       if (rhs) {
-        ops = ops.append(ssa.SInst { kind_tag: ssa.BINARY, result: i, args: [2, 0], imm: 0, str: "add" });
+        ops = ops.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: i, args: [2, 0], imm: 0, str: "add" });
       } else {
         ops = ops.append(inst(ssa.UNARY, i, [0]));
       }

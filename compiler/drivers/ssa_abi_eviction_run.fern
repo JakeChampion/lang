@@ -2,7 +2,7 @@ import "../ssa";
 import "../util";
 
 function ins(k: i32, id: i32, args: i32[], text: string): ssa.SInst {
-  return ssa.SInst { kind_tag: k, result: id, args: args, imm: 7, str: text };
+  return ssa.SInst { ir_kind: 0, kind_tag: k, result: id, args: args, imm: 7, str: text };
 }
 
 function probe(op: string, fixed: boolean, regs: i32): i32 {

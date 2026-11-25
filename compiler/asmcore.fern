@@ -6303,7 +6303,7 @@ pub function ssa_prepared_loc(rows: sourcepos.SourcePos[], id: i32, s: EmitState
     return s;
   }
   let pos = rows[id];
-  return ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+  return ssa_line_loc(ssa.SInst { ir_kind: 0, kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
 }
 
 pub function ssa_sext32(what: string, unsigned: boolean): boolean {

@@ -77,7 +77,7 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
         changed = ssa.SInst { ...op, result: f.nvals };
       } else {
         ops = ops.append(op);
-        changed = ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [op.result], imm: 0, str: "" };
+        changed = ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: f.nvals, args: [op.result], imm: 0, str: "" };
       }
       hits += 1;
     }

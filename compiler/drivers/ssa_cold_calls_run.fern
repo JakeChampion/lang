@@ -4,7 +4,7 @@ import "../ssalive";
 import "../util";
 
 function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
-  return ssa.SInst { kind_tag: kind, result: v, args: args, imm: 0, str: str };
+  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: v, args: args, imm: 0, str: str };
 }
 
 function jump(to: i32): ssa.STerm {

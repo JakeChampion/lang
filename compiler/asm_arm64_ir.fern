@@ -1502,7 +1502,7 @@ function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, pos: so
   }
   s = ssa_parallel_moves(srcs, dsts, asmcore.ssa_x0_forget(s));
   if (pos.line > 0) {
-    s = asmcore.ssa_line_loc(ssa.SInst { kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
+    s = asmcore.ssa_line_loc(ssa.SInst { ir_kind: 0, kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
   }
   return ssa_exit(fr, s, target);
 }
@@ -2122,7 +2122,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
 
 // A 32-bit operation writes `v` zero-extended.
 function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
-  let tag = ir.kind_id(ins.str);
+  let tag = ins.ir_kind;
   let a = ins.args[0];
   let b = ins.args[1];
   if (fr.imm.is_imm[a] && !asmcore.ssa_shift_tag(tag)) {
@@ -2507,7 +2507,7 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
 // The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
 // bits. An op that a width does not have is a refusal that names the op.
 function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
-  let id = ir.kind_id(b);
+  let id = ins.ir_kind;
   let w = ins.imm;
   if (w != 8 && w != 16 && w != 32) {
     ircore.unsupported_op_refuse(id, "arm64");
@@ -2589,7 +2589,7 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
   // of 32 bits, and no multiply for lanes of 8 bits. So this one refuses
   // them too.
   if (w == 32 && i >= 2 && i <= 5 || w == 32 && b == "viavg" || w == 8 && b == "vimul") {
-    ircore.unsupported_op_refuse(ir.kind_id(b), "arm64");
+    ircore.unsupported_op_refuse(ins.ir_kind, "arm64");
   }
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
@@ -2650,7 +2650,7 @@ function arm64_lane_widen(b: string, w: i32, a: string, d: string): string {
 // The ops that change the shape of integer lanes. `ins.imm` is the width
 // of a lane of the first value. v0 is the scratch register.
 function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let id = ir.kind_id(b);
+  let id = ins.ir_kind;
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
@@ -2689,10 +2689,10 @@ function ssa_vi_half(d: string, w: i32): string {
 
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let b = ssa.lane_base(ins.str);
-  if (ir.is_lane_int_kind(ir.kind_id(b))) {
+  if (ir.is_lane_int_kind(ins.ir_kind)) {
     return ssa_vint(ins, b, reg_of, imm, s);
   }
-  if (ir.is_lane_shape_kind(ir.kind_id(b))) {
+  if (ir.is_lane_shape_kind(ins.ir_kind)) {
     return ssa_vint_shape(ins, b, reg_of, s);
   }
   if (b == "vpermute") {
@@ -4366,12 +4366,12 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     return ssa_no_fuse();
   }
   if (ssa.float_cmp(cmp.str)) {
-    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
+    return SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" });
+    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" });
   }
-  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" });
+  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" });
 }
 
 function ssa_narrow_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
@@ -4401,7 +4401,7 @@ function ssa_shape_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
 }
 
 function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
-  return cmp.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(ir.kind_id(cmp.str)) || ssa.float_cmp(cmp.str));
+  return cmp.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(cmp.ir_kind) || ssa.float_cmp(cmp.str));
 }
 
 function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
@@ -4532,9 +4532,9 @@ function ssa_shape_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
   if (!ssa.float_cmp(cmp.str) && fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" };
   }
-  return SsaFuse { n: 1, tag: ir.kind_id(cmp.str), inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
+  return SsaFuse { n: 1, tag: cmp.ir_kind, inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -4919,19 +4919,19 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     s = s.write("    ldr " + d + ", =" + ins.str + "\n");
   } else if (k == ssa.COPY) {
     s = ssa_load(reg_of, ins.args[0], d, s);
-  } else if (k == ssa.BINARY && ssa_direct_bin(ir.kind_id(ins.str))) {
+  } else if (k == ssa.BINARY && ssa_direct_bin(ins.ir_kind)) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == ssa.BINARY && asmcore.ssa_shift_tag(ir.kind_id(ins.str)) && (fr.imm.is_imm[ins.args[1]] || ins.imm == 64)) {
+  } else if (k == ssa.BINARY && asmcore.ssa_shift_tag(ins.ir_kind) && (fr.imm.is_imm[ins.args[1]] || ins.imm == 64)) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == ssa.BINARY && ssa_div_tag(ir.kind_id(ins.str)) && fr.imm.konst[ins.args[1]]) {
+  } else if (k == ssa.BINARY && ssa_div_tag(ins.ir_kind) && fr.imm.konst[ins.args[1]]) {
     d = "x4";
     s = ssa_load(reg_of, ins.args[0], "x4", s);
-    s = ssa_div_const(ir.kind_id(ins.str), ins.imm, fr.imm.value[ins.args[1]], s);
+    s = ssa_div_const(ins.ir_kind, ins.imm, fr.imm.value[ins.args[1]], s);
   } else if (k == ssa.BINARY) {
     d = "x4";
     s = ssa_load(reg_of, ins.args[0], "x4", s);
     s = ssa_load(reg_of, ins.args[1], "x5", s);
-    s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6"));
+    s = s.write(ir_bin_asm(ins.ir_kind, ins.imm, "x4", "x5", "x6"));
   } else if (k == ssa.UNARY) {
     let src = "";
     if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {

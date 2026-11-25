@@ -24,7 +24,7 @@ function definition(f: ssasem.Func, v: i32): Def {
       }
     }
   }
-  return Def { found: false, ins: ssa.SInst { kind_tag: ssa.NONE, result: 0, args: [], imm: 0, str: "" } };
+  return Def { found: false, ins: ssa.SInst { ir_kind: 0, kind_tag: ssa.NONE, result: 0, args: [], imm: 0, str: "" } };
 }
 
 function contains(xs: i32[], x: i32): boolean {
@@ -393,13 +393,13 @@ function outer_instructions(ins: ssa.SInst, plan: Plan, funcs: ssasem.Func[], va
   let dims = shape_type();
   let contract = ssasem.Contract { name: "__outer_mul_f64", params: [data, data], modes: [ssasem.borrow_mode(), ssasem.borrow_mode()], result: data };
   values = values.append(data).append(data).append(dims).append(dims).append(dims).append(typeinfo.TypeVoid { tag: 0 }).append(data);
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n, args: [ins.args[0]], imm: 0, str: "data" });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n + 1, args: [ins.args[1]], imm: 0, str: "data" });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n + 2, args: [ins.args[0]], imm: 1, str: "shape" });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n + 3, args: [ins.args[1]], imm: 1, str: "shape" });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: n + 4, args: [n + 2, n + 3], imm: 0, str: funcs[plan.join].graph.name });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: n + 5, args: [n + 4], imm: 0, str: funcs[plan.check].graph.name });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: n + 6, args: [n, n + 1], imm: 0, str: contract.name });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: n, args: [ins.args[0]], imm: 0, str: "data" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: n + 1, args: [ins.args[1]], imm: 0, str: "data" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: n + 2, args: [ins.args[0]], imm: 1, str: "shape" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: n + 3, args: [ins.args[1]], imm: 1, str: "shape" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: n + 4, args: [n + 2, n + 3], imm: 0, str: funcs[plan.join].graph.name });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: n + 5, args: [n + 4], imm: 0, str: funcs[plan.check].graph.name });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: n + 6, args: [n, n + 1], imm: 0, str: contract.name });
   insts = insts.append(ssa.SInst { ...ins, str: funcs[plan.ctor].graph.name, args: [n + 6, n + 4] });
   for c in [contract, helper_contract(funcs[plan.join]), helper_contract(funcs[plan.check]), helper_contract(funcs[plan.ctor])] {
     if (ssasem.find_contract_in(calls, c.name) < 0) {
@@ -414,10 +414,10 @@ function scale_instructions(ins: ssa.SInst, plan: Plan, funcs: ssasem.Func[], va
   let ctor = helper_contract(funcs[plan.ctor]);
   let n = values.len();
   values = values.append(contract.params[0]).append(shape_type()).append(contract.params[1]).append(contract.result);
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n, args: [ins.args[0]], imm: 0, str: "data" });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.record_get(), result: n + 1, args: [ins.args[0]], imm: 1, str: "shape" });
-  insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: n + 2, args: [], imm: 0, str: plan.factor.literal });
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: n + 3, args: [n, n + 2], imm: 0, str: contract.name });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: n, args: [ins.args[0]], imm: 0, str: "data" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: n + 1, args: [ins.args[0]], imm: 1, str: "shape" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: n + 2, args: [], imm: 0, str: plan.factor.literal });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: n + 3, args: [n, n + 2], imm: 0, str: contract.name });
   insts = insts.append(ssa.SInst { ...ins, str: ctor.name, args: [n + 3, n + 1] });
   for c in [contract, ctor] {
     if (ssasem.find_contract_in(calls, c.name) < 0) {

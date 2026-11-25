@@ -123,10 +123,10 @@ function copies(f: ssa.SFunc): ssa.SFunc {
       }
     }
     if (b.id == f.entry) {
-      insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [1], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: f.nvals, args: [1], imm: 0, str: "" });
     }
     if (term.kind_tag == ssa.TERM_RET) {
-      insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: f.nvals + 1, args: [term.value], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: f.nvals + 1, args: [term.value], imm: 0, str: "" });
       term = ssa.STerm { ...term, value: f.nvals + 1 };
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });

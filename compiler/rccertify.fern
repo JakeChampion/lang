@@ -4686,9 +4686,9 @@ function token_phis(b: ssa.SBlock, phis: i32[], box: i32, hold: boolean): ssa.SB
     if (ins.kind_tag == ssa.PHI && ins.result >= 0 && util.index_of_i32(phis, ins.result) >= 0) {
       any = true;
       if (hold) {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [box], imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [box], imm: 0, str: "" });
       } else {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: ins.result, args: [], imm: 0, str: "" });
       }
     } else {
       insts = insts.append(ins);
@@ -4722,7 +4722,7 @@ function box_ops_in(own ops: BoxOps, bi: i32, root: i32[], box: i32, unique: boo
       insts = insts.append(ssa.SInst { ...ins, imm: 2 });
     } else if (on_box && ins.str == "__fern_alloc_reuse" && ins.result >= 0) {
       any = true;
-      insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [box], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [box], imm: 0, str: "" });
       ops = BoxOps { ...ops, reused: ops.reused.with(ins.result, true) };
     } else {
       insts = insts.append(ins);
@@ -4865,7 +4865,7 @@ function without_dropped_preds(w: Walk, b: ssa.SBlock, dropped: i32[], reach: bo
         }
       }
       if (args.len() == 1 && ins.args.len() > 1 && args[0] >= 0) {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: args, imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: args, imm: 0, str: "" });
       } else {
         insts = insts.append(ssa.SInst { ...ins, args: args });
       }
