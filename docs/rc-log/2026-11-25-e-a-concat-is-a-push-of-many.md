@@ -17,7 +17,9 @@ tests the array against `v0` before the concat:
 The certifier gave an unmarked call no origin, so the result had no slot. A
 phi input from it handed 0 units. The marked result held a plain count after
 its test. The join met 0 with the twin of `v0` that the pushes gave, and the
-maybe went round the loop into each push after it. A value with no slot is
+maybe went round the loop into each push after it.
+
+A value with no slot is
 also a value that the certifier does not check.
 
 ## The change
@@ -54,8 +56,9 @@ main and with the change:
 | all functions | 706 | 677 |
 
 No function goes up, and no function has a finding. The certifier tracks 90
-more values (277,512 to 277,602): the results of unmarked concats. The row
-is re-banked in `.github/certify-baseline.txt`. `wasm32/checker.unproved`
+more values (277,512 to 277,602): the results of unmarked concats.
+
+The row is re-banked in `.github/certify-baseline.txt`. `wasm32/checker.unproved`
 stays at 84. The mutant census of `checker.fern` is the same with both
 certifiers: 5,378 refuted, 227 weakened, 228 missed.
 
