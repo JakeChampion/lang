@@ -860,6 +860,18 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
 	reversed := g.git("commit-tree", "-p", "module-2", "-p", "module-1", "-m", "swapped parents", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// A gitlink can name an annotated tag. Walk its target for ancestry,
+	// and keep the original tag object in the fast-forwarded tree.
+	// A tag pointing to a tree reports the peeled object's type.
+	for _, target := range []string{links[2], links[2] + "^{tree}"} {
+		g.git("-C", "module", "tag", "-f", "-a", "-m", "target", "target", target)
+		tag := g.git("-C", "module", "rev-parse", "target")
+		g.git("update-index", "--add", "--cacheinfo", "160000,"+tag+",module")
+		tagTree := g.git("write-tree")
+		tagSide := g.git("commit-tree", "-p", "module-base", "-m", "tagged gitlink", tagTree)
+		tagMerge := g.git("commit-tree", "-p", "module-1", "-p", tagSide, "-m", "take untagged side", tree)
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", tagMerge)
+	}
 	// From s1, one parent rewinds to s0 and the other advances to s2.
 	rewind := g.git("commit-tree", "-p", "module-1", "-m", "rewind", s0Tree)
 	advance := g.git("commit-tree", "-p", "module-1", "-m", "advance", rightTree)

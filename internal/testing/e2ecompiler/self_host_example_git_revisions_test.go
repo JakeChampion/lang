@@ -172,6 +172,11 @@ func TestSelfHostExampleGitRevisions(t *testing.T) {
 			for _, c := range conflictCases {
 				compare(conflict, c)
 			}
+			if _, stderr, code := oracle.run(t, repo, "", "-c", "user.name=A", "-c", "user.email=a@example.com", "tag", "-a", "tree-tag", "-m", "a tree", "HEAD^{tree}"); code != 0 {
+				t.Fatal(stderr)
+			}
+			compare(repo, "rev-parse --verify tree-tag^0")
+			compare(repo, "rev-parse --verify tree-tag~1")
 		})
 	}
 }
