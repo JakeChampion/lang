@@ -10347,6 +10347,18 @@ function step_none(env: Env): StepResult {
   return StepResult { env: env, ret: VErr { msg: "", abort: false }, sig: 0 };
 }
 
+// An expression statement stops its block only on an error.
+function step_after(own r: ExprResult): StepResult {
+  if (is_err(r.value)) {
+    return step_stop(r.env, r.value);
+  }
+  return step_none(r.env);
+}
+
+function step_stop_at(own r: ExprResult): StepResult {
+  return step_stop(r.env, r.value);
+}
+
 function step_stop(env: Env, v: Value): StepResult {
   if let VControl(control) = v {
     return StepResult { env: env, ret: control.box, sig: control.sig };
@@ -10713,32 +10725,35 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   return step_none(cur);
 }
 
+// A `let` binds the value of its initializer, or stops on its error.
+function bind_var(v: ast.StmtVar, own init: ExprResult): StepResult {
+  let env = init.env;
+  let val = init.value;
+  if (is_err(val)) {
+    return step_stop(env, val);
+  }
+  if (ast.var_binds_itself(v)) {
+    if let VFunc(f) = val {
+      val = VFunc { ...f, self_name: v.name };
+    }
+  }
+  if (ast.destructures(v)) {
+    return destructure_step(env, v, val);
+  }
+  let declared = v.type_name;
+  if (declared.len() == 0) {
+    declared = env.static_type_of(v.init);
+  }
+  return step_none(env.bind_decl(v.name, val, declared));
+}
+
 pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
   match (st) {
     ast.StmtDefer(d) => {
       return eval_stmt(d.action, env);
     },
     ast.StmtVar(v) => {
-      let val_r = eval_var_init(v, env);
-      env = val_r.env;
-      let val = val_r.value;
-      if (is_err(val)) {
-        return step_stop(env, val);
-      }
-      if (ast.var_binds_itself(v)) {
-        if let VFunc(f) = val {
-          val = VFunc { ...f, self_name: v.name };
-        }
-      }
-      if (ast.destructures(v)) {
-        return destructure_step(env, v, val);
-      }
-      let declared = v.type_name;
-      if (declared.len() == 0) {
-        declared = env.static_type_of(v.init);
-      }
-      let env2 = env.bind_decl(v.name, val, declared);
-      return step_none(env2);
+      return bind_var(v, eval_var_init(v, env));
     },
     ast.StmtReturn(r) => {
       if (parser.bare_return(r.value)) {
@@ -10746,22 +10761,12 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       }
       if let ast.ExprCall(rc) = r.value {
         let expect = bound_type_spelling(env.ret, env);
-        let val_r = eval_expr_call_expect(rc, env, expect);
-        return step_stop(val_r.env, val_r.value);
+        return step_stop_at(eval_expr_call_expect(rc, env, expect));
       }
-      let val_r = eval_expr(r.value, env);
-      env = val_r.env;
-      let val = val_r.value;
-      return step_stop(env, val);
+      return step_stop_at(eval_expr(r.value, env));
     },
     ast.StmtExpr(x) => {
-      let val_r = eval_expr(x.value, env);
-      env = val_r.env;
-      let val = val_r.value;
-      if (is_err(val)) {
-        return step_stop(env, val);
-      }
-      return step_none(env);
+      return step_after(eval_expr(x.value, env));
     },
     ast.StmtIf(ifs) => {
       let cv_r = eval_expr(ifs.cond, env);
