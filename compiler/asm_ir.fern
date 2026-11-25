@@ -13615,14 +13615,37 @@ function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
   s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    movq %rdx, __fern_heap_end(%rip)\n");
   s = s.write("    pushq %rcx\n    pushq %rdi\n");
+  s = zero_freelist(s);
   s = s.write("    xorl %eax, %eax\n");
-  s = s.write("    leaq __fern_freelist(%rip), %rdi\n");
-  s = s.write("    movl $65536, %ecx\n    rep stosq\n");
   s = s.write("    leaq __fern_large_freelist(%rip), %rdi\n");
   s = s.write("    movl $2560, %ecx\n    rep stosq\n");
   s = s.write("    popq %rdi\n    popq %rcx\n");
   s = s.write("    pushq %rax\n");
   return s;
+}
+
+// Zeroes __fern_freelist, 512 KiB. A worker zeroes it after its fork, when
+// most of its pages are not mapped. MADV_DONTNEED gives back the whole pages
+// in it, so they read as zero and take no page fault. The stores zero the
+// bytes before and after those pages, and all of them where the call fails
+// or the target has no kernel.
+function zero_freelist(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.runtime_target.ends_with("-freestanding")) {
+    return s.write("    xorl %eax, %eax\n    leaq __fern_freelist(%rip), %rdi\n    movl $65536, %ecx\n    rep stosq\n");
+  }
+  let kept = asmcore.fresh_label(s);
+  s = kept.state;
+  s = s.write("    pushq %rsi\n    pushq %rdx\n    pushq %r11\n    pushq %r8\n");
+  s = s.write("    xorl %eax, %eax\n    leaq __fern_freelist(%rip), %rdi\n");
+  s = s.write("    leaq 4095(%rdi), %r8\n    andq $-4096, %r8\n    movq %r8, %rcx\n    subq %rdi, %rcx\n    shrq $3, %rcx\n    rep stosq\n");
+  s = s.write("    leaq __fern_freelist(%rip), %rsi\n    addq $524288, %rsi\n    andq $-4096, %rsi\n    movq %rsi, %r8\n    subq %rdi, %rsi\n");
+  s = s.write("    movl $4, %edx\n    movl $28, %eax\n");
+  s = s.syscall(28);
+  s = s.write("    testq %rax, %rax\n    jz " + kept.name + "\n");
+  s = s.write("    movq %r8, %rcx\n    subq %rdi, %rcx\n    shrq $3, %rcx\n    xorl %eax, %eax\n    rep stosq\n");
+  s = s.write(kept.name + ":\n");
+  s = s.write("    movq %r8, %rdi\n    leaq __fern_freelist(%rip), %rcx\n    addq $524288, %rcx\n    subq %rdi, %rcx\n    shrq $3, %rcx\n    xorl %eax, %eax\n    rep stosq\n");
+  return s.write("    popq %r8\n    popq %r11\n    popq %rdx\n    popq %rsi\n");
 }
 
 // The leak-check counters a worker region carries, at words 1 to 4 of its
