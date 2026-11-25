@@ -6861,10 +6861,42 @@ function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
   s = s.write(keep.name + ":\n");
   s = s.write("    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    str x0, [x2]\n");
   s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    str x1, [x2]\n");
-  s = arm64_zero_words(s, "__fern_freelist", 65536);
+  s = arm64_zero_freelist(s);
   s = arm64_zero_words(s, "__fern_large_freelist", 2560);
   s = s.write("    str xzr, [sp, #-16]!\n");
   return s;
+}
+
+// Zeroes __fern_freelist, 512 KiB. On Linux, MADV_DONTNEED gives back the
+// 64 KiB parts in it, whole pages for a page of 4, 16 or 64 KiB, and they
+// read as zero with no page fault. The stores zero the bytes before and
+// after those parts, and all of them where the call fails, on macOS, and on
+// a target with no kernel.
+function arm64_zero_freelist(s: asmcore.EmitState): asmcore.EmitState {
+  if (s.runtime_target == "arm64-darwin" || s.runtime_target.ends_with("-freestanding")) {
+    return arm64_zero_words(s, "__fern_freelist", 65536);
+  }
+  s = s.write("    adrp x10, __fern_freelist\n    add x10, x10, :lo12:__fern_freelist\n");
+  s = s.write("    mov x13, #524288\n    add x15, x10, x13\n");
+  s = s.write("    mov x13, #65535\n    add x12, x10, x13\n    lsr x12, x12, #16\n    lsl x12, x12, #16\n");
+  s = s.write("    lsr x14, x15, #16\n    lsl x14, x14, #16\n");
+  s = arm64_zero_span(s, "x12");
+  s = s.write("    mov x0, x12\n    sub x1, x14, x12\n    mov x2, #4\n    mov x8, #233\n").svc(233);
+  let kept = asmcore.fresh_label(s);
+  s = kept.state;
+  s = s.write("    cbz x0, " + kept.name + "\n");
+  s = arm64_zero_span(s, "x14");
+  s = s.write(kept.name + ":\n    mov x10, x14\n");
+  return arm64_zero_span(s, "x15");
+}
+
+// Zeroes the words from x10 up to the register `end`, and leaves x10 at it.
+function arm64_zero_span(s: asmcore.EmitState, end: string): asmcore.EmitState {
+  let top = asmcore.fresh_label(s);
+  let out = asmcore.fresh_label(top.state);
+  s = out.state;
+  s = s.write(top.name + ":\n    cmp x10, " + end + "\n    b.hs " + out.name + "\n    str xzr, [x10], #8\n    b " + top.name + "\n");
+  return s.write(out.name + ":\n");
 }
 
 // The leak-check counters a worker region carries, at words 1 to 4 of its
