@@ -35691,6 +35691,9 @@ function names_whole_type(t: typeinfo.Type, s: Scope): boolean {
     typeinfo.TypeStruct(sd) => {
       return all_names_whole(sd.args, s);
     },
+    typeinfo.TypeUnbound(_) => {
+      return false;
+    },
     _ => {
       return true;
     }
@@ -36682,7 +36685,12 @@ function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
       match (c.callee) {
         ast.ExprLambda(lm) => {
           let body = struct_record_value_body(lm, s);
-          let inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: pretype_stmts(body, lambda_body_scope(lm, s)) } };
+          let bs = lambda_body_scope(lm, s);
+          let whole = check_expr(x, s);
+          if (names_whole_type(whole, s)) {
+            bs = bs.with_block_ret(whole);
+          }
+          let inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: pretype_stmts(body, bs) } };
           return (vb_retype(inner, s), s, true);
         },
         _ => {
