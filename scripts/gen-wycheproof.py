@@ -3,7 +3,7 @@
 # testvectors_v1 JSON files of https://github.com/C2SP/wycheproof. Each suite
 # runs every vector of one primitive through the std/crypto entry and checks
 # the verdict against the file. Run it with the directory that holds the JSON
-# files; it rewrites the five tests/stdlib/wycheproof_*_test.fern files.
+# files; it writes the tests/stdlib/wycheproof_*_test.fern files.
 import json
 import os
 import sys
@@ -47,7 +47,7 @@ def suite(name, src, data, imports, helpers, groups, title):
     for gi, (label, body) in enumerate(groups):
         fn = "test_group_" + str(gi + 1)
         lines.append("function " + fn + "(): test.TestOutcome {")
-        lines.append("  let r: string = \"\";")
+        lines.append("  let r = \"\";")
         for stmt in body:
             lines.append("  r = " + stmt + ";")
             lines.append("  if (r != \"\") {")
@@ -58,7 +58,7 @@ def suite(name, src, data, imports, helpers, groups, title):
         lines.append("")
         its.append((label, fn))
     lines.append("function main(): i32 {")
-    lines.append("  let r: test.TestRunner = test.new(" + fern_str(title) + ");")
+    lines.append("  let r = test.new(" + fern_str(title) + ");")
     for label, fn in its:
         lines.append("  r = r.it(" + fern_str(label) + ", " + fn + ");")
     lines.append("  return r.finish();")
@@ -73,7 +73,7 @@ AEAD_HELPERS = """
 // One vector. A key, nonce or tag size the module does not take must be
 // refused, so a valid vector of such a size passes only through an error.
 function check(key: string, iv: string, aad: string, msg: string, sealed: string, want: i32, supported: boolean, id: i32): string {
-  let tc: string = "tc " + id.to_string() + ": ";
+  let tc = "tc " + id.to_string() + ": ";
   let Ok(k) = MODULE.key(bytes(key)) else {
     if (supported) {
       return tc + "key refused";
@@ -103,10 +103,10 @@ function check(key: string, iv: string, aad: string, msg: string, sealed: string
 """
 
 
-def aead(name, src, data, module, key_sizes, title):
+def aead(name, src, data, module, key_sizes, title, iv_bits=96, open_method="open"):
     groups = []
     for g in data["testGroups"]:
-        supported = g["keySize"] in key_sizes and g["ivSize"] == 96 and g["tagSize"] == 128
+        supported = g["keySize"] in key_sizes and g["ivSize"] == iv_bits and g["tagSize"] == 128
         body = []
         for t in g["tests"]:
             body.append("check(%s, %s, %s, %s, %s, %d, %s, %d)" % (
@@ -117,14 +117,14 @@ def aead(name, src, data, module, key_sizes, title):
             label += " (refused)"
         groups.append((label, body))
     suite(name, src, data, ["std/test", "std/hex", "std/codec", "std/i32", "std/crypto/aead", "std/crypto/" + module],
-          AEAD_HELPERS.replace("MODULE", module), groups, title)
+          AEAD_HELPERS.replace("MODULE", module).replace("k.open(", "k." + open_method + "("), groups, title)
 
 
 X25519_HELPERS = """
 // One vector. The module refuses a low-order public key, which Wycheproof
 // marks acceptable with an all-zero shared secret.
 function check(priv: string, pk: string, shared: string, want: i32, id: i32): string {
-  let tc: string = "tc " + id.to_string() + ": ";
+  let tc = "tc " + id.to_string() + ": ";
   match (x25519.x25519(bytes(priv), bytes(pk))) {
     Ok(s) => {
       if (hex.encode(s) != shared) {
@@ -155,14 +155,14 @@ def xdh(name, src, data, title):
 ED25519_HELPERS = """
 // One vector. An acceptable vector runs for its verdict alone.
 function check(pk: string, msg: string, sig: string, want: i32, id: i32): string {
-  let tc: string = "tc " + id.to_string() + ": ";
+  let tc = "tc " + id.to_string() + ": ";
   let Ok(k) = ed25519.public_key(bytes(pk)) else {
     if (want == 1) {
       return tc + "public key refused";
     }
     return "";
   };
-  let ok: boolean = k.verify(bytes(msg), bytes(sig));
+  let ok = k.verify(bytes(msg), bytes(sig));
   if (want == 1 && !ok) {
     return tc + "valid signature refused";
   }
@@ -186,11 +186,11 @@ def eddsa(name, src, data, title):
 ECDSA_HELPERS = """
 // One vector. The signature is DER, and the module reads strict DER alone.
 function check(pk: string, msg: string, sig: string, want: i32, id: i32): string {
-  let tc: string = "tc " + id.to_string() + ": ";
+  let tc = "tc " + id.to_string() + ": ";
   let Ok(k) = ecdsa.public_key(ecdsa.P256, bytes(pk)) else {
     return tc + "public key refused";
   };
-  let ok: boolean = k.verify(sha2.Sha256, bytes(msg), bytes(sig));
+  let ok = k.verify(sha2.Sha256, bytes(msg), bytes(sig));
   if (want == 1 && !ok) {
     return tc + "valid signature refused";
   }
@@ -202,14 +202,162 @@ function check(pk: string, msg: string, sig: string, want: i32, id: i32): string
 """
 
 
-def ecdsa(name, src, data, title):
+def ecdsa(name, src, data, title, curve="P256", digest="Sha256"):
     groups = []
     for g in data["testGroups"]:
-        assert g["sha"] == "SHA-256" and g["publicKey"]["curve"] == "secp256r1", g["sha"]
+        assert g["sha"] == "SHA-" + digest[3:] and g["publicKey"]["curve"] == "secp" + curve[1:] + "r1"
         pk = g["publicKey"]["uncompressed"]
         body = ["check(%s, %s, %s, %d, %d)" % (fern_str(pk), fern_str(t["msg"]), fern_str(t["sig"]), want(t["result"]), t["tcId"]) for t in g["tests"]]
         groups.append(("key %s" % pk[2:18], body))
-    suite(name, src, data, ["std/test", "std/hex", "std/codec", "std/i32", "std/crypto/ecdsa", "std/crypto/sha2"], ECDSA_HELPERS, groups, title)
+    suite(name, src, data, ["std/test", "std/hex", "std/codec", "std/i32", "std/crypto/ecdsa", "std/crypto/sha2"], ECDSA_HELPERS.replace("ecdsa.P256", "ecdsa." + curve).replace("sha2.Sha256", "sha2." + digest), groups, title)
+
+
+# The integer keys in JSON are unsigned values, sometimes padded with a
+# leading zero for DER. Fern takes the minimal modulus and a 32-byte EC scalar.
+def unsigned(value):
+    digits = value.lstrip("0") or "0"
+    return digits.zfill(len(digits) + len(digits) % 2)
+
+
+def vector_groups(data, make_call):
+    groups = []
+    for g in data["testGroups"]:
+        tests = g["tests"]
+        for start in range(0, len(tests), 32):
+            part = tests[start:start + 32]
+            label = "vectors %d to %d" % (part[0]["tcId"], part[-1]["tcId"])
+            groups.append((label, [make_call(g, t) for t in part]))
+    return groups
+
+
+def vector_call(t, *args):
+    fields = [fern_str(arg) if isinstance(arg, str) else str(arg) for arg in args]
+    return "check(" + ", ".join(fields + [str(want(t["result"])), str(t["tcId"])]) + ")"
+
+
+def rsa_suite(data, scheme):
+    private = scheme == "oaep"
+    helpers = []
+    groups = []
+    for i, g in enumerate(data["testGroups"]):
+        key = g["privateKey" if private else "publicKey"]
+        fields = ["modulus", "publicExponent"]
+        if private:
+            fields += ["privateExponent", "prime1", "prime2", "coefficient"]
+        args = ", ".join('bytes("%s")' % unsigned(key[k]) for k in fields)
+        init = "rsa.%s_key(%s)" % ("private" if private else "public", args)
+        if private:
+            helper = """function check_ID(ct: string, label: string, msg: string, want: i32, id: i32): string {
+  let Ok(k) = INIT else { return "private key refused"; };
+  match (k.decrypt_oaep(sha2.Sha256, bytes(ct), bytes(label))) {
+    Ok(plain) => { if (want == 0 || hex.encode(plain) != msg) { return "OAEP tc " + id.to_string(); } },
+    Err(_) => { if (want == 1) { return "OAEP tc " + id.to_string(); } }
+  }
+  return "";
+}"""
+        else:
+            helper = """function check_ID(msg: string, sig: string, want: i32, id: i32): string {
+  let Ok(k) = INIT else { return "public key refused"; };
+  let ok = k.VERIFY(sha2.Sha256, bytes(msg), bytes(sig));
+  if ((want == 0 && ok) || (want == 1 && !ok)) { return "signature tc " + id.to_string(); }
+  return "";
+}""".replace("VERIFY", "verify_pss" if scheme == "pss" else "verify_pkcs1v15")
+        helpers.append(helper.replace("INIT", init).replace("check_ID", "check_" + str(i)))
+        def call(_, t):
+            names = ["ct", "label", "msg"] if private else ["msg", "sig"]
+            return vector_call(t, *(t[n] for n in names)).replace("check(", "check_%d(" % i)
+        groups.extend(vector_groups({"testGroups": [g]}, call))
+    return "\n\n".join(helpers), groups
+
+
+def extended_suites(d):
+    # Source revision for these suites: C2SP/wycheproof 65ca494727a52944c204441c860b039e6786b99b.
+    def emit(name, file, imports, helpers, call):
+        data = load(d, file)
+        suite("wycheproof_" + name + "_test.fern", "testvectors_v1/" + file, data,
+              ["std/test", "std/hex", "std/codec", "std/i32"] + imports,
+              helpers, vector_groups(data, call), "wycheproof " + name)
+    for curve, digest in [("P256", "Sha512"), ("P384", "Sha384")]:
+        file = "ecdsa_secp%sr1_%s_test.json" % (curve[1:], digest.lower())
+        name = "ecdsa_" + curve.lower() + "_" + digest.lower()
+        ecdsa("wycheproof_" + name + "_test.fern", "testvectors_v1/" + file, load(d, file),
+              "wycheproof " + name, curve, digest)
+    file = "xchacha20_poly1305_test.json"
+    aead("wycheproof_xchacha20poly1305_test.fern", "testvectors_v1/" + file, load(d, file),
+         "chacha20poly1305", (256,), "wycheproof xchacha20-poly1305", 192, "open_xchacha")
+    emit("hkdf_sha256", "hkdf_sha256_test.json", ["std/crypto"], """
+function check(ikm: string, salt: string, info: string, size: i32, okm: string, want: i32, id: i32): string {
+  match (crypto.hkdf_sha256(bytes(salt), bytes(ikm), bytes(info), size)) {
+    Ok(out) => { if (want == 0 || hex.encode(out) != okm) { return "HKDF tc " + id.to_string(); } },
+    Err(_) => { if (want == 1) { return "HKDF tc " + id.to_string(); } }
+  }
+  return "";
+}""", lambda g, t: vector_call(t, t["ikm"], t["salt"], t["info"], t["size"], t["okm"]))
+    emit("hmac_sha256", "hmac_sha256_test.json", ["std/crypto"], """
+function check(key: string, msg: string, tag: string, size: i32, want: i32, id: i32): string {
+  let mac = crypto.hmac_sha256(bytes(key), bytes(msg));
+  let ok = hex.encode(mac[0:size]) == tag;
+  if (size == 32 && ok != crypto.hmac_sha256_verify(bytes(key), bytes(msg), bytes(tag))) { return "verify tc " + id.to_string(); }
+  if ((want == 0 && ok) || (want == 1 && !ok)) { return "HMAC tc " + id.to_string(); }
+  return "";
+}""", lambda g, t: vector_call(t, t["key"], t["msg"], t["tag"], g["tagSize"] // 8))
+    emit("ecdh_p256", "ecdh_secp256r1_ecpoint_test.json", ["std/crypto/ecdsa"], """
+function check(priv: string, point: string, shared: string, want: i32, id: i32): string {
+  let Ok(k) = ecdsa.private_key(ecdsa.P256, bytes(priv)) else { return "private key tc " + id.to_string(); };
+  match (k.ecdh(bytes(point))) {
+    Ok(secret) => { if (want == 0 || hex.encode(secret) != shared) { return "ECDH tc " + id.to_string(); } },
+    Err(_) => { if (want == 1) { return "ECDH tc " + id.to_string(); } }
+  }
+  return "";
+}""", lambda g, t: vector_call(t, unsigned(t["private"]).zfill(64), t["public"], t["shared"]))
+    emit("mlkem768", "mlkem_768_test.json", ["std/crypto/mlkem768"], """
+function check(seed: string, ek: string, ct: string, secret: string, want: i32, id: i32): string {
+  let value = bytes(seed);
+  let cut = value.len().min(32);
+  let Ok(k) = mlkem768.keygen_derand(value[0:cut], value[cut:]) else {
+    if (want == 1) { return "keygen tc " + id.to_string(); }
+    return "";
+  };
+  if (ek != "" && hex.encode(k.encapsulation_key) != ek) { return "public key tc " + id.to_string(); }
+  match (mlkem768.decaps(k.decapsulation_key, bytes(ct))) {
+    Ok(out) => { if (want == 0 || hex.encode(out) != secret) { return "decaps tc " + id.to_string(); } },
+    Err(_) => { if (want == 1) { return "decaps tc " + id.to_string(); } }
+  }
+  return "";
+}""", lambda g, t: vector_call(t, t["seed"], t.get("ek", ""), t["c"], t["K"]))
+    emit("mlkem768_encaps", "mlkem_768_encaps_test.json", ["std/crypto/mlkem768"], """
+function check(ek: string, randomness: string, ct: string, secret: string, want: i32, id: i32): string {
+  match (mlkem768.encaps_derand(bytes(ek), bytes(randomness))) {
+    Ok(out) => {
+      if (want == 0 || hex.encode(out.ciphertext) != ct || hex.encode(out.shared_secret) != secret) {
+        return "encaps tc " + id.to_string();
+      }
+    },
+    Err(_) => { if (want == 1) { return "encaps tc " + id.to_string(); } }
+  }
+  return "";
+}""", lambda g, t: vector_call(t, t["ek"], t["m"], t["c"], t["K"]))
+    emit("mlkem768_keygen", "mlkem_768_keygen_seed_test.json", ["std/crypto/mlkem768"], """
+function check(seed: string, ek: string, dk: string, want: i32, id: i32): string {
+  let value = bytes(seed);
+  let cut = value.len().min(32);
+  match (mlkem768.keygen_derand(value[0:cut], value[cut:])) {
+    Ok(k) => {
+      if (want == 0 || hex.encode(k.encapsulation_key) != ek || hex.encode(k.decapsulation_key) != dk) {
+        return "keygen tc " + id.to_string();
+      }
+    },
+    Err(_) => { if (want == 1) { return "keygen tc " + id.to_string(); } }
+  }
+  return "";
+}""", lambda g, t: vector_call(t, t["seed"], t["ek"], t["dk"]))
+    for scheme, file in [("pkcs1v15", "rsa_signature_2048_sha256_test.json"), ("pss", "rsa_pss_2048_sha256_mgf1_32_test.json"),
+                         ("oaep", "rsa_oaep_2048_sha256_mgf1sha256_test.json")]:
+        data = load(d, file)
+        helpers, groups = rsa_suite(data, scheme)
+        suite("wycheproof_rsa_" + scheme + "_test.fern", "testvectors_v1/" + file, data,
+              ["std/test", "std/hex", "std/codec", "std/i32", "std/crypto/rsa", "std/crypto/sha2"],
+              helpers, groups, "wycheproof RSA " + scheme)
 
 
 def load(d, f):
@@ -222,6 +370,7 @@ def main():
         print("usage: gen-wycheproof.py DIR-WITH-TESTVECTORS-V1-JSON", file=sys.stderr)
         sys.exit(2)
     d = sys.argv[1]
+    extended_suites(d)
     aead("wycheproof_aes_gcm_test.fern", "testvectors_v1/aes_gcm_test.json", load(d, "aes_gcm_test.json"), "aes_gcm", (128, 256), "wycheproof aes-gcm")
     aead("wycheproof_chacha20poly1305_test.fern", "testvectors_v1/chacha20_poly1305_test.json", load(d, "chacha20_poly1305_test.json"), "chacha20poly1305", (256,), "wycheproof chacha20-poly1305")
     xdh("wycheproof_x25519_test.fern", "testvectors_v1/x25519_test.json", load(d, "x25519_test.json"), "wycheproof x25519")
