@@ -1,4 +1,6 @@
 import "./ssa";
+import "./ssabounds";
+import "./ssabytes";
 import "./ssadeps";
 import "./ssasem";
 import "./semtypes";
@@ -74,6 +76,10 @@ function lent_reads(f: ssasem.Func): Lent {
         insts = insts.append(ins);
       } else if (lent_read(f, ins) && ins.args[0] < owner.len() && owner[ins.args[0]] >= 0) {
         insts = insts.append(ssa.SInst { ...ins, args: ins.args.with(0, owner[ins.args[0]]) });
+      } else if (lent_word(f, ins, owner)) {
+        let w = owned_word(insts, values, ins, owner[ins.args[0]]);
+        insts = w.insts;
+        values = w.values;
       } else {
         insts = insts.append(ins);
         if (ins.kind_tag == ssasem.array_lend() && ins.result >= 0 && ins.result < len_of.len() && len_of[ins.result] >= 0) {
@@ -85,10 +91,43 @@ function lent_reads(f: ssasem.Func): Lent {
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
+  while (of.len() < values.len()) {
+    of = of.append(of.len());
+  }
   if (n == 0) {
     return Lent { f: f, of: of, merged: 0 };
   }
   return Lent { f: ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } }, of: of, merged: n };
+}
+
+// A word read of a lend of an array reads the array: the address of its
+// first element plus the index, with no test of the kind of the view.
+function lent_word(f: ssasem.Func, ins: ssa.SInst, owner: i32[]): boolean {
+  return ins.kind_tag == ssasem.call() && ssabytes.word_bytes(ins.str) > 0 && !util.has_str(f.shadows, ins.str) && ins.args.len() == 2
+    && ins.args[0] >= 0 && ins.args[0] < owner.len() && owner[ins.args[0]] >= 0 && has_call(f, "__raw_arr_ptr") && has_call(f, ssabounds.word_loader(ssabytes.word_bytes(ins.str)));
+}
+
+function has_call(f: ssasem.Func, name: string): boolean {
+  for c in f.calls {
+    if (c.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+struct Word { insts: ssa.SInst[], values: typeinfo.Type[] }
+
+function owned_word(own insts: ssa.SInst[], own values: typeinfo.Type[], ins: ssa.SInst, arr: i32): Word {
+  let v = values.len();
+  let addr = typeinfo.t_usize();
+  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [arr], imm: 0, str: "__raw_arr_ptr" });
+  insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: v + 1, args: [], imm: 8, str: "" });
+  insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 2, args: [v, v + 1], imm: 0, str: "+" });
+  insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: v + 3, args: [ins.args[1]], imm: 0, str: "" });
+  insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: v + 4, args: [v + 2, v + 3], imm: 0, str: "+" });
+  insts = insts.append(ssa.SInst { ...ins, args: [v + 4], str: ssabounds.word_loader(ssabytes.word_bytes(ins.str)) });
+  return Word { insts: insts, values: values.append(addr).append(addr).append(addr).append(addr).append(addr) };
 }
 
 function lent_length(f: ssasem.Func, ins: ssa.SInst, owner: i32[]): boolean {

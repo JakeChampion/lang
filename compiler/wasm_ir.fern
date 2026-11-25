@@ -5186,6 +5186,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     }
   } else if (o.kind_tag == ir.K_OPT_PAYLOAD) {
     parts = parts.append("    i32.const 4\n    i32.add\n    i32.load\n");
+  } else if (o.kind_tag == ir.K_OPT_SET_PAYLOAD && o.width == 64) {
+    if (o.unsigned) {
+      parts = parts.append("    local.set " + util.i32_to_string(i64tmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(i64tmp) + "\n    i64.store\n");
+    } else {
+      parts = parts.append("    local.set " + util.i32_to_string(f64tmp) + "\n    i32.const 8\n    i32.add\n    local.get " + util.i32_to_string(f64tmp) + "\n    f64.store\n");
+    }
   } else if (o.kind_tag == ir.K_OPT_SET_PAYLOAD) {
     parts = parts.append("    local.set " + util.i32_to_string(eltmp) + "\n    i32.const 4\n    i32.add\n    local.get " + util.i32_to_string(eltmp) + "\n    i32.store\n");
   } else if (is_host_op_kind(o.kind_tag)) {

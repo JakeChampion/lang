@@ -20,7 +20,20 @@ pub function word_name(bytes: i32): string {
   if (bytes == 8) {
     return "__sem_byte_view_word8";
   }
+  if (bytes == 2) {
+    return "__sem_byte_view_word2";
+  }
   return "__sem_byte_view_word4";
+}
+
+// The bytes of the word that the view read `name` loads, or 0.
+pub function word_bytes(name: string): i32 {
+  for bytes in [2, 4, 8] {
+    if (name == word_name(bytes)) {
+      return bytes;
+    }
+  }
+  return 0;
 }
 
 pub function swap_name(bytes: i32): string {
@@ -58,7 +71,7 @@ function element_name(): string {
 
 function read_value(op: ir.Op, call_direct: i32): i32 {
   if (op.kind_tag == call_direct && op.i64_imm > 0
-    && (op.str == length_name() || op.str == data_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == check_name() || op.str == word_name(4) || op.str == word_name(8))) {
+    && (op.str == length_name() || op.str == data_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == check_name() || word_bytes(op.str) > 0)) {
     return (op.i64_imm - 1) as i32;
   }
   if (op.kind_tag != call_direct && op.str == element_name()) {
@@ -108,6 +121,9 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
   }
   if (op.str == check_name()) {
     return ops.append(ir.op_const_i32(0));
+  }
+  if (op.str == word_name(2)) {
+    return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_addr(), ir.op_load_u16()]);
   }
   if (op.str == word_name(4)) {
     return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_addr(), ir.op_load_i32()]);

@@ -1,0 +1,123 @@
+import "std/crypto/stream";
+import "std/test";
+import "std/hex";
+import "std/result";
+
+// Independent vector from HKDF-SHA256 and libsodium's XChaCha20-Poly1305.
+function vector(): test.TestOutcome {
+  let key = __alloc_u8(32);
+  let data = hex.decode("000102030405060708090a0b0c0d0e0f01f64fc92a840562ec2b07ebf417d9a0eb9e9216").unwrap_or([]);
+  let Ok(plain) = stream.open_all(key, data) else {
+    return test.fail("vector refused");
+  };
+  return test.assert_eq_array(plain, [1u8, 2u8, 3u8]);
+}
+
+function boundaries(): test.TestOutcome {
+  let key = __alloc_u8(32);
+  for n in [0, 1, 65536, 65537] {
+    let data = __alloc_u8(n);
+    if (n > 0) {
+      data = data.with(n - 1, 9u8);
+    }
+    let Ok(sealed) = stream.seal_all(key, data) else {
+      return test.fail("seal");
+    };
+    let Ok(opened) = stream.open_all(key, sealed) else {
+      return test.fail("open");
+    };
+    if (opened != data) {
+      return test.fail("plaintext");
+    }
+  }
+  return test.pass();
+}
+
+function refused(key: [u8], data: [u8]): boolean {
+  return match (stream.open_all(key, data)) { Ok(_) => false, Err(_) => true };
+}
+
+function damaged(): test.TestOutcome {
+  let key = __alloc_u8(32);
+  let block = __alloc_u8(stream.CHUNK_BYTES);
+  let Ok((prefix, w)) = stream.writer(key) else {
+    return test.fail("writer");
+  };
+  let Ok((a, w1)) = w.write_chunk(block, false) else {
+    return test.fail("first");
+  };
+  let Ok((b, w2)) = w1.write_chunk(block, false) else {
+    return test.fail("second");
+  };
+  let Ok((last, done)) = w2.write_chunk([], true) else {
+    return test.fail("last");
+  };
+  if let Ok(_) = done.write_chunk([], true) {
+    return test.fail("write past EOF");
+  }
+  let start = prefix.concat(a);
+  let body = start.concat(b);
+  if (!refused(key, body) || !refused(key, body.concat([1u8]))) {
+    return test.fail("truncation");
+  }
+  if (!refused(key, prefix.concat(b).concat(a).concat(last))) {
+    return test.fail("reorder");
+  }
+  if (!refused(key, start.concat(a).concat(last))) {
+    return test.fail("duplicate");
+  }
+  if (!refused(key, body.concat(last).concat([0u8]))) {
+    return test.fail("trailing byte");
+  }
+  if (!refused(key, body.concat(last.with(0, 0u8)))) {
+    return test.fail("flag");
+  }
+  let Ok(r) = stream.reader(key, prefix) else {
+    return test.fail("reader");
+  };
+  if let Ok(_) = r.finish() {
+    return test.fail("missing last frame");
+  }
+  return test.pass();
+}
+
+// The test wrapper adds one marker byte. Changing the marker leaves the
+// unwrapped key unchanged and exercises authentication of the envelope header.
+function wrap(key: [u8]): Result[u8[], stream.StreamError] {
+  return Ok(__bytes_into(__alloc_u8(33), 1, key, 0, 32));
+}
+
+function unwrap(bytes: [u8]): Result[u8[], stream.StreamError] {
+  if (bytes.len() != 33) {
+    return Err(stream.Wrap);
+  }
+  return Ok(__bytes_owned(bytes[1:]));
+}
+
+function envelope(): test.TestOutcome {
+  let Ok(data) = stream.seal_envelope([7u8], wrap) else {
+    return test.fail("wrap");
+  };
+  let Ok(plain) = stream.open_envelope(data, unwrap) else {
+    return test.fail("unwrap");
+  };
+  if let Ok(_) = stream.open_envelope(data.with(5, 1u8), unwrap) {
+    return test.fail("header");
+  }
+  if let Ok(_) = stream.open_envelope(data.with(0, 2u8), unwrap) {
+    return test.fail("version");
+  }
+  if let Ok(_) = stream.open_envelope(data.with(1, 255u8), unwrap) {
+    return test.fail("length");
+  }
+  return test.assert_eq_array(plain, [7u8]);
+}
+
+function main(): i32 {
+  let t = test.new("std/crypto/stream");
+  t = t.it("independent XChaCha20-Poly1305 frame", vector);
+  t = t.it("empty, partial, full and split final chunks", boundaries);
+  t = t.it("chunk order, authentication and stream termination", damaged);
+  t = t.it("wrapped keys and authenticated envelope metadata", envelope);
+  return t.finish();
+}

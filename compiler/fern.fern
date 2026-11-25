@@ -15,6 +15,7 @@ import "./interp";
 import "./printer";
 import "./watbin";
 import "./wit_compose";
+import "./wit_decode";
 import "./constfold";
 import "./embed";
 import "./platforms";
@@ -2333,6 +2334,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-backend", "NAME", "name the target's emitter: ssa on the native ISAs, flat on wasm"),
       cli_flag("-stdlib", "DIR", "compile against the standard library in DIR, not the one that this binary embeds"),
       cli_flag("-embed", "DIR", "the asset directory __fern_asset, __fern_asset_bytes, __fern_assets and __fern_assets_bytes read"),
+      cli_flag("-wit", "FILE", "with -target wasm32-wasi: compose the component against the WIT world in FILE, not the fern world; FILE is the output of wasm-tools component embed --dummy -w WORLD"),
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared or a freestanding -target: the comma-separated functions to export, besides the @jni ones (default main)"),
@@ -5600,6 +5602,40 @@ pub function target_refusal(target: string): string {
   return msg + ")";
 }
 
+// The world of a wasm32-wasi component: the fern world, or the world in the
+// file that -wit names. The string is the refusal, or "".
+function component_world(wit_path: string, target: string, emit: string): (emitforms.World, string) {
+  let fern_world = emitforms.fern_world();
+  if (wit_path.len() == 0) {
+    return (fern_world, "");
+  }
+  if (target != "wasm32-wasi") {
+    return (fern_world, "fern: -wit gives the world of a wasm32-wasi component; -target " + target + " composes no component");
+  }
+  if (emit.len() > 0) {
+    return (fern_world, "fern: -wit gives the world of a component; -emit " + emit + " writes no component");
+  }
+  match (read_file_bytes(wit_path)) {
+    Ok(b) => {
+      let file: i32[] = [];
+      for x in b {
+        file = file.append(x as i32);
+      }
+      match (wit_decode.wit_world_payload(file)) {
+        Ok(payload) => {
+          return (emitforms.World { payload: payload, name: "the world in " + wit_path, embedded: false }, "");
+        },
+        Err(why) => {
+          return (fern_world, "fern: -wit " + wit_path + ": " + why);
+        }
+      }
+    },
+    Err(e) => {
+      return (fern_world, "fern: cannot read " + wit_path + ": " + e.message());
+    }
+  }
+}
+
 pub function emit_refusal(target: string, emit: string): string {
   if (emit == "command-module" && target != "wasm32-wasi") {
     return "fern: -emit command-module is not available for -target " + target + " (available for: wasm32-wasi)";
@@ -6874,6 +6910,7 @@ struct CliFlags {
   pos: string[],
   backend: string,
   embed_dir: string,
+  wit_path: string,
   optimize: boolean,
   emit_syms: boolean,
   backtrace: boolean,
@@ -6908,7 +6945,7 @@ const CLI_FLAGS_4: string[] = ["-profile", "-manifest", "-sign-index", "-index-k
 
 const CLI_FLAGS_5: string[] = ["-capabilities", "-effects", "-array-report", "-tangle", "-doc", "-doc-source", "-add", "-fetch", "-vendor"];
 
-const CLI_FLAGS_6: string[] = ["-lsp", "-resolve", "-targets", "-chunk", "-grant", "-emit", "-O", "-target", "-embed"];
+const CLI_FLAGS_6: string[] = ["-lsp", "-resolve", "-targets", "-chunk", "-grant", "-emit", "-O", "-target", "-embed", "-wit"];
 
 const CLI_FLAGS_7: string[] = ["-o", "-stdlib"];
 
@@ -7068,6 +7105,9 @@ function cli_flags_6(o: CliFlags, f: CliArg): CliFlags {
   if (f.name == "-embed") {
     return CliFlags { ...o, embed_dir: f.value };
   }
+  if (f.name == "-wit") {
+    return CliFlags { ...o, wit_path: f.value };
+  }
   return o;
 }
 
@@ -7120,6 +7160,7 @@ function parse_cli_flags(av: string[], embedded_root: string): CliFlags {
     pos: [],
     backend: "",
     embed_dir: "",
+    wit_path: "",
     optimize: false,
     emit_syms: false,
     backtrace: asmcore.backtrace_on(),
@@ -7255,6 +7296,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let pos = o.pos;
   let backend = o.backend;
   let embed_dir = o.embed_dir;
+  let wit_path = o.wit_path;
   let optimize = o.optimize;
   let emit_syms = o.emit_syms;
   let backtrace = o.backtrace;
@@ -7398,6 +7440,11 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let bad_emit = emit_refusal(target, emit);
   if (bad_emit.len() > 0) {
     eprint(bad_emit);
+    return 2;
+  }
+  let (world, bad_wit) = component_world(wit_path, target, emit);
+  if (bad_wit.len() > 0) {
+    eprint(bad_wit);
     return 2;
   }
   let run_dir = "";
@@ -7715,7 +7762,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   } else if (target == "wasm32-wasi" && emit == "core-module") {
     image = util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches));
   } else if (target == "wasm32-wasi") {
-    let comp = emitforms.wasm_component(full, sub);
+    let comp = emitforms.wasm_component(full, sub, world);
     if (comp.bytes.len() == 0) {
       if (comp.refused.len() > 0) {
         eprint(comp.refused);
