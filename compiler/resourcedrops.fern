@@ -225,7 +225,7 @@ pub function lower_defers_prepass_module(mod: parser.Module, funcs: parser.FuncD
     let rn = needed[k];
     let iface2 = resource_binding_iface(resources, rn);
     let wit2 = resource_binding_wit(resources, rn);
-    let hp: ast.ParamDecl[] = [ast.ParamDecl { name: "h", type_name: "own " + rn, own: true, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+    let hp: ast.ParamDecl[] = [ast.ParamDecl { name: "h", type_name: "own " + rn, own: true, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
     out_funcs = out_funcs.append(parser.FuncDecl {
       bound_modules: [], is_unsafe: false,
       stdlib: "", no_inline: false, always_inline: false,
@@ -233,7 +233,7 @@ pub function lower_defers_prepass_module(mod: parser.Module, funcs: parser.FuncD
       type_params: no_tp, params: hp, ret_own: false, ret_type: "void", body: no_body,
       line: 0, col: 0, import_iface: iface2, import_wit: "[resource-drop]" + wit2, import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
       is_pub: true,
-      is_const: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [],
+      is_const: false, ret_fn_ret: "", ret_fn_param_types: [], is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [],
     });
   }
   return parser.Module { ...mod, funcs: out_funcs };

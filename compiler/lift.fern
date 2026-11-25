@@ -32,7 +32,7 @@ pub function fn_param_from_func(name: string, f: parser.FuncDecl, skip: i32): as
   return fn_param_decl(name, tys, nested_fn_spelling(f.ret_type, f.ret_fn_ret, f.ret_fn_param_types));
 }
 
-function nested_fn_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
+function nested_fn_spelling(tag: string, fn_ret: string, fn_ptys: string[]): string {
   if (tag != "fn" || fn_ret.len() == 0) {
     return tag;
   }
@@ -40,7 +40,7 @@ function nested_fn_spelling(tag: string, fn_ret: string, fn_ptys: string): strin
 }
 
 pub function fn_spelling_of(p: ast.ParamDecl): string {
-  return "(" + p.fn_param_types + ") => " + p.fn_ret;
+  return "(" + p.fn_param_types.join(",") + ") => " + p.fn_ret;
 }
 
 function fn_local_spelling_for(v: ast.StmtVar, funcs: parser.FuncDecl[]): string {
@@ -299,11 +299,11 @@ function lift_expr_walk(e: ast.Expr, acc: LiftAcc, gfns: string[]): LiftExpr {
 
 struct DesugarRet { body: ast.Stmt[], counter: i32 }
 
-struct RetSig { tag: string, fn_ret: string, fn_ptys: string }
+struct RetSig { tag: string, fn_ret: string, fn_ptys: string[] }
 
-function ret_sig_of(tag: string, fn_ret: string, fn_ptys: string): RetSig {
+function ret_sig_of(tag: string, fn_ret: string, fn_ptys: string[]): RetSig {
   if (!parser.is_coarse_fn_tag(tag) || fn_ret.len() == 0) {
-    return RetSig { tag: "", fn_ret: "", fn_ptys: "" };
+    return RetSig { tag: "", fn_ret: "", fn_ptys: [] };
   }
   return RetSig { tag: tag, fn_ret: fn_ret, fn_ptys: fn_ptys };
 }
@@ -318,7 +318,7 @@ function lamret_slot(rn: string, value: ast.Expr, sig: RetSig, line: i32, col: i
   return ast.StmtVar { name: rn, type_name: sig.tag, init: init, line: line, col: col, fn_ret: sig.fn_ret, fn_param_types: sig.fn_ptys, destr: ast.no_destr(), header: false };
 }
 
-function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string {
+function contract_spelling(tag: string, fn_ret: string, fn_ptys: string[]): string {
   if (tag.len() == 0) {
     return "";
   }
@@ -329,7 +329,7 @@ function contract_spelling(tag: string, fn_ret: string, fn_ptys: string): string
   return spelled;
 }
 
-function returned_fn_contract(body: ast.Stmt[], shadowed: string[], mfuncs: MFuncs): (string, string) {
+function returned_fn_contract(body: ast.Stmt[], shadowed: string[], mfuncs: MFuncs): (string, string[]) {
   for i in 0..body.len() {
     match (body[i]) {
       ast.StmtReturn(r) => {
@@ -371,10 +371,10 @@ function returned_fn_contract(body: ast.Stmt[], shadowed: string[], mfuncs: MFun
       _ => {}
     }
   }
-  return ("", "");
+  return ("", []);
 }
 
-function value_fn_contract(v: ast.Expr, shadowed: string[], mfuncs: MFuncs): (string, string, boolean) {
+function value_fn_contract(v: ast.Expr, shadowed: string[], mfuncs: MFuncs): (string, string[], boolean) {
   match (v) {
     ast.ExprLambda(lm) => {
       let (lr, lp) = params_fn_contract(lm.params, contract_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types));
@@ -382,7 +382,7 @@ function value_fn_contract(v: ast.Expr, shadowed: string[], mfuncs: MFuncs): (st
     },
     ast.ExprIdent(id) => {
       if (util.index_of_str(shadowed, id.name) >= 0) {
-        return ("", "", false);
+        return ("", [], false);
       }
       let di = first_free_decl(mfuncs, id.name, true);
       if (di >= 0) {
@@ -401,26 +401,23 @@ function value_fn_contract(v: ast.Expr, shadowed: string[], mfuncs: MFuncs): (st
     },
     _ => {}
   }
-  return ("", "", false);
+  return ("", [], false);
 }
 
-function params_fn_contract(params: ast.ParamDecl[], res: string): (string, string) {
+function params_fn_contract(params: ast.ParamDecl[], res: string): (string, string[]) {
   if (res.len() == 0) {
-    return ("", "");
+    return ("", []);
   }
-  let ptys = "";
+  let ptys: string[] = [];
   for k in 0..params.len() {
     let pt = contract_spelling(params[k].type_name, params[k].fn_ret, params[k].fn_param_types);
     if (pt.len() == 0) {
-      return ("", "");
+      return ("", []);
     }
     if (params[k].own && !parser.spelling_is_own(pt)) {
       pt = "own " + pt;
     }
-    if (k > 0) {
-      ptys += ",";
-    }
-    ptys += pt;
+    ptys = ptys.append(pt);
   }
   return (res, ptys);
 }
@@ -1078,7 +1075,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     }
     ctys = ctys.append(cty);
   }
-  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
   for pj in 0..lam.params.len() {
     ps = ps.append(lam.params[pj]);
   }
@@ -1091,7 +1088,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
     if (lam.once) {
       read = ast.ExprCall { callee: ast.ExprIdent { name: "__env_take", line: 0, col: 0, ty: "", builtin: true }, args: [env, at], line: 0, col: 0, type_args: [], ty: ctys[cj] };
     }
-    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: read, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false });
+    bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: read, line: 0, col: 0, fn_ret: "", fn_param_types: [], destr: ast.no_destr(), header: false });
   }
   for bk in 0..lam.body.len() {
     bd = bd.append(lam.body[bk]);
@@ -1123,7 +1120,7 @@ function try_inline_closure(lam: ast.ExprLambda, fd: parser.FuncDecl, funcs: par
 }
 
 function make_wrap_lambda_func(lam: ast.ExprLambda, wrapname: string): parser.FuncDecl {
-  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
   for pj in 0..lam.params.len() {
     ps = ps.append(lam.params[pj]);
   }
@@ -1137,7 +1134,7 @@ function make_wrap_named_func(fnname: string, wrapname: string, mfuncs: MFuncs):
     return None;
   }
   let tgt = mfuncs.decls[fi];
-  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+  let ps: ast.ParamDecl[] = [ast.ParamDecl { name: "__env", type_name: "i32[]", own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
   let args: ast.Expr[] = [];
   for pj in 0..tgt.params.len() {
     ps = ps.append(tgt.params[pj]);
@@ -1900,8 +1897,7 @@ function var_param_is_fn(v: ast.StmtVar, fd: parser.FuncDecl, vars: VarDecls, id
   }
 }
 
-function spelled_param_is_fn(csv: string, idx: i32): boolean {
-  let parts = parser.split_type_list(csv);
+function spelled_param_is_fn(parts: string[], idx: i32): boolean {
   return idx < parts.len() && fn_param_from_spelling("", parts[idx]).type_name == "fn";
 }
 
@@ -3329,13 +3325,13 @@ function wcaps_join(a: WCaps, b: WCaps): WCaps {
 
 function wcap_cell_decl(c: string, ty: string): ast.Stmt {
   let src: ast.Expr = ast.ExprIdent { name: c, line: 0, col: 0, ty: "", builtin: false };
-  return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
+  return ast.StmtVar { name: wcap_cell_name(c), type_name: ty + "[]", init: ast.ExprArray { elements: [src], elem_ty: ty, line: 0, col: 0 }, line: 0, col: 0, fn_ret: "", fn_param_types: [], destr: ast.no_destr(), header: false };
 }
 
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
   let cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "", builtin: false };
   let idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
-  return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
+  return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: [], destr: ast.no_destr(), header: false };
 }
 
 function wcap_expr(e: ast.Expr, fd: parser.FuncDecl, gfns: string[], structs: irtables.StructTab, mfuncs: MFuncs, acc: WCaps, atargets: string[]): WCapExpr {
@@ -3831,7 +3827,7 @@ function box_scan_stmts(stmts: ast.Stmt[], fd: parser.FuncDecl, structs: irtable
   for i in 0..stmts.len() {
     let lam_ok = false;
     let bname = "";
-    let lam = ast.ExprLambda { params: [], ret_own: false, ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: "", once: false };
+    let lam = ast.ExprLambda { params: [], ret_own: false, ret_type: "", body: [], use_infer: false, origin: "", line: 0, col: 0, captures: [], captures_known: false, ret_fn_ret: "", ret_fn_param_types: [], once: false };
     let nested: ast.ExprLambda[] = [];
     match (stmts[i]) {
       ast.StmtVar(v) => {

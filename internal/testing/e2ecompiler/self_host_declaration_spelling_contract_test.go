@@ -31,7 +31,7 @@ func TestSelfHostDeclarationSpellingContracts(t *testing.T) {
 	src.WriteString("import \"./lift\";\nfunction main(): i32 {\n")
 	for i, tc := range cases {
 		fmt.Fprintf(&src, "let p%d = lift.fn_param_from_spelling(\"capture\", %s);\n", i, strconv.Quote(tc.spelling))
-		fmt.Fprintf(&src, "print(p%d.type_name + \"|\" + p%d.fn_param_types + \"|\" + p%d.fn_ret);\n", i, i, i)
+		fmt.Fprintf(&src, "print(p%d.type_name + \"|\" + p%d.fn_param_types.join(\",\") + \"|\" + p%d.fn_ret);\n", i, i, i)
 		fmt.Fprintf(&src, "if (p%d.name != \"capture\" || p%d.own || p%d.has_default) { return %d; }\n", i, i, i, i+1)
 	}
 	src.WriteString("return 0;\n}\n")

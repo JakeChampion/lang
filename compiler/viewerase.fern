@@ -10,10 +10,19 @@ function erase_view_list(tys: string[]): string[] {
   return out;
 }
 
+function spells_view_list(tys: string[]): boolean {
+  for t in tys {
+    if (parser.spells_view(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function erase_view_params(ps: ast.ParamDecl[]): ast.ParamDecl[] {
   let out: ast.ParamDecl[] = [];
   for p in ps {
-    out = out.append(ast.ParamDecl { ...p, type_name: parser.erase_view_spelling(p.type_name), fn_ret: parser.erase_view_spelling(p.fn_ret), fn_param_types: parser.erase_view_spelling(p.fn_param_types) });
+    out = out.append(ast.ParamDecl { ...p, type_name: parser.erase_view_spelling(p.type_name), fn_ret: parser.erase_view_spelling(p.fn_ret), fn_param_types: erase_view_list(p.fn_param_types) });
   }
   return out;
 }
@@ -36,7 +45,7 @@ function erase_view_expr(e: ast.Expr): ast.Expr {
       return ast.with_cast(ast.rebuild_unary(u, u.operand, u.line, u.col, parser.erase_view_spelling(u.ty)), parser.erase_view_spelling(u.cast));
     },
     ast.ExprLambda(lm) => {
-      return ast.ExprLambda { ...lm, params: erase_view_params(lm.params), ret_type: parser.erase_view_spelling(lm.ret_type), ret_fn_ret: parser.erase_view_spelling(lm.ret_fn_ret), ret_fn_param_types: parser.erase_view_spelling(lm.ret_fn_param_types) };
+      return ast.ExprLambda { ...lm, params: erase_view_params(lm.params), ret_type: parser.erase_view_spelling(lm.ret_type), ret_fn_ret: parser.erase_view_spelling(lm.ret_fn_ret), ret_fn_param_types: erase_view_list(lm.ret_fn_param_types) };
     },
     ast.ExprIdent(id) => {
       return ast.ExprIdent { ...id, ty: parser.erase_view_spelling(id.ty) };
@@ -61,7 +70,7 @@ function erase_view_expr(e: ast.Expr): ast.Expr {
 
 function erase_view_stmt(st: ast.Stmt): ast.Stmt[] {
   if let ast.StmtVar(v) = st {
-    return [ast.StmtVar { ...v, type_name: parser.erase_view_spelling(v.type_name), fn_ret: parser.erase_view_spelling(v.fn_ret), fn_param_types: parser.erase_view_spelling(v.fn_param_types) }];
+    return [ast.StmtVar { ...v, type_name: parser.erase_view_spelling(v.type_name), fn_ret: parser.erase_view_spelling(v.fn_ret), fn_param_types: erase_view_list(v.fn_param_types) }];
   }
   return [st];
 }
@@ -77,7 +86,7 @@ function spells_view_any(tys: string[]): boolean {
 
 function spells_view_params(ps: ast.ParamDecl[]): boolean {
   for p in ps {
-    if (parser.spells_view(p.type_name) || parser.spells_view(p.fn_ret) || parser.spells_view(p.fn_param_types)) {
+    if (parser.spells_view(p.type_name) || parser.spells_view(p.fn_ret) || spells_view_list(p.fn_param_types)) {
       return true;
     }
   }
@@ -89,7 +98,7 @@ function spells_view_stmt(st: ast.Stmt, own found: boolean): boolean {
     return true;
   }
   if let ast.StmtVar(v) = st {
-    return parser.spells_view(v.type_name) || parser.spells_view(v.fn_ret) || parser.spells_view(v.fn_param_types);
+    return parser.spells_view(v.type_name) || parser.spells_view(v.fn_ret) || spells_view_list(v.fn_param_types);
   }
   return false;
 }
@@ -115,7 +124,7 @@ function spells_view_expr(e: ast.Expr, own found: boolean): boolean {
       return parser.spells_view(u.cast) || parser.spells_view(u.ty);
     },
     ast.ExprLambda(lm) => {
-      return spells_view_params(lm.params) || parser.spells_view(lm.ret_type) || parser.spells_view(lm.ret_fn_ret) || parser.spells_view(lm.ret_fn_param_types);
+      return spells_view_params(lm.params) || parser.spells_view(lm.ret_type) || parser.spells_view(lm.ret_fn_ret) || spells_view_list(lm.ret_fn_param_types);
     },
     ast.ExprIdent(id) => {
       return parser.spells_view(id.ty);
@@ -152,7 +161,7 @@ function erase_view_body(body: ast.Stmt[]): ast.Stmt[] {
 function erase_view_funcs(fds: parser.FuncDecl[]): parser.FuncDecl[] {
   let out: parser.FuncDecl[] = [];
   for fd in fds {
-    out = out.append(parser.FuncDecl { ...fd, receiver_type: parser.erase_view_spelling(fd.receiver_type), params: erase_view_params(fd.params), ret_type: parser.erase_view_spelling(fd.ret_type), ret_fn_ret: parser.erase_view_spelling(fd.ret_fn_ret), ret_fn_param_types: parser.erase_view_spelling(fd.ret_fn_param_types), body: erase_view_body(fd.body) });
+    out = out.append(parser.FuncDecl { ...fd, receiver_type: parser.erase_view_spelling(fd.receiver_type), params: erase_view_params(fd.params), ret_type: parser.erase_view_spelling(fd.ret_type), ret_fn_ret: parser.erase_view_spelling(fd.ret_fn_ret), ret_fn_param_types: erase_view_list(fd.ret_fn_param_types), body: erase_view_body(fd.body) });
   }
   return out;
 }
