@@ -680,7 +680,7 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 			short := []string{"log --remerge-diff --all", "log --remerge-diff --all --stat --oneline", "log --diff-merges=r --all --format=%h -- text.txt dir"}
 			settings := [][]string{{"merge.conflictStyle", "diff3"}, {"merge.conflictStyle", "zdiff3"}, {"merge.conflictStyle", "merge"},
 				{"merge.directoryRenames", "false"}, {"merge.directoryRenames", "true"}, {"merge.directoryRenames", "conflict"},
-				{"merge.renameLimit", "1"}, {"merge.renameLimit", "0"}, {"merge.verbosity", "5"}, {"merge.verbosity", "2"},
+				{"merge.renameLimit", "0x10"}, {"merge.renameLimit", "1"}, {"merge.renameLimit", "0"}, {"merge.verbosity", "5"}, {"merge.verbosity", "2"},
 				{"merge.default", "union"}, {"merge.default", "nosuch"}, {"merge.default", "text"}, {"diff.renames", "copies"}}
 			for _, setting := range settings {
 				g.git("config", setting[0], setting[1])
@@ -696,7 +696,7 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 					gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
 				}
 			}
-			for _, setting := range [][]string{{"log.diffMerges", "bogus"}, {"merge.renameLimit", "abc"}, {"merge.renames", "maybe"}, {"merge.renormalize", "maybe"}, {"merge.verbosity", "x"}} {
+			for _, setting := range [][]string{{"log.diffMerges", "bogus"}, {"merge.renameLimit", "abc"}, {"merge.renameLimit", "08"}, {"merge.renameLimit", "0x80000000"}, {"merge.renames", "maybe"}, {"merge.renormalize", "maybe"}, {"merge.verbosity", "x"}} {
 				g.git("config", setting[0], setting[1])
 				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--all", "--format=%h")
 				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%h", "base")
