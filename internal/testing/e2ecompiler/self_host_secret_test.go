@@ -673,6 +673,101 @@ function main(): i32 {
 }
 `
 
+// A record of a `@secret` struct also wipes a field of a record or an enum
+// type with a finalizer when it holds the field alone. The finalizer runs
+// first and prints whether the fields are still whole, and the wipe follows.
+// The control is the same record without the attribute. "shared" returns the
+// record from the key, so that record must keep its fields.
+const secretFinalizedSrc = `import "core/mem";
+
+struct Res { a: u64, b: u64, words: u64[] }
+
+enum Part { Words(u64, u64[]), Empty }
+
+impl mem.Drop for Res {
+  @noinline function drop(self: Self): void {
+    print("res " + (self.a == self.b && self.words[5] == self.a).to_string());
+  }
+}
+
+impl mem.Drop for Part {
+  @noinline function drop(self: Self): void {
+    let whole = match (self) { Words(v, w) => w[5] == v, Empty => false };
+    print("part " + whole.to_string());
+  }
+}
+
+@secret
+struct Key { res: Res, part: Part, n: i32 }
+
+struct Plain { res: Res, part: Part, n: i32 }
+
+@noinline
+function words(v: u64): u64[] {
+  return [v, v, v, v, v, v];
+}
+
+@noinline
+function res(v: u64): Res {
+  return Res { a: v, b: v, words: words(v) };
+}
+
+@noinline
+function part(v: u64): Part {
+  return Words(v, words(v));
+}
+
+@noinline
+function key(v: u64): i32 {
+  let k = Key { res: res(v), part: part(v), n: 1 };
+  return k.n;
+}
+
+@noinline
+function plain(v: u64): i32 {
+  let k = Plain { res: res(v), part: part(v), n: 1 };
+  return k.n;
+}
+
+@noinline
+function shared(v: u64): Res {
+  let r = res(v);
+  let k = Key { res: r, part: part(v), n: 1 };
+  let n = k.n;
+  return r;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 3..10 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word);
+  } else if (mode == "shared") {
+    let r = shared(word);
+    print((r.a == word && r.words[5] == word).to_string());
+  } else {
+    let n = plain(word);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
@@ -837,6 +932,28 @@ func TestSelfHostSecretRecordWipesItsUnions(t *testing.T) {
 			}
 			if got := run("shared"); len(got) != 2 || got[0] != "true" {
 				t.Fatalf("shared printed %q; the union value that the caller still holds must keep its fields", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsFinalizedFields(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretFinalizedSrc)
+			plain := run("plain")
+			if got := secretCount(t, "plain", plain); got < 72 {
+				t.Fatalf("plain read %d secret bytes back, want at least 72; the raw allocations no longer observe the released boxes", got)
+			}
+			secret := run("secret")
+			if got := strings.Join(secret[:len(secret)-1], " "); got != "res true part true" {
+				t.Fatalf("secret printed %q, want each finalizer to run once and see whole fields", secret)
+			}
+			if got := secretCount(t, "secret", secret); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its finalized fields back, want 0", got)
+			}
+			if got := run("shared"); strings.Join(got[:len(got)-1], " ") != "part true res true true" {
+				t.Fatalf("shared printed %q; the record that the caller still holds must keep its fields, and its finalizer must run once", got)
 			}
 		})
 	}

@@ -1544,10 +1544,14 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
         r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       }
       r = emit(r, ir.op_store_local(child));
-      if (secret) {
-        r = wipe_child(r, child, fields[i].ty, child + 1, f);
+      if (secret && finalized_plain(fields[i].ty, f)) {
+        r = drop_finalized_secret(r, child, fields[i].ty, child + 1, f);
+      } else {
+        if (secret) {
+          r = wipe_child(r, child, fields[i].ty, child + 1, f);
+        }
+        r = drop_value(r, child, fields[i].ty, child + 1, f);
       }
-      r = drop_value(r, child, fields[i].ty, child + 1, f);
     } else if (secret && ssasem.is_scalar(fields[i].ty)) {
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, zero(fields[i].ty));
@@ -1600,6 +1604,33 @@ function wipes(t: typeinfo.Type, f: ssasem.Func): boolean {
   }
   let plain = ssasem.box_shape(t) && ssasem.finalizer_of(f, t) == "";
   return plain && (typeinfo.is_record(t) && !ssasem.secret_record(t, f) || wiped_enum(t, f));
+}
+
+// A record that is not `@secret`, or an enum of boxes, with a finalizer.
+function finalized_plain(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if (!ssasem.box_shape(t) || ssasem.finalizer_of(f, t) == "") {
+    return false;
+  }
+  return typeinfo.is_record(t) && !ssasem.secret_record(t, f) || wiped_enum(t, f);
+}
+
+// The drop of a child of `finalized_plain` type that a `@secret` record
+// holds. When no other value holds the child, its finalizer runs first, and
+// then its fields are wiped and dropped before its box is freed.
+function drop_finalized_secret(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, aligned_unique_of(t, f));
+  r = emit(r, ir.op_if(0));
+  r = helper(r, slot, ssasem.finalizer_of(f, t));
+  if (typeinfo.is_record(t)) {
+    r = drop_record_fields(r, slot, ssasem.record_fields(t, f), scratch, f, false, false, true);
+  } else {
+    r = wipe_variant_fields(r, slot, t, scratch, f);
+    r = drop_variant_fields(r, slot, t, scratch, f);
+  }
+  r = emit(r, ir.op_end());
+  r = release(r, slot, t, f);
+  return mark_release(r, ir.box_release);
 }
 
 // Wipes each element of the array of boxes in `slot`.
