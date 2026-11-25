@@ -75,3 +75,27 @@ func TestLetElseValueBranchTail(t *testing.T) {
 		t.Fatalf("statement let-else: got %T, want a let-else match that keeps its rest", stmt.Funcs[0].Body.Stmts[0])
 	}
 }
+
+// The rest of a lambda body after a let-else keeps its tail as the return
+// value of the lambda.
+func TestLetElseLambdaBodyTail(t *testing.T) {
+	prog, err := Parse(`function g(t: Option[i32]): i32 { let f = (): i32 => { let Some(s) = t else { return 0; }; s + 2 }; return f(); }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lam, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Var).Init.(*ast.Lambda)
+	if !ok {
+		t.Fatalf("initializer: got %T, want a lambda", prog.Funcs[0].Body.Stmts[0].(*ast.Var).Init)
+	}
+	m, ok := lam.Body.Stmts[0].(*ast.Match)
+	if !ok || m.Origin != ast.OriginLetElse {
+		t.Fatalf("lambda body: got %T, want a let-else match", lam.Body.Stmts[0])
+	}
+	rest := m.Arms[0].Body.Stmts
+	if len(rest) != 1 {
+		t.Fatalf("success arm: got %d statements, want 1", len(rest))
+	}
+	if r, ok := rest[0].(*ast.Return); !ok || r.Value == nil {
+		t.Fatalf("success arm: got %T, want the return of the tail", rest[0])
+	}
+}
