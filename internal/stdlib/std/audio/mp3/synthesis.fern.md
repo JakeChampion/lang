@@ -89,7 +89,9 @@ function long_pair(own samples: f32[], own overlap: f32[], at: i32, other: i32, 
 function long_output(value: f32x4, own samples: f32[], own overlap: f32[], at: i32, other: i32, ov: i32, ov_other: i32, window: i32, i: i32): (f32[], f32[]) {
   let co = __f32x4_of(__f32x4_lane(value, 0), __f32x4_lane(value, 2), 0.0f32, 0.0f32);
   let si = __f32x4_of(__f32x4_lane(value, 1), __f32x4_lane(value, 3), 0.0f32, 0.0f32);
-  if ((i & 1) != 0) { si = -si; }
+  if ((i & 1) != 0) {
+    si = -si;
+  }
   let old = __f32x4_of(overlap[ov + i], overlap[ov_other + i], 0.0f32, 0.0f32);
   let sum = co * __f32x4_splat(tables.G_TWID9[9 + i]) + si * __f32x4_splat(tables.G_TWID9[i]);
   let next = co * __f32x4_splat(tables.G_TWID9[i]) - si * __f32x4_splat(tables.G_TWID9[9 + i]);
