@@ -281,7 +281,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       return failed(out, "integer add requires numeric operands");
     }
     kind = 4;
-  } else if (op.kind_tag == ssa.UNARY && op.args.len() == 1 && op.str == "int_cast:i32" && op.imm == 0) {
+  } else if (op.kind_tag == ssa.UNARY && op.args.len() == 1 && ssa.cast_target(op) == "i32" && op.imm == 0) {
     let v = out.values[op.args[0]];
     if (!narrow_number(v) && v.kind != 4) {
       return failed(out, "integer cast requires numeric operand");

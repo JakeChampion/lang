@@ -11,7 +11,11 @@ The reusable-buffer methods retain storage beyond the valid output prefix.
 ADTS configuration changes reset overlap state before the new format is decoded.
 
 HE-AAC, coupling-channel elements, program configurations, and 960-sample frames are explicit unsupported cases.
-ADTS header inspection exposes transport CRC fields. Protected frame decode is unsupported until CRC verification is implemented.
+
+Protected ADTS frames verify the header CRC and the CRC of each raw data block, and a mismatch returns `Checksum`.
+The CRC covers the first 192 bits of each single-channel and LFE element, and each complete data element.
+For a channel pair, it covers the first 192 bits and the first 128 bits of the second channel.
+Fill elements are outside the CRC.
 This module is available under MPL-2.0. See `licenses/aac/NOTICE.txt`.
 
 ```fern
@@ -41,7 +45,7 @@ pub struct Frame { sample_rate: i32, channels: i32, channel_config: i32, frames:
 
 pub struct Decoded { sample_rate: i32, channels: i32, channel_config: i32, samples: f32[] }
 
-struct Run { config: config.Config, reader: bits.Reader, work: dsp.Work, shapes: i32[], seed: u32, elements: Element[], seen: i32[], channels: i32, count: i32, first: boolean, out_at: i32 }
+struct Run { config: config.Config, reader: bits.Reader, work: dsp.Work, shapes: i32[], seed: u32, elements: Element[], seen: i32[], channels: i32, count: i32, first: boolean, out_at: i32, protected: boolean, crc: u32 }
 
 pub function create(c: config.Config, limits: audio.Limits): Result[Decoder, audio.AudioError] {
   let canonical = config.create(c.object_type, c.sample_rate, c.channel_config)?;
@@ -138,16 +142,25 @@ function synthesize(own run: Run, own channel: ics.Channel, at: i32): Result[Run
   return Ok(Run { ...run, work: work, shapes: run.shapes.with(at, shaped.info.shape) });
 }
 
+function checked(input: [u8], own run: Run, from: bits.Reader, max: i32): Result[Run, audio.AudioError] {
+  if (!run.protected) {
+    return Ok(run);
+  }
+  return Ok(Run { ...run, crc: bits.crc(input, from, run.reader, max, run.crc)? });
+}
+
 function single(input: [u8], own run: Run, kind: i32): Result[Run, audio.AudioError] {
+  let start = run.reader;
   let (b1, tag) = bits.read(input, run.reader, 4)?;
   let (next, channel) = element(Run { ...run, reader: b1 }, kind, tag as i32)?;
   let (end, value, seed) = ics.decode(input, next.reader, None, next.config.rate_index, next.seed, None, [])?;
-  return synthesize(Run { ...next, reader: end, seed: seed }, value, channel);
+  return synthesize(checked(input, Run { ...next, reader: end, seed: seed }, start, 192)?, value, channel);
 }
 
 // Keep common-window stereo flags beside channel-pair decode.
 // fern-lint: allow cyclomatic-complexity
 function pair(input: [u8], own run: Run): Result[Run, audio.AudioError] {
+  let start = run.reader;
   let (b1, tag) = bits.read(input, run.reader, 4)?;
   let (b2, common_window) = bits.read(input, b1, 1)?;
   let (next, channel) = element(Run { ...run, reader: b2 }, 1, tag as i32)?;
@@ -164,7 +177,7 @@ function pair(input: [u8], own run: Run): Result[Run, audio.AudioError] {
   let (b5, left, seed1) = ics.decode(input, run.reader, common, run.config.rate_index, run.seed, None, [])?;
   let other = if (common_window != 0u32) { Some(left) } else { None };
   let (b6, right, seed2) = ics.decode(input, b5, common, run.config.rate_index, seed1, other, mask.bands)?;
-  run = Run { ...run, reader: b6, seed: seed2 };
+  run = checked(input, checked(input, Run { ...run, reader: b6, seed: seed2 }, start, 192)?, b5, 128)?;
   if (common_window != 0u32) {
     let (l, r) = stereo.apply(left, right, mask, run.config.rate_index)?;
     return synthesize(synthesize(run, l, channel)?, r, channel + 1);
@@ -173,6 +186,7 @@ function pair(input: [u8], own run: Run): Result[Run, audio.AudioError] {
 }
 
 function data_element(input: [u8], own run: Run): Result[Run, audio.AudioError] {
+  let start = run.reader;
   let (b1, _) = bits.read(input, run.reader, 4)?;
   let (b2, aligned) = bits.read(input, b1, 1)?;
   let (b3, size) = bits.read(input, b2, 8)?;
@@ -186,7 +200,7 @@ function data_element(input: [u8], own run: Run): Result[Run, audio.AudioError] 
   if (aligned != 0u32) {
     reader = bits.align(input, reader)?;
   }
-  return Ok(Run { ...run, reader: bits.skip(input, reader, count * 8)? });
+  return checked(input, Run { ...run, reader: bits.skip(input, reader, count * 8)? }, start, 0);
 }
 
 function fill(input: [u8], own run: Run): Result[Run, audio.AudioError] {
@@ -261,11 +275,11 @@ function begin(own decoder: Decoder, own output: f32[], at: i32, blocks: i32, li
     return Err(audio.Buffer);
   }
   let Decoder { config, delay, scratch, shapes, seed, elements } = decoder;
-  return Ok(Run { config: config, reader: bits.Reader { at: at, bit: 0 }, work: dsp.Work { delay: delay, scratch: scratch, pcm: output }, shapes: shapes, seed: seed, elements: elements, seen: [], channels: 0, count: 0, first: false, out_at: 0 });
+  return Ok(Run { config: config, reader: bits.Reader { at: at, bit: 0 }, work: dsp.Work { delay: delay, scratch: scratch, pcm: output }, shapes: shapes, seed: seed, elements: elements, seen: [], channels: 0, count: 0, first: false, out_at: 0, protected: false, crc: 65535u32 });
 }
 
 function finish(own run: Run, frames: i32, bytes: i32): (Decoder, Frame) {
-  let Run { config, reader, work, shapes, seed, elements, seen, channels, count, first, out_at } = run;
+  let Run { config, reader, work, shapes, seed, elements, seen, channels, count, first, out_at, protected, crc } = run;
   let dsp.Work { delay, scratch, pcm } = work;
   let decoder = Decoder { config: config, delay: delay, scratch: scratch, shapes: shapes, seed: seed, elements: elements };
   let frame = Frame { sample_rate: config.sample_rate, channels: config.channels, channel_config: config.channel_config, frames: frames, bytes_read: bytes, samples: pcm };
@@ -286,22 +300,69 @@ pub function (own decoder: Decoder) decode_packet(input: [u8], limits: audio.Lim
   return decoder.decode_packet_into(input, dsp.zeros(count), limits);
 }
 
+function word(bytes: [u8], at: i32): i32 {
+  return bytes[at] as i32 << 8 | bytes[at + 1] as i32;
+}
+
+// A single-block frame carries one CRC over the header and the block.
+// A multi-block frame checks the header CRC here and carries a CRC after each block.
+function protect(bytes: [u8], header: config.Adts, own run: Run): Result[Run, audio.AudioError] {
+  if (!header.protected) {
+    return Ok(run);
+  }
+  let span = header.header_bytes - 2;
+  let value = bits.crc(bytes, bits.create(), bits.Reader { at: span, bit: 0 }, 0, 65535u32)?;
+  if (header.blocks == 1) {
+    return Ok(Run { ...run, protected: true, crc: value });
+  }
+  if (value != word(bytes, span) as u32) {
+    return Err(audio.Checksum);
+  }
+  return Ok(Run { ...run, protected: true });
+}
+
+// A protected multi-block header gives the offset of each block after the first.
+function placed(bytes: [u8], header: config.Adts, own run: Run, block_no: i32): Result[Run, audio.AudioError] {
+  if (header.protected && block_no > 0 && run.reader.at != header.header_bytes + word(bytes, 5 + 2 * block_no)) {
+    return Err(audio.Header);
+  }
+  return Ok(run);
+}
+
+function verify(bytes: [u8], header: config.Adts, own run: Run): Result[Run, audio.AudioError] {
+  if (!header.protected) {
+    return Ok(run);
+  }
+  if (header.blocks == 1) {
+    if (run.crc != word(bytes, 7) as u32) {
+      return Err(audio.Checksum);
+    }
+    return Ok(run);
+  }
+  let (reader, stored) = bits.read(bytes, run.reader, 16)?;
+  if (run.crc != stored) {
+    return Err(audio.Checksum);
+  }
+  return Ok(Run { ...run, reader: reader, crc: 65535u32 });
+}
+
+function adts_block(bytes: [u8], header: config.Adts, own run: Run, block_no: i32): Result[Run, audio.AudioError] {
+  run = verify(bytes, header, block(bytes, placed(bytes, header, run, block_no)?)?)?;
+  return Ok(Run { ...run, out_at: (block_no + 1) * 1024 * header.config.channels });
+}
+
 pub function (own decoder: Decoder) decode_adts_into(input: [u8], at: i32, own output: f32[], limits: audio.Limits): Result[(Decoder, Frame), audio.AudioError] {
   let header = config.adts(input, at, limits)?;
   if (header.bytes > input.len() - at) {
     return Err(audio.Truncated);
   }
-  if (header.protected) {
-    return Err(audio.Unsupported);
-  }
   if (header.config != decoder.config) {
     decoder = create(header.config, limits)?;
   }
   let bytes = input[at:at + header.bytes];
-  let run = begin(decoder, output, header.header_bytes, header.blocks, limits)?;
+  let run = protect(bytes, header, begin(decoder, output, header.header_bytes, header.blocks, limits)?)?;
   for block_no in 0..header.blocks {
-    run = block(bytes, run)?;
-    run = Run { ...run, out_at: (block_no + 1) * 1024 * header.config.channels };
+    run = adts_block(bytes, header, run, block_no)?;
   }
   if (bits.left(bytes, run.reader) != 0i64) {
     return Err(audio.Header);

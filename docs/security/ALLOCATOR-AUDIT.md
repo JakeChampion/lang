@@ -75,7 +75,7 @@ Under `-sanitize` each block also carries a redzone.
 Above 256 words a class is larger than its request, and the words of the class past the request get the pattern too.
 `__fern_quar_push` reads those words at each release, and a word that lost the pattern aborts with `fern-sanitizer: heap-buffer-overflow (a block was written past its end)`, status 124.
 The release build keeps the plain block.
-The `redzone` case of `TestSelfHostQuarantinePolicy` pins the report for a raw block: a write one byte past the block, at the last byte of the redzone, at the first byte past the rounded size of a 13-byte block, and past the request of a 3000-byte block inside its class.
+The `redzone` case of `TestSelfHostQuarantinePolicy` pins the report for a raw block: a write one byte past the block, at the last byte of the redzone, at the first and the last byte of the rounding of a 13-byte block, at the first byte past its rounded size, and past the request of a 3000-byte block inside its class.
 It pins a clean run for a write at the last byte of a block.
 `TestSanitizeTypedBoxOverflowReported` pins the same report for a byte array.
 

@@ -1,0 +1,32 @@
+import "std/audio/mp3/encoder";
+import "std/audio/pcm";
+import "std/audio/wire";
+import "std/io";
+import "std/i32";
+import "std/result";
+
+// mp3-encode IN.f32 OUT.mp3 RATE CHANNELS KBPS: encode raw little-endian f32 PCM.
+function main(): i32 {
+  let a = args();
+  if (a.len() != 6) {
+    return 1;
+  }
+  let Ok(raw) = io.read_input_bytes(a[1]) else {
+    return 1;
+  };
+  let samples: f32[] = [];
+  let at = 0;
+  while (at + 4 <= raw.len()) {
+    samples = samples.append(f32_from_bits(wire.le(raw, at, 4) as i32));
+    at += 4;
+  }
+  let rate = i32.parse_i32(a[3]).unwrap_or(0);
+  let channels = i32.parse_i32(a[4]).unwrap_or(0);
+  let bitrate = i32.parse_i32(a[5]).unwrap_or(0);
+  let limits = pcm.Limits { max_input_bytes: 1073741824, max_samples: 1073741824 };
+  let bytes = match (encoder.encode(samples, rate, channels, encoder.Options { bitrate: bitrate }, limits)) { Ok(v) => v, Err(e) => { print(e.message()); return 2; } };
+  let Ok(_) = write_file_bytes(a[2], bytes) else {
+    return 1;
+  };
+  return 0;
+}

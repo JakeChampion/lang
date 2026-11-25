@@ -10,6 +10,7 @@
 # largest part of a case after a change to the oracle.
 aac 46
 aac_boundary 71
+aac_crc 110
 aac_kernel 51
 aac_smoke 10
 aes 19
@@ -255,6 +256,7 @@ mp2_shard3 21
 mp2_smoke 21
 mp3 25
 mp3_bits 13
+mp3_encoder 30
 mp3_file 136
 mp3_file_smoke 39
 mp3_freeformat 430

@@ -2267,14 +2267,14 @@ function ssa_adrp_add(s: asmcore.EmitState, d: string, label: string): asmcore.E
 
 function ssa_unary_known(ins: ssa.SInst): boolean {
   let k = ins.ir_kind;
-  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins.str)) {
+  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins)) {
     return true;
   }
   let to = ssa.cast_target(ins);
   if (to == "u8" || to == "u16" || to == "i16" || to == "u32" || to == "i32") {
     return true;
   }
-  return ssa.rotr_count(ins.str) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "x4") != "";
+  return ssa.rotr_count(ins) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "x4") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -2324,11 +2324,10 @@ function ssa_unary_asm(ins: ssa.SInst, d: string): string {
   if (f != "") {
     return f;
   }
-  let what = ins.str;
-  if (what == "load_i32") {
+  if (ins.ir_kind == ir.K_LOAD_I32) {
     return "    ldrsw " + d + ", [" + d + "]\n";
   }
-  if (what == "load_u16") {
+  if (ins.ir_kind == ir.K_LOAD) {
     return "    ldrh " + w + ", [" + d + "]\n";
   }
   let k = ins.ir_kind;
@@ -2336,9 +2335,9 @@ function ssa_unary_asm(ins: ssa.SInst, d: string): string {
   if (k == ir.K_NOT) {
     return "    cmp " + d + ", #0\n    cset " + d + ", eq\n";
   }
-  if (what.starts_with("rotr:")) {
-    let n = util.i32_to_string(ssa.rotr_count(what));
-    if (ssa.rotr_width(what) == 64) {
+  if (ins.ir_kind == ir.K_ROTR) {
+    let n = util.i32_to_string(ssa.rotr_count(ins));
+    if (ssa.rotr_width(ins) == 64) {
       return "    ror " + d + ", " + d + ", #" + n + "\n";
     }
     return "    ror " + w + ", " + w + ", #" + n + "\n";
@@ -2370,11 +2369,10 @@ function ssa_unary_asm(ins: ssa.SInst, d: string): string {
 function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
   let w = ssa_wreg(d);
   let ws = ssa_wreg(src);
-  let what = ins.str;
-  if (what == "load_i32") {
+  if (ins.ir_kind == ir.K_LOAD_I32) {
     return "    ldrsw " + d + ", [" + src + "]\n";
   }
-  if (what == "load_u16") {
+  if (ins.ir_kind == ir.K_LOAD) {
     return "    ldrh " + w + ", [" + src + "]\n";
   }
   let k = ins.ir_kind;
@@ -2397,9 +2395,9 @@ function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
   if (to == "i16") {
     return "    sxth " + d + ", " + ws + "\n";
   }
-  if (what.starts_with("rotr:")) {
-    let n = util.i32_to_string(ssa.rotr_count(what));
-    if (ssa.rotr_width(what) == 64) {
+  if (ins.ir_kind == ir.K_ROTR) {
+    let n = util.i32_to_string(ssa.rotr_count(ins));
+    if (ssa.rotr_width(ins) == 64) {
       return "    ror " + d + ", " + src + ", #" + n + "\n";
     }
     return "    ror " + w + ", " + ws + ", #" + n + "\n";
@@ -4693,8 +4691,11 @@ function ssa_carry_reader(ins: ssa.SInst, carry: i32, op: string, reg_of: i32[],
   if (other == carry) {
     other = ins.args[1];
   }
-  let h = ssa_src(reg_of, other, "x5");
-  s = ssa_load_value(fr, reg_of, other, h, s);
+  let h = "xzr";
+  if (!fr.imm.is_imm[other] || fr.imm.value[other] != 0i64) {
+    h = ssa_src(reg_of, other, "x5");
+    s = ssa_load_value(fr, reg_of, other, h, s);
+  }
   let d = ssa_dst(reg_of, ins.result);
   s = s.write("    " + op + " " + d + ", " + h + ", xzr\n");
   return ssa_store(reg_of, ins.result, d, s);
@@ -5652,7 +5653,7 @@ struct Allocated { imm: ssa.Imms, call_kinds: i32[], alloc: ssa.Alloc, floats: b
 
 function ssa_allocated(f: ssa.SFunc, r: irtables.Lowered, s: asmcore.EmitState): Allocated {
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
-  let imm = ssa_logical_imms(f, ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false, true));
+  let imm = ssa_logical_imms(f, ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false, true, false));
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let floats = ssa.float_values(f, ssa_float_calls(f, s), true);
@@ -8853,8 +8854,8 @@ function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // The allocation side of the redzone. The block takes its class and six
-// words more. The two words after the class and the words of the class past
-// the request get the poison. The four words after them link the block into
+// words more. The two words after the class and the words of the class from
+// the word that holds the end of the request get the poison. The four words after them link the block into
 // __fern_san_live: the next and the previous link, the words of the class and
 // the words of the request. The census counts the request alone. It uses x0
 // to x4, as the allocator does.
@@ -8866,7 +8867,7 @@ function emit_san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    adrp x2, __fern_lc_alloc_bytes\n    add x2, x2, :lo12:__fern_lc_alloc_bytes\n    ldr x4, [x2]\n    sub x4, x4, x3, lsl #3\n    str x4, [x2]\n");
   }
   s = s.write("    add x3, x0, x1, lsl #3\n" + rc_poison_into("w2") + "    orr x2, x2, x2, lsl #32\n    str x2, [x3]\n    str x2, [x3, #8]\n");
-  s = s.write("    ldr x4, [sp, #16]\n    add x4, x4, #7\n    lsr x4, x4, #3\n.Lsan_slack_fill:\n    cmp x4, x1\n    b.hs .Lsan_slack_filled\n");
+  s = s.write("    ldr x4, [sp, #16]\n    lsr x4, x4, #3\n.Lsan_slack_fill:\n    cmp x4, x1\n    b.hs .Lsan_slack_filled\n");
   s = s.write("    str x2, [x0, x4, lsl #3]\n    add x4, x4, #1\n    b .Lsan_slack_fill\n.Lsan_slack_filled:\n");
   s = s.write("    add x3, x0, x1, lsl #3\n    add x3, x3, #16\n    str x1, [x3, #16]\n    ldr x4, [sp, #16]\n    add x4, x4, #7\n    lsr x4, x4, #3\n    str x4, [x3, #24]\n");
   s = s.write("    adrp x2, __fern_san_live\n    add x2, x2, :lo12:__fern_san_live\n    ldr x4, [x2]\n    str x4, [x3]\n    str xzr, [x3, #8]\n");
@@ -8892,6 +8893,15 @@ function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lsan_unlink_first:\n    adrp x12, __fern_san_live\n    add x12, x12, :lo12:__fern_san_live\n    str x10, [x12]\n");
   s = s.write(".Lsan_unlink_back:\n    cbz x10, .Lsan_unlink_done\n    str x11, [x10, #8]\n.Lsan_unlink_done:\n");
   return s.write("    add x1, x1, #6\n    ldr x30, [sp], #16\n.Lquar_redzone_ok:\n");
+}
+
+// A raw release: x0 is the block and x1 the request in bytes. The bytes of
+// the last word past the request hold the poison from the allocation, so a
+// byte that lost it was written past the end of the block. It uses x9 to x11.
+function san_rounding_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    ands x9, x1, #7\n    b.eq .Lrawfree_round_ok\n    and x10, x1, #-8\n    ldr x10, [x0, x10]\n" + rc_poison_into("w11") + "    orr x11, x11, x11, lsl #32\n");
+  s = s.write("    eor x10, x10, x11\n    lsl x9, x9, #3\n    mov x11, #-1\n    lsl x11, x11, x9\n    tst x10, x11\n    b.ne __fern_san_abort_hbo\n.Lrawfree_round_ok:\n");
+  return s;
 }
 
 // The name of each shape id, its length and the words of its box
@@ -11703,6 +11713,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    adrp x9, __fern_heap_base\n    add x9, x9, :lo12:__fern_heap_base\n    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lrawfree_bad\n");
   s = s.write("    adrp x9, __fern_heap_end\n    add x9, x9, :lo12:__fern_heap_end\n    ldr x9, [x9]\n    cmp x0, x9\n    b.hs .Lrawfree_bad\n");
+  if (san_redzone_on(s)) {
+    s = san_rounding_check(s);
+  }
   s = s.write("    add x1, x1, #7\n");
   s = s.write("    lsr x5, x1, #3\n");
   s = s.write("    cbz x5, .Lrawfree_done\n");

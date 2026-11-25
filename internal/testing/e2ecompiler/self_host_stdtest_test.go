@@ -99,7 +99,14 @@ func runSelfHostStdTestX86(t *testing.T, tls bool) {
 // balanced census: as many frees as allocations and no live bytes. A run that
 // leaves through exit() is not checked, because its frames are not unwound.
 func TestSelfHostStdTestHarden(t *testing.T) {
-	stdTestVerdictUnder(t, "under -harden", []string{"-harden"}, []string{"FERN_LEAKCHECK=1"})
+	stdTestVerdictUnder(t, "x86-64-linux", "under -harden", []string{"-harden"}, []string{"FERN_LEAKCHECK=1"})
+}
+
+// The same check for arm64-linux, where -harden also signs each return
+// address and puts a landing pad on each indirect-call target. The programs
+// run under qemu-aarch64 on an x86-64 host.
+func TestSelfHostStdTestHardenArm64(t *testing.T) {
+	stdTestVerdictUnder(t, "arm64-linux", "under -harden", []string{"-harden"}, []string{"FERN_LEAKCHECK=1"})
 }
 
 // Each std/test program must give the same verdict when the allocator has
@@ -108,29 +115,34 @@ func TestSelfHostStdTestHarden(t *testing.T) {
 // that reads an operand to a scratch register that holds a different
 // operand gives a crash or a failed assertion here.
 func TestSelfHostStdTestFewRegisters(t *testing.T) {
-	stdTestVerdictUnder(t, "with FERN_DEBUG_SSA_DENY=16319", nil, []string{"FERN_DEBUG_SSA_DENY=16319"})
+	stdTestVerdictUnder(t, "x86-64-linux", "with FERN_DEBUG_SSA_DENY=16319", nil, []string{"FERN_DEBUG_SSA_DENY=16319"})
 }
 
-func stdTestVerdictUnder(t *testing.T, what string, flags, env []string) {
+func stdTestVerdictUnder(t *testing.T, target, what string, flags, env []string) {
 	cli := buildSelfHostCLI(t)
+	run := func(bin string) *exec.Cmd { return runX86_64Bin(cli.runner, bin) }
+	if target == "arm64-linux" {
+		_, qemu := arm64Tooling(t)
+		run = func(bin string) *exec.Cmd { return runArm64Bin(qemu, bin) }
+	}
 	cases := selfHostStdTestShard(t, append(selfHostStdTestCases(t, false), selfHostStdTestCases(t, true)...))
 	t.Run("cases", func(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				bin := filepath.Join(t.TempDir(), tc.name)
-				args := append(append([]string{}, flags...), "-target", "x86-64-linux", "-o", bin, tc.src, cli.stdlib)
+				args := append(append([]string{}, flags...), "-target", target, "-o", bin, tc.src, cli.stdlib)
 				build := runX86_64Bin(cli.runner, cli.bin, args...)
 				build.Env = append(childEnv(), env...)
 				var log []byte
 				if err := e2eharness.WithBuildMemoryMB(1024, func() (err error) { log, err = build.CombinedOutput(); return }); err != nil {
 					t.Fatalf("self-host compile failed: %v\n%s", err, log)
 				}
-				run := runX86_64Bin(cli.runner, bin)
+				prog := run(bin)
 				var stderr bytes.Buffer
-				run.Stderr = &stderr
-				out, _ := stdTestOutput(run)
-				exit := run.ProcessState.ExitCode()
+				prog.Stderr = &stderr
+				out, _ := stdTestOutput(prog)
+				exit := prog.ProcessState.ExitCode()
 				if wantFail := tc.name == "synthetic_fail"; (exit != 0) != wantFail {
 					t.Errorf("exit code %d %s\n%s", exit, what, out)
 				}
@@ -198,7 +210,7 @@ var interpSlowStdTests = map[string]bool{
 	// The full M4A ALAC bank uses compiled gates. Its exact integer smoke stays here.
 	"mp4_alac": true, "mp4_alac_reader": true,
 	// Full AAC corpora exceed a minute. Independent AAC PCM smoke stays here.
-	"aac": true, "aac_boundary": true, "aac_kernel": true,
+	"aac": true, "aac_boundary": true, "aac_crc": true, "aac_kernel": true,
 	// The two conformance files of UAX #9 run each of their cases. The compiled gates run them.
 	"bidi": true,
 	// The HarfBuzz cases shape each word of each script with two fonts, for
@@ -542,6 +554,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"mp4_smoke", langSrcAbs(t, "tests/stdlib/mp4_smoke_test.fern"), ""},
 		{"aac", langSrcAbs(t, "tests/stdlib/aac_test.fern"), ""},
 		{"aac_boundary", langSrcAbs(t, "tests/stdlib/aac_boundary_test.fern"), ""},
+		{"aac_crc", langSrcAbs(t, "tests/stdlib/aac_crc_test.fern"), ""},
 		{"aac_kernel", langSrcAbs(t, "tests/stdlib/aac_kernel_test.fern"), ""},
 		{"aac_smoke", langSrcAbs(t, "tests/stdlib/aac_smoke_test.fern"), ""},
 		{"audio", langSrcAbs(t, "tests/stdlib/audio_test.fern"), ""},
@@ -578,6 +591,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"android_content_read", langSrcAbs(t, "tests/android/video/content_read_test.fern"), ""},
 		{"mp3", langSrcAbs(t, "tests/stdlib/mp3_test.fern"), ""},
 		{"mp3_bits", langSrcAbs(t, "tests/stdlib/mp3_bits_test.fern"), ""},
+		{"mp3_encoder", langSrcAbs(t, "tests/stdlib/mp3_encoder_test.fern"), ""},
 		{"mp2", langSrcAbs(t, "tests/stdlib/mp2_test.fern"), ""},
 		{"mp2_shard1", langSrcAbs(t, "tests/stdlib/mp2_shard1_test.fern"), ""},
 		{"mp2_shard2", langSrcAbs(t, "tests/stdlib/mp2_shard2_test.fern"), ""},

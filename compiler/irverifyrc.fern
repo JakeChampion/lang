@@ -397,42 +397,111 @@ function read_site(ops: ir.Op[], call: i32): Site {
   };
 }
 
-// A one-argument call that retains, releases or moves the local that the
-// op before it reads, or -1.
-function counted_local(ops: ir.Op[], i: i32, sigs: rcsigs.Table): i32 {
-  if (i < 1 || ops[i].kind_tag != ir.K_CALL_DIRECT || ops[i].i32_imm != 1) {
+// The local that argument k of the call at i reads directly, or -1. The
+// arguments after k must be straight-line ops.
+function arg_local(ops: ir.Op[], i: i32, k: i32): i32 {
+  let after = ops[i].i32_imm - 1 - k;
+  let net = 0;
+  let j = i - 1;
+  while (net != after) {
+    if (j < 0 || net > after || ir.op_pops(ops[j]) < 0 || is_flow_kind(ops[j].kind_tag)) {
+      return -1;
+    }
+    net += ir.op_pushes(ops[j]) - ir.op_pops(ops[j]);
+    j -= 1;
+  }
+  if (j < 0 || ops[j].kind_tag != ir.K_LOAD_LOCAL && ops[j].kind_tag != ir.K_TEE_LOCAL) {
     return -1;
   }
-  let arg = ops[i - 1].kind_tag;
-  if (arg != ir.K_LOAD_LOCAL && arg != ir.K_TEE_LOCAL) {
-    return -1;
-  }
-  let sig = sigs.lookup(ops[i].str);
-  if (!sig.known || sig.arg != 0) {
-    return -1;
-  }
-  if (sig.effect != rcsigs.effect_retain() && sig.effect != rcsigs.effect_release() && sig.effect != rcsigs.effect_move()) {
-    return -1;
-  }
-  return ops[i - 1].i32_imm;
+  return ops[j].i32_imm;
 }
 
-function first_count_change(ops: ir.Op[], from: i32, to: i32, donor: i32, sigs: rcsigs.Table): i32 {
+function is_flow_kind(t: i32): boolean {
+  return t == ir.K_BLOCK || t == ir.K_LOOP || t == ir.K_IF || t == ir.K_ELSE || t == ir.K_END
+    || t == ir.K_BR || t == ir.K_BRIF || t == ir.K_RETURN;
+}
+
+// True when the call at i retains, releases or moves one of the locals in
+// held through one of its arguments.
+function changes_count_of(ops: ir.Op[], i: i32, held: i32[], sigs: rcsigs.Table): boolean {
+  if (ops[i].kind_tag != ir.K_CALL_DIRECT) {
+    return false;
+  }
+  let sig = sigs.lookup(ops[i].str);
+  if (!sig.known) {
+    return false;
+  }
+  let counts = sig.effect == rcsigs.effect_retain() || sig.effect == rcsigs.effect_release() || sig.effect == rcsigs.effect_move();
+  if (counts && sig.arg >= 0 && sig.arg < ops[i].i32_imm && util.index_of_i32(held, arg_local(ops, i, sig.arg)) >= 0) {
+    return true;
+  }
+  for a in sig.also {
+    if (a >= 0 && a < ops[i].i32_imm && util.index_of_i32(held, arg_local(ops, i, a)) >= 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// True when no scope that is open at i closes before to, so each path from
+// i reaches to.
+function stays_open(ops: ir.Op[], i: i32, to: i32): boolean {
+  let depth = 0;
+  for j in i + 1..to {
+    depth += scope_delta(ops[j]);
+    if (depth < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The locals that hold the donor's box: the donor, and each local that a
+// copy of one of them writes. A store of anything else ends a copy when
+// each path from the store reaches to.
+function held_after(ops: ir.Op[], i: i32, to: i32, own held: i32[]): i32[] {
+  let k = ops[i].kind_tag;
+  if (k != ir.K_STORE_LOCAL && k != ir.K_TEE_LOCAL) {
+    return held;
+  }
+  let dst = ops[i].i32_imm;
+  let copied = i >= 1 && ops[i - 1].kind_tag == ir.K_LOAD_LOCAL && util.index_of_i32(held, ops[i - 1].i32_imm) >= 0;
+  let at = util.index_of_i32(held, dst);
+  if (copied && at < 0) {
+    return held.append(dst);
+  }
+  if (!copied && at > 0 && stays_open(ops, i, to)) {
+    let out: i32[] = [];
+    for j in 0..held.len() {
+      if (j != at) {
+        out = out.append(held[j]);
+      }
+    }
+    return out;
+  }
+  return held;
+}
+
+struct CountScan { at: i32, held: i32[] }
+
+function first_count_change(ops: ir.Op[], from: i32, to: i32, own held: i32[], sigs: rcsigs.Table): CountScan {
   let i = from;
   while (i < to) {
-    if (counted_local(ops, i, sigs) == donor) {
-      return i;
+    if (changes_count_of(ops, i, held, sigs)) {
+      return CountScan { at: i, held: held };
     }
+    held = held_after(ops, i, to, held);
     i += 1;
   }
-  return -1;
+  return CountScan { at: -1, held: held };
 }
 
 function count_problems(fn_name: string, ops: ir.Op[], call: i32, s: Site, sigs: rcsigs.Table): irverify.Problem[] {
   let out: irverify.Problem[] = [];
-  let at = first_count_change(ops, s.unique_at + 1, s.else_at, s.gate, sigs);
+  let scan = first_count_change(ops, s.unique_at + 1, s.else_at, [s.gate], sigs);
+  let at = scan.at;
   if (at < 0) {
-    at = first_count_change(ops, s.end_at + 1, call, s.gate, sigs);
+    at = first_count_change(ops, s.end_at + 1, call, scan.held, sigs).at;
   }
   if (at >= 0) {
     out = out.append(irverify.Problem {

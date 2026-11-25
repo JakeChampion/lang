@@ -67,9 +67,9 @@ x86_64/http_hello.text	15871
 x86_64/http_hello.ir	21160352
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	8455
+x86_64/map_int.text	8540
 x86_64/map_int.ir	22567114
-x86_64/map_probe_chain.text	8459
+x86_64/map_probe_chain.text	8544
 x86_64/map_probe_chain.ir	222031221
 x86_64/map_string.text	9349
 x86_64/map_string.ir	45796489	2
@@ -225,10 +225,10 @@ x86_64/base64_decode.text	3297
 x86_64/base64_decode.ir	511304834
 aarch64/base64_decode.text	3349
 aarch64/base64_decode.ir	340618902
-x86_64/gather_many.text	6164
-x86_64/gather_many.ir	35347966
-aarch64/gather_many.text	6715
-aarch64/gather_many.ir	40808112
+x86_64/gather_many.text	6023
+x86_64/gather_many.ir	34173734
+aarch64/gather_many.text	6519
+aarch64/gather_many.ir	39539355
 aarch64/hex_decode.ir	177963145
 aarch64/utf8_validate.text	2882
 aarch64/utf8_validate.ir	221066742

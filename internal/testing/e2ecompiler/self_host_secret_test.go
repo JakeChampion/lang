@@ -8,13 +8,16 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // A record of a `@secret` struct zeroes each numeric array that it holds
-// alone when it is released (SEC-025). The arrays here are 48 bytes, which
-// is 72 bytes with the header, and a raw allocation of 72 bytes takes a
-// freed block of that class back without a zero-fill. The control is the same
-// record without the attribute: it must read the secret bytes back. "shared"
+// alone when it is released (SEC-025). A raw allocation takes a freed block
+// of its size class back without a zero-fill, so the scan takes blocks of
+// each class that the 48-byte arrays can have on a target. The control is
+// the same record without the attribute: it must read the secret bytes back.
+// "shared"
 // returns the byte array from the key, so that array must keep its bytes.
 const secretSrc = `@secret
 struct Key { bytes: u8[], words: u64[], n: i32 }
@@ -56,10 +59,12 @@ function shared(v: u64): u8[] {
 function stale(): i32 {
   unsafe {
     let found: i32 = 0;
-    for k in 0..8 {
-      let p: usize = __alloc(72);
-      for i in 0..72 {
-        if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+    for size in 2..24 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+        }
       }
     }
     return found;
@@ -83,7 +88,7 @@ function main(): i32 {
 `
 
 // A record of a `@secret` struct also zeroes its scalar fields when it is
-// released. The record has seven fields, and a raw allocation of 64 bytes
+// released. The record has seven fields, and the scan of the size classes
 // takes its freed box back. The fields `a`, `b`, `e` and `f` and the four
 // bytes of `c` hold the byte 65, which is 36 bytes. The control is the same
 // record without the attribute.
@@ -125,10 +130,12 @@ function plain(v: u64): u64 {
 function stale(): i32 {
   unsafe {
     let found: i32 = 0;
-    for k in 0..8 {
-      let p: usize = __alloc(64);
-      for i in 0..64 {
-        if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+    for size in 2..24 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+        }
       }
     }
     return found;
@@ -950,10 +957,121 @@ function main(): i32 {
 }
 `
 
+// The drop of a @secret record wipes each level of a recursive type: each node
+// of a list, which the chain loop takes, and each node of a tree, which the
+// wipe helper takes through a call for each level.
+const secretRecursiveSrc = `enum List { Node(u64, u64, List), Nil }
+
+struct Tree { a: u64, b: u64, kids: Tree[] }
+
+@secret
+struct Key { list: List, tree: Tree, n: i32 }
+
+struct Plain { list: List, tree: Tree, n: i32 }
+
+@noinline
+function list(v: u64, n: i32): List {
+  let l: List = Nil;
+  for i in 0..n {
+    l = Node(v, v, l);
+  }
+  return l;
+}
+
+@noinline
+function tree(v: u64, depth: i32): Tree {
+  if (depth == 0) {
+    return Tree { a: v, b: v, kids: [] };
+  }
+  return Tree { a: v, b: v, kids: [tree(v, depth - 1), tree(v, depth - 1)] };
+}
+
+function whole(l: List, v: u64): i32 {
+  let n = 0;
+  let at = l;
+  while (true) {
+    match (at) {
+      Node(a, b, rest) => {
+        if (a != v || b != v) {
+          return -1;
+        }
+        n += 1;
+        at = rest;
+      },
+      Nil => {
+        return n;
+      },
+    }
+  }
+  return n;
+}
+
+@noinline
+function key(v: u64, n: i32): i32 {
+  let k = Key { list: list(v, n), tree: tree(v, 3), n: 1 };
+  return k.n;
+}
+
+@noinline
+function plain(v: u64, n: i32): i32 {
+  let k = Plain { list: list(v, n), tree: tree(v, 3), n: 1 };
+  return k.n;
+}
+
+@noinline
+function shared(v: u64): List {
+  let tail = list(v, 3);
+  let k = Key { list: Node(v, v, tail), tree: tree(v, 0), n: 1 };
+  let n = k.n;
+  return tail;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 3..10 {
+      for k in 0..12 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size {
+          if (__load_i64(p + ((i * 8) as usize)) == 4702111234474983745) { found += 8; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word, 4);
+  } else if (mode == "deep") {
+    let n = key(word, 100000);
+  } else if (mode == "shared") {
+    let tail = shared(word);
+    print(whole(tail, word).to_string());
+  } else {
+    let n = plain(word, 4);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
+// secretTargets are the targets of the read-back tests.
+var secretTargets = []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"}
+
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
-	_, qemu := arm64Tooling(t)
+	var qemu, wasmtime string
+	switch target {
+	case "arm64-linux":
+		_, qemu = arm64Tooling(t)
+	case "wasm32-wasi":
+		wasmtime = e2eharness.Wasmtime(t)
+	}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.fern")
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
@@ -969,9 +1087,12 @@ func secretRun(t *testing.T, target, src string) func(mode string) []string {
 	return func(mode string) []string {
 		t.Helper()
 		var c *exec.Cmd
-		if target == "arm64-linux" {
+		switch target {
+		case "arm64-linux":
 			c = runArm64Bin(qemu, bin, mode)
-		} else {
+		case "wasm32-wasi":
+			c = exec.Command(wasmtime, "run", bin, mode)
+		default:
 			c = runX86_64Bin(cli.runner, bin, mode)
 		}
 		var stdout, stderr bytes.Buffer
@@ -998,7 +1119,7 @@ func secretCount(t *testing.T, mode string, fields []string) int {
 }
 
 func TestSelfHostSecretRecordWipesItsArrays(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretSrc)
 			if got := secretCount(t, "plain", run("plain")); got < 48 {
@@ -1015,7 +1136,7 @@ func TestSelfHostSecretRecordWipesItsArrays(t *testing.T) {
 }
 
 func TestSelfHostSecretRecordWipesItsScalars(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretScalarsSrc)
 			if got := secretCount(t, "plain", run("plain")); got < 36 {
@@ -1029,7 +1150,7 @@ func TestSelfHostSecretRecordWipesItsScalars(t *testing.T) {
 }
 
 func TestSelfHostSecretRecordWipesItsNestedBoxes(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretNestedSrc)
 			if got := secretCount(t, "plain", run("plain")); got != 136 {
@@ -1046,7 +1167,7 @@ func TestSelfHostSecretRecordWipesItsNestedBoxes(t *testing.T) {
 }
 
 func TestSelfHostSecretRecordWipesItsEnums(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretEnumSrc)
 			if got := secretCount(t, "plain", run("plain")); got != 148 {
@@ -1063,7 +1184,7 @@ func TestSelfHostSecretRecordWipesItsEnums(t *testing.T) {
 }
 
 func TestSelfHostSecretRecordWipesItsStrings(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretStringSrc)
 			if got := secretCount(t, "plain", run("plain")); got < 48 {
@@ -1088,6 +1209,7 @@ func TestSelfHostSecretRecordWipesItsBuiltStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := strings.ReplaceAll(secretBuiltStringSrc, "KEYFILE", keyfile)
+	// The mapped file needs the mmap of a native target.
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, src)
@@ -1110,7 +1232,7 @@ func TestSelfHostSecretRecordWipesItsBuiltStrings(t *testing.T) {
 }
 
 func TestSelfHostSecretRecordWipesItsArraysOfBoxes(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretElementsSrc)
 			if got := secretCount(t, "plain", run("plain")); got < 152 {
@@ -1127,7 +1249,7 @@ func TestSelfHostSecretRecordWipesItsArraysOfBoxes(t *testing.T) {
 }
 
 func TestSelfHostSecretRecordWipesItsUnions(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretUnionSrc)
 			if got := secretCount(t, "plain", run("plain")); got < 76 {
@@ -1147,7 +1269,7 @@ func TestSelfHostSecretRecordWipesItsUnions(t *testing.T) {
 }
 
 func TestSelfHostSecretRecordWipesItsFinalizedFields(t *testing.T) {
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretFinalizedSrc)
 			plain := run("plain")
@@ -1170,7 +1292,7 @@ func TestSelfHostSecretRecordWipesItsFinalizedFields(t *testing.T) {
 
 func TestSelfHostSecretRecordWipesItsDeepFinalizedValues(t *testing.T) {
 	want := "res true res true res true res true res true res true"
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretDeepFinalizedSrc)
 			plain := run("plain")
@@ -1194,9 +1316,29 @@ func TestSelfHostSecretRecordWipesItsDeepFinalizedValues(t *testing.T) {
 	}
 }
 
+func TestSelfHostSecretRecordWipesItsRecursiveValues(t *testing.T) {
+	for _, target := range secretTargets {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretRecursiveSrc)
+			if got := secretCount(t, "plain", run("plain")); got < 160 {
+				t.Fatalf("plain read %d secret bytes back, want at least 160; the raw allocations no longer observe the released nodes", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its deeper nodes back, want 0", got)
+			}
+			if got := secretCount(t, "deep", run("deep")); got != 0 {
+				t.Fatalf("after the release of a @secret record with a list of 100000 nodes the raw allocations read %d secret bytes back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 2 || got[0] != "3" {
+				t.Fatalf("shared printed %q; the nodes that the caller still holds must keep their fields", got)
+			}
+		})
+	}
+}
+
 func TestSelfHostUnionDropRunsMemberFinalizer(t *testing.T) {
 	want := []string{"res", "r1", "bare", "2", "res", "r7", "bare", "8", "end", "9"}
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range secretTargets {
 		t.Run(target, func(t *testing.T) {
 			got := secretRun(t, target, unionMemberDropSrc)("run")
 			if strings.Join(got, " ") != strings.Join(want, " ") {

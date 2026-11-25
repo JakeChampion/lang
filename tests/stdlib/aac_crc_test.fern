@@ -1,0 +1,109 @@
+import "std/audio/aac";
+import "std/audio/pcm";
+import "std/test";
+import "aac_check";
+import "aac_crc_vectors";
+import "aac_kernel_check" as ref;
+
+function stream(name: string): Result[u8[], string] {
+  for v in aac_crc_vectors.vectors() {
+    if (v.name == name) {
+      return ref.unpack(v.bytes);
+    }
+  }
+  return Err("no vector " + name);
+}
+
+function checksum(bytes: u8[], at: i32, bit: i32): boolean {
+  if let Err(pcm.Checksum) = aac.decode(bytes.with(at, bytes[at] ^ 1u8 << bit as u8), pcm.default_limits()) {
+    return true;
+  }
+  return false;
+}
+
+function reference(): test.TestOutcome {
+  for v in aac_crc_vectors.vectors() {
+    if let Err(message) = aac_check.reference(v) {
+      return test.fail(message);
+    }
+  }
+  return test.pass();
+}
+
+// Each bit of the header and of the first 192 bits after the element identifier is in the CRC.
+// The second frame of single-1 holds one element of more than 192 bits.
+function single_block(): test.TestOutcome {
+  let Ok(bytes) = stream("single-1") else {
+    return test.fail("single-1");
+  };
+  let frame = (bytes[3] as i32 & 3) << 11 | bytes[4] as i32 << 3 | bytes[5] as i32 >> 5;
+  for at in frame * 8..frame * 8 + 267 {
+    if (at < frame * 8 + 56 || at >= frame * 8 + 75) {
+      if let Ok(_) = aac.decode(bytes.with(at / 8, bytes[at / 8] ^ 1u8 << (7 - at % 8) as u8), pcm.default_limits()) {
+        return test.fail("a flip of protected bit " + at.to_string() + " decodes");
+      }
+    }
+  }
+  for at in frame + 7..frame + 9 {
+    for bit in 0..8 {
+      if (!checksum(bytes, at, bit)) {
+        return test.fail("a flip of the stored CRC is not a checksum error");
+      }
+    }
+  }
+  return test.pass();
+}
+
+// A multi-block frame has a header CRC and a CRC after each raw data block.
+function multi_block(): test.TestOutcome {
+  for name in ["multi-1", "multi-2", "multi-6"] {
+    let Ok(bytes) = stream(name) else {
+      return test.fail(name);
+    };
+    let size = (bytes[3] as i32 & 3) << 11 | bytes[4] as i32 << 3 | bytes[5] as i32 >> 5;
+    let blocks = (bytes[6] as i32 & 3) + 1;
+    let header_crc = 7 + 2 * (blocks - 1);
+    let first_end = header_crc + 2 + (bytes[7] as i32 << 8 | bytes[8] as i32);
+    for at in [header_crc, header_crc + 1, first_end - 2, first_end - 1, size - 2, size - 1] {
+      for bit in 0..8 {
+        if (!checksum(bytes, at, bit)) {
+          return test.fail(name + " CRC byte " + at.to_string() + " bit " + bit.to_string());
+        }
+      }
+    }
+    if let Err(pcm.Checksum) = aac.decode(bytes.with(8, bytes[8] ^ 1u8), pcm.default_limits()) {} else {
+      return test.fail(name + " block position is outside the header CRC");
+    }
+  }
+  return test.pass();
+}
+
+// The CRC covers each byte of a data element and no byte of a fill element.
+function data_and_fill(): test.TestOutcome {
+  let Ok(bytes) = stream("data-1") else {
+    return test.fail("data-1");
+  };
+  for at in 15..19 {
+    for bit in 0..8 {
+      if (!checksum(bytes, at, bit)) {
+        return test.fail("data element byte " + at.to_string());
+      }
+    }
+  }
+  let Ok(original) = aac.decode(bytes, pcm.default_limits()) else {
+    return test.fail("data-1 decode");
+  };
+  let Ok(filled) = aac.decode(bytes.with(21, bytes[21] ^ 64u8), pcm.default_limits()) else {
+    return test.fail("a changed fill byte is not in the CRC");
+  };
+  return test.assert_true(filled.samples == original.samples);
+}
+
+function main(): i32 {
+  let runner = test.new("AAC-LC protected ADTS");
+  runner = runner.it("FDK AAC protected frames, one and three blocks a frame, against FFmpeg", reference);
+  runner = runner.it("each protected bit of a single-block frame and its stored CRC", single_block);
+  runner = runner.it("the header CRC and the CRC of each raw data block", multi_block);
+  runner = runner.it("a data element is in the CRC and a fill element is not", data_and_fill);
+  return runner.finish();
+}

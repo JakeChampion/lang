@@ -81,7 +81,7 @@ func TestStdTestCorpusMatrixCoversEveryShard(t *testing.T) {
 			t.Errorf("stdlib corpus jobs omit %q", required)
 		}
 	}
-	expected := map[string]int{"x86-64": 8, "arm64": 8, "arm64-bidi": 1, "interp": 4, "x86-64-tls": 1, "x86-64-harden": 2, "x86-64-few-registers": 2, "arm64-tls": 1, "crypto-wasm": 1, "wasm": 7}
+	expected := map[string]int{"x86-64": 8, "arm64": 8, "arm64-bidi": 1, "interp": 4, "x86-64-tls": 1, "x86-64-harden": 2, "arm64-harden": 4, "arm64-harden-bidi": 1, "x86-64-few-registers": 2, "arm64-tls": 1, "crypto-wasm": 1, "wasm": 7}
 	rows := regexp.MustCompile(`\{ leg: ([a-z0-9-]+), shard: ([0-9]+), count: ([0-9]+) \}`).FindAllStringSubmatch(job, -1)
 	seen := map[string]bool{}
 	for _, row := range rows {
@@ -102,7 +102,7 @@ func TestStdTestCorpusMatrixCoversEveryShard(t *testing.T) {
 			}
 		}
 	}
-	if strings.Count(job, "-test.timeout 33m") != 9 {
+	if strings.Count(job, "-test.timeout 33m") != 10 {
 		t.Error("stdlib corpus timeouts changed")
 	}
 }

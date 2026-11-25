@@ -585,206 +585,51 @@ pub function (c: ListClass) release(e: usize): void {
 // The struct of IDs of each class of this module.
 pub struct Classes { activity: ActivityClass, pending_intent: PendingIntentClass, content_resolver: ContentResolverClass, content_uris: ContentUrisClass, context: ContextClass, intent: IntentClass, intent_sender: IntentSenderClass, cursor: CursorClass, uri: UriClass, media_store: MediaStoreClass, media_store_audio_media: MediaStore_Audio_MediaClass, output_stream: OutputStreamClass, collections: CollectionsClass, collection: CollectionClass, list: ListClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let activity = match (activity_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let pending_intent = match (pending_intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      return Err(err);
-    },
-  };
-  let content_resolver = match (content_resolver_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      return Err(err);
-    },
-  };
-  let content_uris = match (content_uris_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      return Err(err);
-    },
-  };
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let intent_sender = match (intent_sender_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let cursor = match (cursor_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      return Err(err);
-    },
-  };
-  let uri = match (uri_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      cursor.release(e);
-      return Err(err);
-    },
-  };
-  let media_store = match (media_store_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      cursor.release(e);
-      uri.release(e);
-      return Err(err);
-    },
-  };
-  let media_store_audio_media = match (media_store_audio_media_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      cursor.release(e);
-      uri.release(e);
-      media_store.release(e);
-      return Err(err);
-    },
-  };
-  let output_stream = match (output_stream_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      cursor.release(e);
-      uri.release(e);
-      media_store.release(e);
-      media_store_audio_media.release(e);
-      return Err(err);
-    },
-  };
-  let collections = match (collections_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      cursor.release(e);
-      uri.release(e);
-      media_store.release(e);
-      media_store_audio_media.release(e);
-      output_stream.release(e);
-      return Err(err);
-    },
-  };
-  let collection = match (collection_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      cursor.release(e);
-      uri.release(e);
-      media_store.release(e);
-      media_store_audio_media.release(e);
-      output_stream.release(e);
-      collections.release(e);
-      return Err(err);
-    },
-  };
-  let list = match (list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      pending_intent.release(e);
-      content_resolver.release(e);
-      content_uris.release(e);
-      context.release(e);
-      intent.release(e);
-      intent_sender.release(e);
-      cursor.release(e);
-      uri.release(e);
-      media_store.release(e);
-      media_store_audio_media.release(e);
-      output_stream.release(e);
-      collections.release(e);
-      collection.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let activity = deleted_on_error(e, activity_class(e), made)?;
+  made = made.append(activity.class);
+  let pending_intent = deleted_on_error(e, pending_intent_class(e), made)?;
+  made = made.append(pending_intent.class);
+  let content_resolver = deleted_on_error(e, content_resolver_class(e), made)?;
+  made = made.append(content_resolver.class);
+  let content_uris = deleted_on_error(e, content_uris_class(e), made)?;
+  made = made.append(content_uris.class);
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let intent_sender = deleted_on_error(e, intent_sender_class(e), made)?;
+  made = made.append(intent_sender.class);
+  let cursor = deleted_on_error(e, cursor_class(e), made)?;
+  made = made.append(cursor.class);
+  let uri = deleted_on_error(e, uri_class(e), made)?;
+  made = made.append(uri.class);
+  let media_store = deleted_on_error(e, media_store_class(e), made)?;
+  made = made.append(media_store.class);
+  let media_store_audio_media = deleted_on_error(e, media_store_audio_media_class(e), made)?;
+  made = made.append(media_store_audio_media.class);
+  let output_stream = deleted_on_error(e, output_stream_class(e), made)?;
+  made = made.append(output_stream.class);
+  let collections = deleted_on_error(e, collections_class(e), made)?;
+  made = made.append(collections.class);
+  let collection = deleted_on_error(e, collection_class(e), made)?;
+  made = made.append(collection.class);
+  let list = deleted_on_error(e, list_class(e), made)?;
   return Ok(Classes { activity: activity, pending_intent: pending_intent, content_resolver: content_resolver, content_uris: content_uris, context: context, intent: intent, intent_sender: intent_sender, cursor: cursor, uri: uri, media_store: media_store, media_store_audio_media: media_store_audio_media, output_stream: output_stream, collections: collections, collection: collection, list: list });
 }
 

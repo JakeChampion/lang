@@ -819,6 +819,39 @@ pub function immediate_enum(f: Func, t: typeinfo.Type): boolean {
   return false;
 }
 
+// A value of `Option[T]` whose `T` is a box that is never null is that box,
+// and null is `None` (docs/RC-DESIGN.md, "The runtime contract").
+pub function niche_option(f: Func, t: typeinfo.Type): boolean {
+  let at = semrecords.find_enum(f.enums, t);
+  if (at < 0 || f.enums[at].layout != semrecords.layout_option() || f.enums[at].variants.len() != 2) {
+    return false;
+  }
+  let some = f.enums[at].variants[0];
+  let none = f.enums[at].variants[1];
+  return some.name == "Some" && none.name == "None" && some.fields.len() == 1 && none.fields.len() == 0
+    && never_null(f, some.fields[0].ty);
+}
+
+// The payload type of a `niche_option` type.
+pub function niche_payload(f: Func, t: typeinfo.Type): typeinfo.Type {
+  return f.enums[semrecords.find_enum(f.enums, t)].variants[0].fields[0].ty;
+}
+
+function never_null(f: Func, t: typeinfo.Type): boolean {
+  if (is_string(t) || typeinfo.is_owned_array(t)) {
+    return true;
+  }
+  if (typeinfo.is_cell(t) || semtypes.is_handle(t) || semtypes.is_env(t)) {
+    return false;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    let at = semrecords.find_enum(f.enums, t);
+    return at >= 0 && !f.enums[at].views && !immediate_enum(f, t)
+      && (f.enums[at].layout == semrecords.layout_variant() || f.enums[at].layout == semrecords.layout_member());
+  }
+  return semrecords.find(f.records, t) >= 0;
+}
+
 // A dyn value is a box that holds a tag. A value of an immediate enum has
 // no tag, so its widening to a dyn value makes a box.
 pub function boxed_enum_dyns(f: Func): Func {
@@ -1676,6 +1709,9 @@ function widening_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
   if (ins.args.len() != 1) {
     return "variant widening arity";
   }
+  if (niche_option(f, result)) {
+    return if (ins.str == "Some" && semtypes.equal(f.values[ins.args[0]], niche_payload(f, result))) { "" } else { "niche widening type" };
+  }
   if (!member_layout(f, result)) {
     return "variant widening layout";
   }
@@ -1777,6 +1813,9 @@ function narrowing_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
     return "variant narrowing arity";
   }
   let whole = f.values[ins.args[0]];
+  if (niche_option(f, whole)) {
+    return if (ins.str == "Some" && semtypes.equal(result, niche_payload(f, whole))) { "" } else { "niche narrowing type" };
+  }
   if (!member_layout(f, whole)) {
     return "variant narrowing layout";
   }
@@ -3793,7 +3832,7 @@ function twin_into(defs: ssa.SInst[], own t: Twins, v: i32): Twins {
 }
 
 function twin_arity(kind: i32): i32 {
-  if (kind == variant_get() || kind == record_get() || kind == tuple_get()) {
+  if (kind == variant_get() || kind == variant_as() || kind == record_get() || kind == tuple_get()) {
     return 1;
   }
   if (kind == array_get()) {

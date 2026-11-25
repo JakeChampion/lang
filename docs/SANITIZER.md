@@ -371,9 +371,14 @@ whose reference outlived the count.
 - **A stale reference that never touches the block again.** The detector fires
   on the `inc`/`dec`, so a dangling pointer that is only ever *read through*
   raw-memory builtins is invisible.
-- **A write inside the rounding of a request, or far past a block.** The
-  redzone starts at the request rounded up to 8 bytes. A write in those 7
-  bytes or fewer is not seen. A write that lands beyond the redzone, or in the
+- **A write inside the rounding of a string or an array, or far past a block.** The
+  allocator puts the poison in the word that holds the end of each request. A
+  raw `__free(p, n)` checks the bytes of that word past `n`, so a raw write in
+  the rounding of the request is seen (the `first-rounding-byte` and
+  `last-rounding-byte` cases of `TestSelfHostQuarantinePolicy`, and
+  `TestWasmSanitizeReportsRoundingWrite`). Other releases know only a number
+  of words, so a write in the rounding of a string or an array is not seen. A
+  write that lands beyond the redzone, or in the
   next block, is seen only when that block's own release or count reports it.
   A block that is never released gets one check: after a leak verdict, the
   census reads the two redzone words after the class of each live block

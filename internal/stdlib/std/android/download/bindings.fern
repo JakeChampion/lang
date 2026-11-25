@@ -430,74 +430,35 @@ pub function (c: FileClass) get_absolute_path(e: usize, self: File): Result[stri
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, download_manager: DownloadManagerClass, download_manager_request: DownloadManager_RequestClass, download_manager_query: DownloadManager_QueryClass, cursor: CursorClass, uri: UriClass, file: FileClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let download_manager = match (download_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let download_manager_request = match (download_manager_request_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      download_manager.release(e);
-      return Err(err);
-    },
-  };
-  let download_manager_query = match (download_manager_query_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      download_manager.release(e);
-      download_manager_request.release(e);
-      return Err(err);
-    },
-  };
-  let cursor = match (cursor_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      download_manager.release(e);
-      download_manager_request.release(e);
-      download_manager_query.release(e);
-      return Err(err);
-    },
-  };
-  let uri = match (uri_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      download_manager.release(e);
-      download_manager_request.release(e);
-      download_manager_query.release(e);
-      cursor.release(e);
-      return Err(err);
-    },
-  };
-  let file = match (file_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      download_manager.release(e);
-      download_manager_request.release(e);
-      download_manager_query.release(e);
-      cursor.release(e);
-      uri.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let download_manager = deleted_on_error(e, download_manager_class(e), made)?;
+  made = made.append(download_manager.class);
+  let download_manager_request = deleted_on_error(e, download_manager_request_class(e), made)?;
+  made = made.append(download_manager_request.class);
+  let download_manager_query = deleted_on_error(e, download_manager_query_class(e), made)?;
+  made = made.append(download_manager_query.class);
+  let cursor = deleted_on_error(e, cursor_class(e), made)?;
+  made = made.append(cursor.class);
+  let uri = deleted_on_error(e, uri_class(e), made)?;
+  made = made.append(uri.class);
+  let file = deleted_on_error(e, file_class(e), made)?;
   return Ok(Classes { context: context, download_manager: download_manager, download_manager_request: download_manager_request, download_manager_query: download_manager_query, cursor: cursor, uri: uri, file: file });
 }
 

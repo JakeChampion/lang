@@ -241,15 +241,33 @@ function test_type_only(): test.TestOutcome {
 }
 
 // The struct Classes holds the struct of IDs of each class. When a class
-// gives an error, the function releases the classes before it.
+// gives an error, the function deletes the classes before it. Each lookup
+// goes to one function, so `classes` has one branch for each class.
 function test_all_classes(): test.TestOutcome {
   let text = generated([all("dev/fern/Point"), all("dev/fern/Shape")]);
   return test.assert_eq(
     absent(text, [
       "pub struct Classes { point: PointClass, shape: ShapeClass }",
-      "// fern-lint: allow cyclomatic-complexity\npub function classes(e: usize): Result[Classes, jni.JavaError] {",
-      "  let shape = match (shape_class(e)) {\n    Ok(c) => c,\n    Err(err) => {\n      point.release(e);\n      return Err(err);\n    },\n  };",
+      "function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {\n  if let Err(_) = r {\n    for class in made {\n      jni.delete_global_ref(e, class);\n    }\n  }\n  return r;\n}",
+      "// fern-lint: allow cyclomatic-complexity\npub function classes(e: usize): Result[Classes, jni.JavaError] {\n  let made: usize[] = [];\n  let point = deleted_on_error(e, point_class(e), made)?;\n  made = made.append(point.class);\n  let shape = deleted_on_error(e, shape_class(e), made)?;\n  return Ok(Classes { point: point, shape: shape });\n}",
       "pub function (c: Classes) release(e: usize): void {\n  c.point.release(e);\n  c.shape.release(e);\n}",
+    ]),
+    "",
+  );
+}
+
+// `e` and `made` are names of the function `classes`, so the class Made
+// takes the name `made_` there.
+function test_classes_keep_their_names(): test.TestOutcome {
+  let made = classfile.Class { name: "dev/fern/Made", parent: "java/lang/Object", interfaces: [], access: 1, version: 52, fields: [], methods: [], pool: [], bootstraps: [] };
+  let text = match (bind.generate(classes().append(made), [all("dev/fern/Point"), all("dev/fern/Made")])) {
+    Ok(t) => t,
+    Err(e) => "error: " + e,
+  };
+  return test.assert_eq(
+    absent(text, [
+      "pub struct Classes { point: PointClass, made_: MadeClass }",
+      "  made = made.append(point.class);\n  let made_ = deleted_on_error(e, made_class(e), made)?;\n  return Ok(Classes { point: point, made_: made_ });",
     ]),
     "",
   );
@@ -317,6 +335,7 @@ function main(): i32 {
   r = r.it("a request with members binds only them", test_members);
   r = r.it("the member - binds a class with no function", test_type_only);
   r = r.it("the struct Classes holds each class", test_all_classes);
+  r = r.it("a class does not take a name of the function classes", test_classes_keep_their_names);
   r = r.it("a mark gives a member that can be absent and a parameter that can be null", test_marks);
   r = r.it("a module with no null parameter has no Option", test_marks_absent);
   r = r.it("generate refuses a mark in a wrong place", test_mark_errors);

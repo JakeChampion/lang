@@ -185,7 +185,7 @@ pub function ldexp_q2(own value: f32, own exponent: i32): f32 {
 
 // Scalefactor reconstruction preserves the reference partition and reuse order.
 // fern-lint: allow cyclomatic-complexity
-pub function scales(input: [u8], b: bits.Bits, g: Granule, h: header.Header, positions: i32[], channel: i32): Result[Scales, pcm.AudioError] {
+pub function scales(input: [u8], b: bits.Bits, g: Granule, h: header.Header, own positions: i32[], channel: i32): Result[Scales, pcm.AudioError] {
   let row = (if (g.short_bands != 0) { 1 } else { 0 }) + (if (g.long_bands == 0) { 1 } else { 0 });
   let offset = 0;
   let sizes: i32[] = [0, 0, 0, 0];

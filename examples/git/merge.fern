@@ -25,11 +25,10 @@ import "./walk";
 // renames. `dir_renames` is true unless `merge.directoryRenames` is
 // false, and `dir_moves` is true when it is true: a file then moves with
 // its directory with no conflict. `default_driver` is `merge.default`,
-// and `drivers` holds the names of the merge drivers of the
-// configuration. With a `verbosity` of 5 or more, the messages of an
-// inner merge are kept. `abbrev` is the least length of a short name.
+// and `drivers` records whether each named driver has a command.
+// With a `verbosity` of 5 or more, the messages of an inner merge are kept. `abbrev` is the least length of a short name.
 // `attrs` holds the attributes, or nothing.
-pub struct Options { style: i32, algo: linediff.Options, renames: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: string[], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
+pub struct Options { style: i32, algo: linediff.Options, renames: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
 
 // The text of a gap: a part of a merge that the port does not have.
 function gap(what: string): string {
@@ -38,7 +37,7 @@ function gap(what: string): string {
 
 // The settings of git with no configuration.
 pub function defaults(): Options {
-  return Options { style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: [], verbosity: 2, abbrev: 7, attrs: [] };
+  return Options { style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
 }
 
 // The settings of a merge from the configuration, or the message of git
@@ -190,7 +189,9 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
     // The name of a driver is the part between `merge.` and the last dot.
     let last = e.name.last_index_of(".").unwrap_or(-1);
     if (e.name.starts_with("merge.") && last > 6) {
-      o = Options { ...o, drivers: o.drivers.append(objects.part(e.name, 6, last)) };
+      let name = objects.part(e.name, 6, last);
+      let has_command = e.name.ends_with(".driver") || o.drivers.get_or(name, false);
+      o = Options { ...o, drivers: o.drivers.insert(name, has_command) };
     }
   }
   if (verbosity.len() > 0) {
@@ -552,11 +553,6 @@ function trees_below(versions: Version[], dirmask: i32): string[] {
 function collect(st_in: State, dir: string, e: Entry): State {
   let st = st_in;
   let before = st.mask;
-  for v in e.versions {
-    if (kind_of(v.mode) < 0) {
-      return State { ...st, fatal: gap("an entry of a tree with the mode " + v.mode) };
-    }
-  }
   let filemask = e.mask & (7 ^ e.dirmask);
   let base = e.versions[0];
   let one = e.versions[1];
@@ -731,7 +727,10 @@ function driver_of(st: State, path: string): (State, string) {
     return (st, "binary");
   }
   let name = if (value == attr.UNSPECIFIED) { st.o.default_driver } else { value };
-  if (st.o.drivers.contains(name)) {
+  if let Some(has_command) = st.o.drivers.get(name) {
+    if (!has_command) {
+      return (State { ...st, fatal: "custom merge driver " + name + " lacks command line." }, "text");
+    }
     return (State { ...st, fatal: gap("the merge driver '" + name + "' of the configuration") }, "text");
   }
   return (st, if (name == "binary" || name == "union") { name } else { "text" });

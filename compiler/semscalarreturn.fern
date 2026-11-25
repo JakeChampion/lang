@@ -1,3 +1,4 @@
+import "./ir";
 import "./ssa";
 import "./ssasem";
 import "./sourcepos";
@@ -506,7 +507,7 @@ function consecutive(first: i32, n: i32): i32[] {
 // a record built of the parts after it.
 pub function read_of_parts(ins: ssa.SInst, result: i32, parts: i32[], payload: typeinfo.Type[]): ssa.SInst {
   if (ins.kind_tag == ssasem.variant_is() && ins.str == "None") {
-    return ssa.SInst { ir_kind: 0, kind_tag: ssa.UNARY, result: result, args: [parts[0]], imm: 0, str: "!" };
+    return ssa.SInst { ir_kind: ir.K_NOT, kind_tag: ssa.UNARY, result: result, args: [parts[0]], imm: 0, str: "!" };
   }
   if (ins.kind_tag == ssasem.variant_is()) {
     return ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: result, args: [parts[0]], imm: 0, str: "" };

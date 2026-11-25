@@ -171,3 +171,84 @@ function main(): i32 {
 		},
 	})
 }
+
+func TestSelfHostAndIdentityFoldsX86_64(t *testing.T) {
+	runX86ShapeCases(t, []shapeCase{
+		{
+			name: "and",
+			src: `@noinline function ones64(x: u64): u64 { return 0xffffffffffffffffu64 & x; }
+@noinline function ones32(a: i32, b: i32): i32 { return (a + b) & -1i32; }
+@noinline function zero64(x: u64, y: u64): u64 { return x + (0u64 & y); }
+@noinline function low32(a: u32, b: u32): u64 { return ((a + b) & 0xffffffffu32) as u64; }
+function main(): i32 {
+    let r: i32 = 0;
+    if (ones64(18446744073709551615u64) == 18446744073709551615u64) { r = r + 1; }
+    if (ones32(2000000000, 2000000000) == 0 - 294967296) { r = r + 2; }
+    if (zero64(5u64, 18446744073709551615u64) == 5u64) { r = r + 4; }
+    if (low32(4000000000u32, 4000000000u32) == 3705032704u64) { r = r + 8; }
+    return r;
+}`,
+			want: 15,
+			has: map[string][]string{
+				"low32": {`\n    andq %r[a-z0-9]+, %r[a-z0-9]+\n`},
+			},
+			lacks: map[string][]string{
+				"ones64": {`and`, `\$-1`},
+				"ones32": {`and`, `\$-1`},
+				"zero64": {`and`, `\$0,`},
+			},
+		},
+		{
+			name: "carry-through-zero",
+			src: `const ALL: u64 = 0xffffffffffffffffu64;
+@noinline function add_masked(a0: u64, a1: u64, a2: u64, b0: u64, b2: u64, m: u64): u64 {
+    let s0: u64 = a0 + b0;
+    let c0: u64 = (a0 & b0 | (a0 | b0) & (s0 ^ ALL)) >> 63u64;
+    let q: u64 = 0u64 & m;
+    let s1: u64 = a1 + q + c0;
+    let c1: u64 = (a1 & q | (a1 | q) & (s1 ^ ALL)) >> 63u64;
+    let s2: u64 = a2 + b2 + c1;
+    return s0 ^ s1 ^ s2;
+}
+function main(): i32 {
+    let r: i32 = 0;
+    if (add_masked(ALL, ALL, 5u64, 1u64, 7u64, ALL) == 13u64) { r = r + 1; }
+    if (add_masked(ALL, 3u64, 5u64, 1u64, 7u64, ALL) == 8u64) { r = r + 2; }
+    return r;
+}`,
+			want: 3,
+			has: map[string][]string{
+				"add_masked": {`\n    adcq \$0, %r[a-z0-9]+\n`},
+			},
+			lacks: map[string][]string{
+				"add_masked": {`setb`, `btq`, `and`},
+			},
+		},
+		{
+			name: "link-operand-after-carry",
+			src: `const ALL: u64 = 0xffffffffffffffffu64;
+@noinline function add_late_mask(a0: u64, a1: u64, a2: u64, b0: u64, b1: u64, m: u64): u64 {
+    let s0: u64 = a0 + b0;
+    let c0: u64 = (a0 & b0 | (a0 | b0) & (s0 ^ ALL)) >> 63u64;
+    let s1: u64 = a1 + b1 + c0;
+    let c1: u64 = (a1 & b1 | (a1 | b1) & (s1 ^ ALL)) >> 63u64;
+    let q: u64 = 0xffffffff00000001u64 & m;
+    let s2: u64 = a2 + q + c1;
+    return s0 ^ s1 ^ s2;
+}
+function main(): i32 {
+    let r: i32 = 0;
+    if (add_late_mask(ALL, ALL, 3u64, 1u64, 0u64, ALL) == 0xffffffff00000005u64) { r = r + 1; }
+    if (add_late_mask(2u64, 5u64, 3u64, 1u64, 1u64, 0u64) == 6u64) { r = r + 2; }
+    return r;
+}`,
+			want: 3,
+			has: map[string][]string{
+				"add_late_mask": {`\n    adcq %r[a-z0-9]+, %r[a-z0-9]+\n`},
+			},
+			lacks: map[string][]string{
+				"add_late_mask": {`setb`, `btq`, `leaq`},
+			},
+		},
+	})
+}

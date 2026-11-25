@@ -5,6 +5,7 @@ Every operation checks its input range. Incomplete codewords return `Truncated`.
 Reader positions contain integers and retain no encoded input.
 
 The generated prefix tables use nine bits. Longer codewords use a bounded tree walk.
+The ADTS CRC is the CRC-16 of ISO/IEC 13818-7: polynomial 0x8005, register preset to ones, no final inversion.
 This module is available under MPL-2.0. See `licenses/aac/NOTICE.txt`.
 
 ```fern
@@ -66,6 +67,31 @@ pub function skip(input: [u8], reader: Reader, count: i32): Result[Reader, pcm.A
 
 pub function align(input: [u8], reader: Reader): Result[Reader, pcm.AudioError] {
   return skip(input, reader, (8 - reader.bit) % 8);
+}
+
+function crc_bit(value: u32, bit: u32): u32 {
+  let feedback = value >> 15u32 & 1u32 ^ bit;
+  let shifted = value << 1u32 & 65535u32;
+  return if (feedback != 0u32) { shifted ^ 32773u32 } else { shifted };
+}
+
+// Continue the ADTS CRC-16 over the bits from `from` to `to`.
+// A nonzero `max` takes at most `max` bits and pads a shorter span with zero bits.
+pub function crc(input: [u8], from: Reader, to: Reader, max: i32, value: u32): Result[u32, pcm.AudioError] {
+  let length = (to.at - from.at) * 8 + to.bit - from.bit;
+  if (!valid(input, from) || !valid(input, to) || length < 0 || max < 0) {
+    return Err(pcm.Header);
+  }
+  let count = if (max > 0 && length > max) { max } else { length };
+  let reader = from;
+  for _ in 0..count {
+    value = crc_bit(value, input[reader.at] as u32 >> (7 - reader.bit) as u32 & 1u32);
+    reader = advanced(reader, 1);
+  }
+  for _ in count..max {
+    value = crc_bit(value, 0u32);
+  }
+  return Ok(value);
 }
 
 function tree(input: [u8], reader: Reader, node: i32): Result[(Reader, i32), pcm.AudioError] {

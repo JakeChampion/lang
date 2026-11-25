@@ -1681,8 +1681,11 @@ function either(xs: i32[], ys: i32[]): i32[] {
   if (xs.len() == 0) {
     return ys;
   }
-  if (ys.len() == 0) {
+  if (ys.len() == 0 || holds_all(xs, ys)) {
     return xs;
+  }
+  if (holds_all(ys, xs)) {
+    return ys;
   }
   let out: i32[] = [];
   let (i, j) = (0, 0);
@@ -1699,6 +1702,23 @@ function either(xs: i32[], ys: i32[]): i32[] {
     }
   }
   return out;
+}
+
+// Whether each position of `ys` is in `xs`. Both are in order, each one time.
+function holds_all(xs: i32[], ys: i32[]): boolean {
+  if (ys.len() > xs.len()) {
+    return false;
+  }
+  let i = 0;
+  for y in ys {
+    while (i < xs.len() && xs[i] < y) {
+      i += 1;
+    }
+    if (i == xs.len() || xs[i] != y) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The positions of `xs`, and those after one character of `set`.
@@ -1730,6 +1750,13 @@ function steps_at(cats: i32[], x: i32, set: i64): boolean {
 
 // The positions after any count of characters of `set`.
 function any_of(cats: i32[], xs: i32[], set: i64): i32[] {
+  let first = 0;
+  while (first < xs.len() && !steps_at(cats, xs[first], set)) {
+    first += 1;
+  }
+  if (first == xs.len()) {
+    return xs;
+  }
   let out: i32[] = [];
   let end = -1;
   for start in xs {

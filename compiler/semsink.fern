@@ -744,7 +744,7 @@ function repeats_one(reads: ssa.SInst[], seen: i32[], ins: ssa.SInst, at: i32[])
 
 function rereads_any(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock): boolean {
   for ins in b.insts {
-    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI) {
+    if (ins.kind_tag != ssa.PARAM && ins.kind_tag != ssa.PHI && used_through(rd, bi, ins)) {
       for a in ins.args {
         if (read_above(rd, bi, a)) {
           return true;
@@ -780,7 +780,9 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
     } else {
       let args: i32[] = [];
       for a in ins.args {
-        r = reread(rd, g, bi, r, a);
+        if (used_through(rd, bi, ins)) {
+          r = reread(rd, g, bi, r, a);
+        }
         args = args.append(standing(r, a));
       }
       insts = insts.append(ssa.SInst { ...ins, args: args });
@@ -834,10 +836,29 @@ function sink_block(rd: Reads, g: ssa.SFunc, bi: i32, b: ssa.SBlock, values: typ
   return Sinking { b: ssa.SBlock { ...b, insts: out, term: term }, values: r.values, added: r.insts.len(), edits: edits };
 }
 
+// used_through says the plan can take what bi reads through ins: ins is not
+// a counted projection, or its result or a read off it in bi is spent in bi
+// or lives out of bi. A read that bi only measures needs no re-read.
+function used_through(rd: Reads, bi: i32, ins: ssa.SInst): boolean {
+  return !counted_projection(ins, rd.types) || taken_in(rd, bi, ins.result, 0);
+}
+
+function taken_in(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
+  if (depth > 8 || util.index_of_i32(rd.spent[v], bi) >= 0 || ssalive.live_out_has(rd.flow, bi, v)) {
+    return true;
+  }
+  for c in rd.kids[rd.first[v]] {
+    if (rd.at[c] == bi && taken_in(rd, bi, c, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // read_above says v can be read again in bi. With strict spends it says so
 // only where a lent argument is what allows it.
 function read_above(rd: Reads, bi: i32, v: i32): boolean {
-  if (!read_above_for(rd, rd.spent, bi, v, v) || child_used_above(rd, rd.grown, bi, v, 0) || child_live_out(rd, bi, v, 0)) {
+  if (!read_above_for(rd, rd.spent, bi, v, v) || child_used_above(rd, rd.grown, bi, v, 0) || child_held_out(rd, bi, v, 0)) {
     return false;
   }
   if (child_grown_in(rd, bi, v, 0) && child_spent_between(rd, bi, v, 0)) {
@@ -997,6 +1018,29 @@ function child_live_out(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
   }
   for c in rd.kids[rd.first[v]] {
     if (ssalive.live_out_has(rd.flow, bi, c) || child_live_out(rd, bi, c, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A child that lives out of bi and that a block below bi spends is taken
+// there, so it does not need the first read to stay.
+function child_held_out(rd: Reads, bi: i32, v: i32, depth: i32): boolean {
+  if (depth > 8) {
+    return false;
+  }
+  for c in rd.kids[rd.first[v]] {
+    if (ssalive.live_out_has(rd.flow, bi, c) && !spent_below(rd, bi, c) || child_held_out(rd, bi, c, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function spent_below(rd: Reads, bi: i32, c: i32): boolean {
+  for s in rd.spent[c] {
+    if (s != bi && ssadeps.dom_holds(rd.dom, s, bi)) {
       return true;
     }
   }

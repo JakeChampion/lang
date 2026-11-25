@@ -68,9 +68,11 @@ The drop zeroes each scalar field of the record, and each numeric array and each
 It does the same inside a nested record, a tuple, an enum value and a `type A | B` union value that the record holds alone.
 It also does the same for each element of an array of boxes that the record holds alone.
 A value with a `core/mem.Drop` finalizer, at each depth, is wiped after its finalizer runs.
+The drop also wipes each level of a recursive type, such as each node of a list or of a tree.
 
 An array or a string that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md).
-`TestSelfHostSecretRecordWipesItsArrays`, `TestSelfHostSecretRecordWipesItsScalars`, `TestSelfHostSecretRecordWipesItsNestedBoxes`, `TestSelfHostSecretRecordWipesItsEnums`, `TestSelfHostSecretRecordWipesItsStrings`, `TestSelfHostSecretRecordWipesItsBuiltStrings`, `TestSelfHostSecretRecordWipesItsArraysOfBoxes`, `TestSelfHostSecretRecordWipesItsUnions`, `TestSelfHostSecretRecordWipesItsFinalizedFields` and `TestSelfHostSecretRecordWipesItsDeepFinalizedValues` pin them on both native targets.
+
+`TestSelfHostSecretRecordWipesItsArrays`, `TestSelfHostSecretRecordWipesItsScalars`, `TestSelfHostSecretRecordWipesItsNestedBoxes`, `TestSelfHostSecretRecordWipesItsEnums`, `TestSelfHostSecretRecordWipesItsStrings`, `TestSelfHostSecretRecordWipesItsBuiltStrings`, `TestSelfHostSecretRecordWipesItsArraysOfBoxes`, `TestSelfHostSecretRecordWipesItsUnions`, `TestSelfHostSecretRecordWipesItsFinalizedFields`, `TestSelfHostSecretRecordWipesItsDeepFinalizedValues` and `TestSelfHostSecretRecordWipesItsRecursiveValues` pin them on x86-64, on arm64 under QEMU and on wasm32-wasi under wasmtime. `TestSelfHostSecretRecordWipesItsBuiltStrings` runs on the native targets only, because it maps a file.
 The key records of `aes`, `aes_gcm`, `legacy/des`, `chacha20poly1305`, `hpke`, `mlkem768` and `rsa` have the attribute. [SECRET-TYPES.md](../SECRET-TYPES.md) lists them.
 
 The stores cannot be elided, because no pass of the compiler removes a store to an array.

@@ -18,12 +18,11 @@ No frames, or a count of durations that is not the count of frames, gives `NoFra
 
 An animated file gives `Animated`. A file that is not WebP gives `NotWebpFile`. An image chunk that is not valid gives `BadHeader`, `BadCode`, `BadData` or `Truncated`.
 
-`decode` gives the pixels of `dwebp` of libwebp: the same loop filter, the same upsampling of the chroma, and the same conversion to RGB. It accepts the files that libwebp accepts, with the exception below. Thus the bitstream can read past the end of its chunk, to the end of the file. An `ALPH` chunk has no effect on a lossless image. The last `ALPH` chunk before a `VP8 ` chunk gives the alpha, also when the `VP8X` chunk has no alpha flag.
+`decode` gives the pixels of `dwebp` of libwebp: the same loop filter, the same upsampling of the chroma, and the same conversion to RGB. It accepts the files that libwebp accepts. Thus the bitstream can read past the end of its chunk, to the end of the file. An `ALPH` chunk has no effect on a lossless image. The last `ALPH` chunk before a `VP8 ` chunk gives the alpha, also when the `VP8X` chunk has no alpha flag.
 
-These are the differences from libwebp, each for a file that no encoder writes:
+This is the difference from libwebp, for a file that no encoder writes: a coefficient outside the range of the format gives the pixels of the C code of libwebp (`dwebp -noasm`). The SIMD code of libwebp computes in 16 bits and can give other pixels.
 
-- A lossless `ALPH` stream that reads past the end of its chunk gives `Truncated`. libwebp accepts some of these streams, and reads the last bytes of the chunk again.
-- A coefficient outside the range of the format gives the pixels of the C code of libwebp (`dwebp -noasm`). The SIMD code of libwebp computes in 16 bits and can give other pixels.
+The last run of symbols of a lossless `ALPH` stream can read past the end of its chunk, as in libwebp. The section "the end of an alpha stream" gives the rule.
 
 `decode_animation` reads an animated file. It gives the canvas after each frame, as the animation decoder of libwebp gives it.
 
@@ -88,6 +87,8 @@ import "std/i32";
 <<prefix codes>>
 
 <<pixels>>
+
+<<the end of an alpha stream>>
 
 <<transforms>>
 
@@ -311,7 +312,7 @@ pub function animate(width: i32, height: i32, stills: [u8[]], durations_ms: [i32
 
 ### `bits`
 
-The lossless bitstream packs its fields from the low bit of each byte. The reader keeps up to 56 bits in a word and takes from its low end. A read past the end of the chunk fails with `Truncated`. A chunk of fewer than 8 bytes reads as 8 bytes, with zero bytes after its end, as the reference decoder reads it.
+The lossless bitstream packs its fields from the low bit of each byte. The reader keeps up to 56 bits in a word and takes from its low end. A read past the end of the chunk fails with `Truncated`, except in the last run of some alpha streams ("the end of an alpha stream"). A chunk of fewer than 8 bytes reads as 8 bytes, with zero bytes after its end, as the reference decoder reads it.
 
 ```fern
 <<bits>>=
@@ -422,31 +423,44 @@ function code_or_fail(lengths: [i32], own b: Bits): (Code, Bits) {
   }
 }
 
+// The symbol of the code `c` at the low end of `word`, and its length in bits.
+// The length is 0 for a code with one symbol, and -1 when no code matches.
+function decoded(word: i64, c: Code): (i32, i32) {
+  if (c.symbols.len() == 1) {
+    return (c.symbols[0], 0);
+  }
+  let w = word;
+  let code = 0;
+  let first = 0;
+  let index = 0;
+  for n in 1..16 {
+    code |= (w & 1i64) as i32;
+    w >>= 1i64;
+    let count = c.counts[n];
+    if (code - first < count) {
+      return (c.symbols[index + code - first], n);
+    }
+    index += count;
+    first = first + count << 1;
+    code <<= 1;
+  }
+  return (0, -1);
+}
+
 // The next symbol of the code `c`.
 function symbol(own b: Bits, data: [u8], c: Code): (i32, Bits) {
   if (c.symbols.len() == 1) {
     return (c.symbols[0], b);
   }
   let r = if (b.count < 15) { refilled(b, data) } else { b };
-  let word = r.word;
-  let code = 0;
-  let first = 0;
-  let index = 0;
-  for n in 1..16 {
-    code |= (word & 1i64) as i32;
-    word >>= 1i64;
-    let count = c.counts[n];
-    if (code - first < count) {
-      if (n > r.count) {
-        return (0, failed(r, Truncated));
-      }
-      return (c.symbols[index + code - first], Bits { ...r, word: r.word >> n as i64, count: r.count - n });
-    }
-    index += count;
-    first = first + count << 1;
-    code <<= 1;
+  let (sym, n) = decoded(r.word, c);
+  if (n < 0) {
+    return (0, failed(r, BadCode));
   }
-  return (0, failed(r, BadCode));
+  if (n > r.count) {
+    return (0, failed(r, Truncated));
+  }
+  return (sym, Bits { ...r, word: r.word >> n as i64, count: r.count - n });
 }
 
 // The order in which a code of code lengths gives its own lengths.
@@ -648,7 +662,7 @@ function entropy_image(own b: Bits, data: [u8], width: i32, height: i32, main: b
   let (k, b2) = take(b1, data, 3);
   let bits = k + 2;
   let across = blocks(width, bits);
-  let (meta, b3) = coded_image(b2, data, across, blocks(height, bits), false);
+  let (meta, b3) = coded_image(b2, data, across, blocks(height, bits), Part);
   return (Groups { meta: meta, bits: bits, across: across }, b3);
 }
 
@@ -679,16 +693,13 @@ function literal(own d: Decoded, own b: Bits, data: [u8], codes: [Code], g: i32,
   return (Decoded { px: d.px.with(at, argb), colors: remembered(d.colors, argb, cache_bits), pos: at + 1 }, b3);
 }
 
+function copy_fits(d: Decoded, dist: i32, length: i32): boolean {
+  return dist <= d.pos && length <= d.px.len() - d.pos;
+}
+
 // A copy of `length` pixels from `dist` pixels back. Each copied pixel goes
 // into the color cache.
-function copied(own d: Decoded, own b: Bits, data: [u8], distances: Code, green: i32, width: i32, cache_bits: i32, near: [i32]): (Decoded, Bits) {
-  let (length, b1) = amount(b, data, green - 256);
-  let (dsym, b2) = symbol(b1, data, distances);
-  let (dcode, b3) = amount(b2, data, dsym);
-  let dist = distance(width, dcode, near);
-  if (b3.failed || dist > d.pos || length > d.px.len() - d.pos) {
-    return (d, failed(b3, BadData));
-  }
+function copy_run(own d: Decoded, dist: i32, length: i32, cache_bits: i32): Decoded {
   let px = d.px;
   let colors = d.colors;
   for k in d.pos..d.pos + length {
@@ -696,7 +707,18 @@ function copied(own d: Decoded, own b: Bits, data: [u8], distances: Code, green:
     px = px.with(k, argb);
     colors = remembered(colors, argb, cache_bits);
   }
-  return (Decoded { px: px, colors: colors, pos: d.pos + length }, b3);
+  return Decoded { px: px, colors: colors, pos: d.pos + length };
+}
+
+function copied(own d: Decoded, own b: Bits, data: [u8], distances: Code, green: i32, width: i32, cache_bits: i32, near: [i32]): (Decoded, Bits) {
+  let (length, b1) = amount(b, data, green - 256);
+  let (dsym, b2) = symbol(b1, data, distances);
+  let (dcode, b3) = amount(b2, data, dsym);
+  let dist = distance(width, dcode, near);
+  if (b3.failed || !copy_fits(d, dist, length)) {
+    return (d, failed(b3, BadData));
+  }
+  return (copy_run(d, dist, length, cache_bits), b3);
 }
 
 function cached(own d: Decoded, green: i32, cache_bits: i32): Decoded {
@@ -705,10 +727,30 @@ function cached(own d: Decoded, green: i32, cache_bits: i32): Decoded {
   return Decoded { px: d.px.with(at, argb), colors: remembered(d.colors, argb, cache_bits), pos: at + 1 };
 }
 
-// The pixels of an entropy-coded image of `width` by `height`. Only the main
-// image (`main`) can have an entropy image.
-function coded_image(own b: Bits, data: [u8], width: i32, height: i32, main: boolean): (i32[], Bits) {
+// One run of symbols: a literal pixel, a copy, or a pixel from the color cache.
+function step(own d: Decoded, own b: Bits, data: [u8], groups: Groups, codes: [Code], width: i32, cache_bits: i32, near: [i32]): (Decoded, Bits) {
+  let g = group_at(groups, d.pos % width, d.pos / width);
+  let (green, b1) = symbol(b, data, codes[g]);
+  if (green < 256) {
+    return literal(d, b1, data, codes, g, green, cache_bits);
+  }
+  if (green < 280) {
+    return copied(d, b1, data, codes[g + 4], green, width, cache_bits, near);
+  }
+  return (cached(d, green, cache_bits), b1);
+}
+
+// A sub-image (`Part`) has no entropy image. `PalettedAlpha` is the image of
+// an `ALPH` stream whose one transform is the color-indexing transform.
+enum Role { Part, Main, PalettedAlpha }
+
+// The pixels of an entropy-coded image of `width` by `height`.
+function coded_image(own b: Bits, data: [u8], width: i32, height: i32, role: Role): (i32[], Bits) {
   let (cache_bits, b1) = cache_bits_of(b, data);
+  let main = match (role) {
+    Part => false,
+    _ => true,
+  };
   let (groups, b2) = entropy_image(b1, data, width, height, main);
   if (b2.failed) {
     return ([], b2);
@@ -718,27 +760,124 @@ function coded_image(own b: Bits, data: [u8], width: i32, height: i32, main: boo
   if (b3.failed) {
     return ([], b3);
   }
+  let alpha_path = match (role) {
+    PalettedAlpha => cache_bits == 0 && plain_green(codes),
+    _ => false,
+  };
   let near = near_codes();
   let total = width * height;
   let d = Decoded { px: __alloc_i32(total), colors: __alloc_i32(cache), pos: 0 };
   let cur = b3;
   while (d.pos < total && !cur.failed) {
-    let g = group_at(groups, d.pos % width, d.pos / width);
-    let (green, b4) = symbol(cur, data, codes[g]);
-    if (green < 256) {
-      let (next, b5) = literal(d, b4, data, codes, g, green, cache_bits);
-      d = next;
-      cur = b5;
-    } else if (green < 280) {
-      let (next, b5) = copied(d, b4, data, codes[g + 4], green, width, cache_bits, near);
-      d = next;
-      cur = b5;
-    } else {
-      d = cached(d, green, cache_bits);
-      cur = b4;
-    }
+    let (next, b4) = if (alpha_path) { alpha_step(d, cur, data, groups, codes, width, near) } else { step(d, cur, data, groups, codes, width, cache_bits, near) };
+    d = next;
+    cur = b4;
   }
   return (d.px, cur);
+}
+```
+
+### `the end of an alpha stream`
+
+libwebp decodes the image of an `ALPH` stream with a faster path when the stream has only the color-indexing transform, no color cache, and one symbol in each code of red, blue and alpha. That path tests for the end of the data only after each run of symbols. Thus the last run can read past the end of the chunk, and the image is valid when that run gives the last pixels.
+
+The reader of libwebp then holds the last 8 bytes of the stream in a word of 64 bits, `pos` bits into it. A read takes the bits from position `pos & 63`, so a read after the end reads the word again from its start. A read of a symbol does not test for the end. A read of extra bits after the end gives 0. When a read ends more than 64 bits into the word, the reader records the end and puts `pos` back to 0. A stream of fewer than 8 bytes has zero bytes after its end in the word.
+
+```fern
+<<the end of an alpha stream>>=
+// No color cache, and one symbol in each code of red, blue and alpha.
+function plain_green(codes: [Code]): boolean {
+  let g = 0;
+  while (g < codes.len()) {
+    if (codes[g + 1].symbols.len() != 1 || codes[g + 2].symbols.len() != 1 || codes[g + 3].symbols.len() != 1) {
+      return false;
+    }
+    g += 5;
+  }
+  return true;
+}
+
+struct Tail { word: u64, pos: i32, ended: boolean }
+
+function peek(t: Tail, pos: i32): u64 {
+  return t.word >> (pos & 63) as u64;
+}
+
+// The test for the end that libwebp makes after a read of extra bits.
+function tested(own t: Tail): Tail {
+  if (t.ended || t.pos > 64) {
+    return Tail { ...t, pos: 0, ended: true };
+  }
+  return t;
+}
+
+function tail_bits(own t: Tail, n: i32): (i32, Tail) {
+  if (t.ended) {
+    return (0, Tail { ...t, pos: 0 });
+  }
+  let v = (peek(t, t.pos) & (1u64 << n as u64) - 1u64) as i32;
+  return (v, tested(Tail { ...t, pos: t.pos + n }));
+}
+
+// A code of more than 8 bits reads its other bits at `pos + 8`.
+function tail_symbol(own t: Tail, c: Code): (i32, Tail) {
+  let word = peek(t, t.pos) & 255u64 | peek(t, t.pos + 8) << 8u64;
+  let (sym, n) = decoded(word as i64, c);
+  return (sym, Tail { ...t, pos: t.pos + n.max(0) });
+}
+
+function tail_amount(own t: Tail, sym: i32): (i32, Tail) {
+  if (sym < 4) {
+    return (sym + 1, t);
+  }
+  let extra = sym - 2 >> 1;
+  let (v, t1) = tail_bits(t, extra);
+  return ((2 + (sym & 1) << extra) + v + 1, t1);
+}
+
+function ran_out(b: Bits): boolean {
+  return b.failed && match (b.error) {
+    Truncated => true,
+    _ => false,
+  };
+}
+
+// A run of `step` that can read past the end, as the last run of libwebp.
+function alpha_step(own d: Decoded, own b: Bits, data: [u8], groups: Groups, codes: [Code], width: i32, near: [i32]): (Decoded, Bits) {
+  let pos = d.pos;
+  let start = (b.at - (b.padded - 8)) * 8 - b.count;
+  let (next, b1) = step(d, b, data, groups, codes, width, 0, near);
+  if (!ran_out(b1) || start < 0) {
+    return (next, b1);
+  }
+  let word = 0u64;
+  for i in 0..8 {
+    let at = b1.padded - 8 + i;
+    if (at < b1.end) {
+      word |= data[at] as u64 << (8 * i) as u64;
+    }
+  }
+  let t = Tail { word: word, pos: start, ended: false };
+  let d0 = Decoded { ...next, pos: pos };
+  let total = d0.px.len();
+  let g = group_at(groups, pos % width, pos / width);
+  let (green, t1) = tail_symbol(t, codes[g]);
+  if (green < 256) {
+    if (pos + 1 == total) {
+      let (last, b2) = literal(d0, b1, data, codes, g, green, 0);
+      return (last, Bits { ...b2, failed: false });
+    }
+    return (d0, b1);
+  }
+  let (length, t2) = tail_amount(t1, green - 256);
+  let (dsym, t3) = tail_symbol(t2, codes[g + 4]);
+  let t4 = if (t3.pos >= 32) { tested(t3) } else { t3 };
+  let (dcode, _) = tail_amount(t4, dsym);
+  let dist = distance(width, dcode, near);
+  if (green < 280 && pos + length == total && copy_fits(d0, dist, length)) {
+    return (copy_run(d0, dist, length, 0), Bits { ...b1, failed: false });
+  }
+  return (d0, b1);
 }
 ```
 
@@ -961,13 +1100,13 @@ function read_transform(own b: Bits, data: [u8], kind: i32, width: i32, height: 
   if (kind == 3) {
     let (n, b1) = take(b, data, 8);
     let size = n + 1;
-    let (colors, b2) = coded_image(b1, data, size, 1, false);
+    let (colors, b2) = coded_image(b1, data, size, 1, Part);
     let bits = if (size <= 2) { 3 } else if (size <= 4) { 2 } else if (size <= 16) { 1 } else { 0 };
     return (Index(width, bits, palette_of(colors)), blocks(width, bits), b2);
   }
   let (k, b1) = take(b, data, 3);
   let bits = k + 2;
-  let (sub, b2) = coded_image(b1, data, blocks(width, bits), blocks(height, bits), false);
+  let (sub, b2) = coded_image(b1, data, blocks(width, bits), blocks(height, bits), Part);
   if (kind == 0) {
     return (Predict(width, bits, sub), width, b2);
   }
@@ -1149,7 +1288,7 @@ function lossless_image(file: [u8], start: i32, end: i32, want_width: i32, want_
   if (cur.failed) {
     return Err(cur.error);
   }
-  let (px, b9) = coded_image(cur, file, coded_width, height, true);
+  let (px, b9) = coded_image(cur, file, coded_width, height, Main);
   if (b9.failed) {
     return Err(b9.error);
   }
@@ -2482,7 +2621,7 @@ function loop_filtered(own r: Recon, h: Lossy, info: [i32]): Recon {
 
 ### `lossy decoding`
 
-The decoder reads the macroblocks in raster order. The modes come from the first partition. The coefficients of the row `mb_y` come from the token partition `mb_y` modulo the count of partitions. A read past the end of a partition fails with `Truncated` after the frame. libwebp fails at the end of the row, so the result is the same.
+The decoder reads the macroblocks in raster order. The modes come from the first partition. The coefficients of the row `mb_y` come from the token partition `mb_y` modulo the count of partitions. A read past the end of a partition fails with `Truncated` at the macroblock that made it, as in libwebp. Thus a short file stops after the bytes that it has, and it does not decode the rest of a large frame.
 
 The output has the fancy upsampling of libwebp: each chroma sample between two luma rows or columns has the weights 3/4 and 1/4, from the nearer and the farther sample. The conversion to RGB is the integer conversion of libwebp, with 14 bits of precision.
 
@@ -2497,7 +2636,6 @@ function lossy_planes(data: [u8], h: Lossy, own first: Bool, own parts: Bool[]):
   let above = __alloc_i32(mb_w * 4);
   let nz = Nz { top: __alloc_i32(mb_w), top_dc: __alloc_i32(mb_w), left: 0, left_dc: 0 };
   let modes_reader = first;
-  let eof = false;
   for mb_y in 0..h.mb_h {
     let left = [DC_PRED, DC_PRED, DC_PRED, DC_PRED];
     nz = Nz { ...nz, left: 0, left_dc: 0 };
@@ -2511,14 +2649,13 @@ function lossy_planes(data: [u8], h: Lossy, own first: Bool, own parts: Bool[]):
       let (coef, empty, nz1, t1) = macroblock_coeffs(tokens, data, tab, h, m, nz, mb_x);
       nz = nz1;
       tokens = t1;
+      if (tokens.eof || modes_reader.eof) {
+        return Err(Truncated);
+      }
       info = with_filter(info, h, m, empty, (mb_y * mb_w + mb_x) * 4);
       r = with_macroblock(r, m, coef, mb_x, mb_y, mb_w, h.mb_h);
     }
-    eof = eof || tokens.eof;
     parts = parts.with(part, tokens);
-  }
-  if (eof || modes_reader.eof) {
-    return Err(Truncated);
   }
   return Ok(loop_filtered(r, h, info));
 }
@@ -2643,7 +2780,8 @@ function lossless_alpha(file: [u8], at: i32, end: i32, width: i32, height: i32):
   if (cur.failed) {
     return Err(cur.error);
   }
-  let (px, b1) = coded_image(cur, file, coded_width, height, true);
+  let role = if (transforms.len() == 1 && paletted(transforms[0])) { PalettedAlpha } else { Main };
+  let (px, b1) = coded_image(cur, file, coded_width, height, role);
   if (b1.failed) {
     return Err(b1.error);
   }
@@ -2653,6 +2791,13 @@ function lossless_alpha(file: [u8], at: i32, end: i32, width: i32, height: i32):
     raw = raw.with(i, byte_of(argb[i], 8) as u8);
   }
   return Ok(raw);
+}
+
+function paletted(t: Transform): boolean {
+  return match (t) {
+    Index(_, _, _) => true,
+    _ => false,
+  };
 }
 
 // The alpha values with the prediction of the filter added.

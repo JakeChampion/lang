@@ -270,6 +270,88 @@ function corrupt_input(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+// A frame of QOA has no checksum, so a bit flip can decode. The output must
+// still stay in the 16-bit range and in the sample limit.
+function qoa_mutations(): test.TestOutcome {
+  let limits = pcm.Limits { max_input_bytes: 65536, max_samples: 640 };
+  for cc in [1, 2] {
+    let format = pcm.Format { sample_rate: 44100, channels: cc, bits_per_sample: 16 };
+    let Ok(bytes) = qoa.encode(signal(320, cc), format, limits) else {
+      return test.fail("QOA mutation fixture");
+    };
+    let seed = 1907u32 + cc as u32;
+    for _ in 0..64 {
+      seed = seed * 1664525u32 + 1013904223u32;
+      let at = (seed >> 8) as i32 % bytes.len();
+      let changed = bytes.with(at, bytes[at] ^ 1u8 << (seed & 7u32) as u8);
+      match (qoa.decode(changed, limits)) {
+        Ok(block) => {
+          if (!pcm.valid(block.format) || block.samples.len() > limits.max_samples || block.samples.len() % block.format.channels != 0) {
+            return test.fail("QOA mutated block bounds");
+          }
+          for v in block.samples {
+            if (v < -32768 || v > 32767) {
+              return test.fail("QOA mutated sample range");
+            }
+          }
+        },
+        Err(_) => {}
+      }
+      match (qoa.decode_frame_into(changed, 8, pcm.zeros(320 * cc), limits)) {
+        Ok(frame) => {
+          if (frame.frames * frame.format.channels > 320 * cc || frame.bytes_read > changed.len() - 8) {
+            return test.fail("QOA mutated frame bounds");
+          }
+        },
+        Err(_) => {}
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
+// CRC-16 covers each FLAC frame, so a single-bit flip of a frame must fail.
+// STREAMINFO has no checksum, so a flip there must only keep the output bounded.
+function flac_mutations(): test.TestOutcome {
+  let limits = pcm.Limits { max_input_bytes: 65536, max_samples: 4096 };
+  for v in audio_vectors.flacs() {
+    let Ok(bytes) = hex.decode(v.bytes) else {
+      return test.fail("FLAC mutation fixture");
+    };
+    let Ok(h) = flac.inspect(bytes, limits) else {
+      return test.fail("FLAC mutation header");
+    };
+    let seed = v.crc;
+    for _ in 0..8 {
+      seed = seed * 1664525u32 + 1013904223u32;
+      let at = 4 + (seed >> 8) as i32 % (bytes.len() - 4);
+      let changed = bytes.with(at, bytes[at] ^ 1u8 << (seed & 7u32) as u8);
+      match (flac.decode(changed, limits)) {
+        Ok(block) => {
+          if (at >= h.data_offset) {
+            return test.fail("FLAC frame bit flip decoded " + v.name);
+          }
+          if (!pcm.valid(block.format) || block.samples.len() > limits.max_samples || block.samples.len() % block.format.channels != 0) {
+            return test.fail("FLAC mutated block bounds " + v.name);
+          }
+        },
+        Err(_) => {}
+      }
+      if (at >= h.data_offset) {
+        match (flac.decode_frame_into(changed, h.data_offset, h, pcm.zeros(v.count + 1), limits)) {
+          Ok(frame) => {
+            if (frame.frames * frame.format.channels > v.count + 1 || frame.bytes_read > changed.len() - h.data_offset) {
+              return test.fail("FLAC mutated frame bounds " + v.name);
+            }
+          },
+          Err(_) => {}
+        }
+      }
+    }
+  }
+  return test.assert_true(true);
+}
+
 function wave_extensible(): test.TestOutcome {
   let Ok(bytes) = hex.decode("524946464e000000574156454a554e4b010000007800666d742028000000feff020080bb000000ee02000400100016001000030000000100000000001000800000aa00389b7164617461080000000080ff7f0100ffff") else {
     return test.fail("extensible fixture");
@@ -390,6 +472,8 @@ function main(): i32 {
   r = r.it("WAVE PCM depths, channels, and ranges", wave_pcm);
   r = r.it("WAVE byte layout and malformed input", wave_bytes);
   r = r.it("truncation, checksums, and malformed frames", corrupt_input);
+  r = r.it("QOA bit mutations stay in range and in the limits", qoa_mutations);
+  r = r.it("FLAC frame bit mutations fail the frame checksum", flac_mutations);
   r = r.it("WAVE extensible PCM and metadata chunks", wave_extensible);
   r = r.it("allocation and buffer limits", limits);
   r = r.it("float PCM quantization and clipping", quantization);

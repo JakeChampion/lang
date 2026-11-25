@@ -104,6 +104,7 @@ an empty value.
 | --- | --- |
 | `FERN_DEBUG_SSA_ALLOC` | Dump register allocation for the named native function, or for every function with `*`. |
 | `FERN_DEBUG_SSA_DENY` | Exclude registers selected by the numeric mask from native register allocation. |
+| `FERN_DEBUG_NO_SHA_EXT` | On x86-64, run SHA-256 and SHA-1 on the rounds of std/crypto and not on the SHA extensions. The constant-time gate uses it, because valgrind cannot decode the SHA extensions. |
 | `FERN_DEBUG_SEM_INLINE`, `FERN_DEBUG_SEM_REUSE` | Set to zero or an empty value to disable semantic inlining or reuse of previously lowered rows. Both passes run by default. |
 | `FERN_DEBUG_NO_SEM_REACH`, `FERN_DEBUG_NO_SCALE_KERNEL`, `FERN_DEBUG_NO_PRODUCT_KERNEL`, `FERN_DEBUG_NO_ARRAY_FUSION` | Disable the named pass when enabled. |
 | `FERN_DEBUG_NO_RANGE_PROOFS` | Keep each bounds check that the compiler can prove unnecessary. The word loads, loop versions and quotient rewrites that use the same proofs are also off. |
