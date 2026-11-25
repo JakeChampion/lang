@@ -10298,6 +10298,12 @@ function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Pr
       let th = semthread.thread(p.func, stack_phi_joins);
       if (th.changed > 0 && optbisect.allowed_by(sw, "thread", name)) {
         p = Produced { ...p, func: th.f, analysis: None };
+        // A threaded branch can leave a part read off its construction, not off a phi.
+        if (optbisect.allowed_by(sw, "split-threaded", name)) {
+          if let Some(split) = seminline.split_reads(p.func, p.modes) {
+            p = Produced { ...p, func: split, analysis: None };
+          }
+        }
       }
       let ho = semhoist.hoist(p.func);
       if (ho.moved > 0 && optbisect.allowed_by(sw, "hoist", name)) {
