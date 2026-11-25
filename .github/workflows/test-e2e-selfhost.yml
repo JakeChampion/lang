@@ -1046,6 +1046,7 @@ jobs:
           - { leg: x86-64-linux-android, test: "TestFernFixturesSelfHostX86_64|TestFernFixturesSelfHostX86_64Android", wasmtime: "false", qemu: "false" }
           - { leg: x86-64-quarantine-harden, test: "TestFernFixturesSelfHostX86_64Quarantine|TestFernFixturesSelfHostX86_64Harden", wasmtime: "false", qemu: "false" }
           - { leg: arm64-linux-android, test: "TestFernFixturesSelfHostArm64|TestFernFixturesSelfHostArm64Android", wasmtime: "false", qemu: "true" }
+          - { leg: arm64-harden, test: "TestFernFixturesSelfHostArm64Harden", wasmtime: "false", qemu: "true" }
           - { leg: wasm-core-component-http, test: "TestFernFixturesSelfHostWasm|TestFernFixturesSelfHostWasmComponent|TestFernFixturesSelfHostWasiHttp", wasmtime: "true", qemu: "false" }
           - { leg: front-end, test: "TestFernFixturesSelfHostInterp|TestFernFixturesSelfHostCheck|TestGrammarDerivesSelfHostParsedSources", wasmtime: "false", qemu: "false" }
     steps:
