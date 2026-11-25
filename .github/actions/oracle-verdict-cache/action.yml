@@ -1,11 +1,16 @@
 name: Oracle verdict cache
 description: >
   Restore the Go oracle's verdicts (e2eharness.InterpVerdict and
-  CheckVerdict) into the directory that FERN_SELFHOST_BUILD_CACHE names, and
-  save them when the job ends. Each verdict file is named by the hash of its
-  inputs, so any earlier directory is safe to restore. Run it after
-  selfhost-driver-cache, which sets that directory. Verdicts that no run has
-  read for a week are dropped after the restore.
+  CheckVerdict) into the directory that FERN_SELFHOST_BUILD_CACHE names. Each
+  verdict file is named by the hash of its inputs, so any earlier directory is
+  safe to restore. Run it after selfhost-driver-cache, which sets that
+  directory. Verdicts that no run has read for a week are dropped after the
+  restore.
+
+  The job saves the verdicts with oracle-verdict-save as its last step, with
+  `if: always()`. The post step of actions/cache saves only when the job
+  passes. A job that times out cold then saves nothing, and each later run
+  starts as cold and times out again.
 inputs:
   slot:
     description: >
@@ -25,11 +30,18 @@ runs:
       env:
         SLOT: ${{ inputs.slot }}
       run: echo "family=${SLOT%%-*}" >> "$GITHUB_OUTPUT"
-    - name: Restore the oracle verdicts, and save them when the job ends
-      uses: actions/cache@v6
+    - name: Name the verdict cache key
+      id: key
+      shell: bash
+      run: |
+        key="oracle-verdicts-v1-${{ runner.os }}-${{ inputs.slot }}-${{ github.sha }}"
+        echo "ORACLE_VERDICT_KEY=$key" >> "$GITHUB_ENV"
+        echo "key=$key" >> "$GITHUB_OUTPUT"
+    - name: Restore the oracle verdicts
+      uses: actions/cache/restore@v6
       with:
         path: ${{ runner.temp }}/selfhost-unicache/*.verdict
-        key: oracle-verdicts-v1-${{ runner.os }}-${{ inputs.slot }}-${{ github.sha }}
+        key: ${{ steps.key.outputs.key }}
         restore-keys: |
           oracle-verdicts-v1-${{ runner.os }}-${{ inputs.slot }}-
           oracle-verdicts-v1-${{ runner.os }}-${{ steps.family.outputs.family }}-

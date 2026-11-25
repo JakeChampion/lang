@@ -404,6 +404,8 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   # An arm64-kernel image boots on qemu-system-aarch64 -M virt, prints on the
   # board's UART and powers the VM off through PSCI. An x86-64-kernel image
@@ -921,6 +923,8 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   # Checker mutations exceeded the 20-minute test budget in run 40368845276.
   # Keep all 512 seeds and their mutations, partitioned by the shared I/N
@@ -1185,6 +1189,8 @@ jobs:
           path: shard-outcome/
           retention-days: 1
           overwrite: true
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   # Every shard must have REPORTED success: a shard whose runner vanished
   # leaves no marker, which is a failure with a diagnosis here rather than a
