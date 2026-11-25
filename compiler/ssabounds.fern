@@ -1,6 +1,9 @@
 import "./ssa";
+import "./rtbytecopy";
 import "./ssadeps";
 import "./ssasem";
+import "./semrecords";
+import "./semtypes";
 import "./typeinfo";
 import "./util";
 
@@ -9,22 +12,30 @@ struct Rel { lo: i32, hi: i32, strict: boolean, nonnegative: boolean }
 // `sure[v]` is true when every caller gives the parameter v a value that is
 // not negative. `under[v]` is the parameter whose length each caller gives
 // the parameter v a value below, or -1.
-struct Graph { defs: ssa.SInst[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], sure: boolean[], under: i32[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
+// `lens[v]` is the fewest elements that each caller gives the parameter v,
+// or -1.
+struct Graph { defs: ssa.SInst[], values: typeinfo.Type[], home: i32[], i32s: boolean[], i64s: boolean[], unsigned_max: i64[], sure: boolean[], under: i32[], lens: i32[], fields: FieldLen[], widens: i32[], rels: Rel[], first: i32[], count: i32[], up: i32[], above: i32[], preds: i32[][] }
 
 pub struct SignTested { func: ssasem.Func, changed: boolean }
 
 // What every caller gives each parameter of a function: `nonneg[k]` is
 // true when each argument is not negative, and `max[k]` is a bound that
 // each argument stays at or below, or -1. `below[k]` is the parameter
-// whose argument has a length above each argument k, or -1.
-pub struct ParamFacts { nonneg: boolean[], max: i64[], below: i32[] }
+// whose argument has a length above each argument k, or -1. `lens[k]` is the
+// fewest elements of each argument k, or -1. `fields` holds the fields that
+// each record of the program fills with an array of a known length.
+pub struct ParamFacts { nonneg: boolean[], max: i64[], below: i32[], lens: i32[], fields: FieldLen[] }
+
+// Each record of type `ty` in the program holds an array of at least `len`
+// elements in its field `slot`.
+pub struct FieldLen { ty: typeinfo.Type, slot: i32, len: i32 }
 
 pub function no_facts(): ParamFacts {
-  return ParamFacts { nonneg: [], max: [], below: [] };
+  return ParamFacts { nonneg: [], max: [], below: [], lens: [], fields: [] };
 }
 
 pub function (p: ParamFacts) known(): boolean {
-  return p.nonneg.filter((b: boolean): boolean => b).len() > 0 || p.below.filter((j: i32): boolean => j >= 0).len() > 0;
+  return p.nonneg.filter((b: boolean): boolean => b).len() > 0 || p.below.filter((j: i32): boolean => j >= 0).len() > 0 || p.lens.filter((n: i32): boolean => n >= 0).len() > 0;
 }
 
 pub function proven_indices(f: ssasem.Func): ssasem.Func {
@@ -174,7 +185,7 @@ const PROOF_LANE_SPAN: i32 = 3;
 function proof_of(g: Graph, b: i32, ins: ssa.SInst): i32 {
   if (byte_lane_read(ins) || byte_lane_write(ins)) {
     let high = small_max(g, ins.args[1]);
-    let length = literal_len(g, ins.args[0]);
+    let length = known_len(g, ins.args[0]);
     if (high >= 0 && length >= 16 && high <= length - 16) {
       return PROOF_LANE_SPAN;
     }
@@ -392,6 +403,12 @@ function graph_with(f: ssasem.Func, facts: ParamFacts): Graph {
     }
     b += 1;
   }
+  let lens = util.minus_ones(n);
+  for k in 0..facts.lens.len() {
+    if (k < params.len() && params[k] >= 0 && facts.lens[k] >= 0) {
+      lens = lens.with(params[k], facts.lens[k]);
+    }
+  }
   let under = util.minus_ones(n);
   for k in 0..facts.below.len() {
     let j = facts.below[k];
@@ -400,7 +417,7 @@ function graph_with(f: ssasem.Func, facts: ParamFacts): Graph {
     }
   }
   let at = ssa.block_positions(f.graph);
-  let g = Graph { defs: defs, home: home, i32s: i32s, i64s: i64s, unsigned_max: unsigned_max, sure: sure, under: under, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
+  let g = Graph { defs: defs, values: f.values, home: home, i32s: i32s, i64s: i64s, unsigned_max: unsigned_max, sure: sure, under: under, lens: lens, fields: facts.fields, widens: widens, rels: [], first: [], count: [], up: [], above: [], preds: pred_positions(f.graph, at) };
   for b in 0..nb {
     let blk = f.graph.blocks[b];
     let before = g.rels.len();
@@ -611,7 +628,7 @@ function length_root(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
     return base;
   }
   let d = g.defs[base];
-  if (d.kind_tag == ssasem.with() && d.args.len() == 3) {
+  if (d.kind_tag == ssasem.with() && d.args.len() == 3 || keeps_length(d)) {
     return length_root(g, d.args[0], assume, steps - 1);
   }
   if (d.kind_tag != ssa.PHI || d.args.len() == 0) {
@@ -654,7 +671,7 @@ function built_len(g: Graph, base: i32, assume: i32[], steps: i32): i32 {
   if (d.kind_tag == ssasem.call() && d.args.len() == 1 && ssasem.sized_alloc(d.str)) {
     return d.args[0];
   }
-  if (d.kind_tag == ssasem.with() && d.args.len() == 3) {
+  if (d.kind_tag == ssasem.with() && d.args.len() == 3 || keeps_length(d)) {
     return built_len(g, d.args[0], assume, steps - 1);
   }
   if (d.kind_tag != ssa.PHI || d.args.len() == 0) {
@@ -743,6 +760,75 @@ function literal_len(g: Graph, base: i32): i32 {
   }
   if (d.kind_tag == ssasem.array_new()) {
     return d.args.len();
+  }
+  return -1;
+}
+
+// The fewest elements that `base` holds, or -1: a literal, a sized
+// allocation, a parameter that each caller gives a known length, or a field
+// that each record fills with a known length, through `with` writes, the
+// kernels that keep the length, and the inputs of a phi.
+function known_len(g: Graph, base: i32): i32 {
+  let n = len_bound(g, base, typeinfo.unchecked(), -1, [], 24);
+  return if (n >= 0) { n } else { -1 };
+}
+
+// As `known_len`, and SAME_FIELD for a read of the field `slot` of a record
+// of type `ty`, which a phi input does not count.
+function len_bound(g: Graph, v: i32, ty: typeinfo.Type, slot: i32, assume: i32[], steps: i32): i32 {
+  v = ssa.copy_root(g.defs, v);
+  if (steps <= 0 || v < 0 || v >= g.defs.len()) {
+    return -1;
+  }
+  let d = g.defs[v];
+  if (d.kind_tag == ssasem.with() && d.args.len() == 3 || keeps_length(d)) {
+    return len_bound(g, d.args[0], ty, slot, assume, steps - 1);
+  }
+  if (d.kind_tag == ssa.PHI && d.args.len() > 0) {
+    if (assumed(assume, v)) {
+      return SAME_FIELD;
+    }
+    let inner = assume.append(v);
+    let n = SAME_FIELD;
+    for o in d.args {
+      let m = len_bound(g, o, ty, slot, inner, steps - 1);
+      if (m == -1) {
+        return -1;
+      }
+      if (m != SAME_FIELD && (n == SAME_FIELD || m < n)) {
+        n = m;
+      }
+    }
+    return n;
+  }
+  if (d.kind_tag == ssasem.call() && d.args.len() == 1 && ssasem.sized_alloc(d.str) && is_const(g, d.args[0])) {
+    let n = const_value(g, d.args[0]);
+    return if (n >= 0) { n } else { -1 };
+  }
+  if (d.kind_tag == ssa.PARAM) {
+    return if (v < g.lens.len()) { g.lens[v] } else { -1 };
+  }
+  if (d.kind_tag == ssasem.record_get() && d.args.len() == 1) {
+    let c = ssa.copy_root(g.defs, d.args[0]);
+    if (slot >= 0 && d.imm == slot && same_type(g, c, ty)) {
+      return SAME_FIELD;
+    }
+    return if (c >= 0 && c < g.values.len()) { field_len(g.fields, g.values[c], d.imm) } else { -1 };
+  }
+  return literal_len(g, v);
+}
+
+// A call that gives back its first argument, or a copy of it, with the same
+// length.
+function keeps_length(d: ssa.SInst): boolean {
+  return d.kind_tag == ssasem.call() && d.args.len() >= 1 && (ssasem.is_unique_check(d.str) || util.has_str(rtbytecopy.kernel_names(), d.str));
+}
+
+function field_len(fields: FieldLen[], ty: typeinfo.Type, slot: i32): i32 {
+  for fl in fields {
+    if (fl.slot == slot && semtypes.equal(fl.ty, ty)) {
+      return fl.len;
+    }
   }
   return -1;
 }
@@ -1139,7 +1225,7 @@ function fold_op(op: string, a: i64, b: i64): i64 {
 // A constant or a mask below a literal's length or a length a fact bounds.
 function small_below(g: Graph, b: i32, x: i32, base: i32): boolean {
   let m = small_max(g, x);
-  return m >= 0 && (m < literal_len(g, base) || length_at_least(g, b, base, m + 1));
+  return m >= 0 && (m < known_len(g, base) || length_at_least(g, b, base, m + 1));
 }
 
 // Whether a dominating fact holds `base.len() >= n`.
@@ -1881,14 +1967,145 @@ function const_through_cast(defs: ssa.SInst[], v: i32): i32 {
   return -1;
 }
 
+// The array fields that each record of the program fills with at least a
+// known number of elements. A record keeps the length of its field when it
+// stores the same field of a record of its own type, after `with` writes.
+// A type has no facts when a value of it can come from outside the records
+// that the program builds: a zero value, a call to a body that the program
+// does not have, a parameter that the host gives, or an unknown op.
+pub function field_lens(funcs: ssasem.Func[], ix: util.NameIndex, bodies: boolean[], host: boolean[]): FieldLen[] {
+  let rows: FieldLen[] = [];
+  let lost: string[] = [];
+  for c in 0..funcs.len() {
+    if (!bodies[c]) {
+      continue;
+    }
+    let f = funcs[c];
+    let g = defs_graph(f);
+    for blk in f.graph.blocks {
+      for ins in blk.insts {
+        if (ins.kind_tag == ssasem.hole_fill() && (ins.args.len() < 3 || !has_value(f, ins.args[2]) || typeinfo.is_array(f.values[ins.args[2]]))) {
+          return [];
+        }
+        if (ins.result < 0 || ins.result >= f.values.len()) {
+          continue;
+        }
+        let t = f.values[ins.result];
+        if (ins.kind_tag == ssasem.record_new() && typeinfo.is_record(t)) {
+          for k in 0..ins.args.len() {
+            if (!has_value(f, ins.args[k])) {
+              lost = record_names(t, lost, 16);
+            } else if (typeinfo.is_array(f.values[ins.args[k]])) {
+              rows = stored(rows, t, k, len_bound(g, ins.args[k], t, k, [], 24));
+            }
+          }
+        } else if (ins.kind_tag == ssa.PARAM && host[c] || !carries(ins, ix, bodies, f.shadows)) {
+          lost = record_names(t, lost, 16);
+        }
+      }
+    }
+  }
+  return rows.filter((r: FieldLen): boolean => r.len >= 0 && !util.has_str(lost, semrecords.name_of(r.ty)));
+}
+
+// Whether `f` reads a field of `fields`.
+pub function reads_field(f: ssasem.Func, fields: FieldLen[]): boolean {
+  if (fields.len() == 0) {
+    return false;
+  }
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && has_value(f, ins.args[0]) && field_len(fields, f.values[ins.args[0]], ins.imm) >= 0) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// A store of the field `slot` of a record of type `ty` back into a record of
+// the same type.
+const SAME_FIELD: i32 = -3;
+
+function defs_graph(f: ssasem.Func): Graph {
+  let none = ssa.no_inst();
+  let defs: ssa.SInst[] = [];
+  for v in 0..f.values.len() {
+    defs = defs.append(none);
+  }
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < defs.len()) {
+        defs = defs.with(ins.result, ins);
+      }
+    }
+  }
+  return Graph { defs: defs, values: f.values, home: [], i32s: f.values.map((t: typeinfo.Type): boolean => ssasem.is_i32(t)), i64s: [], unsigned_max: [], sure: [], under: [], lens: [], fields: [], widens: [], rels: [], first: [], count: [], up: [], above: [], preds: [] };
+}
+
+function has_value(f: ssasem.Func, v: i32): boolean {
+  return v >= 0 && v < f.values.len();
+}
+
+function same_type(g: Graph, v: i32, ty: typeinfo.Type): boolean {
+  return v >= 0 && v < g.values.len() && semtypes.equal(g.values[v], ty);
+}
+
+function stored(rows: FieldLen[], ty: typeinfo.Type, slot: i32, n: i32): FieldLen[] {
+  if (n == SAME_FIELD) {
+    return rows;
+  }
+  for i in 0..rows.len() {
+    let r = rows[i];
+    if (r.slot == slot && semtypes.equal(r.ty, ty)) {
+      return rows.with(i, FieldLen { ...r, len: if (n < 0 || r.len < 0) { -1 } else if (n < r.len) { n } else { r.len } });
+    }
+  }
+  return rows.append(FieldLen { ty: ty, slot: slot, len: n });
+}
+
+// Whether `ins` only moves values that the program built: it makes no record
+// of its own.
+function carries(ins: ssa.SInst, ix: util.NameIndex, bodies: boolean[], shadows: string[]): boolean {
+  let k = ins.kind_tag;
+  if (k == ssasem.call()) {
+    let j = if (util.has_str(shadows, ins.str)) { -1 } else { ix.find(ins.str) };
+    return j >= 0 && bodies[j];
+  }
+  return k == ssa.PHI || k == ssa.COPY || k == ssa.PARAM || k == ssa.SELECT || k == ssa.BINARY || k == ssa.UNARY || k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_FLOAT || k == ssa.CONST_STR
+    || k == ssasem.record_new() || k == ssasem.record_get() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
+    || k == ssasem.variant_new() || k == ssasem.variant_get() || k == ssasem.variant_is() || k == ssasem.variant_as() || k == ssasem.variant_up()
+    || k == ssasem.array_new() || k == ssasem.bytes_new() || k == ssasem.array_get() || k == ssasem.array_reserve() || k == ssasem.length() || k == ssasem.with()
+    || k == ssasem.append() || k == ssasem.slice() || k == ssasem.arr_slice() || k == ssasem.arr_concat() || k == ssasem.append_range() || k == ssasem.truncate() || k == ssasem.array_lend()
+    || k == ssasem.map_new() || k == ssasem.map_insert() || k == ssasem.map_has() || k == ssasem.map_get() || k == ssasem.map_get_or() || k == ssasem.map_len()
+    || k == ssasem.map_keys() || k == ssasem.map_values() || k == ssasem.map_delete() || k == ssasem.map_cleared()
+    || k == ssasem.cell_new() || k == ssasem.cell_get() || k == ssasem.cell_set() || k == ssasem.closure_new()
+    || k == ssasem.dyn_box() || k == ssasem.dyn_up() || k == ssasem.dyn_is() || k == ssasem.dyn_as() || k == ssasem.hole_at() || k == ssasem.hole_fill();
+}
+
+// The names of the records in `t`, added to `acc`.
+function record_names(t: typeinfo.Type, acc: string[], steps: i32): string[] {
+  if (steps <= 0) {
+    return acc;
+  }
+  let name = semrecords.name_of(t);
+  if (name.len() > 0 && !util.has_str(acc, name)) {
+    acc = acc.append(name);
+  }
+  for c in typeinfo.children(t) {
+    acc = record_names(c, acc, steps - 1);
+  }
+  return acc;
+}
+
 // What every caller gives the parameters of each function in `funcs`. A
 // function takes part when `direct[i]` holds: only direct calls reach it.
 // Each round uses the facts of the round before, so each fact holds for
 // each call. The rounds stop when no fact changes.
-pub function caller_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: boolean[]): ParamFacts[] {
-  let facts = funcs.map((f: ssasem.Func): ParamFacts => no_facts());
+pub function caller_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: boolean[], fields: FieldLen[]): ParamFacts[] {
+  let facts = funcs.map((f: ssasem.Func): ParamFacts => ParamFacts { ...no_facts(), fields: fields });
   for round in 0..3 {
-    let next = round_facts(funcs, ix, direct, facts);
+    let next = round_facts(funcs, ix, direct, facts, fields);
     if (same_facts(next, facts)) {
       return next;
     }
@@ -1897,15 +2114,17 @@ pub function caller_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: bool
   return facts;
 }
 
-function round_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: boolean[], facts: ParamFacts[]): ParamFacts[] {
+function round_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: boolean[], facts: ParamFacts[], fields: FieldLen[]): ParamFacts[] {
   let seen = __alloc_bool(funcs.len());
   let nonneg_at: boolean[][] = [];
   let max_at: i64[][] = [];
   let below_at: i32[][] = [];
+  let lens_at: i32[][] = [];
   for f in funcs {
     nonneg_at = nonneg_at.append(f.params.map((t: typeinfo.Type): boolean => ssasem.is_i32(t)));
     max_at = max_at.append(f.params.map((t: typeinfo.Type): i64 => 0i64));
     below_at = below_at.append(f.params.map((t: typeinfo.Type): i32 => if (ssasem.is_i32(t)) { UNSEEN } else { -1 }));
+    lens_at = lens_at.append(f.params.map((t: typeinfo.Type): i32 => if (typeinfo.is_array(t)) { UNSEEN } else { -1 }));
   }
   for c in 0..funcs.len() {
     let f = funcs[c];
@@ -1931,15 +2150,16 @@ function round_facts(funcs: ssasem.Func[], ix: util.NameIndex, direct: boolean[]
         nonneg_at = nonneg_at.with(j, row);
         max_at = max_at.with(j, top);
         below_at = below_at.with(j, call_below(g, b, ins, below_at[j]));
+        lens_at = lens_at.with(j, call_lens(g, ins, lens_at[j]));
       }
     }
   }
   let out: ParamFacts[] = [];
   for j in 0..funcs.len() {
     if (seen[j]) {
-      out = out.append(ParamFacts { nonneg: nonneg_at[j], max: max_at[j], below: below_at[j].map((m: i32): i32 => if (m == UNSEEN) { -1 } else { m }) });
+      out = out.append(ParamFacts { nonneg: nonneg_at[j], max: max_at[j], below: below_at[j].map((m: i32): i32 => if (m == UNSEEN) { -1 } else { m }), lens: lens_at[j].map((m: i32): i32 => if (m == UNSEEN) { -1 } else { m }), fields: fields });
     } else {
-      out = out.append(no_facts());
+      out = out.append(ParamFacts { ...no_facts(), fields: fields });
     }
   }
   return out;
@@ -1964,6 +2184,21 @@ function call_below(g: Graph, b: i32, ins: ssa.SInst, before: i32[]): i32[] {
     } else {
       out = out.with(k, first_below(g, b, ins, k));
     }
+  }
+  return out;
+}
+
+// The fewest elements of each array argument of `ins` and of each call
+// before it.
+function call_lens(g: Graph, ins: ssa.SInst, before: i32[]): i32[] {
+  let out = before;
+  for k in 0..before.len() {
+    let m = before[k];
+    if (m == -1) {
+      continue;
+    }
+    let n = if (k < ins.args.len()) { known_len(g, ins.args[k]) } else { -1 };
+    out = out.with(k, if (n < 0) { -1 } else if (m == UNSEEN || n < m) { n } else { m });
   }
   return out;
 }
@@ -2008,6 +2243,14 @@ function same_facts(a: ParamFacts[], b: ParamFacts[]): boolean {
     }
     for k in 0..a[i].below.len() {
       if (a[i].below[k] != b[i].below[k]) {
+        return false;
+      }
+    }
+    if (a[i].lens.len() != b[i].lens.len()) {
+      return false;
+    }
+    for k in 0..a[i].lens.len() {
+      if (a[i].lens[k] != b[i].lens[k]) {
         return false;
       }
     }
