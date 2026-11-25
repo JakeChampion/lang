@@ -7596,14 +7596,14 @@ pub function hoisted_invariants(f: SFunc): Formed {
   let defs = inst_defs(f);
   let def_pos = def_positions(f);
   let blocks = f.blocks;
-  let nvals = f.nvals;
+  let made: i32[] = [];
   let changed = false;
   let h = latch.len() - 1;
   while (h >= 0) {
     let last = latch[h];
     let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
     if (pre >= 0) {
-      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: nvals }, defs, def_pos, h, last);
+      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, defs, def_pos, h, last);
       let lifted: SInst[] = [];
       let originals: i32[] = [];
       let copies: i32[] = [];
@@ -7616,7 +7616,7 @@ pub function hoisted_invariants(f: SFunc): Formed {
           }
           let args: i32[] = [];
           for a in ins.args {
-            if (!is_constant(defs[a], nvals) || def_pos[a] < h || def_pos[a] > last) {
+            if (!is_constant(defs[a], defs.len()) || def_pos[a] < h || def_pos[a] > last) {
               args = args.append(a);
               continue;
             }
@@ -7624,12 +7624,13 @@ pub function hoisted_invariants(f: SFunc): Formed {
             if (k < 0) {
               k = originals.len();
               originals = originals.append(a);
-              copies = copies.append(nvals);
-              let c = SInst { ...defs[a], result: nvals };
+              let id = f.nvals + made.len();
+              made = made.append(a);
+              copies = copies.append(id);
+              let c = SInst { ...defs[a], result: id };
               lifted = lifted.append(c);
               defs = defs.append(c);
               def_pos = def_pos.append(pre);
-              nvals += 1;
             }
             args = args.append(copies[k]);
           }
@@ -7652,7 +7653,7 @@ pub function hoisted_invariants(f: SFunc): Formed {
   if (!changed) {
     return Formed { f: f, repl: [] };
   }
-  return merge_duplicates(SFunc { ...f, blocks: blocks, nvals: nvals }, false);
+  return merge_duplicates(SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, false);
 }
 
 // The values of the loop from `h` to `last` that can move in front of it: a
