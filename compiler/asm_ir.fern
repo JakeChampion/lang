@@ -6027,12 +6027,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function ir_bin_asm(tag: i32, width: i32, d: string, r: string): string {
-  if (tag == ir.K_MULHI_U) {
-    return "    mulq " + r + "\n    movq %rdx, " + d + "\n";
-  }
-  if (tag == ir.K_MULHI_S) {
-    return "    imulq " + r + "\n    movq %rdx, " + d + "\n";
-  }
   if (tag == ir.K_ADD) {
     return "    addq " + r + ", " + d + "\n";
   }
@@ -9722,7 +9716,7 @@ function ssa_shiftx_mnem(tag: i32): string {
 }
 
 function ssa_bin_work(tag: i32): string {
-  if (tag == ir.K_DIV_S || tag == ir.K_DIV_U || tag == ir.K_REM_S || tag == ir.K_REM_U || tag == ir.K_MULHI_U || tag == ir.K_MULHI_S) {
+  if (tag == ir.K_DIV_S || tag == ir.K_DIV_U || tag == ir.K_REM_S || tag == ir.K_REM_U) {
     return "%rax";
   }
   return "%r11";
@@ -11333,11 +11327,30 @@ function ssa_mul_wide_at(blk: ssa.SBlock, ii: i32, fr: SsaFrame): boolean {
 // The low half goes first: the home of the high half can be `%rax`, and the
 // low half is live across the `mulq`, so its home is not `%rax` or `%rdx`.
 function ssa_mul_wide(lo: ssa.SInst, hi: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_load(reg_of, hi.args[1], "%rcx", s);
-  s = ssa_load(reg_of, hi.args[0], "%rax", s);
-  s = s.write("    mulq %rcx\n");
+  s = ssa_mul_rax("mulq", hi.args[0], hi.args[1], reg_of, s);
   s = ssa_store(reg_of, lo.result, "%rax", s);
   return ssa_store(reg_of, hi.result, "%rdx", s);
+}
+
+// One factor goes to `%rax`. `mnem` reads the other from its home, which is
+// not `%rax` unless the two factors are one value.
+function ssa_mul_rax(mnem: string, a: i32, b: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let x = a;
+  let y = b;
+  if (ssa_in_x(reg_of, b) && ssa_reg(reg_of[b]) == "%rax") {
+    x = b;
+    y = a;
+  }
+  let src = "%rcx";
+  if (ssa_in_x(reg_of, y)) {
+    src = ssa_reg(reg_of[y]);
+  } else if (reg_of[y] < 0 && !ssa_lane_disp(ssa_slot_disp(ssa.spill_slot(reg_of[y]), s.ssa_save), s)) {
+    src = ssa_slot(ssa.spill_slot(reg_of[y]), s.ssa_save);
+  } else {
+    s = ssa_load(reg_of, y, "%rcx", s);
+  }
+  s = ssa_load(reg_of, x, "%rax", s);
+  return s.write("    " + mnem + " " + src + "\n");
 }
 
 struct SelectCond { fu: SsaFuse, first: boolean }
@@ -11733,6 +11746,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     return ssa_bin_in_place(ins, reg_of, fr, s);
   } else if (k == ssa.BINARY && asmcore.ssa_shift_tag(ins.ir_kind)) {
     return ssa_shift(ins, reg_of, fr, s);
+  } else if (k == ssa.BINARY && (ins.ir_kind == ir.K_MULHI_U || ins.ir_kind == ir.K_MULHI_S)) {
+    s = ssa_mul_rax(if (ins.ir_kind == ir.K_MULHI_U) { "mulq" } else { "imulq" }, ins.args[0], ins.args[1], reg_of, s);
+    d = "%rdx";
   } else if (k == ssa.BINARY) {
     d = ssa_bin_work(ins.ir_kind);
     if (!fr.imm.is_imm[ins.args[1]]) {

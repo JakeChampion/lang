@@ -337,7 +337,8 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 }
 
 // A product and its high half with the same operands make one mulq, also when
-// each names its own literal of the same value.
+// each names its own literal of the same value. The mulq reads its operand
+// from the home of that operand, with no copy into %rcx.
 func TestSelfHostSSAProductHalvesShareOneMultiply(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -355,6 +356,7 @@ func TestSelfHostSSAProductHalvesShareOneMultiply(t *testing.T) {
 	}
 	mulq := regexp.MustCompile(`(?m)^\s+mulq `)
 	imulq := regexp.MustCompile(`(?m)^\s+imulq `)
+	rcx := regexp.MustCompile(`(?m)^\s+(movq [^\n]*, %rcx|mulq %rcx)$`)
 	for _, name := range []string{"wide_k", "wide_small", "wide_xy"} {
 		fn := functionListing(string(asm), "__fn_"+name)
 		if fn == "" {
@@ -362,6 +364,9 @@ func TestSelfHostSSAProductHalvesShareOneMultiply(t *testing.T) {
 		}
 		if n := len(mulq.FindAllString(fn, -1)); n != 1 || imulq.MatchString(fn) {
 			t.Errorf("%s has %d mulq, want one mulq and no imulq:\n%s", name, n, fn)
+		}
+		if rcx.MatchString(fn) {
+			t.Errorf("%s copies a factor into %%rcx, want the mulq to read it in place:\n%s", name, fn)
 		}
 	}
 }
