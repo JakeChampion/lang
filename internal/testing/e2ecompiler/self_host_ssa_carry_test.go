@@ -406,3 +406,28 @@ func TestSelfHostSSAMultiplyReadsItsFactorInPlace(t *testing.T) {
 		}
 	}
 }
+
+// The low half of a widening product can stay in %rax, where mulq writes it.
+func TestSelfHostSSAProductLowHalfStaysInRax(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_wide_xy")
+	if fn == "" {
+		t.Fatal("no __fn_wide_xy in the listing")
+	}
+	if regexp.MustCompile(`(?m)^\s+movq %rax, %r?[a-z0-9]+$`).MatchString(fn) {
+		t.Errorf("wide_xy copies the low half out of %%rax:\n%s", fn)
+	}
+}
