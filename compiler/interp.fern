@@ -5768,55 +5768,61 @@ function resolve_ident_value(name: string, env: Env): Value {
 }
 
 @noinline
-function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
-  let lv = eval_expr(b.left, env);
+function eval_binary_expr(b: ast.ExprBinary, own env: Env): ExprResult {
+  let lv_r = eval_expr(b.left, env);
+  env = lv_r.env;
+  let lv = lv_r.value;
   if (is_err(lv)) {
-    return lv;
+    return with_env(lv, env);
   }
   if (b.code == ast.OP_LAND || b.code == ast.OP_LOR) {
     match (lv) {
       VBool(lb) => {
         if (b.code == ast.OP_LAND && !lb.v) {
-          return v_bool(false);
+          return with_env(v_bool(false), env);
         }
         if (b.code == ast.OP_LOR && lb.v) {
-          return v_bool(true);
+          return with_env(v_bool(true), env);
         }
       },
       _ => {}
     }
   }
-  let rv = eval_expr(float_operand(b.right, b.left, lv), env);
+  let rv_r = eval_expr(float_operand(b.right, b.left, lv), env);
+  env = rv_r.env;
+  let rv = rv_r.value;
   if (is_err(rv)) {
-    return rv;
+    return with_env(rv, env);
   }
   if (float_width(rv).len() > 0 && ast.is_unsettled_int_literal(b.left)) {
-    lv = eval_expr(float_operand(b.left, b.right, rv), env);
+    let lv_r = eval_expr(float_operand(b.left, b.right, rv), env);
+    env = lv_r.env;
+    lv = lv_r.value;
   }
   let overload = struct_op_method(b.op, lv);
   if (overload.len() > 0) {
-    return call_method(env.heap, lv, overload, [rv], env.funcs, env.aliases, env.type_decls);
+    return with_env(call_method(env.heap, lv, overload, [rv], env.funcs, env.aliases, env.type_decls), env);
   }
   if (ast.is_checked_code(b.code)) {
-    return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
+    return with_env(eval_checked(b.op, lv, rv, checked_operand_type(b, lv)), env);
   }
   if ((b.code == ast.OP_EQ || b.code == ast.OP_NE) && has_eq_method(lv, env.funcs, env.aliases)) {
     let e = call_method(env.heap, lv, "eq", [rv], env.funcs, env.aliases, env.type_decls);
     if let VBool(eb) = e {
       if (b.code == ast.OP_NE) {
-        return v_bool(!eb.v);
+        return with_env(v_bool(!eb.v), env);
       }
     }
-    return e;
+    return with_env(e, env);
   }
   if (ast.is_order_code(b.code) && orders_by_cmp(lv)) {
     let c = call_method(env.heap, lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
     if (is_err(c)) {
-      return c;
+      return with_env(c, env);
     }
-    return eval_binary(b.code, c, v_int(0));
+    return with_env(eval_binary(b.code, c, v_int(0)), env);
   }
-  return eval_typed_binary(b.code, lv, rv, b.ty);
+  return with_env(eval_typed_binary(b.code, lv, rv, b.ty), env);
 }
 
 // orders_by_cmp says whether an order on v calls its `cmp` method.
@@ -5888,35 +5894,44 @@ function bit_op_method(op: string): string {
   };
 }
 
-function eval_expr(e: ast.Expr, env: Env): Value {
+// The value of an expression and the environment that evaluated it.
+struct ExprResult { env: Env, value: Value }
+
+function with_env(v: Value, own env: Env): ExprResult {
+  return ExprResult { env: env, value: v };
+}
+
+function eval_expr(e: ast.Expr, own env: Env): ExprResult {
   match (e) {
     ast.ExprNumber(n) => {
-      return eval_number_literal(n);
+      return with_env(eval_number_literal(n), env);
     },
     ast.ExprBool(b) => {
-      return v_bool(b.value);
+      return with_env(v_bool(b.value), env);
     },
     ast.ExprString(s) => {
-      return v_string(s.value);
+      return with_env(v_string(s.value), env);
     },
     ast.ExprIdent(id) => {
-      return resolve_ident_value(id.name, env);
+      return with_env(resolve_ident_value(id.name, env), env);
     },
     ast.ExprBinary(b) => {
       return eval_binary_expr(b, env);
     },
     ast.ExprUnary(u) => {
-      let ov = eval_expr(u.operand, env);
+      let ov_r = eval_expr(u.operand, env);
+      env = ov_r.env;
+      let ov = ov_r.value;
       if (is_err(ov)) {
-        return ov;
+        return with_env(ov, env);
       }
       if (u.op == "-") {
         if let VStruct(_) = ov {
-          return call_method(env.heap, ov, "neg", [], env.funcs, env.aliases, env.type_decls);
+          return with_env(call_method(env.heap, ov, "neg", [], env.funcs, env.aliases, env.type_decls), env);
         }
       }
       // Negate the wide magnitude before conversion to the checked result width.
-      return coerce_int_width(eval_unary(u.op, u.cast, ov), u.ty);
+      return with_env(coerce_int_width(eval_unary(u.op, u.cast, ov), u.ty), env);
     },
     ast.ExprCall(c) => {
       return eval_expr_call(c, env);
@@ -5925,32 +5940,36 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       let elems: Value[] = [];
       let i = 0;
       while (i < t.elements.len()) {
-        let ev = eval_expr(t.elements[i], env);
+        let ev_r = eval_expr(t.elements[i], env);
+        env = ev_r.env;
+        let ev = ev_r.value;
         if (is_err(ev)) {
-          return ev;
+          return with_env(ev, env);
         }
         elems = elems.append(ev);
         i += 1;
       }
-      return v_tuple_in(env.heap, elems);
+      return with_env(v_tuple_in(env.heap, elems), env);
     },
     ast.ExprArray(a) => {
       let elems: Value[] = [];
       for i in 0..a.elements.len() {
-        let ev = eval_expr(a.elements[i], env);
+        let ev_r = eval_expr(a.elements[i], env);
+        env = ev_r.env;
+        let ev = ev_r.value;
         if (is_err(ev)) {
-          return ev;
+          return with_env(ev, env);
         }
         elems = elems.append(ev);
       }
-      return v_arr(env.heap, elems);
+      return with_env(v_arr(env.heap, elems), env);
     },
     ast.ExprBytes(bs) => {
       let elems: Value[] = [];
       for b in bs.value {
         elems = elems.append(v_byte(b as i32));
       }
-      return v_arr_of(env.heap, elems, "u8");
+      return with_env(v_arr_of(env.heap, elems, "u8"), env);
     },
     ast.ExprIndex(x) => {
       return eval_expr_index(x, env);
@@ -5966,7 +5985,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
     },
     ast.ExprLambda(lm) => {
       let captured = flattened_env(env);
-      return VFunc {
+      let closure = VFunc {
         params: lm.params,
         ret_type: lm.ret_type,
         body: lm.body,
@@ -5979,37 +5998,38 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         cells: lambda_needs_cells(lm, env),
         tynames: captured.tynames,
       };
+      return with_env(closure, env);
     },
     ast.ExprMapLit(_) => {
-      return v_err("Map literal: formatter-only node");
+      return with_env(v_err("Map literal: formatter-only node"), env);
     },
     ast.ExprFString(_) => {
-      return v_err("f-string: formatter-only node");
+      return with_env(v_err("f-string: formatter-only node"), env);
     },
     ast.ExprUnknown(u) => {
       if (u.fault.code == "P002") {
-        return v_err("error[P002]: " + u.fault.message);
+        return with_env(v_err("error[P002]: " + u.fault.message), env);
       }
-      return v_err("parser-side unknown: " + ast.fault_text(u.fault));
+      return with_env(v_err("parser-side unknown: " + ast.fault_text(u.fault)), env);
     },
     ast.ExprZero(z) => {
-      return zero_value_of(env.heap, z.type_name);
+      return with_env(zero_value_of(env.heap, z.type_name), env);
     }
   }
 }
 
-function eval_expr_call(c: ast.ExprCall, env: Env): Value {
+function eval_expr_call(c: ast.ExprCall, own env: Env): ExprResult {
   return eval_expr_call_expect(c, env, "");
 }
 
-function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value {
+function eval_expr_call_expect(c: ast.ExprCall, own env: Env, expect: string): ExprResult {
   if let ast.ExprLambda(lm) = c.callee {
     if (c.args.len() == 0 && lm.params.len() == 0 && (lm.origin == parser.ORIGIN_BLOCK || lm.origin == parser.ORIGIN_IF_EXPR || lm.origin == parser.ORIGIN_MATCH_EXPR)) {
       let step = eval_value_body(lm.body, unsafe { share_unchecked(env) }, expect);
       if (step.sig == 0 || step.sig == 1 && is_err(step.ret)) {
-        return step.ret;
+        return with_env(step.ret, env);
       }
-      return VControl { box: step.ret, sig: step.sig };
+      return with_env(VControl { box: step.ret, sig: step.sig }, env);
     }
   }
   let name = "";
@@ -6093,9 +6113,11 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
             recv = v_type(static_type);
           } else {
             if (!recv_read) {
-              recv = eval_expr(fa.obj, env);
+              let recv_r = eval_expr(fa.obj, env);
+              env = recv_r.env;
+              recv = recv_r.value;
               if (is_err(recv)) {
-                return recv;
+                return with_env(recv, env);
               }
             }
             recv_static = bound_type_spelling(env.static_type_of(fa.obj), env);
@@ -6105,9 +6127,11 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       }
     },
     _ => {
-      let cv = eval_expr(c.callee, env);
+      let cv_r = eval_expr(c.callee, env);
+      env = cv_r.env;
+      let cv = cv_r.value;
       if (is_err(cv)) {
-        return cv;
+        return with_env(cv, env);
       }
       match (cv) {
         VFunc(_) => {
@@ -6115,7 +6139,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
           closure_val = cv;
         },
         _ => {
-          return v_err("call target is not callable");
+          return with_env(v_err("call target is not callable"), env);
         }
       }
     }
@@ -6127,18 +6151,20 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
   }
   let arg_vals: Value[] = [];
   for i in 0..c.args.len() {
-    let av = eval_pinned_arg(c, i, target, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
+    let av_r = eval_pinned_arg(c, i, target, is_method && !is_type_value(recv), recv, arg_vals, targs, env);
+    env = av_r.env;
+    let av = av_r.value;
     if (is_err(av)) {
-      return av;
+      return with_env(av, env);
     }
     arg_vals = arg_vals.append(av);
   }
   if (is_variant) {
-    return v_variant_in(env.heap, variant_enum, variant_name, arg_vals);
+    return with_env(v_variant_in(env.heap, variant_enum, variant_name, arg_vals), env);
   }
   if (is_method) {
     env.heap.call_at.set((c.line, c.col));
-    return call_method_targs(env.heap, recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
+    return with_env(call_method_targs(env.heap, recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls), env);
   }
   if (targs.len() == 0 && target >= 0 && !is_closure) {
     targs = static_type_args(env.funcs.decls[target], c.args, arg_vals, env);
@@ -6153,15 +6179,15 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       }
     }
     env.heap.call_at.set((c.line, c.col));
-    return call_closure_mode(env.heap, closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
+    return with_env(call_closure_mode(env.heap, closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value), env);
   }
   if (target < 0) {
     if let Some(member) = union_member_value(name, arg_vals, env.aliases) {
-      return member;
+      return with_env(member, env);
     }
   }
   env.heap.call_at.set((c.line, c.col));
-  return call_func_targs(env.heap, name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls);
+  return with_env(call_func_targs(env.heap, name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls), env);
 }
 
 function union_member_value(name: string, args: Value[], aliases: parser.TypeAlias[]): Option[Value] {
@@ -6230,7 +6256,7 @@ function has_call_arg(args: ast.Expr[]): boolean {
   return false;
 }
 
-function eval_pinned_arg(c: ast.ExprCall, i: i32, target: i32, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], env: Env): Value {
+function eval_pinned_arg(c: ast.ExprCall, i: i32, target: i32, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], own env: Env): ExprResult {
   let ast.ExprCall(ac) = c.args[i] else {
     return eval_expr(c.args[i], env);
   };
@@ -6350,47 +6376,55 @@ function bound_type_spelling(spelling: string, env: Env): string {
   return parser.render_type_ref(parser.TypeRef { ...ref, base: base, args: args });
 }
 
-function eval_expr_index(x: ast.ExprIndex, env: Env): Value {
-  let av = eval_expr(x.array, env);
+function eval_expr_index(x: ast.ExprIndex, own env: Env): ExprResult {
+  let av_r = eval_expr(x.array, env);
+  env = av_r.env;
+  let av = av_r.value;
   if (is_err(av)) {
-    return av;
+    return with_env(av, env);
   }
-  let iv = eval_expr(x.index, env);
+  let iv_r = eval_expr(x.index, env);
+  env = iv_r.env;
+  let iv = iv_r.value;
   if (is_err(iv)) {
-    return iv;
+    return with_env(iv, env);
   }
   if (!is_int_like(iv)) {
-    return v_err("index must be an integer");
+    return with_env(v_err("index must be an integer"), env);
   }
   match (av) {
     VArr(arr) => {
       let i = index_in(iv, arr_len(arr));
       if (i < 0) {
-        return index_abort(aborts.arr_oob(), value_text(iv), arr_len(arr));
+        return with_env(index_abort(aborts.arr_oob(), value_text(iv), arr_len(arr)), env);
       }
-      return arr_at(arr, i);
+      return with_env(arr_at(arr, i), env);
     },
     VString(s) => {
       let si = index_in(iv, s.v.len());
       if (si < 0) {
-        return index_abort(aborts.str_oob(), value_text(iv), s.v.len());
+        return with_env(index_abort(aborts.str_oob(), value_text(iv), s.v.len()), env);
       }
-      return v_byte(s.v[si] as i32);
+      return with_env(v_byte(s.v[si] as i32), env);
     },
     _ => {
-      return v_err("can only index into an array or string");
+      return with_env(v_err("can only index into an array or string"), env);
     }
   }
 }
 
-function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
-  let av = eval_expr(sl.array, env);
+function eval_expr_slice(sl: ast.ExprSlice, own env: Env): ExprResult {
+  let av_r = eval_expr(sl.array, env);
+  env = av_r.env;
+  let av = av_r.value;
   if (is_err(av)) {
-    return av;
+    return with_env(av, env);
   }
-  let sv = eval_expr(sl.start, env);
+  let sv_r = eval_expr(sl.start, env);
+  env = sv_r.env;
+  let sv = sv_r.value;
   if (is_err(sv)) {
-    return sv;
+    return with_env(sv, env);
   }
   let sb = 0;
   let eb = 0;
@@ -6399,7 +6433,7 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
       sb = i.v;
     },
     _ => {
-      return v_err("slice start must be i32");
+      return with_env(v_err("slice start must be i32"), env);
     }
   }
   if (sl.open_end) {
@@ -6411,20 +6445,22 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
         eb = arr_len(oea);
       },
       _ => {
-        return v_err("can only slice array or string");
+        return with_env(v_err("can only slice array or string"), env);
       }
     }
   } else {
-    let ev = eval_expr(sl.end, env);
+    let ev_r = eval_expr(sl.end, env);
+    env = ev_r.env;
+    let ev = ev_r.value;
     if (is_err(ev)) {
-      return ev;
+      return with_env(ev, env);
     }
     match (ev) {
       VInt(i) => {
         eb = i.v;
       },
       _ => {
-        return v_err("slice end must be i32");
+        return with_env(v_err("slice end must be i32"), env);
       }
     }
   }
@@ -6432,31 +6468,33 @@ function eval_expr_slice(sl: ast.ExprSlice, env: Env): Value {
     VString(s) => {
       if (sb < 0 || eb > s.v.len() || sb > eb) {
         let slcn1: Value[] = [];
-        return v_variant("None", slcn1);
+        return with_env(v_variant("None", slcn1), env);
       }
       if (!interp_char_boundary(s.v, sb) || !interp_char_boundary(s.v, eb)) {
         let slcn2: Value[] = [];
-        return v_variant("None", slcn2);
+        return with_env(v_variant("None", slcn2), env);
       }
-      return v_variant("Some", [v_string(slice_unchecked(s.v, sb, eb))]);
+      return with_env(v_variant("Some", [v_string(slice_unchecked(s.v, sb, eb))]), env);
     },
     VArr(a) => {
       if (sb < 0 || eb > arr_len(a) || sb > eb) {
-        return slice_abort(aborts.slice_range(), "slice", sb, eb, arr_len(a));
+        return with_env(slice_abort(aborts.slice_range(), "slice", sb, eb, arr_len(a)), env);
       }
-      return arr_view(a, sb, eb);
+      return with_env(arr_view(a, sb, eb), env);
     },
     _ => {
-      return v_err("can only slice array or string");
+      return with_env(v_err("can only slice array or string"), env);
     }
   }
 }
 
-function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
+function eval_expr_struct_lit(sl: ast.ExprStructLit, own env: Env): ExprResult {
   if (sl.has_base) {
-    let bv = eval_expr(sl.base, env);
+    let bv_r = eval_expr(sl.base, env);
+    env = bv_r.env;
+    let bv = bv_r.value;
     if (is_err(bv)) {
-      return bv;
+      return with_env(bv, env);
     }
     match (bv) {
       VStruct(sv) => {
@@ -6464,9 +6502,11 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
         let bvals = sv.field_values;
         for oi in 0..sl.field_values.len() {
           let oname = sl.field_names[oi];
-          let ov2 = settled_field(sl.type_name, oname, eval_expr(sl.field_values[oi], env), env);
+          let ov_r = eval_expr(sl.field_values[oi], env);
+          env = ov_r.env;
+          let ov2 = settled_field(sl.type_name, oname, ov_r.value, env);
           if (is_err(ov2)) {
-            return ov2;
+            return with_env(ov2, env);
           }
           let replaced = false;
           for bi in 0..bnames.len() {
@@ -6480,22 +6520,24 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
             bvals = bvals.append(ov2);
           }
         }
-        return v_struct_at(env.heap, sl.type_name, bnames, bvals, struct_targs(sl.type_name, env));
+        return with_env(v_struct_at(env.heap, sl.type_name, bnames, bvals, struct_targs(sl.type_name, env)), env);
       },
       _ => {
-        return v_err("struct update base is not a struct");
+        return with_env(v_err("struct update base is not a struct"), env);
       }
     }
   }
   let fvs: Value[] = [];
   for i in 0..sl.field_values.len() {
-    let fv = settled_field(sl.type_name, sl.field_names[i], eval_expr(sl.field_values[i], env), env);
+    let fv_r = eval_expr(sl.field_values[i], env);
+    env = fv_r.env;
+    let fv = settled_field(sl.type_name, sl.field_names[i], fv_r.value, env);
     if (is_err(fv)) {
-      return fv;
+      return with_env(fv, env);
     }
     fvs = fvs.append(fv);
   }
-  return v_struct_at(env.heap, sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
+  return with_env(v_struct_at(env.heap, sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env)), env);
 }
 
 // A field value settles to the declared type of the field, as a let settles
@@ -6519,10 +6561,11 @@ function settled_field(type_name: string, field: string, fv: Value, env: Env): V
   return fv;
 }
 
-function eval_var_init(v: ast.StmtVar, env: Env): Value {
+function eval_var_init(v: ast.StmtVar, own env: Env): ExprResult {
   if (v.type_name.len() > 0) {
     if let ast.ExprCall(c) = v.init {
-      return eval_expr_call_expect(c, env, bound_type_spelling(v.type_name, env));
+      let expect = bound_type_spelling(v.type_name, env);
+      return eval_expr_call_expect(c, env, expect);
     }
   }
   return eval_expr(v.init, env);
@@ -6555,16 +6598,18 @@ function struct_targs(type_name: string, env: Env): string[] {
   return [];
 }
 
-function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
-  let ov = eval_expr(fa.obj, env);
+function eval_expr_field_access(fa: ast.ExprFieldAccess, own env: Env): ExprResult {
+  let ov_r = eval_expr(fa.obj, env);
+  env = ov_r.env;
+  let ov = ov_r.value;
   if (is_err(ov)) {
     match (fa.obj) {
       ast.ExprIdent(qid) => {
         let no_vals: Value[] = [];
-        return v_variant_of(qualified_owner(qid.name, fa.field, env.type_decls), fa.field, no_vals);
+        return with_env(v_variant_of(qualified_owner(qid.name, fa.field, env.type_decls), fa.field, no_vals), env);
       },
       _ => {
-        return ov;
+        return with_env(ov, env);
       }
     }
   }
@@ -6572,26 +6617,26 @@ function eval_expr_field_access(fa: ast.ExprFieldAccess, env: Env): Value {
     VStruct(sv) => {
       for i in 0..sv.field_names.len() {
         if (sv.field_names[i] == fa.field) {
-          return sv.field_values[i];
+          return with_env(sv.field_values[i], env);
         }
       }
-      return v_err("struct " + sv.type_name + " has no field `" + fa.field + "`");
+      return with_env(v_err("struct " + sv.type_name + " has no field `" + fa.field + "`"), env);
     },
     VTuple(tv) => {
       let idx = util.digits_to_i32(fa.field);
       if (idx < 0 || idx >= tv.elements.len()) {
-        return v_err("tuple index `" + fa.field + "` out of range");
+        return with_env(v_err("tuple index `" + fa.field + "` out of range"), env);
       }
-      return tv.elements[idx];
+      return with_env(tv.elements[idx], env);
     },
     VHandle(hv) => {
       if (fa.field == "fd") {
-        return handle_fd(hv);
+        return with_env(handle_fd(hv), env);
       }
-      return v_err(handle_kind(hv) + " has no field `" + fa.field + "`");
+      return with_env(v_err(handle_kind(hv) + " has no field `" + fa.field + "`"), env);
     },
     _ => {
-      return socket_field(ov, fa.field);
+      return with_env(socket_field(ov, fa.field), env);
     }
   }
 }
@@ -10316,19 +10361,23 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
   let cur = env;
   for i in 0..body.len() - 1 {
     cur = cellify_captures(cur, body[i], body);
-    let step = block_stmt(body, i, unsafe { share_unchecked(cur) });
-    if (step.sig != 0) {
-      return step;
-    }
+    let step = block_stmt(body, i, cur);
     cur = step.env;
+    if (step.sig != 0) {
+      return StepResult { env: cur, ret: step.ret, sig: step.sig };
+    }
   }
   match (body[body.len() - 1]) {
     ast.StmtReturn(r) => {
       let value = v_void();
       if let ast.ExprCall(call) = r.value {
-        value = eval_expr_call_expect(call, cur, expect);
+        let value_r = eval_expr_call_expect(call, cur, expect);
+        cur = value_r.env;
+        value = value_r.value;
       } else {
-        value = eval_expr(r.value, cur);
+        let value_r = eval_expr(r.value, cur);
+        cur = value_r.env;
+        value = value_r.value;
       }
       if (is_err(value)) {
         return step_stop(cur, value);
@@ -10336,7 +10385,9 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
       return StepResult { env: cur, ret: value, sig: 0 };
     },
     ast.StmtIf(branch) => {
-      let condition = eval_expr(branch.cond, cur);
+      let condition_r = eval_expr(branch.cond, cur);
+      cur = condition_r.env;
+      let condition = condition_r.value;
       if (is_err(condition)) {
         return step_stop(cur, condition);
       }
@@ -10353,12 +10404,12 @@ function eval_value_body(body: ast.Stmt[], own env: Env, expect: string): StepRe
         }
       }
       if (yes) {
-        return eval_value_body(branch.then_body, unsafe { share_unchecked(cur) }, expect);
+        return eval_value_body(branch.then_body, cur, expect);
       }
-      return eval_value_body(branch.else_body, unsafe { share_unchecked(cur) }, expect);
+      return eval_value_body(branch.else_body, cur, expect);
     },
     ast.StmtMatch(m) => {
-      return eval_match_stmt_mode(m, unsafe { share_unchecked(cur) }, true, expect);
+      return eval_match_stmt_mode(m, cur, true, expect);
     },
     _ => {
       return step_stop(cur, v_err("value expression has no terminal value"));
@@ -10372,7 +10423,9 @@ function eval_while_stmt(w: ast.StmtWhile, own env: Env): StepResult {
   let cur = env;
   let scoped = body_binds(w.body);
   while (true) {
-    let cv = eval_expr(w.cond, cur);
+    let cv_r = eval_expr(w.cond, cur);
+    cur = cv_r.env;
+    let cv = cv_r.value;
     if (is_err(cv)) {
       return step_stop(cur, cv);
     }
@@ -10449,7 +10502,9 @@ function match_test_passes(value: Value): boolean {
 }
 
 function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolean, expect: string): StepResult {
-  let sv = eval_expr(m.scrutinee, env);
+  let sv_r = eval_expr(m.scrutinee, env);
+  env = sv_r.env;
+  let sv = sv_r.value;
   if (is_err(sv)) {
     return step_stop(env, sv);
   }
@@ -10461,13 +10516,17 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
     let bind_types: string[] = [];
     match (arm.pattern) {
       ast.PatLiteral(literal) => {
-        let low = eval_expr(literal.lit, env);
+        let low_r = eval_expr(literal.lit, env);
+        env = low_r.env;
+        let low = low_r.value;
         if (is_err(low)) {
           return step_stop(env, low);
         }
         matched = match_test_passes(eval_binary(ast.OP_EQ, sv, low));
         if (literal.has_range) {
-          let high = eval_expr(literal.range_hi, env);
+          let high_r = eval_expr(literal.range_hi, env);
+          env = high_r.env;
+          let high = high_r.value;
           if (is_err(high)) {
             return step_stop(env, high);
           }
@@ -10563,7 +10622,9 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
       }
       let pass = true;
       if (arm.has_guard) {
-        let gv = eval_expr(arm.guard, bodyEnv);
+        let gv_r = eval_expr(arm.guard, bodyEnv);
+        bodyEnv = gv_r.env;
+        let gv = gv_r.value;
         if (is_err(gv)) {
           return step_stop(trim_env(unsafe { share_unchecked(bodyEnv) }, base), gv);
         }
@@ -10587,7 +10648,9 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
 
 @noinline
 function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
-  let iv = eval_expr(f.iter, env);
+  let iv_r = eval_expr(f.iter, env);
+  env = iv_r.env;
+  let iv = iv_r.value;
   if (is_err(iv)) {
     return step_stop(env, iv);
   }
@@ -10656,7 +10719,9 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
       return eval_stmt(d.action, env);
     },
     ast.StmtVar(v) => {
-      let val = eval_var_init(v, env);
+      let val_r = eval_var_init(v, env);
+      env = val_r.env;
+      let val = val_r.value;
       if (is_err(val)) {
         return step_stop(env, val);
       }
@@ -10680,20 +10745,28 @@ pub function eval_stmt(st: ast.Stmt, own env: Env): StepResult {
         return step_stop(env, v_void());
       }
       if let ast.ExprCall(rc) = r.value {
-        return step_stop(env, eval_expr_call_expect(rc, env, bound_type_spelling(env.ret, env)));
+        let expect = bound_type_spelling(env.ret, env);
+        let val_r = eval_expr_call_expect(rc, env, expect);
+        return step_stop(val_r.env, val_r.value);
       }
-      let val = eval_expr(r.value, env);
+      let val_r = eval_expr(r.value, env);
+      env = val_r.env;
+      let val = val_r.value;
       return step_stop(env, val);
     },
     ast.StmtExpr(x) => {
-      let val = eval_expr(x.value, env);
+      let val_r = eval_expr(x.value, env);
+      env = val_r.env;
+      let val = val_r.value;
       if (is_err(val)) {
         return step_stop(env, val);
       }
       return step_none(env);
     },
     ast.StmtIf(ifs) => {
-      let cv = eval_expr(ifs.cond, env);
+      let cv_r = eval_expr(ifs.cond, env);
+      env = cv_r.env;
+      let cv = cv_r.value;
       if (is_err(cv)) {
         return step_stop(env, cv);
       }
@@ -10746,7 +10819,9 @@ function eval_assign_stmt(a: ast.StmtAssign, own env: Env): StepResult {
   if (in_place_array_write(a, env)) {
     return write_array_in_place(a, env);
   }
-  let av = eval_expr(a.value, env);
+  let av_r = eval_expr(a.value, env);
+  env = av_r.env;
+  let av = av_r.value;
   if (is_err(av)) {
     return step_stop(env, av);
   }
@@ -10813,7 +10888,9 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
     };
     let vs: Value[] = [];
     for arg in c.args {
-      let v = eval_expr(arg, env);
+      let v_r = eval_expr(arg, env);
+      env = v_r.env;
+      let v = v_r.value;
       if (is_err(v)) {
         return step_stop(env, v);
       }
@@ -10990,7 +11067,9 @@ function bind_fn_group(body: ast.Stmt[], cycle: string[], own env: Env): StepRes
     for st in body {
       if let ast.StmtVar(v) = st {
         if (v.name == name && ast.var_binds_itself(v)) {
-          let val = eval_var_init(v, env);
+          let val_r = eval_var_init(v, env);
+          env = val_r.env;
+          let val = val_r.value;
           if let VFunc(f) = val {
             members = members.append(VFunc { ...f, self_name: name });
             types = types.append(env.static_type_of(v.init));
@@ -11176,7 +11255,9 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
     if (k == body.len() - 1) {
       match (body[k]) {
         ast.StmtExpr(x) => {
-          let v = eval_expr(x.value, env);
+          let v_r = eval_expr(x.value, unsafe { share_unchecked(env) });
+          env = v_r.env;
+          let v = v_r.value;
           return (Session { ...s, env: session_env(env) }, is_err(v) || !returns_void(env, x.value), v);
         },
         _ => {}
