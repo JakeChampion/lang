@@ -1178,6 +1178,9 @@ function option_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): string {
   if (e < 0 || f.enums[e].layout != semrecords.layout_option()) {
     return "";
   }
+  if (ssasem.niche_option(f, f.values[d.result])) {
+    return "0";
+  }
   return ir.const_option_ref(semrecords.find_variant(f.enums[e], d.str));
 }
 

@@ -441,101 +441,39 @@ pub function (c: ListClass) release(e: usize): void {
 // The struct of IDs of each class of this module.
 pub struct Classes { activity: ActivityClass, component_name: ComponentNameClass, context: ContextClass, intent: IntentClass, shortcut_info: ShortcutInfoClass, shortcut_info_builder: ShortcutInfo_BuilderClass, shortcut_manager: ShortcutManagerClass, array_list: ArrayListClass, list: ListClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let activity = match (activity_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let component_name = match (component_name_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      return Err(err);
-    },
-  };
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      component_name.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      component_name.release(e);
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let shortcut_info = match (shortcut_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      component_name.release(e);
-      context.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let shortcut_info_builder = match (shortcut_info_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      component_name.release(e);
-      context.release(e);
-      intent.release(e);
-      shortcut_info.release(e);
-      return Err(err);
-    },
-  };
-  let shortcut_manager = match (shortcut_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      component_name.release(e);
-      context.release(e);
-      intent.release(e);
-      shortcut_info.release(e);
-      shortcut_info_builder.release(e);
-      return Err(err);
-    },
-  };
-  let array_list = match (array_list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      component_name.release(e);
-      context.release(e);
-      intent.release(e);
-      shortcut_info.release(e);
-      shortcut_info_builder.release(e);
-      shortcut_manager.release(e);
-      return Err(err);
-    },
-  };
-  let list = match (list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      component_name.release(e);
-      context.release(e);
-      intent.release(e);
-      shortcut_info.release(e);
-      shortcut_info_builder.release(e);
-      shortcut_manager.release(e);
-      array_list.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let activity = deleted_on_error(e, activity_class(e), made)?;
+  made = made.append(activity.class);
+  let component_name = deleted_on_error(e, component_name_class(e), made)?;
+  made = made.append(component_name.class);
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let shortcut_info = deleted_on_error(e, shortcut_info_class(e), made)?;
+  made = made.append(shortcut_info.class);
+  let shortcut_info_builder = deleted_on_error(e, shortcut_info_builder_class(e), made)?;
+  made = made.append(shortcut_info_builder.class);
+  let shortcut_manager = deleted_on_error(e, shortcut_manager_class(e), made)?;
+  made = made.append(shortcut_manager.class);
+  let array_list = deleted_on_error(e, array_list_class(e), made)?;
+  made = made.append(array_list.class);
+  let list = deleted_on_error(e, list_class(e), made)?;
   return Ok(Classes { activity: activity, component_name: component_name, context: context, intent: intent, shortcut_info: shortcut_info, shortcut_info_builder: shortcut_info_builder, shortcut_manager: shortcut_manager, array_list: array_list, list: list });
 }
 

@@ -412,6 +412,27 @@ function test_decode_lossy_errors(): test.TestOutcome {
   return test.assert_eq(got.join(" | "), "webp: the data ends early | webp: the data ends early | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the data ends early");
 }
 
+// The 3 by 2 file of Pillow with a frame of 4096 by 4096 pixels in its
+// header. Its partitions end in the first row of macroblocks, so the decode
+// must stop there and not decode the rest of the frame.
+function test_decode_lossy_short_large_frame(): test.TestOutcome {
+  let large = lossy().with(26, 0u8).with(27, 16u8).with(28, 0u8).with(29, 16u8);
+  return test.assert_eq(decoded(large), "webp: the data ends early");
+}
+
+// The limits of the size of an image: a side of 16385 pixels for `animate`,
+// and a canvas of 16384 by 16385 pixels, which is more than 2^28 pixels.
+function test_size_limits(): test.TestOutcome {
+  let too_wide = message([lossy()], [1], 16385);
+  let too_high = match (webp.animate(3, 16385, [lossy()], [1])) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+  let canvas = animation_4x4().with(24, 255u8).with(25, 63u8).with(26, 0u8).with(27, 0u8).with(28, 64u8).with(29, 0u8);
+  let got = [too_wide, too_high, animated(canvas)];
+  return test.assert_eq(got.join(" | "), "webp: the width and the height must be from 1 to 16384 | webp: the width and the height must be from 1 to 16384 | webp: the header of the image is not valid");
+}
+
 function test_decode_lossy_animation(): test.TestOutcome {
   let made = webp.animate(3, 2, [lossy(), lossy_alpha(), lossless()], [100, 250, 70000]).unwrap_or([]);
   let got = [animated(lossy_animation()), animated(made)];
@@ -434,6 +455,8 @@ function main(): i32 {
   r = r.it("decode the pixels of a lossy file of Pillow", test_decode_lossy_pixels);
   r = r.it("decode lossy files with alpha", test_decode_lossy_alpha);
   r = r.it("lossy decode errors", test_decode_lossy_errors);
+  r = r.it("a short lossy file with a large frame", test_decode_lossy_short_large_frame);
+  r = r.it("the limits of the size of an image", test_size_limits);
   r = r.it("decode animations with lossy frames", test_decode_lossy_animation);
   return r.finish();
 }

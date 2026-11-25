@@ -213,51 +213,31 @@ pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: s
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, broadcast_receiver: BroadcastReceiverClass, intent_filter: IntentFilterClass, class: ClassClass, class_loader: ClassLoaderClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let broadcast_receiver = match (broadcast_receiver_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let intent_filter = match (intent_filter_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      return Err(err);
-    },
-  };
-  let class = match (class_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent_filter.release(e);
-      return Err(err);
-    },
-  };
-  let class_loader = match (class_loader_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent_filter.release(e);
-      class.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let broadcast_receiver = deleted_on_error(e, broadcast_receiver_class(e), made)?;
+  made = made.append(broadcast_receiver.class);
+  let intent_filter = deleted_on_error(e, intent_filter_class(e), made)?;
+  made = made.append(intent_filter.class);
+  let class = deleted_on_error(e, class_class(e), made)?;
+  made = made.append(class.class);
+  let class_loader = deleted_on_error(e, class_loader_class(e), made)?;
   return Ok(Classes { context: context, broadcast_receiver: broadcast_receiver, intent_filter: intent_filter, class: class, class_loader: class_loader });
 }
 

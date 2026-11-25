@@ -9624,6 +9624,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
       all = sign_tested_reads(caller_ranges(all, names, mod));
     }
   }
+  all = niche_options(all);
   if (opts.shape_slot) {
     all = with_shape_slots(all);
   }
@@ -9839,6 +9840,20 @@ function byte_copy_loops(all: Produced[]): Produced[] {
       let r = sembytecopy.rewrite(p.func, contracts);
       if (r.changed && optbisect.allowed_by(sw, "byte-copy", p.func.graph.name)) {
         p = Produced { ...p, func: r.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+function niche_options(all: Produced[]): Produced[] {
+  let out: Produced[] = [];
+  for p in all {
+    if (p.ok && !p.template && !p.bodyless) {
+      let n = semoption.niche(p.func);
+      if (n.changed) {
+        p = Produced { ...p, func: n.f, analysis: None };
       }
     }
     out = out.append(p);

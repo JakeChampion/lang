@@ -965,249 +965,55 @@ pub function (c: MediaPlayerClass) start(e: usize, self: MediaPlayer): Result[vo
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, class_loader: ClassLoaderClass, class: ClassClass, uri: UriClass, audio_attributes: AudioAttributesClass, audio_attributes_builder: AudioAttributes_BuilderClass, playback_params: PlaybackParamsClass, media_timestamp: MediaTimestampClass, media_player_track_info: MediaPlayer_TrackInfoClass, media_player_on_prepared_listener: MediaPlayer_OnPreparedListenerClass, media_player_on_completion_listener: MediaPlayer_OnCompletionListenerClass, media_player_on_error_listener: MediaPlayer_OnErrorListenerClass, media_player_on_info_listener: MediaPlayer_OnInfoListenerClass, media_player_on_seek_complete_listener: MediaPlayer_OnSeekCompleteListenerClass, surface_texture: SurfaceTextureClass, surface: SurfaceClass, media_player: MediaPlayerClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let class_loader = match (class_loader_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let class = match (class_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      return Err(err);
-    },
-  };
-  let uri = match (uri_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      return Err(err);
-    },
-  };
-  let audio_attributes = match (audio_attributes_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      return Err(err);
-    },
-  };
-  let audio_attributes_builder = match (audio_attributes_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      return Err(err);
-    },
-  };
-  let playback_params = match (playback_params_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      return Err(err);
-    },
-  };
-  let media_timestamp = match (media_timestamp_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      return Err(err);
-    },
-  };
-  let media_player_track_info = match (media_player_track_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      return Err(err);
-    },
-  };
-  let media_player_on_prepared_listener = match (media_player_on_prepared_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      return Err(err);
-    },
-  };
-  let media_player_on_completion_listener = match (media_player_on_completion_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      media_player_on_prepared_listener.release(e);
-      return Err(err);
-    },
-  };
-  let media_player_on_error_listener = match (media_player_on_error_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      media_player_on_prepared_listener.release(e);
-      media_player_on_completion_listener.release(e);
-      return Err(err);
-    },
-  };
-  let media_player_on_info_listener = match (media_player_on_info_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      media_player_on_prepared_listener.release(e);
-      media_player_on_completion_listener.release(e);
-      media_player_on_error_listener.release(e);
-      return Err(err);
-    },
-  };
-  let media_player_on_seek_complete_listener = match (media_player_on_seek_complete_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      media_player_on_prepared_listener.release(e);
-      media_player_on_completion_listener.release(e);
-      media_player_on_error_listener.release(e);
-      media_player_on_info_listener.release(e);
-      return Err(err);
-    },
-  };
-  let surface_texture = match (surface_texture_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      media_player_on_prepared_listener.release(e);
-      media_player_on_completion_listener.release(e);
-      media_player_on_error_listener.release(e);
-      media_player_on_info_listener.release(e);
-      media_player_on_seek_complete_listener.release(e);
-      return Err(err);
-    },
-  };
-  let surface = match (surface_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      media_player_on_prepared_listener.release(e);
-      media_player_on_completion_listener.release(e);
-      media_player_on_error_listener.release(e);
-      media_player_on_info_listener.release(e);
-      media_player_on_seek_complete_listener.release(e);
-      surface_texture.release(e);
-      return Err(err);
-    },
-  };
-  let media_player = match (media_player_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      uri.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      playback_params.release(e);
-      media_timestamp.release(e);
-      media_player_track_info.release(e);
-      media_player_on_prepared_listener.release(e);
-      media_player_on_completion_listener.release(e);
-      media_player_on_error_listener.release(e);
-      media_player_on_info_listener.release(e);
-      media_player_on_seek_complete_listener.release(e);
-      surface_texture.release(e);
-      surface.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let class_loader = deleted_on_error(e, class_loader_class(e), made)?;
+  made = made.append(class_loader.class);
+  let class = deleted_on_error(e, class_class(e), made)?;
+  made = made.append(class.class);
+  let uri = deleted_on_error(e, uri_class(e), made)?;
+  made = made.append(uri.class);
+  let audio_attributes = deleted_on_error(e, audio_attributes_class(e), made)?;
+  made = made.append(audio_attributes.class);
+  let audio_attributes_builder = deleted_on_error(e, audio_attributes_builder_class(e), made)?;
+  made = made.append(audio_attributes_builder.class);
+  let playback_params = deleted_on_error(e, playback_params_class(e), made)?;
+  made = made.append(playback_params.class);
+  let media_timestamp = deleted_on_error(e, media_timestamp_class(e), made)?;
+  made = made.append(media_timestamp.class);
+  let media_player_track_info = deleted_on_error(e, media_player_track_info_class(e), made)?;
+  made = made.append(media_player_track_info.class);
+  let media_player_on_prepared_listener = deleted_on_error(e, media_player_on_prepared_listener_class(e), made)?;
+  made = made.append(media_player_on_prepared_listener.class);
+  let media_player_on_completion_listener = deleted_on_error(e, media_player_on_completion_listener_class(e), made)?;
+  made = made.append(media_player_on_completion_listener.class);
+  let media_player_on_error_listener = deleted_on_error(e, media_player_on_error_listener_class(e), made)?;
+  made = made.append(media_player_on_error_listener.class);
+  let media_player_on_info_listener = deleted_on_error(e, media_player_on_info_listener_class(e), made)?;
+  made = made.append(media_player_on_info_listener.class);
+  let media_player_on_seek_complete_listener = deleted_on_error(e, media_player_on_seek_complete_listener_class(e), made)?;
+  made = made.append(media_player_on_seek_complete_listener.class);
+  let surface_texture = deleted_on_error(e, surface_texture_class(e), made)?;
+  made = made.append(surface_texture.class);
+  let surface = deleted_on_error(e, surface_class(e), made)?;
+  made = made.append(surface.class);
+  let media_player = deleted_on_error(e, media_player_class(e), made)?;
   return Ok(Classes { context: context, class_loader: class_loader, class: class, uri: uri, audio_attributes: audio_attributes, audio_attributes_builder: audio_attributes_builder, playback_params: playback_params, media_timestamp: media_timestamp, media_player_track_info: media_player_track_info, media_player_on_prepared_listener: media_player_on_prepared_listener, media_player_on_completion_listener: media_player_on_completion_listener, media_player_on_error_listener: media_player_on_error_listener, media_player_on_info_listener: media_player_on_info_listener, media_player_on_seek_complete_listener: media_player_on_seek_complete_listener, surface_texture: surface_texture, surface: surface, media_player: media_player });
 }
 

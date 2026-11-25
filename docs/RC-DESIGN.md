@@ -635,7 +635,9 @@ no key names the box (`kept_or_same_twin`). A
 push (`arr_push`) also grows its array in place or returns a new box. A push
 onto a box, or onto a value that a test found to be that box, gives a twin
 of that box. A store of null can clear the slot that the box was read from.
-Then the unit of the slot goes to the value that is the box on that path. A twin holds no unit if it is the
+Then the unit of the slot goes to the value that is the box on that path. A
+load and a store name one array slot when their indices are one value, or
+two constants that are equal (`index_key`). A twin holds no unit if it is the
 box of the parameter, and one unit if it is a new box. A test of the twin
 against the parameter decides the side on each edge, and a join meets the
 two sides apart. An edge where the test selects a side that the twin does
@@ -770,6 +772,17 @@ pointer that flows through the program points past the header.
   enum has a mark (`ssa.PAIRED_BOX`), and a value that is not that box has the
   shape of the other variant. The reuse pass reads this as the proof of the
   shape of a token (`ssatokenkeep.proves_shape`). wasm32 loads the shape.
+- A value of an **`Option[T]` whose `T` is a box** that is never null is the
+  box of its payload, and null is `None` (`ssasem.niche_option`: a record, an
+  owned array, a string or an enum of boxes). `semoption.niche`
+  changes `Some(x)` and the read of its payload to identity ops before the
+  unit plan, so the plan sees one unit. The release and the drop of the value
+  are those of `T`, and they skip null. A map read of such a value gives the
+  value or null (`__map_get_ref_impl`). Each other `Option` and each `Result`
+  is a box of two words: the tag and the payload.
+- The certifier reads a **store of null** into a slot as a take of the load
+  of that slot. When the code releases the load before the store, the null is
+  a `None` that overwrites the slot (`rccertify.spent_before`).
 - On a native target the **narrow fields of a variant share one word** when
   two or more of them fit in 64 bits (`semsource.packing`). A narrow field is
   a boolean, a `u8`, an `i32`, a `u32` or such an enum. The fields of one
