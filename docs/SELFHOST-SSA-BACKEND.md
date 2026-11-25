@@ -76,8 +76,10 @@ lowered function it:
    operation stays, because it costs less to compute again than to keep live
    across blocks. Then it
    moves each pure integer computation in a loop whose operands do not
-   change in the loop to the one block that enters the loop, with the
-   constants that it reads (`ssa.hoisted_invariants`). Inner loops go first.
+   change in the loop to the one block that enters the loop
+   (`ssa.hoisted_invariants`). A computation of constants only stays. A
+   constant stays in the loop, where a target can use it as an immediate,
+   and the moved computation reads a copy of it. Inner loops go first.
    A loop with a second way in keeps its instructions. A division moves
    only when its divisor is a constant other than 0 and -1. Equal
    computations that move to the same block become one value;
