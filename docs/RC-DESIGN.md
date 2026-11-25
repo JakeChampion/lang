@@ -106,6 +106,12 @@ builtin that reads only its operands. `ssasem`'s guard check
 treats two reads of one slot of one box (an array's at one index) as one
 value, so a test of the first read settles the re-read.
 
+Before its first re-read, `semsink.sink` merges repeated projections when
+a child of the dominating read lives out of the repeat’s block and the
+field rule below permits the merge. That liveness is independent of call
+modes. This keeps a spliced record update from holding a second copy of
+its list field across the join.
+
 After ownership inference, `semsink.sink_past_lent` first merges a repeated
 read into an earlier read of the same slot in a dominant block (`reuse`).
 It merges when a read off the earlier read is spent or is live out of the

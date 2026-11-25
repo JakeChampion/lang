@@ -14,7 +14,12 @@ struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos:
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
-  return sink_rereads(f, false, ssadeps.unchecked());
+  let facts = ssadeps.unchecked();
+  // Merge twins whose children stay live before a re-read can split them.
+  // A spend can justify a merge only after the call modes are inferred.
+  let ru = reuse(f, false, facts);
+  let sk = sink_rereads(ru.f, false, facts);
+  return Sunk { f: sk.f, reread: ru.reread + sk.reread };
 }
 
 // sink_to_uses moves a counted record or tuple field read down to the
@@ -246,7 +251,7 @@ function spends_any(ins: ssa.SInst, up: i32[]): boolean {
 // callee consumes is counted by then. facts describe the graph of f when
 // they are checked.
 pub function sink_past_lent(f: ssasem.Func, facts: ssadeps.Facts): Sunk {
-  let ru = reuse(f, facts);
+  let ru = reuse(f, true, facts);
   if (ru.reread > 0) {
     facts = ssadeps.unchecked();
     // A merge can undo a re-read of `sink`.
@@ -371,13 +376,13 @@ function moved_down(insts: ssa.SInst[], i: i32, to: i32): ssa.SInst[] {
   return out;
 }
 
-function reuse(f: ssasem.Func, facts: ssadeps.Facts): Sunk {
+function reuse(f: ssasem.Func, inferred: boolean, facts: ssadeps.Facts): Sunk {
   let g = f.graph;
   let at = projection_blocks(g, f.values);
   if (at.len() == 0 || !repeated_across(g, f.values, at)) {
     return Sunk { f: f, reread: 0 };
   }
-  let rd = reads_of(f, at, true, facts);
+  let rd = reads_of(f, at, inferred, facts);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
@@ -387,7 +392,7 @@ function reuse(f: ssasem.Func, facts: ssadeps.Facts): Sunk {
   let n = 0;
   for r in reads {
     let bi = rd.at[r.result];
-    let first = earlier_read(rd, reads, slots, r, bi, same, f.values);
+    let first = earlier_read(rd, reads, slots, r, bi, same, f.values, inferred);
     if (first >= 0) {
       same = same.with(r.result, first);
       n += 1;
@@ -411,13 +416,13 @@ function counted_reads(g: ssa.SFunc, values: typeinfo.Type[]): ssa.SInst[] {
   return reads;
 }
 
-function earlier_read(rd: Reads, reads: ssa.SInst[], slots: semcse.Slots, r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
+function earlier_read(rd: Reads, reads: ssa.SInst[], slots: semcse.Slots, r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[], inferred: boolean): i32 {
   let i = slots.head[semcse.slot_hash(r) & slots.head.len() - 1];
   while (i >= 0) {
     let u = reads[i];
     let ub = rd.at[u.result];
     if (u.result != r.result && ub != bi && ssadeps.dom_holds(rd.dom, bi, ub) && semcse.same_slot(u, r, same, values)
-      && (child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0) && !field_kept_apart(rd, r, bi))) {
+      && (inferred && child_used_above(rd, rd.spent, bi, u.result, 0) || child_live_out(rd, bi, u.result, 0) && !field_kept_apart(rd, r, bi))) {
       return semcse.stand_in(same, u.result);
     }
     i = slots.next[i];
