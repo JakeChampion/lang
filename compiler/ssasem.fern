@@ -4612,9 +4612,9 @@ pub function analyze(f: Func): Analysis {
 
 pub function view_copy(first: i32, v: i32): ssa.SInst[] {
   return [
-    ssa.SInst { kind_tag: ssa.CONST_STR, result: first, args: [], imm: 0, str: "" },
-    ssa.SInst { kind_tag: ssa.BINARY, result: first + 1, args: [v, first], imm: 0, str: "+" },
-    ssa.SInst { kind_tag: str_as(), result: first + 2, args: [first + 1], imm: 0, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_STR, result: first, args: [], imm: 0, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: first + 1, args: [v, first], imm: 0, str: "+" },
+    ssa.SInst { ir_kind: 0, kind_tag: str_as(), result: first + 2, args: [first + 1], imm: 0, str: "" },
   ];
 }
 
@@ -4709,7 +4709,7 @@ struct Copied { s: CopySplice, value: i32 }
 
 function sp_emit(s: CopySplice, kind: i32, t: typeinfo.Type, args: i32[], imm: i32, str: string): Copied {
   let v = s.values.len();
-  let ins = ssa.SInst { kind_tag: kind, result: v, args: args, imm: imm, str: str };
+  let ins = ssa.SInst { ir_kind: 0, kind_tag: kind, result: v, args: args, imm: imm, str: str };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(ins) }, value: v };
 }
 
@@ -5001,9 +5001,9 @@ function loop_leave(l: CopyLoop, s: CopySplice, acc1: i32): Copied {
   let latch = s.id;
   s = sp_close(s, ssa.t_br(l.head));
   let header: ssa.SBlock = ssa.SBlock { id: l.head, preds: [l.pre, latch], term: ssa.t_brif(l.cond, l.head + 1, l.exit), insts: [
-    ssa.SInst { kind_tag: ssa.PHI, result: l.i, args: [l.zero, i1.value], imm: 0, str: "" },
-    ssa.SInst { kind_tag: ssa.PHI, result: l.acc, args: [l.acc0, acc1], imm: 0, str: "" },
-    ssa.SInst { kind_tag: ssa.BINARY, result: l.cond, args: [l.i, l.n], imm: 0, str: "<" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: l.i, args: [l.zero, i1.value], imm: 0, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: l.acc, args: [l.acc0, acc1], imm: 0, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: l.cond, args: [l.i, l.n], imm: 0, str: "<" },
   ] };
   s = CopySplice { ...s, done: inserted(s.done, l.head_at, header) };
   s = sp_open(s, l.exit, [l.head]);
@@ -5051,7 +5051,7 @@ function copy_enum(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   }
   s = sp_open(s, join, froms);
   let out = s.values.len();
-  let phi = ssa.SInst { kind_tag: ssa.PHI, result: out, args: built, imm: 0, str: "" };
+  let phi = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: out, args: built, imm: 0, str: "" };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
 }
 
@@ -5090,7 +5090,7 @@ function copy_dyn(f: Func, s: CopySplice, v: i32, t: typeinfo.Type): Copied {
   built = built.append(kept.value);
   s = sp_open(sp_close(kept.s, ssa.t_br(join)), join, froms);
   let out = s.values.len();
-  let phi = ssa.SInst { kind_tag: ssa.PHI, result: out, args: built, imm: 0, str: "" };
+  let phi = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: out, args: built, imm: 0, str: "" };
   return Copied { s: CopySplice { ...s, values: s.values.append(t), insts: s.insts.append(phi) }, value: out };
 }
 
@@ -5109,7 +5109,7 @@ pub function copy_helpers_called(f: Func): typeinfo.Type[] {
 }
 
 pub function copy_helper_func(f: Func, t: typeinfo.Type): Func {
-  let param = ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" };
+  let param = ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" };
   let s = CopySplice { values: [t], done: [], id: 0, preds: [], insts: [param], next_block: 1, unfold: true, helpers: [] };
   let c = deep_copy(f, s, 0);
   s = sp_close(c.s, ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: c.value });
@@ -5867,20 +5867,20 @@ function chain_values(own values: typeinfo.Type[], result: typeinfo.Type, ch: Ch
 
 function chain_starts(own insts: ssa.SInst[], ch: Chain): ssa.SInst[] {
   if (ch.holes.len() > 0) {
-    insts = insts.append(ssa.SInst { kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
-    insts = insts.append(ssa.SInst { kind_tag: zero(), result: ch.h0, args: [], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: zero(), result: ch.r0, args: [], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: zero(), result: ch.h0, args: [], imm: 0, str: "" });
   }
   if (ch.i >= 0) {
-    insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: ch.i0, args: [], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: ch.i0, args: [], imm: 0, str: "" });
   }
   return insts;
 }
 
 function fill(ch: Chain, result: i32, value: i32): ssa.SInst {
   if (ch.i < 0) {
-    return ssa.SInst { kind_tag: hole_fill(), result: result, args: [ch.r, ch.h, value], imm: ch.holes[0], str: "" };
+    return ssa.SInst { ir_kind: 0, kind_tag: hole_fill(), result: result, args: [ch.r, ch.h, value], imm: ch.holes[0], str: "" };
   }
-  return ssa.SInst { kind_tag: hole_fill(), result: result, args: [ch.r, ch.h, value, ch.i], imm: 0, str: hole_list(ch.holes) };
+  return ssa.SInst { ir_kind: 0, kind_tag: hole_fill(), result: result, args: [ch.r, ch.h, value, ch.i], imm: 0, str: hole_list(ch.holes) };
 }
 
 function address(): typeinfo.Type {
@@ -5912,9 +5912,9 @@ function spliced(own f: Func, kinds: i32[], nparams: i32, sites: i32[], name: st
     firsts = firsts.append(p);
     if (sliced_on_back_edge(f, s.rows, p)) {
       let at = s.values.len();
-      entry_insts = entry_insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: at, args: [], imm: 0, str: "" });
-      entry_insts = entry_insts.append(ssa.SInst { kind_tag: length(), result: at + 1, args: [p], imm: 0, str: "" });
-      entry_insts = entry_insts.append(ssa.SInst { kind_tag: view_slice_kind(f.values[p]), result: at + 2, args: [p, at, at + 1], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: at, args: [], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { ir_kind: 0, kind_tag: length(), result: at + 1, args: [p], imm: 0, str: "" });
+      entry_insts = entry_insts.append(ssa.SInst { ir_kind: 0, kind_tag: view_slice_kind(f.values[p]), result: at + 2, args: [p, at, at + 1], imm: 0, str: "" });
       s = Splice { ...s, values: s.values.append(i32_type()).append(i32_type()).append(f.values[p]) };
       firsts = firsts.with(p, at + 2);
     }
@@ -6003,19 +6003,19 @@ function linked(own s: Splice, f: Func, b: ssa.SBlock, map: i32[], header: i32, 
     let ins = b.insts[i];
     if (i == called) {
       row = mapped_list(map, ins.args);
-      insts = insts.append(ssa.SInst { kind_tag: zero(), result: ins.result, args: [], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: zero(), result: ins.result, args: [], imm: 0, str: "" });
     } else {
       insts = insts.append(mapped_inst(map, ins));
     }
     if (i == box) {
-      insts = insts.append(ssa.SInst { kind_tag: hole_at(), result: at, args: [ins.result], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: hole_at(), result: at, args: [ins.result], imm: 0, str: "" });
     }
   }
   insts = insts.append(fill(ch, chain, cons.result));
   row = row.append(chain).append(at);
   let values = s.values.append(address()).append(f.result);
   if (ch.i >= 0) {
-    insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: at + 2, args: [], imm: hole, str: "" });
+    insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: at + 2, args: [], imm: hole, str: "" });
     row = row.append(at + 2);
     values = values.append(i32_type());
   }
@@ -6083,5 +6083,5 @@ function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
   for row in rows {
     ops = ops.append(row[at]);
   }
-  return ssa.SInst { kind_tag: ssa.PHI, result: result, args: ops, imm: 0, str: "" };
+  return ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: result, args: ops, imm: 0, str: "" };
 }

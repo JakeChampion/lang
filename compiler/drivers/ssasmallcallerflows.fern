@@ -92,7 +92,7 @@ function aliases(output: ssaprepare.Output, f: ssa.SFunc): void {
     }
     ops = ops.append(ssa.SInst { ...op, args: args });
     if (op.result == root) {
-      ops = ops.append(ssa.SInst { kind_tag: ssa.COPY, result: f.nvals, args: [root], imm: 0, str: "" });
+      ops = ops.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: f.nvals, args: [root], imm: 0, str: "" });
     }
   }
   let copied = ssa.SFunc { ...with_ops(f, ops), nvals: f.nvals + 1 };
@@ -143,7 +143,7 @@ function relations(output: ssaprepare.Output, f: ssa.SFunc, single: boolean): vo
   let relation = flow.derive(replaced(output, with_ops(f, reordered)), "caller", "parent");
   require(relation.error == "" && relation.events[1].kind == 0 && relation.events[2].kind == 1, "overlapping live allocations");
   let b = f.blocks[0];
-  let literal = ssa.SInst { kind_tag: ssa.CONST_INT, result: f.nvals, args: [], imm: -2147483647 - 1, str: "" };
+  let literal = ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: f.nvals, args: [], imm: -2147483647 - 1, str: "" };
   let constant = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: [ssa.SBlock { ...b, insts: ops.append(literal), term: ssa.STerm { ...b.term, value: f.nvals } }] };
   relation = flow.derive(replaced(output, constant), "caller", "parent");
   require(relation.error == "" && relation.result.kind == 0 && relation.result.identity == -2147483647 - 1, "literal result");

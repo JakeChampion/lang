@@ -121,6 +121,27 @@ function main(): i32 {
 }`,
 	},
 	{
+		name: "a type parameter shadows an enum of the same name",
+		src: `enum Tail { Held(i32), Other }
+trait Factory { const Empty: Self; }
+function f[Tail: Factory](): Tail { return Tail.Empty; }
+function main(): i32 { return 0; }`,
+	},
+	{
+		name: "a type parameter shadows a struct of the same name",
+		src: `struct Tail { a: i32 }
+trait Factory { const Empty: Self; }
+function f[Tail: Factory](): Tail { return Tail.Empty; }
+function main(): i32 { return 0; }`,
+	},
+	{
+		name: "a shadowed enum keeps its variants outside the function",
+		src: `enum Tail { Held(i32), Other }
+trait Factory { const Empty: Self; }
+function f[Tail: Factory](): Tail { return Tail.Empty; }
+function main(): i32 { let t: Tail = Tail.Empty; return 0; }`,
+	},
+	{
 		name: "an enum reads its own constant",
 		src: `trait Lanes { const LANES: i32; }
 enum Kind { A, B }

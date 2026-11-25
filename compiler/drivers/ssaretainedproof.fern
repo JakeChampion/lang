@@ -63,7 +63,7 @@ function effects(row: ssaprepare.Emitted, architecture: string): void {
   for op in b.insts {
     if (op.kind_tag == ssa.ST_AT) {
       hits += 1;
-      insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" });
     } else {
       insts = insts.append(op);
     }

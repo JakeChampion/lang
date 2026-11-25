@@ -414,7 +414,7 @@ function mutant(f: ssa.SFunc, g: Gate, kind: i32): ssa.SFunc {
       insts = insts.append(b.insts[j]);
     } else if (kind == 1 && ins.result >= 0) {
       // A retain's result names its operand, so the copy keeps each later read.
-      insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [ins.args[0]], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [ins.args[0]], imm: 0, str: "" });
     } else if (kind == 2) {
       insts = insts.append(ins);
       insts = insts.append(ssa.SInst { ...ins, result: -1 });

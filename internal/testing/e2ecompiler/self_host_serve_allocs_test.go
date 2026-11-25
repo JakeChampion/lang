@@ -112,11 +112,11 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	e2eharness.CheckServeAllocsTLS(t, addr, ServeAllocsTLSCeiling, e2eharness.ServeAllocsRounds, pool)
 }
 
-// 48 since 2026-11-25, at 47.69: a method with more than one block is
-// spliced into its one caller.
-const ServeAllocsH3Ceiling = 48
+// 47 since 2026-11-25, at 46.53: h3 keeps the pseudo-header fields it saw
+// as bits, not as an array.
+const ServeAllocsH3Ceiling = 47
 
-const ServeAllocsH3MuxCeiling = 28
+const ServeAllocsH3MuxCeiling = 27
 
 const ServeAllocsH3MuxConcurrency = 64
 

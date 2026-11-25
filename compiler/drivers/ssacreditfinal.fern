@@ -65,7 +65,7 @@ function damaged(f: ssa.SFunc): ssa.SFunc {
     let insts: ssa.SInst[] = [];
     for op in b.insts {
       if (!changed && ownership_effect(f.name, op)) {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: op.result, args: [], imm: 0, str: "" });
         changed = true;
       } else {
         insts = insts.append(op);
@@ -77,7 +77,7 @@ function damaged(f: ssa.SFunc): ssa.SFunc {
       changed = true;
     }
     if (f.name == "require" && !changed) {
-      insts = insts.append(ssa.SInst { kind_tag: ssa.CALL, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CALL, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
       changed = true;
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });

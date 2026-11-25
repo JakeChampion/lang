@@ -1,3 +1,4 @@
+import "./ir";
 import "./util";
 import "./ssa";
 
@@ -269,7 +270,7 @@ function with_phi(b: ssa.SBlock, defs: ssa.SInst[], site: Loop, addr: i32): ssa.
   for s in 0..b.preds.len() {
     args = args.append(edge_address(defs, site, addr, s));
   }
-  let insts: ssa.SInst[] = [ssa.SInst { kind_tag: ssa.PHI, result: addr, args: args, imm: 0, str: "" }];
+  let insts: ssa.SInst[] = [ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: addr, args: args, imm: 0, str: "" }];
   for ins in b.insts {
     insts = insts.append(ins);
   }
@@ -288,7 +289,7 @@ function with_edge(b: ssa.SBlock, defs: ssa.SInst[], head: ssa.SBlock, site: Loo
     offset = site.when_eq;
   }
   let at = addr + 1 + 2 * s;
-  let insts = b.insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: at, args: [], imm: offset, str: "" });
-  insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: at + 1, args: [defs[site.h].args[s], at], imm: 64, str: "add" });
+  let insts = b.insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: at, args: [], imm: offset, str: "" });
+  insts = insts.append(ssa.binary_inst(at + 1, [defs[site.h].args[s], at], 64, ir.K_ADD));
   return ssa.SBlock { ...b, insts: insts };
 }

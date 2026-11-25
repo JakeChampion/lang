@@ -42,15 +42,15 @@ pub function shared_quotients(f: ssasem.Func): ssasem.Func {
       if (q < 0 || leads && ins.str == "/") {
         insts = insts.append(ins);
       } else if (ins.str == "/") {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.COPY, result: ins.result, args: [q], imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [q], imm: 0, str: "" });
       } else {
         if (leads) {
-          insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: q, args: ins.args, imm: 0, str: "/" });
+          insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: q, args: ins.args, imm: 0, str: "/" });
         }
         let product = values.len();
         values = values.append(f.values[ins.result]);
-        insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: product, args: [q, ins.args[1]], imm: 0, str: "*" });
-        insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: ins.result, args: [ins.args[0], product], imm: 0, str: "-" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: product, args: [q, ins.args[1]], imm: 0, str: "*" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: ins.result, args: [ins.args[0], product], imm: 0, str: "-" });
       }
       ii += 1;
     }

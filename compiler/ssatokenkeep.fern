@@ -1,3 +1,4 @@
+import "./ir";
 import "./util";
 import "./ssa";
 
@@ -463,9 +464,9 @@ function alloc_preds(site: Site, head: i32, n: Names): i32[] {
 
 function shape_test(site: Site, n: Names): ssa.SInst[] {
   return [
-    ssa.SInst { kind_tag: ssa.LD_AT, result: n.word, args: [site.tok], imm: ssa.tag_offset(), str: "u32" },
-    ssa.SInst { kind_tag: ssa.SHAPE_ADDR, result: n.want, args: [], imm: 0, str: site.shape },
-    ssa.SInst { kind_tag: ssa.BINARY, result: n.same, args: [n.word, n.want], imm: 64, str: "eq" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.LD_AT, result: n.word, args: [site.tok], imm: ssa.tag_offset(), str: "u32" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.SHAPE_ADDR, result: n.want, args: [], imm: 0, str: site.shape },
+    ssa.binary_inst(n.same, [n.word, n.want], 64, ir.K_EQ),
   ];
 }
 
@@ -482,15 +483,15 @@ function split_insts(f: ssa.SFunc, site: Site, n: Names): Parts {
   for k in 0..site.k {
     head = head.append(b.insts[k]);
   }
-  head = head.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: n.zero, args: [], imm: 0, str: "" });
-  head = head.append(ssa.SInst { kind_tag: ssa.BINARY, result: n.null, args: [site.tok, n.zero], imm: 64, str: "eq" });
+  head = head.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: n.zero, args: [], imm: 0, str: "" });
+  head = head.append(ssa.binary_inst(n.null, [site.tok, n.zero], 64, ir.K_EQ));
   let mark = if (site.tested) { ssa.REUSE_NULL } else { ssa.REUSE_SPLIT };
   let alloc: ssa.SInst[] = [
     ssa.SInst { ...defs[ins.args[1]], result: n.size },
     ssa.SInst { ...ins, result: n.made, args: [site.tok, n.size], imm: mark },
-    ssa.SInst { kind_tag: ssa.SHAPE_ADDR, result: n.shape, args: [], imm: 0, str: site.shape },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.SHAPE_ADDR, result: n.shape, args: [], imm: 0, str: site.shape },
   ];
-  let rest: ssa.SInst[] = [ssa.SInst { kind_tag: ssa.PHI, result: ins.result, args: [site.tok, n.made], imm: 0, str: "" }];
+  let rest: ssa.SInst[] = [ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: ins.result, args: [site.tok, n.made], imm: 0, str: "" }];
   for k in site.k + 1..b.insts.len() {
     if (redundant(f, site, defs, def_at, b, k)) {
       alloc = alloc.append(on_fresh(b.insts[k], n));
@@ -697,7 +698,7 @@ function moved(f: ssa.SFunc, move: Move): ssa.SFunc {
         insts = insts.append(ssa.SInst { ...load, result: f.nvals + 2 * j });
       }
       if (bi == move.meets[j]) {
-        insts = insts.append(ssa.SInst { kind_tag: ssa.PHI, result: f.nvals + 2 * j + 1, args: arm_values(b, f.blocks[move.arms[j]].id, f.nvals + 2 * j, load.args[0]), imm: 0, str: "" });
+        insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: f.nvals + 2 * j + 1, args: arm_values(b, f.blocks[move.arms[j]].id, f.nvals + 2 * j, load.args[0]), imm: 0, str: "" });
       }
     }
     let now = value_in(f, move, bi);
