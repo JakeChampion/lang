@@ -1406,492 +1406,73 @@ pub function (c: BitmapClass) get_width(e: usize, self: Bitmap): Result[i32, jni
 // The struct of IDs of each class of this module.
 pub struct Classes { surface: SurfaceClass, surface_texture: SurfaceTextureClass, context: ContextClass, list: ListClass, atomic_long_array: AtomicLongArrayClass, atomic_reference: AtomicReferenceClass, audio_attributes: AudioAttributesClass, audio_attributes_builder: AudioAttributes_BuilderClass, exo_player: ExoPlayerClass, exo_player_builder: ExoPlayer_BuilderClass, player: PlayerClass, player_listener: Player_ListenerClass, player_events: Player_EventsClass, media_item: MediaItemClass, tracks: TracksClass, tracks_group: Tracks_GroupClass, track_group: TrackGroupClass, track_selection_parameters: TrackSelectionParametersClass, track_selection_parameters_builder: TrackSelectionParameters_BuilderClass, track_selection_override: TrackSelectionOverrideClass, video_size: VideoSizeClass, playback_exception: PlaybackExceptionClass, audio_capabilities: AudioCapabilitiesClass, cue_group: CueGroupClass, cue: CueClass, bitmap: BitmapClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let surface = match (surface_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let surface_texture = match (surface_texture_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      return Err(err);
-    },
-  };
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      return Err(err);
-    },
-  };
-  let list = match (list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let atomic_long_array = match (atomic_long_array_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      return Err(err);
-    },
-  };
-  let atomic_reference = match (atomic_reference_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      return Err(err);
-    },
-  };
-  let audio_attributes = match (audio_attributes_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      return Err(err);
-    },
-  };
-  let audio_attributes_builder = match (audio_attributes_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      return Err(err);
-    },
-  };
-  let exo_player = match (exo_player_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      return Err(err);
-    },
-  };
-  let exo_player_builder = match (exo_player_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      return Err(err);
-    },
-  };
-  let player = match (player_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      return Err(err);
-    },
-  };
-  let player_listener = match (player_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      return Err(err);
-    },
-  };
-  let player_events = match (player_events_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      return Err(err);
-    },
-  };
-  let media_item = match (media_item_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      return Err(err);
-    },
-  };
-  let tracks = match (tracks_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      return Err(err);
-    },
-  };
-  let tracks_group = match (tracks_group_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      return Err(err);
-    },
-  };
-  let track_group = match (track_group_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      return Err(err);
-    },
-  };
-  let track_selection_parameters = match (track_selection_parameters_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      return Err(err);
-    },
-  };
-  let track_selection_parameters_builder = match (track_selection_parameters_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      return Err(err);
-    },
-  };
-  let track_selection_override = match (track_selection_override_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      track_selection_parameters_builder.release(e);
-      return Err(err);
-    },
-  };
-  let video_size = match (video_size_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      track_selection_parameters_builder.release(e);
-      track_selection_override.release(e);
-      return Err(err);
-    },
-  };
-  let playback_exception = match (playback_exception_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      track_selection_parameters_builder.release(e);
-      track_selection_override.release(e);
-      video_size.release(e);
-      return Err(err);
-    },
-  };
-  let audio_capabilities = match (audio_capabilities_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      track_selection_parameters_builder.release(e);
-      track_selection_override.release(e);
-      video_size.release(e);
-      playback_exception.release(e);
-      return Err(err);
-    },
-  };
-  let cue_group = match (cue_group_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      track_selection_parameters_builder.release(e);
-      track_selection_override.release(e);
-      video_size.release(e);
-      playback_exception.release(e);
-      audio_capabilities.release(e);
-      return Err(err);
-    },
-  };
-  let cue = match (cue_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      track_selection_parameters_builder.release(e);
-      track_selection_override.release(e);
-      video_size.release(e);
-      playback_exception.release(e);
-      audio_capabilities.release(e);
-      cue_group.release(e);
-      return Err(err);
-    },
-  };
-  let bitmap = match (bitmap_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      surface.release(e);
-      surface_texture.release(e);
-      context.release(e);
-      list.release(e);
-      atomic_long_array.release(e);
-      atomic_reference.release(e);
-      audio_attributes.release(e);
-      audio_attributes_builder.release(e);
-      exo_player.release(e);
-      exo_player_builder.release(e);
-      player.release(e);
-      player_listener.release(e);
-      player_events.release(e);
-      media_item.release(e);
-      tracks.release(e);
-      tracks_group.release(e);
-      track_group.release(e);
-      track_selection_parameters.release(e);
-      track_selection_parameters_builder.release(e);
-      track_selection_override.release(e);
-      video_size.release(e);
-      playback_exception.release(e);
-      audio_capabilities.release(e);
-      cue_group.release(e);
-      cue.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let surface = deleted_on_error(e, surface_class(e), made)?;
+  made = made.append(surface.class);
+  let surface_texture = deleted_on_error(e, surface_texture_class(e), made)?;
+  made = made.append(surface_texture.class);
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let list = deleted_on_error(e, list_class(e), made)?;
+  made = made.append(list.class);
+  let atomic_long_array = deleted_on_error(e, atomic_long_array_class(e), made)?;
+  made = made.append(atomic_long_array.class);
+  let atomic_reference = deleted_on_error(e, atomic_reference_class(e), made)?;
+  made = made.append(atomic_reference.class);
+  let audio_attributes = deleted_on_error(e, audio_attributes_class(e), made)?;
+  made = made.append(audio_attributes.class);
+  let audio_attributes_builder = deleted_on_error(e, audio_attributes_builder_class(e), made)?;
+  made = made.append(audio_attributes_builder.class);
+  let exo_player = deleted_on_error(e, exo_player_class(e), made)?;
+  made = made.append(exo_player.class);
+  let exo_player_builder = deleted_on_error(e, exo_player_builder_class(e), made)?;
+  made = made.append(exo_player_builder.class);
+  let player = deleted_on_error(e, player_class(e), made)?;
+  made = made.append(player.class);
+  let player_listener = deleted_on_error(e, player_listener_class(e), made)?;
+  made = made.append(player_listener.class);
+  let player_events = deleted_on_error(e, player_events_class(e), made)?;
+  made = made.append(player_events.class);
+  let media_item = deleted_on_error(e, media_item_class(e), made)?;
+  made = made.append(media_item.class);
+  let tracks = deleted_on_error(e, tracks_class(e), made)?;
+  made = made.append(tracks.class);
+  let tracks_group = deleted_on_error(e, tracks_group_class(e), made)?;
+  made = made.append(tracks_group.class);
+  let track_group = deleted_on_error(e, track_group_class(e), made)?;
+  made = made.append(track_group.class);
+  let track_selection_parameters = deleted_on_error(e, track_selection_parameters_class(e), made)?;
+  made = made.append(track_selection_parameters.class);
+  let track_selection_parameters_builder = deleted_on_error(e, track_selection_parameters_builder_class(e), made)?;
+  made = made.append(track_selection_parameters_builder.class);
+  let track_selection_override = deleted_on_error(e, track_selection_override_class(e), made)?;
+  made = made.append(track_selection_override.class);
+  let video_size = deleted_on_error(e, video_size_class(e), made)?;
+  made = made.append(video_size.class);
+  let playback_exception = deleted_on_error(e, playback_exception_class(e), made)?;
+  made = made.append(playback_exception.class);
+  let audio_capabilities = deleted_on_error(e, audio_capabilities_class(e), made)?;
+  made = made.append(audio_capabilities.class);
+  let cue_group = deleted_on_error(e, cue_group_class(e), made)?;
+  made = made.append(cue_group.class);
+  let cue = deleted_on_error(e, cue_class(e), made)?;
+  made = made.append(cue.class);
+  let bitmap = deleted_on_error(e, bitmap_class(e), made)?;
   return Ok(Classes { surface: surface, surface_texture: surface_texture, context: context, list: list, atomic_long_array: atomic_long_array, atomic_reference: atomic_reference, audio_attributes: audio_attributes, audio_attributes_builder: audio_attributes_builder, exo_player: exo_player, exo_player_builder: exo_player_builder, player: player, player_listener: player_listener, player_events: player_events, media_item: media_item, tracks: tracks, tracks_group: tracks_group, track_group: track_group, track_selection_parameters: track_selection_parameters, track_selection_parameters_builder: track_selection_parameters_builder, track_selection_override: track_selection_override, video_size: video_size, playback_exception: playback_exception, audio_capabilities: audio_capabilities, cue_group: cue_group, cue: cue, bitmap: bitmap });
 }
 

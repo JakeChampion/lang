@@ -652,167 +652,47 @@ pub function (c: PlaybackStateClass) release(e: usize): void {
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, class_loader: ClassLoaderClass, class: ClassClass, looper: LooperClass, handler: HandlerClass, media_session: MediaSessionClass, media_session_callback: MediaSession_CallbackClass, playback_state_builder: PlaybackState_BuilderClass, media_metadata_builder: MediaMetadata_BuilderClass, bitmap: BitmapClass, bitmap_config: Bitmap_ConfigClass, media_metadata: MediaMetadataClass, playback_state: PlaybackStateClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let class_loader = match (class_loader_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let class = match (class_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      return Err(err);
-    },
-  };
-  let looper = match (looper_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      return Err(err);
-    },
-  };
-  let handler = match (handler_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      return Err(err);
-    },
-  };
-  let media_session = match (media_session_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      return Err(err);
-    },
-  };
-  let media_session_callback = match (media_session_callback_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      media_session.release(e);
-      return Err(err);
-    },
-  };
-  let playback_state_builder = match (playback_state_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      media_session.release(e);
-      media_session_callback.release(e);
-      return Err(err);
-    },
-  };
-  let media_metadata_builder = match (media_metadata_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      media_session.release(e);
-      media_session_callback.release(e);
-      playback_state_builder.release(e);
-      return Err(err);
-    },
-  };
-  let bitmap = match (bitmap_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      media_session.release(e);
-      media_session_callback.release(e);
-      playback_state_builder.release(e);
-      media_metadata_builder.release(e);
-      return Err(err);
-    },
-  };
-  let bitmap_config = match (bitmap_config_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      media_session.release(e);
-      media_session_callback.release(e);
-      playback_state_builder.release(e);
-      media_metadata_builder.release(e);
-      bitmap.release(e);
-      return Err(err);
-    },
-  };
-  let media_metadata = match (media_metadata_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      media_session.release(e);
-      media_session_callback.release(e);
-      playback_state_builder.release(e);
-      media_metadata_builder.release(e);
-      bitmap.release(e);
-      bitmap_config.release(e);
-      return Err(err);
-    },
-  };
-  let playback_state = match (playback_state_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      looper.release(e);
-      handler.release(e);
-      media_session.release(e);
-      media_session_callback.release(e);
-      playback_state_builder.release(e);
-      media_metadata_builder.release(e);
-      bitmap.release(e);
-      bitmap_config.release(e);
-      media_metadata.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let class_loader = deleted_on_error(e, class_loader_class(e), made)?;
+  made = made.append(class_loader.class);
+  let class = deleted_on_error(e, class_class(e), made)?;
+  made = made.append(class.class);
+  let looper = deleted_on_error(e, looper_class(e), made)?;
+  made = made.append(looper.class);
+  let handler = deleted_on_error(e, handler_class(e), made)?;
+  made = made.append(handler.class);
+  let media_session = deleted_on_error(e, media_session_class(e), made)?;
+  made = made.append(media_session.class);
+  let media_session_callback = deleted_on_error(e, media_session_callback_class(e), made)?;
+  made = made.append(media_session_callback.class);
+  let playback_state_builder = deleted_on_error(e, playback_state_builder_class(e), made)?;
+  made = made.append(playback_state_builder.class);
+  let media_metadata_builder = deleted_on_error(e, media_metadata_builder_class(e), made)?;
+  made = made.append(media_metadata_builder.class);
+  let bitmap = deleted_on_error(e, bitmap_class(e), made)?;
+  made = made.append(bitmap.class);
+  let bitmap_config = deleted_on_error(e, bitmap_config_class(e), made)?;
+  made = made.append(bitmap_config.class);
+  let media_metadata = deleted_on_error(e, media_metadata_class(e), made)?;
+  made = made.append(media_metadata.class);
+  let playback_state = deleted_on_error(e, playback_state_class(e), made)?;
   return Ok(Classes { context: context, class_loader: class_loader, class: class, looper: looper, handler: handler, media_session: media_session, media_session_callback: media_session_callback, playback_state_builder: playback_state_builder, media_metadata_builder: media_metadata_builder, bitmap: bitmap, bitmap_config: bitmap_config, media_metadata: media_metadata, playback_state: playback_state });
 }
 

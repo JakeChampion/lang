@@ -167,32 +167,27 @@ pub function (c: MessageClass) set_what(e: usize, self: Message, value: i32): Re
 // The struct of IDs of each class of this module.
 pub struct Classes { looper: LooperClass, handler: HandlerClass, message: MessageClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let looper = match (looper_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let handler = match (handler_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      looper.release(e);
-      return Err(err);
-    },
-  };
-  let message = match (message_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      looper.release(e);
-      handler.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let looper = deleted_on_error(e, looper_class(e), made)?;
+  made = made.append(looper.class);
+  let handler = deleted_on_error(e, handler_class(e), made)?;
+  made = made.append(handler.class);
+  let message = deleted_on_error(e, message_class(e), made)?;
   return Ok(Classes { looper: looper, handler: handler, message: message });
 }
 

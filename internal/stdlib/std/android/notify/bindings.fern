@@ -471,87 +471,37 @@ pub function (c: PackageManagerClass) get_launch_intent_for_package(e: usize, se
 // The struct of IDs of each class of this module.
 pub struct Classes { notification: NotificationClass, notification_builder: Notification_BuilderClass, notification_channel: NotificationChannelClass, notification_manager: NotificationManagerClass, pending_intent: PendingIntentClass, context: ContextClass, intent: IntentClass, package_manager: PackageManagerClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let notification = match (notification_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let notification_builder = match (notification_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      notification.release(e);
-      return Err(err);
-    },
-  };
-  let notification_channel = match (notification_channel_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      notification.release(e);
-      notification_builder.release(e);
-      return Err(err);
-    },
-  };
-  let notification_manager = match (notification_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      notification.release(e);
-      notification_builder.release(e);
-      notification_channel.release(e);
-      return Err(err);
-    },
-  };
-  let pending_intent = match (pending_intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      notification.release(e);
-      notification_builder.release(e);
-      notification_channel.release(e);
-      notification_manager.release(e);
-      return Err(err);
-    },
-  };
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      notification.release(e);
-      notification_builder.release(e);
-      notification_channel.release(e);
-      notification_manager.release(e);
-      pending_intent.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      notification.release(e);
-      notification_builder.release(e);
-      notification_channel.release(e);
-      notification_manager.release(e);
-      pending_intent.release(e);
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let package_manager = match (package_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      notification.release(e);
-      notification_builder.release(e);
-      notification_channel.release(e);
-      notification_manager.release(e);
-      pending_intent.release(e);
-      context.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let notification = deleted_on_error(e, notification_class(e), made)?;
+  made = made.append(notification.class);
+  let notification_builder = deleted_on_error(e, notification_builder_class(e), made)?;
+  made = made.append(notification_builder.class);
+  let notification_channel = deleted_on_error(e, notification_channel_class(e), made)?;
+  made = made.append(notification_channel.class);
+  let notification_manager = deleted_on_error(e, notification_manager_class(e), made)?;
+  made = made.append(notification_manager.class);
+  let pending_intent = deleted_on_error(e, pending_intent_class(e), made)?;
+  made = made.append(pending_intent.class);
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let package_manager = deleted_on_error(e, package_manager_class(e), made)?;
   return Ok(Classes { notification: notification, notification_builder: notification_builder, notification_channel: notification_channel, notification_manager: notification_manager, pending_intent: pending_intent, context: context, intent: intent, package_manager: package_manager });
 }
 

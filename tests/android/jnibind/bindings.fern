@@ -700,186 +700,49 @@ pub function (c: SystemClass) out(e: usize): Result[jni.Object, jni.JavaError] {
 // The struct of IDs of each class of this module.
 pub struct Classes { activity: ActivityClass, context: ContextClass, package_manager: PackageManagerClass, intent: IntentClass, component_name: ComponentNameClass, point: PointClass, system_clock: SystemClockClass, date_format: DateFormatClass, file: FileClass, list: ListClass, integer: IntegerClass, math: MathClass, float: FloatClass, system: SystemClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let activity = match (activity_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      return Err(err);
-    },
-  };
-  let package_manager = match (package_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      return Err(err);
-    },
-  };
-  let component_name = match (component_name_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let point = match (point_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      return Err(err);
-    },
-  };
-  let system_clock = match (system_clock_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      return Err(err);
-    },
-  };
-  let date_format = match (date_format_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      system_clock.release(e);
-      return Err(err);
-    },
-  };
-  let file = match (file_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      system_clock.release(e);
-      date_format.release(e);
-      return Err(err);
-    },
-  };
-  let list = match (list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      system_clock.release(e);
-      date_format.release(e);
-      file.release(e);
-      return Err(err);
-    },
-  };
-  let integer = match (integer_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      system_clock.release(e);
-      date_format.release(e);
-      file.release(e);
-      list.release(e);
-      return Err(err);
-    },
-  };
-  let math = match (math_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      system_clock.release(e);
-      date_format.release(e);
-      file.release(e);
-      list.release(e);
-      integer.release(e);
-      return Err(err);
-    },
-  };
-  let float = match (float_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      system_clock.release(e);
-      date_format.release(e);
-      file.release(e);
-      list.release(e);
-      integer.release(e);
-      math.release(e);
-      return Err(err);
-    },
-  };
-  let system = match (system_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      context.release(e);
-      package_manager.release(e);
-      intent.release(e);
-      component_name.release(e);
-      point.release(e);
-      system_clock.release(e);
-      date_format.release(e);
-      file.release(e);
-      list.release(e);
-      integer.release(e);
-      math.release(e);
-      float.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let activity = deleted_on_error(e, activity_class(e), made)?;
+  made = made.append(activity.class);
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let package_manager = deleted_on_error(e, package_manager_class(e), made)?;
+  made = made.append(package_manager.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let component_name = deleted_on_error(e, component_name_class(e), made)?;
+  made = made.append(component_name.class);
+  let point = deleted_on_error(e, point_class(e), made)?;
+  made = made.append(point.class);
+  let system_clock = deleted_on_error(e, system_clock_class(e), made)?;
+  made = made.append(system_clock.class);
+  let date_format = deleted_on_error(e, date_format_class(e), made)?;
+  made = made.append(date_format.class);
+  let file = deleted_on_error(e, file_class(e), made)?;
+  made = made.append(file.class);
+  let list = deleted_on_error(e, list_class(e), made)?;
+  made = made.append(list.class);
+  let integer = deleted_on_error(e, integer_class(e), made)?;
+  made = made.append(integer.class);
+  let math = deleted_on_error(e, math_class(e), made)?;
+  made = made.append(math.class);
+  let float = deleted_on_error(e, float_class(e), made)?;
+  made = made.append(float.class);
+  let system = deleted_on_error(e, system_class(e), made)?;
   return Ok(Classes { activity: activity, context: context, package_manager: package_manager, intent: intent, component_name: component_name, point: point, system_clock: system_clock, date_format: date_format, file: file, list: list, integer: integer, math: math, float: float, system: system });
 }
 
