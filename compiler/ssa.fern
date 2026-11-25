@@ -5048,14 +5048,15 @@ function folded_cast(ins: SInst, a: i64): Option[i64] {
   return None;
 }
 
-// x + 0, x - 0, x | 0, x ^ 0, x shifted by 0 and x * 1 are x.
+// x + 0, x - 0, x | 0, x ^ 0, x & -1, x shifted by 0 and x * 1 are x.
+// x & 0 is 0 and x | -1 is -1.
 function fold_identities(f: SFunc): Formed {
   let defs = inst_defs(f);
   let flat = identity_repl(f.nvals);
   let changed = false;
   for blk in f.blocks {
     for ins in blk.insts {
-      let kept = identity_operand(ins, defs);
+      let kept = identity_operand(rewrite_args(ins, flat), defs);
       if (kept >= 0 && ins.result >= 0) {
         flat = flat.with(ins.result, flat[kept]);
         changed = true;
@@ -5072,8 +5073,21 @@ function identity_operand(ins: SInst, defs: SInst[]): i32 {
   if (ins.kind_tag != BINARY || ins.args.len() != 2) {
     return -1;
   }
+  let k = ins.ir_kind;
+  if (k == ir.K_AND || k == ir.K_OR) {
+    let unit: i64 = if (k == ir.K_AND) { -1i64 } else { 0i64 };
+    for i in 0..2 {
+      if (const_is(defs, ins.args[i], unit)) {
+        return ins.args[1 - i];
+      }
+      if (const_is(defs, ins.args[i], -1i64 - unit)) {
+        return ins.args[i];
+      }
+    }
+    return -1;
+  }
   let unit: i64 = 0i64;
-  if (ins.ir_kind == ir.K_MUL) {
+  if (k == ir.K_MUL) {
     unit = 1i64;
   }
   if (right_identity(ins.ir_kind) && const_is(defs, ins.args[1], unit)) {
@@ -5086,7 +5100,7 @@ function identity_operand(ins: SInst, defs: SInst[]): i32 {
 }
 
 function left_identity(kind: i32): boolean {
-  return kind == ir.K_ADD || kind == ir.K_OR || kind == ir.K_XOR || kind == ir.K_MUL;
+  return kind == ir.K_ADD || kind == ir.K_XOR || kind == ir.K_MUL;
 }
 
 function right_identity(kind: i32): boolean {
@@ -10413,13 +10427,60 @@ function carry_of(defs: SInst[], shr: SInst): SInst {
   }
   let o = bin_of(defs, shr.args[0], ir.K_OR);
   if (o.kind_tag == NONE) {
-    return no_inst();
+    return zero_operand_carry(defs, shr);
   }
   let m = carry_halves(defs, shr, o.args[0], o.args[1]);
   if (m.kind_tag == NONE) {
     m = carry_halves(defs, shr, o.args[1], o.args[0]);
   }
-  return m;
+  return if (m.kind_tag == NONE) { ones_operand_carry(defs, shr, o) } else { m };
+}
+
+// With `x & -1` and `x | -1` folded, the carry of `x + -1 (+ c)` is `x | ~s`
+// and the borrow of `x - -1 (- c)` is `~x | d`.
+function ones_operand_carry(defs: SInst[], shr: SInst, o: SInst): SInst {
+  for k in 0..2 {
+    let x = copy_root(defs, o.args[k]);
+    let m = ones_carry(defs, shr, wide_of(defs, not_of(defs, o.args[1 - k]), ir.K_ADD), x, 0);
+    if (m.kind_tag == NONE) {
+      let nx = not_of(defs, o.args[k]);
+      if (nx >= 0) {
+        m = ones_carry(defs, shr, wide_of(defs, o.args[1 - k], ir.K_SUB), nx, 1);
+      }
+    }
+    if (m.kind_tag != NONE) {
+      return m;
+    }
+  }
+  return no_inst();
+}
+
+// `t` is `x op -1`, or `(x op -1) op c` with `c` 0 or 1. `op` is the add for
+// `sub` 0 and the subtract for `sub` 1, and only an add has its operands in
+// either order.
+function ones_carry(defs: SInst[], shr: SInst, t: SInst, x: i32, sub: i32): SInst {
+  if (t.kind_tag == NONE) {
+    return no_inst();
+  }
+  let ends = if (sub == 1) { 1 } else { 2 };
+  let kind = if (sub == 1) { ir.K_SUB } else { ir.K_ADD };
+  for j in 0..ends {
+    let a = copy_root(defs, t.args[j]);
+    let b = t.args[1 - j];
+    if (a == x && is_const(defs, b, -1i64)) {
+      return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, b)], imm: sub, str: "" };
+    }
+    let inner = wide_of(defs, t.args[j], kind);
+    if (inner.kind_tag == NONE || !zero_one(defs, b)) {
+      continue;
+    }
+    for i in 0..ends {
+      if (copy_root(defs, inner.args[i]) == x && is_const(defs, inner.args[1 - i], -1i64)) {
+        return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, inner.args[1 - i]), copy_root(defs, b)], imm: sub, str: "" };
+      }
+    }
+  }
+  return no_inst();
 }
 
 // `carry(x, y) | carry(x + y, c)` is the carry of `x + y + c` when `c` is 0
@@ -10480,7 +10541,7 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
   let x = copy_root(defs, p.args[0]);
   let y = copy_root(defs, p.args[1]);
   let e = bin_of(defs, either, ir.K_OR);
-  if (e.kind_tag == NONE && !or_zero(defs, either, x, y) || e.kind_tag != NONE && !same_pair(defs, e.args[0], e.args[1], x, y)) {
+  if (e.kind_tag == NONE || !same_pair(defs, e.args[0], e.args[1], x, y)) {
     return no_inst();
   }
   let s = wide_of(defs, not_of(defs, inv), ir.K_ADD);
@@ -10496,27 +10557,28 @@ function add_carry(defs: SInst[], shr: SInst, p: SInst, either: i32, inv: i32): 
       return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [copy_root(defs, inner.args[0]), copy_root(defs, inner.args[1]), copy_root(defs, s.args[1 - k])], imm: 0, str: "" };
     }
   }
-  return zero_add_carry(defs, shr, s, x, y);
+  return no_inst();
 }
 
-// `x | 0` folds to `x`.
-function or_zero(defs: SInst[], v: i32, x: i32, y: i32): boolean {
-  let r = copy_root(defs, v);
-  return r == x && is_const(defs, y, 0i64) || r == y && is_const(defs, x, 0i64);
-}
-
-// `x + 0 + c` folds to `x + c`, which has the same carry.
-function zero_add_carry(defs: SInst[], shr: SInst, s: SInst, x: i32, y: i32): SInst {
+// With `x & 0` folded, the carry of `x + 0 + c` is `x & ~s` and the borrow
+// of `x - 0 - c` is `~x & d`, for `s = x + c` and `d = x - c`.
+function zero_operand_carry(defs: SInst[], shr: SInst): SInst {
+  let a = bin_of(defs, shr.args[0], ir.K_AND);
+  if (a.kind_tag == NONE) {
+    return no_inst();
+  }
   for k in 0..2 {
-    let z = if (k == 0) { y } else { x };
-    let o = if (k == 0) { x } else { y };
-    if (!is_const(defs, z, 0i64)) {
-      continue;
-    }
+    let x = copy_root(defs, a.args[k]);
+    let s = wide_of(defs, not_of(defs, a.args[1 - k]), ir.K_ADD);
     for j in 0..2 {
-      if (copy_root(defs, s.args[j]) == o && zero_one(defs, s.args[1 - j])) {
-        return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [o, copy_root(defs, s.args[1 - j])], imm: 0, str: "" };
+      if (s.kind_tag != NONE && copy_root(defs, s.args[j]) == x && zero_one(defs, s.args[1 - j])) {
+        return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, s.args[1 - j])], imm: 0, str: "" };
       }
+    }
+    let nx = not_of(defs, a.args[k]);
+    let d = wide_of(defs, a.args[1 - k], ir.K_SUB);
+    if (nx >= 0 && d.kind_tag != NONE && copy_root(defs, d.args[0]) == nx && zero_one(defs, d.args[1])) {
+      return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [nx, copy_root(defs, d.args[1])], imm: 1, str: "" };
     }
   }
   return no_inst();
@@ -10535,10 +10597,7 @@ function sub_borrow(defs: SInst[], shr: SInst, p: SInst, either: i32, diff: i32)
 
 function inverted_or(defs: SInst[], v: i32, x: i32, y: i32): boolean {
   let e = bin_of(defs, v, ir.K_OR);
-  if (e.kind_tag == NONE) {
-    return is_const(defs, y, 0i64) && not_of(defs, v) == x;
-  }
-  return not_of(defs, e.args[0]) == x && same_value(defs, e.args[1], y) || not_of(defs, e.args[1]) == x && same_value(defs, e.args[0], y);
+  return e.kind_tag != NONE && (not_of(defs, e.args[0]) == x && same_value(defs, e.args[1], y) || not_of(defs, e.args[1]) == x && same_value(defs, e.args[0], y));
 }
 
 function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SInst {
@@ -10552,10 +10611,6 @@ function borrow_from(defs: SInst[], shr: SInst, diff: i32, x: i32, y: i32): SIns
   let inner = wide_of(defs, d.args[0], ir.K_SUB);
   if (inner.kind_tag != NONE && copy_root(defs, inner.args[0]) == x && same_value(defs, inner.args[1], y) && zero_one(defs, d.args[1])) {
     return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, inner.args[1]), copy_root(defs, d.args[1])], imm: 1, str: "" };
-  }
-  // `x - 0 - c` folds to `x - c`, which has the same borrow.
-  if (is_const(defs, y, 0i64) && copy_root(defs, d.args[0]) == x && zero_one(defs, d.args[1])) {
-    return SInst { ir_kind: 0, kind_tag: CARRY, result: shr.result, args: [x, copy_root(defs, d.args[1])], imm: 1, str: "" };
   }
   return no_inst();
 }

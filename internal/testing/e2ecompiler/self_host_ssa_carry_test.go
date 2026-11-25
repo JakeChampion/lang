@@ -173,6 +173,29 @@ struct W3 { a: u64, b: u64, c: u64 }
     let k3: u64 = ((s3 ^ ALL) & 0xffffffff00000001u64 | ((s3 ^ ALL) | 0xffffffff00000001u64) & d3) >> 63u64;
     return d0 * 3u64 + d1 * 5u64 + d2 * 7u64 + d3 * 11u64 + k3 * 13u64;
 }
+@noinline function sub_mask(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, b2: u64, b3: u64): u64 {
+    let d0: u64 = a0 - b0;
+    let k0: u64 = ((a0 ^ ALL) & b0 | (a0 ^ ALL | b0) & d0) >> 63u64;
+    let d1: u64 = a1 - b1 - k0;
+    let k1: u64 = ((a1 ^ ALL) & b1 | (a1 ^ ALL | b1) & d1) >> 63u64;
+    let d2: u64 = a2 - b2 - k1;
+    let k2: u64 = ((a2 ^ ALL) & b2 | (a2 ^ ALL | b2) & d2) >> 63u64;
+    let d3: u64 = a3 - b3 - k2;
+    let k3: u64 = ((a3 ^ ALL) & b3 | (a3 ^ ALL | b3) & d3) >> 63u64;
+    let m: u64 = 0u64 - k3;
+    let q0: u64 = 0xffffffffffffffffu64 & m;
+    let s0: u64 = d0 + q0;
+    let c0: u64 = (d0 & q0 | (d0 | q0) & (s0 ^ ALL)) >> 63u64;
+    let q1: u64 = 0x00000000ffffffffu64 & m;
+    let s1: u64 = d1 + q1 + c0;
+    let c1: u64 = (d1 & q1 | (d1 | q1) & (s1 ^ ALL)) >> 63u64;
+    let q2: u64 = 0u64 & m;
+    let s2: u64 = d2 + q2 + c1;
+    let c2: u64 = (d2 & q2 | (d2 | q2) & (s2 ^ ALL)) >> 63u64;
+    let q3: u64 = m & 0xffffffff00000001u64;
+    let s3: u64 = d3 + q3 + c2;
+    return s0 * 3u64 + s1 * 5u64 + s2 * 7u64 + s3 * 11u64 + (m | ALL) * 13u64 + (ALL | k3) + (k0 & 0u64);
+}
 @noinline function add_k(a0: u64, a1: u64): u64 {
     let s0: u64 = a0 + 0xffffffff00000001u64;
     let c0: u64 = (a0 & 0xffffffff00000001u64 | (a0 | 0xffffffff00000001u64) & (s0 ^ ALL)) >> 63u64;
@@ -317,6 +340,7 @@ function main(): i32 {
                 acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h) + 5u64 * add_sub_p(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
                 acc = acc ^ sub4(x, y, h, y - x, y, h, x + 1u64, ALL - y) ^ add4_spilled(x, h, x ^ y, y - x, y, ALL - h, x + 1u64, ALL - y);
                 acc = acc * 41u64 + mul_rows(x, y, h, x ^ y, y - h, ALL - x);
+                acc = acc * 43u64 + sub_mask(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
             }
         }
     }
@@ -592,5 +616,35 @@ func TestSelfHostSSABorrowTakesImmediate(t *testing.T) {
 	}
 	if regexp.MustCompile(`(?m)^\s+movq \$-1, %r\w+$`).MatchString(fn) {
 		t.Errorf("add_sub_p loads -1 into a register:\n%s", fn)
+	}
+}
+
+// An AND with all ones or with zero folds, so the add chain after it stays in the flags.
+func TestSelfHostSSAMaskIdentitiesFold(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_sub_mask")
+	if fn == "" {
+		t.Fatal("no __fn_sub_mask in the listing")
+	}
+	for _, bad := range []string{"andq $-1,", "andq $0,", "orq $-1,", "btq"} {
+		if strings.Contains(fn, bad) {
+			t.Errorf("sub_mask has %q:\n%s", bad, fn)
+		}
+	}
+	if !strings.Contains(fn, "adcq $0,") {
+		t.Errorf("sub_mask adds the carry of its third limb outside the chain:\n%s", fn)
 	}
 }
