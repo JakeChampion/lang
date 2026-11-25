@@ -623,18 +623,13 @@ function test_ticket_secret_length(): test.TestOutcome {
 function test_resumption(): test.TestOutcome {
   let sc = fixture_config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_alpn(["http/1.1"]);
   let cc = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
-  let t = client.Ticket { identity: [], psk: [], suite: 0, lifetime: time.DURATION_ZERO, age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "", max_early: 0 as u32, verified_chain: [] };
-  match (connect(cc, sc)) {
-    Ok(p) => {
-      if (p.tickets.len() != 1 || p.client.resumed()) {
-        return test.fail("first: " + p.tickets.len().to_string());
-      }
-      t = p.tickets[0];
-    },
-    Err(e) => {
-      return test.fail(e);
-    }
+  let Ok(first) = connect(cc, sc) else {
+    return test.fail("first handshake");
+  };
+  if (first.tickets.len() != 1 || first.client.resumed()) {
+    return test.fail("first: " + first.tickets.len().to_string());
   }
+  let t = first.tickets[0];
   if (how(connect(cc.with_ticket(t), sc)) != "resumed ping pong 1") {
     return test.fail("resumed: " + how(connect(cc.with_ticket(t), sc)));
   }
@@ -647,7 +642,7 @@ function test_resumption(): test.TestOutcome {
   }
   match (connect(cc, sc.with_ticket_lifetime(time.duration_seconds(2592000 as i64)))) {
     Ok(p) => {
-      if (p.tickets.len() != 1 || !p.tickets[0].lifetime.eq(time.duration_seconds(604800 as i64))) {
+      if (p.tickets.len() != 1 || !p.tickets[0].valid_for().eq(time.duration_seconds(604800 as i64))) {
         return test.fail("a lifetime above seven days");
       }
     },
@@ -694,7 +689,7 @@ function replayed(seed: i64): Result[string, string] {
   let cw = cwrite(c2.session, "ping")?;
   let sr = srd(s2.session, cw.output)?;
   let sw = swrite(sr.session, "pong")?;
-  let wire = c0.output.concat(s1.output).concat(c1.output).concat(s2.output).concat(cw.output).concat(sw.output).concat(c2.tickets[0].identity);
+  let wire = c0.output.concat(s1.output).concat(c1.output).concat(s2.output).concat(cw.output).concat(sw.output).concat(c2.tickets[0].wire_identity());
   return Ok(hex.encode(crypto.sha256_new().update(wire).finish()));
 }
 

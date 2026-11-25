@@ -4118,7 +4118,7 @@ function __recv_records[T: Transport](tr: T, conn: __Conn, s: client.Session, ti
   while (true) {
     let raw = __recv_raw(tr, conn.fd, timeouts, started, size)?;
     if (raw.len() == 0) {
-      if (session.held.len() > 0) {
+      if (session.has_pending_record_bytes()) {
         return Err(Tls(tls.RecordCut));
       }
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });

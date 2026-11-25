@@ -276,7 +276,10 @@ struct Space {
   peer_ecn: frames.Ecn,
 }
 
-enum Tls { TlsClient(handshake.Client), TlsServer(handshake.Server), TlsNone }
+// Keep the handshake and the policy that authenticated its peer together.
+opaque struct ClientHandshake { state: handshake.Client, server_name: string, roots: verify.Roots, verify: boolean, prior: Option[tlsclient.Ticket] }
+
+enum Tls { TlsClient(ClientHandshake), TlsServer(handshake.Server), TlsNone }
 
 pub struct Conn {
   config: Config,
@@ -439,7 +442,7 @@ function __early_wanted(c: Config): boolean {
   let Some(t) = c.resume else {
     return false;
   };
-  return c.early_data && t.tls.max_early > 0 as u32;
+  return c.early_data && t.tls.early_data_limit() > 0 as u32;
 }
 
 function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn, string] {
@@ -452,7 +455,9 @@ function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn
   match (handshake.client_start(cc, entropy[c.cid_len + 8 + CID_SECRET:entropy.len()])) {
     Ok(step) => {
       let conn = __base(c, false, scid, dcid, dcid, now).__initial_keys(dcid);
-      conn = Conn { ...conn, tls: TlsClient(step.client), wall_offset: unix_ms * 1000000 - now, cid_secret: secret };
+      let prior = c.resume.map((previous: Ticket): tlsclient.Ticket => previous.tls);
+      let client = ClientHandshake { state: step.client, server_name: c.server_name, roots: c.roots, verify: c.verify, prior: prior };
+      conn = Conn { ...conn, tls: TlsClient(client), wall_offset: unix_ms * 1000000 - now, cid_secret: secret };
       return Ok(conn.__tls_events(step.events, now));
     },
     Err(e) => {
@@ -638,7 +643,7 @@ pub function (c: Conn) sending_early(): boolean {
 pub function (c: Conn) resumed(): boolean {
   match (c.tls) {
     TlsClient(t) => {
-      return t.resumed();
+      return t.state.resumed();
     },
     TlsServer(t) => {
       return t.resumed();
@@ -676,7 +681,7 @@ pub function (c: Conn) done(): boolean {
 pub function (c: Conn) alpn(): string {
   match (c.tls) {
     TlsClient(t) => {
-      return t.alpn();
+      return t.state.alpn();
     },
     TlsServer(t) => {
       return t.alpn;
@@ -1918,7 +1923,7 @@ function (c: Conn) __crypto(space: i32, offset: i64, data: u8[], now: i64): Conn
 function (c: Conn) __tls_read(level: i32, bytes: u8[], now: i64): Conn {
   match (c.tls) {
     TlsClient(t) => {
-      return c.__client_step(t.read_crypto(level, bytes), now);
+      return c.__client_step(t, t.state.read_crypto(level, bytes), now);
     },
     TlsServer(t) => {
       return c.__server_step(t.read_crypto(level, bytes), now);
@@ -1929,10 +1934,10 @@ function (c: Conn) __tls_read(level: i32, bytes: u8[], now: i64): Conn {
   }
 }
 
-function (c: Conn) __client_step(r: Result[handshake.ClientStep, handshake.HandshakeError], now: i64): Conn {
+function (c: Conn) __client_step(client: ClientHandshake, r: Result[handshake.ClientStep, handshake.HandshakeError], now: i64): Conn {
   match (r) {
     Ok(step) => {
-      return Conn { ...c, tls: TlsClient(step.client) }.__tls_events(step.events, now);
+      return Conn { ...c, tls: TlsClient(ClientHandshake { ...client, state: step.client }) }.__tls_events(step.events, now);
     },
     Err(e) => {
       return c.__fail(frames.CRYPTO_ERROR + e.alert() as i64, frames.CRYPTO, e.message(), now);
@@ -1998,7 +2003,7 @@ function (c: Conn) __early_settled(): Conn {
 pub function (c: Conn) early_state(): i32 {
   match (c.tls) {
     TlsClient(t) => {
-      return t.early_state();
+      return t.state.early_state();
     },
     TlsServer(t) => {
       if (t.early_accepted()) {
@@ -2065,7 +2070,7 @@ function (c: Conn) __early_secret(t: handshake.TrafficSecret): Conn {
     let Some(ticket) = c.config.resume else {
       return c;
     };
-    let suite = keyschedule.cipher_suite(ticket.tls.suite).unwrap_or(__suite(c));
+    let suite = keyschedule.cipher_suite(ticket.tls.suite_code()).unwrap_or(__suite(c));
     let s = c.spaces[recovery.APPLICATION];
     return Conn { ...c, spaces: c.spaces.with(recovery.APPLICATION, Space { ...s, send: Some(packet.keys(suite, t.secret)) }), zero_rtt: true, streams: c.streams.with_peer(ticket.params) };
   }
@@ -2082,7 +2087,7 @@ function (c: Conn) __early_secret(t: handshake.TrafficSecret): Conn {
 function __suite(c: Conn): keyschedule.CipherSuite {
   match (c.tls) {
     TlsClient(t) => {
-      return t.cipher_suite();
+      return t.state.cipher_suite();
     },
     TlsServer(t) => {
       return t.cipher_suite();
@@ -2103,11 +2108,10 @@ function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn {
     TlsClient(t) => {
       match (e) {
         handshake.VerifyServer(v) => {
-          return c.__client_step(t.verdict(__trusted(c.config, v, (now + c.wall_offset) / 1000000000)), now);
+          return c.__client_step(t, t.state.verdict(__trusted(t, v, (now + c.wall_offset) / 1000000000)), now);
         },
         handshake.Ticket(nst) => {
-          let prior: u8[][] = match (c.config.resume) { Some(previous) => previous.tls.verified_chain, None => [] };
-          match (tlsclient.ticket_from_peer(t, nst, c.config.server_name, time.timestamp_from_unix_millis(c.__wall_ms(now)), c.config.verify, prior)) {
+          match (tlsclient.ticket_from_peer(t.state, nst, t.server_name, time.timestamp_from_unix_millis(c.__wall_ms(now)), t.verify, t.prior)) {
             Some(kept) => {
               let Some(p) = c.peer_params else {
                 return c;
@@ -2164,7 +2168,7 @@ function (c: Conn) __server_question(t: handshake.Server, e: handshake.Event, no
   }
 }
 
-function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boolean {
+function __trusted(cfg: ClientHandshake, v: handshake.Verification, unix_sec: i64): boolean {
   if (!cfg.verify) {
     if (v.chain.len() == 0) {
       return false;
@@ -2210,7 +2214,7 @@ function (c: Conn) __connected(now: i64): Conn {
 function (c: Conn) __peer_extensions(): message.Extension[] {
   match (c.tls) {
     TlsClient(t) => {
-      return t.peer_extensions();
+      return t.state.peer_extensions();
     },
     TlsServer(t) => {
       return t.peer_extensions();

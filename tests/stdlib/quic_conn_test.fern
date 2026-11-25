@@ -363,7 +363,10 @@ function test_resumption(): test.TestOutcome {
   let Ok(p0) = start(client_config("tls.example", ["h3"]), sc) else {
     return test.fail("the first handshake did not start");
   };
-  let first = settle(p0, 12, 10000 * MS);
+  // A started handshake keeps the roots and name selected with its ClientHello.
+  let replacement = conn.Config { ...p0.client.config, roots: verify.no_roots(), server_name: "next.example" };
+  let active = conn.Conn { ...p0.client, config: replacement };
+  let first = settle(Pair { ...p0, client: active }, 12, 10000 * MS);
   let tickets = first.client.tickets();
   if (tickets.len() == 0) {
     return test.fail("no ticket: " + first.log);
@@ -411,7 +414,7 @@ function test_zero_rtt(): test.TestOutcome {
   if (rejected.client.connected() || rejected.client.resumed()) {
     return test.fail("untrusted peer connected");
   }
-  let line = "max " + tickets[0].tls.max_early.to_string();
+  let line = "max " + tickets[0].tls.early_data_limit().to_string();
   let cases: (conn.Config, string)[] = [(taking, "taken"), (ticketed, "refused")];
   for (scfg, name) in cases {
     let Ok(q0) = start_at(cc.with_ticket(tickets[0]), scfg, WALL_MS + 60000 as i64) else {

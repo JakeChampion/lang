@@ -1,0 +1,9 @@
+import "std/tls/client";
+
+function chain_length(ticket: client.Ticket): i32 {
+  return ticket.verified_chain.len();
+}
+
+function main(): i32 {
+  return 0;
+}
