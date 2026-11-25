@@ -6260,7 +6260,7 @@ pub function form(f: SFunc): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(g)))));
+  g = hoisted_invariants(sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(g))))));
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
@@ -7338,21 +7338,8 @@ pub function hoisted_lengths(f: SFunc): SFunc {
   let at = block_positions(f);
   let latch = furthest_latches(f, at);
   let used = used_values(f);
-  let def_pos = util.minus_ones(f.nvals);
-  let preds: i32[][] = f.blocks.map((b: SBlock): i32[] => []);
-  for bi in 0..f.blocks.len() {
-    for ins in f.blocks[bi].insts {
-      if (ins.result >= 0 && ins.result < f.nvals) {
-        def_pos = def_pos.with(ins.result, bi);
-      }
-    }
-    for id in successors(f.blocks[bi].term) {
-      let p = position_of(at, id);
-      if (p >= 0 && !util.has_i32(preds[p], bi)) {
-        preds = preds.with(p, preds[p].append(bi));
-      }
-    }
-  }
+  let def_pos = def_positions(f);
+  let preds = position_preds(f, at);
   let blocks = f.blocks;
   let made: i32[] = [];
   for h in 0..latch.len() {
@@ -7416,6 +7403,136 @@ pub function hoisted_lengths(f: SFunc): SFunc {
     return f;
   }
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
+}
+
+// The position of the block that defines each value, or -1.
+function def_positions(f: SFunc): i32[] {
+  let def_pos = util.minus_ones(f.nvals);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        def_pos = def_pos.with(ins.result, bi);
+      }
+    }
+  }
+  return def_pos;
+}
+
+// The positions of the blocks that jump to each block, by position.
+function position_preds(f: SFunc, at: i32[]): i32[][] {
+  let preds: i32[][] = f.blocks.map((b: SBlock): i32[] => []);
+  for bi in 0..f.blocks.len() {
+    for id in successors(f.blocks[bi].term) {
+      let p = position_of(at, id);
+      if (p >= 0 && !util.has_i32(preds[p], bi)) {
+        preds = preds.with(p, preds[p].append(bi));
+      }
+    }
+  }
+  return preds;
+}
+
+// A pure integer computation in a loop whose operands do not change in the
+// loop moves to the block before the loop, so it runs one time. The loop must
+// have one way in. Inner loops go first, so a value can leave several loops.
+pub function hoisted_invariants(f: SFunc): SFunc {
+  if (f.blocks.len() < 3) {
+    return f;
+  }
+  let at = block_positions(f);
+  let latch = furthest_latches(f, at);
+  let preds = position_preds(f, at);
+  let defs = inst_defs(f);
+  let def_pos = def_positions(f);
+  let blocks = f.blocks;
+  let changed = false;
+  let h = latch.len() - 1;
+  while (h >= 0) {
+    let last = latch[h];
+    let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
+    if (pre >= 0) {
+      let inv = invariant_values(blocks, f, defs, def_pos, h, last);
+      let consts: SInst[] = [];
+      let others: SInst[] = [];
+      for bi in h..=last {
+        let kept: SInst[] = [];
+        for ins in blocks[bi].insts {
+          if (ins.result < 0 || !inv[ins.result]) {
+            kept = kept.append(ins);
+          } else if (is_constant(ins, f.nvals)) {
+            consts = consts.append(ins);
+          } else {
+            others = others.append(ins);
+          }
+        }
+        if (kept.len() != blocks[bi].insts.len()) {
+          blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: kept });
+        }
+      }
+      if (others.len() > 0) {
+        let lifted = consts.concat(others);
+        blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(lifted) });
+        for ins in lifted {
+          def_pos = def_pos.with(ins.result, pre);
+        }
+        changed = true;
+      }
+    }
+    h -= 1;
+  }
+  if (!changed) {
+    return f;
+  }
+  return SFunc { ...f, blocks: blocks };
+}
+
+// The values of the loop from `h` to `last` that can move in front of it: a
+// pure integer computation of operands defined before the loop, of constants,
+// or of values that move. The constants that such a computation reads move
+// with it.
+function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32): boolean[] {
+  let inv = __alloc_bool(f.nvals);
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      if (!hoistable(ins, defs)) {
+        continue;
+      }
+      let ok = true;
+      for a in ins.args {
+        if (!(a >= 0 && a < f.nvals && (inv[a] || defined_before(f, def_pos, a, h, last) || is_constant(defs[a], f.nvals)))) {
+          ok = false;
+        }
+      }
+      if (ok) {
+        for a in ins.args {
+          if (is_constant(defs[a], f.nvals) && def_pos[a] >= h && def_pos[a] <= last) {
+            inv = inv.with(a, true);
+          }
+        }
+        inv = inv.with(ins.result, true);
+      }
+    }
+  }
+  return inv;
+}
+
+// An instruction that has no effect and cannot trap wherever it runs. A
+// division needs a constant divisor other than 0 and -1.
+function hoistable(ins: SInst, defs: SInst[]): boolean {
+  if (ins.result < 0 || ins.args.len() == 0) {
+    return false;
+  }
+  if (ins.kind_tag == UNARY) {
+    return ins.args.len() == 1 && int_unary(ins.str);
+  }
+  if (ins.kind_tag != BINARY || ins.args.len() != 2) {
+    return false;
+  }
+  if (ins.str == "div_s" || ins.str == "div_u" || ins.str == "rem_s" || ins.str == "rem_u") {
+    let d = ins.args[1];
+    return d >= 0 && d < defs.len() && is_constant(defs[d], defs.len()) && !const_is(defs, d, 0i64) && !const_is(defs, d, -1i64);
+  }
+  return util.has_str(["add", "sub", "mul", "and", "and_not", "or", "xor", "shl", "shr_s", "shr_u"], ins.str);
 }
 
 // The position of the one block outside the loop from `h` to `last` that
