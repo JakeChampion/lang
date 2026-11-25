@@ -4313,6 +4313,34 @@ function (own e: Env) update(name: string, v: Value): Env {
   return match (e.outer) { Some(parent) => Env { ...e, outer: Some(unsafe { share_unchecked(parent) }.update(name, v)) }, None => e };
 }
 
+// Where the binding `name` is: the scope, counted out from e, and the index
+// there, which is -1 when no scope binds it. True when the slot holds a cell.
+function (e: Env) slot_of(name: string, depth: i32): (i32, i32, boolean) {
+  let i = e.names.len() - 1;
+  while (i >= 0) {
+    if (e.names[i] == name) {
+      return (depth, i, is_cell(e.values[i]));
+    }
+    i -= 1;
+  }
+  return match (e.outer) { Some(parent) => parent.slot_of(name, depth + 1), None => (depth, -1, false) };
+}
+
+function (e: Env) slot_at(depth: i32, i: i32): Value {
+  if (depth == 0) {
+    return e.values[i];
+  }
+  return match (e.outer) { Some(parent) => parent.slot_at(depth - 1, i), None => v_err("no scope at depth") };
+}
+
+// Puts v in slot i of the scope `depth` out from e.
+function (own e: Env) write_slot(depth: i32, i: i32, v: Value): Env {
+  if (depth == 0) {
+    return Env { ...e, values: e.values.with(i, v) };
+  }
+  return match (e.outer) { Some(parent) => Env { ...e, outer: Some(unsafe { share_unchecked(parent) }.write_slot(depth - 1, i, v)) }, None => e };
+}
+
 function sat_exact(op: string, a: i64, b: i64): i64 {
   if (op == "+|") {
     return a + b;
@@ -10463,17 +10491,14 @@ function eval_assign_stmt(a: ast.StmtAssign, own env: Env): StepResult {
   if (is_err(av)) {
     return step_stop(env, av);
   }
-  match (env.raw_value(a.target)) {
-    Some(value) => {
-      if (cell_slot_set(value, av)) {
-        return step_none(env);
-      }
-    },
-    None => {
-      return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
-    }
+  let (depth, i, cell) = env.slot_of(a.target, 0);
+  if (i < 0) {
+    return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
   }
-  return step_none(env.update(a.target, av));
+  if (cell && cell_slot_set(env.slot_at(depth, i), av)) {
+    return step_none(env);
+  }
+  return step_none(env.write_slot(depth, i, av));
 }
 
 // `x = x.with(i, v)` and `x = x.append(v)`, or a chain of them on x, release
