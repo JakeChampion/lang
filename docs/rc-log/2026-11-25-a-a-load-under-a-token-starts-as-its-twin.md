@@ -71,6 +71,20 @@ Take a mutant without the retain on the null edge. The first walk gave it a
 definite 0, and the twin of 1 and 0 gave only maybe. The first walk's findings now
 stay in the report, and the mutant rows do not move.
 
+The 2,871 programs under `conformance/`, `tests/`, `examples/` and
+`coreutils/` give 0 findings on x86-64, arm64 and wasm32. On x86-64, each
+program exits as it did before. The unproved values over those programs:
+
+| target | before | after |
+|---|---:|---:|
+| x86-64 | 37,489 | 36,346 |
+| arm64 | — | 33,090 |
+| wasm32 | — | 13,971 |
+
+`token_loads` looks only at the tokens that decide an unproved value. Without
+that filter, x86-64 has 36,279 unproved values, 67 fewer, and each compile
+examines more tokens.
+
 A compile of `fern_main` with `FERN_RC_CERTIFY_MEMO=0` takes 1m44s, and
 1m39s before. With the memo, a compile pays this only for a function that it
 has not certified before.
