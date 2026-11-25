@@ -39907,8 +39907,9 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
         return (bind_stmt(stmt, s), inferred);
       }
       if (v.type_name.len() > 0) {
-        let demanded = lit_demand(v.init, var_declared_type(v, s), s, st);
-        return (bind_stmt(stmt, s), demanded);
+        let t = var_declared_type(v, s);
+        let demanded = lit_demand(v.init, t, s, st);
+        return (s.bind(v.name, t), demanded);
       }
       let (seed, ids, sst) = lit_seed(v.init, s, st);
       if (!seed) {
@@ -39952,7 +39953,10 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
           return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_key(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
         }
         let inferred = lit_expr(v.init, s, st);
-        return (bind_stmt(stmt, s), inferred);
+        if (ast.var_binds_itself(v)) {
+          return (bind_stmt(stmt, s), inferred);
+        }
+        return (s.bind_inferred(v, inferred_local_type(open_type)), inferred);
       }
       let k = sst.parent.len();
       return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(sst, lit_var_key(v)), ids.append(k)));
