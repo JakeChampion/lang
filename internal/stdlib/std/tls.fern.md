@@ -49,6 +49,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/dns";
 import "std/net";
 import "std/tls/handshake";
+import "std/tls/ocsp";
 import "std/tls/verify";
 import "core/error";
 import "core/cmp";
@@ -62,6 +63,10 @@ pub enum TlsError {
   HandshakeFailed(handshake.HandshakeError),
   Untrusted(verify.VerifyError),
   CertificateMissing,
+  Revoked(i64),
+  RevocationUnknown,
+  Revocation(ocsp.OcspError),
+  StapleMissing,
   SignatureInvalid,
   SchemeMismatch,
   SigningFailed,
@@ -101,6 +106,7 @@ impl cmp.Display for TlsError {}
 
 ```fern
 <<6 pub function (e: TlsError) message(): string>>=
+// fern-lint: allow cyclomatic-complexity
 pub function (e: TlsError) message(): string {
   match (e) {
     InvalidTicketKey => {
@@ -114,6 +120,18 @@ pub function (e: TlsError) message(): string {
     },
     CertificateMissing => {
       return "the peer sent no certificate";
+    },
+    Revoked(at) => {
+      return "the issuer revoked the server certificate at " + at.to_string();
+    },
+    RevocationUnknown => {
+      return "the OCSP response does not know the server certificate";
+    },
+    Revocation(e) => {
+      return "the stapled OCSP response was refused: " + e.message();
+    },
+    StapleMissing => {
+      return "the server stapled no OCSP response";
     },
     SignatureInvalid => {
       return "the peer's CertificateVerify does not verify";

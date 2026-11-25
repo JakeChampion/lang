@@ -16,6 +16,10 @@ The handshake issues opaque tickets. A resumed handshake inherits the authentica
 
 A session step returns state, output, application data, and ticket updates. The caller must preserve the returned state and apply the configured verification policy.
 
+`with_revocation` selects the revocation check of the server certificate. `NoRevocationCheck`, the default, checks nothing. `CheckStapled` asks the server for an OCSP response (RFC 6066 `status_request`) and checks the response that the server staples, with `ocsp.status`. The client accepts a server that staples no response. `RequireStapled` also refuses a server that staples no response.
+
+A revoked leaf, an unknown status and a response that does not pass `ocsp.status` refuse the handshake. A resumed handshake does not check revocation again, and a configuration without verification checks no revocation.
+
 `without_verification` makes a configuration that accepts any certificate chain for any name, as `curl --insecure` does. The session still checks that the server signed the handshake with the key of its leaf certificate. Use it only to test against a server whose certificate the client cannot verify.
 
 ## Module assembly
@@ -98,6 +102,7 @@ import "std/tls/identity";
 import "std/tls/keyschedule";
 import "std/tls/ktls";
 import "std/tls/message";
+import "std/tls/ocsp";
 import "std/tls/record";
 import "std/tls/verify";
 import "std/tls/x509";
@@ -109,7 +114,11 @@ import "std/result";
 ```fern
 <<3 pub struct Config>>=
 // verify is false when the session accepts any certificate chain.
-pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity], verify: boolean, tls12: boolean }
+pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity], verify: boolean, tls12: boolean, revocation: Revocation }
+
+// The revocation check of the server certificate, with the OCSP response
+// that the server staples.
+pub enum Revocation { NoRevocationCheck, CheckStapled, RequireStapled }
 
 // verified_chain is empty if the issuing session did not verify its peer.
 // max_early is the most early data the ticket allows, 0 when it allows none.
@@ -137,7 +146,7 @@ pub function (t: Ticket) early_data_limit(): u32 {
 ```fern
 <<4 pub function config(server_name: string, roots: verify.Roots): Config>>=
 pub function config(server_name: string, roots: verify.Roots): Config {
-  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None, verify: true, tls12: true };
+  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None, verify: true, tls12: true, revocation: NoRevocationCheck };
 }
 
 pub function (c: Config) without_tls12(): Config {
@@ -146,6 +155,10 @@ pub function (c: Config) without_tls12(): Config {
 
 pub function (c: Config) without_verification(): Config {
   return Config { ...c, verify: false };
+}
+
+pub function (c: Config) with_revocation(r: Revocation): Config {
+  return Config { ...c, revocation: r };
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
@@ -165,7 +178,7 @@ pub function (c: Config) with_identity(id: identity.Identity): Config {
 
 ```fern
 <<5 pub opaque struct Session>>=
-pub opaque struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[], verify: boolean, prior_ticket: Option[Ticket] }
+pub opaque struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[], verify: boolean, prior_ticket: Option[Ticket], revocation: Revocation }
 
 pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, tickets: Ticket[], rekeyed: handshake.KernelKeys }
 ```
@@ -178,7 +191,7 @@ pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[S
   let hc = handshake.ClientConfig { ...__hello(config), resume: __offer(config, now) };
   match (handshake.client_start(hc, entropy)) {
     Ok(step) => {
-      let s = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [], verify: config.verify, prior_ticket: config.resume };
+      let s = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [], verify: config.verify, prior_ticket: config.resume, revocation: config.revocation };
       return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
     },
     Err(e) => {
@@ -193,7 +206,7 @@ pub function entropy(config: Config): i32 {
 }
 
 function __hello(config: Config): handshake.ClientConfig {
-  let hc = handshake.ClientConfig { ...handshake.client_config(config.server_name), alpn: config.alpn, tls12: config.tls12 };
+  let hc = handshake.ClientConfig { ...handshake.client_config(config.server_name), alpn: config.alpn, tls12: config.tls12, status_request: config.verify && __checks(config.revocation) };
   match (config.identity) {
     Some(id) => {
       return handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };
@@ -382,7 +395,7 @@ pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
-      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __bytes_owned(saved[4 + n:saved.len()]), verify: false, prior_ticket: None });
+      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __bytes_owned(saved[4 + n:saved.len()]), verify: false, prior_ticket: None, revocation: NoRevocationCheck });
     },
     Err(e) => {
       return Err(tls.HandshakeFailed(e));
@@ -533,7 +546,7 @@ function __answered(s: Session, c: handshake.Client, e: handshake.Event, now: ti
           return __verdict(c);
         },
         Err(err) => {
-          return Err(tls.Failure { error: err, alert: c.alert(handshake.BadCertificate) });
+          return Err(tls.Failure { error: err, alert: c.alert(__refusal(err)) });
         }
       }
     },
@@ -588,13 +601,108 @@ function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): 
       if (!ok) {
         return Err(tls.SignatureInvalid);
       }
-      return Ok(());
+      return __not_revoked(s, v, leaf, now);
     },
     Err(e) => {
       return Err(tls.Untrusted(e));
     }
   }
   return Err(tls.SignatureInvalid);
+}
+
+// The alert that refuses a server for the error `e` of `__trusted`.
+function __refusal(e: tls.TlsError): handshake.HandshakeError {
+  match (e) {
+    tls.Revoked(_) => {
+      return handshake.CertificateRevoked;
+    },
+    tls.Revocation(_) => {
+      return handshake.BadStatusResponse;
+    },
+    tls.RevocationUnknown => {
+      return handshake.BadStatusResponse;
+    },
+    tls.StapleMissing => {
+      return handshake.BadStatusResponse;
+    },
+    _ => {}
+  }
+  return handshake.BadCertificate;
+}
+
+function __checks(r: Revocation): boolean {
+  match (r) {
+    NoRevocationCheck => {
+      return false;
+    },
+    _ => {}
+  }
+  return true;
+}
+
+// The revocation status of the leaf, from the OCSP response that the server
+// stapled.
+function __not_revoked(s: Session, v: handshake.Verification, leaf: x509.Certificate, now: time.Timestamp): Result[void, tls.TlsError] {
+  if (!s.verify || !__checks(s.revocation)) {
+    return Ok(());
+  }
+  if (v.ocsp.len() == 0) {
+    if let RequireStapled = s.revocation {
+      return Err(tls.StapleMissing);
+    }
+    return Ok(());
+  }
+  let issuer = __issuer(s, v, leaf)?;
+  match (ocsp.status(v.ocsp, leaf, issuer, now)) {
+    Ok(ocsp.Good) => {
+      return Ok(());
+    },
+    Ok(ocsp.Revoked(at)) => {
+      return Err(tls.Revoked(at));
+    },
+    Ok(ocsp.Unknown) => {
+      return Err(tls.RevocationUnknown);
+    },
+    Err(e) => {
+      return Err(tls.Revocation(e));
+    }
+  }
+  return Err(tls.RevocationUnknown);
+}
+
+// The certificate that signed the leaf: a certificate of the chain or a
+// root, with the issuer name of the leaf.
+function __issuer(s: Session, v: handshake.Verification, leaf: x509.Certificate): Result[x509.Certificate, tls.TlsError] {
+  let candidates: x509.Certificate[] = [];
+  let i = 1;
+  while (i < v.chain.len()) {
+    if let Ok(c) = x509.parse(v.chain[i]) {
+      candidates = candidates.append(c);
+    }
+    i += 1;
+  }
+  for c in candidates.concat(s.roots.certs) {
+    if (__same(c.subject.raw, leaf.issuer.raw)) {
+      if let Ok(true) = verify.signature_ok(c.key, leaf.algorithm, leaf.tbs, leaf.signature) {
+        return Ok(c);
+      }
+    }
+  }
+  return Err(tls.Untrusted(verify.UnknownIssuer));
+}
+
+function __same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i += 1;
+  }
+  return true;
 }
 
 // The leaf certificate of the chain. A session without verification parses

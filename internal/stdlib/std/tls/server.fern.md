@@ -10,6 +10,8 @@ Server configuration combines an identity, ALPN policy, ticket policy, and optio
 
 A session draws no randomness of its own: `start` takes exactly `entropy(config)` bytes from the caller, covering the handshake's random and key share and the ticket it issues, so a session given the same bytes and clock writes the same records. `accept` draws those bytes from the platform's random source. The configuration shares the supplied identity. The caller can release its own key holder while the configured identity continues to sign. For session tickets, `config` borrows the supplied secret bytes and stores a derived key. Servers configured with the same secret can resume each other's tickets.
 
+`with_ocsp_staple` gives the server an OCSP response for its leaf certificate. The server staples it to the Certificate of a client that asks for a response with `status_request`. The caller gets the response from the OCSP responder of its CA and replaces it before it expires.
+
 Ticket keys and lifetimes control resumption policy. Optional client roots enable a separate client-authentication requirement. The caller retains the next state from each step.
 
 ## Module assembly
@@ -101,7 +103,7 @@ import "std/utf8";
 
 ```fern
 <<3 pub struct Config>>=
-pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots] }
+pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots], ocsp: u8[] }
 ```
 
 ### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]`
@@ -110,7 +112,7 @@ pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolea
 <<4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]>>=
 // Construct a configuration that never issues or accepts session tickets.
 pub function config_without_tickets(id: identity.Identity): Config {
-  return Config { identity: id, alpn: [], tickets: false, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: [], client_roots: None };
+  return Config { identity: id, alpn: [], tickets: false, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: [], client_roots: None, ocsp: [] };
 }
 
 // Supply at least 32 bytes from a cryptographic random source for session tickets.
@@ -148,6 +150,10 @@ pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
 
 pub function (c: Config) without_tickets(): Config {
   return Config { ...c, tickets: false };
+}
+
+pub function (c: Config) with_ocsp_staple(response: [u8]): Config {
+  return Config { ...c, ocsp: __copy(response) };
 }
 
 pub function (c: Config) with_client_roots(roots: verify.Roots): Config {
@@ -198,7 +204,7 @@ function __handshake_config(config: Config): handshake.ServerConfig {
     },
     None => {}
   }
-  return handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks };
+  return handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks, ocsp: config.ocsp };
 }
 
 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure] {

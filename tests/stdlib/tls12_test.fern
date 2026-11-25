@@ -333,6 +333,52 @@ function test_hello_offers_tls12(): test.TestOutcome {
   return test.assert_true(contains(plain, bytes("002b0003020304")));
 }
 
+// What a client that asks for an OCSP response sees after a TLS 1.2
+// ServerHello, Certificate, an optional CertificateStatus and a
+// ServerKeyExchange: the stapled response or the alert.
+function stapled12(acknowledged: boolean, staple: boolean): string {
+  let cfg = handshake.ClientConfig { ...handshake.client_config("example.com"), tls12: true, status_request: true };
+  let c = handshake.client_start(cfg, counting(handshake.client_entropy(cfg)));
+  let Ok(first) = c else {
+    return "start";
+  };
+  let exts = [message.Extension { kind: 23, data: [] }];
+  if (acknowledged) {
+    exts = exts.append(message.Extension { kind: message.EXT_STATUS_REQUEST, data: [] });
+  }
+  let wire = server_hello(server_random(), 0xc02f, exts).concat(record.frame(record.Handshake, 0x0303, tls12.handshake_message(11, bytes("000005000002aabb"))));
+  if (staple) {
+    wire = wire.concat(record.frame(record.Handshake, 0x0303, tls12.handshake_message(message.CERTIFICATE_STATUS, message.certificate_status_body(bytes("30030a0100")))));
+  }
+  let kx = bytes("03001d20").concat(filled(32, 9)).concat(bytes("08040003aabbcc"));
+  wire = wire.concat(record.frame(record.Handshake, 0x0303, tls12.handshake_message(12, kx)));
+  match (first.client.read(wire)) {
+    Ok(step) => {
+      for e in step.events {
+        if let handshake.VerifyServer(v) = e {
+          return "ocsp " + hex.encode(v.ocsp);
+        }
+      }
+      return "no VerifyServer";
+    },
+    Err(e) => {
+      return "alert " + e.alert().to_string();
+    }
+  }
+  return "";
+}
+
+// RFC 6066 section 8: a CertificateStatus follows the Certificate only after
+// a ServerHello with an empty status_request.
+function test_certificate_status12(): test.TestOutcome {
+  let got = stapled12(true, true) + "; " + stapled12(true, false) + "; " + stapled12(false, true);
+  if (got != "ocsp 30030a0100; ocsp ; alert 10") {
+    return test.fail(got);
+  }
+  let asked = [message.Extension { kind: 23, data: [] }, message.Extension { kind: message.EXT_STATUS_REQUEST, data: [] }];
+  return test.assert_eq(alert_after(started(true).client, server_hello(server_random(), 0xc02f, asked)), 110);
+}
+
 function test_suite_signatures(): test.TestOutcome {
   for code in [0xc02f, 0xc030, 0xcca8] {
     if (!tls12.allows_signature(code, 0x0401) || !tls12.allows_signature(code, 0x0804) || tls12.allows_signature(code, 0x0403) || tls12.allows_signature(code, 0x0807)) {
@@ -387,6 +433,7 @@ function main(): i32 {
   r = r.it("the schemes of a CertificateRequest", test_request_schemes);
   r = r.it("the client hello offers TLS 1.2", test_hello_offers_tls12);
   r = r.it("a TLS 1.2 ServerHello", test_server_hello12);
+  r = r.it("a TLS 1.2 CertificateStatus", test_certificate_status12);
   return r.finish();
 }
 

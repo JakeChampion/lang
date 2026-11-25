@@ -28,6 +28,22 @@ const CLIENT_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
   + "MC4CAQAwBQYDK2VwBCIEIFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV\n"
   + "-----END PRIVATE KEY-----\n";
 
+// An Ed25519 root and a leaf for tls.example with the key of leaf_seed, and
+// OCSP responses about the leaf that `openssl ocsp` signed with the root
+// (tests/stdlib/tls_ocsp_test.fern has the same set).
+const OCSP_ROOT: string = "3082012e3081e1a003020102020101300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323830375a180f32313236313130313039323830375a301e311c301a06035504030c134665726e204f435350205465737420526f6f74302a300506032b6570032100b7ad72a5e4cc0a7dc61b8c4b6b54ed4e9d9761bd951c163f11b6e8b370437921a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e0416041474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341009137b62c12d4890b4bf8d32537c9c991094ba026b57243690434f34757a8b0b6e2b4d9a4c4863ec320a0bf287326769e64b81c8f9ee6bc24dd277548f154a00a";
+
+const OCSP_LEAF: string = "3082017530820127a00302010202021001300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323831385a180f32313236313130313039323831385a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8aa3818e30818b300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130160603551d11040f300d820b746c732e6578616d706c65301d0603551d0e04160414a6022ebedf33498fdba9281c9a41790f744bf8c8301f0603551d2304183016801474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341005a9a3a785c0f667ed563d464cd550d4e699451e8bb55731b0f95afbae1cf9549a33b169871828da9c16c7b35bb179bf7c9d33f183f4306fbd8fcc4f365e97804";
+
+const OCSP_GOOD: string = "3082023f0a0100a08202383082023406092b0601050507300101048202253082022130819aa120301e311c301a06035504030c134665726e204f435350205465737420526f6f74180f32303236313132353039323831385a30653063303b300906052b0e03021a05000414f0568322fd377aedca14de19fe339658b4318d70041474ef1131d1f2b078c9006c6d9a632eb13813fcd0020210018000180f32303236313132353039323831385aa011180f32303236313230323039323831385a300506032b6570034100a8f7ee1e30d075c2907fc2f219b825ab175036df1187c40de570dc9b2c41067c68cc803101406784b660e3db8d597fc35d725422c8c1a2d076c62d05e5dbfe0da0820136308201323082012e3081e1a003020102020101300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323830375a180f32313236313130313039323830375a301e311c301a06035504030c134665726e204f435350205465737420526f6f74302a300506032b6570032100b7ad72a5e4cc0a7dc61b8c4b6b54ed4e9d9761bd951c163f11b6e8b370437921a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e0416041474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341009137b62c12d4890b4bf8d32537c9c991094ba026b57243690434f34757a8b0b6e2b4d9a4c4863ec320a0bf287326769e64b81c8f9ee6bc24dd277548f154a00a";
+
+const OCSP_REVOKED: string = "308202550a0100a082024e3082024a06092b06010505073001010482023b308202373081b0a120301e311c301a06035504030c134665726e204f435350205465737420526f6f74180f32303236313132353039323831385a307b3079303b300906052b0e03021a05000414f0568322fd377aedca14de19fe339658b4318d70041474ef1131d1f2b078c9006c6d9a632eb13813fcd002021001a116180f32303236313130313030303030305aa0030a0101180f32303236313132353039323831385aa011180f32303236313230323039323831385a300506032b6570034100e86b222287d9d12fe6153e3fae001cc28f68935565cf4789cd1dd1306b550d904f5371ad109628cb784b02624b33f8fd16aa96476e55d06f5cd4f53961a61f0aa0820136308201323082012e3081e1a003020102020101300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323830375a180f32313236313130313039323830375a301e311c301a06035504030c134665726e204f435350205465737420526f6f74302a300506032b6570032100b7ad72a5e4cc0a7dc61b8c4b6b54ed4e9d9761bd951c163f11b6e8b370437921a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e0416041474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341009137b62c12d4890b4bf8d32537c9c991094ba026b57243690434f34757a8b0b6e2b4d9a4c4863ec320a0bf287326769e64b81c8f9ee6bc24dd277548f154a00a";
+
+const OCSP_UNKNOWN: string = "3082023f0a0100a08202383082023406092b0601050507300101048202253082022130819aa120301e311c301a06035504030c134665726e204f435350205465737420526f6f74180f32303236313132353039323831385a30653063303b300906052b0e03021a05000414f0568322fd377aedca14de19fe339658b4318d70041474ef1131d1f2b078c9006c6d9a632eb13813fcd0020210018200180f32303236313132353039323831385aa011180f32303236313230323039323831385a300506032b6570034100cbc16632ca7572a05007781805a45522e8ac99999d16355009a59594adf3127e99a73d5cbe540128e075050e9556885938a7131c56bcf5f776ac8ca01b1b0d01a0820136308201323082012e3081e1a003020102020101300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323830375a180f32313236313130313039323830375a301e311c301a06035504030c134665726e204f435350205465737420526f6f74302a300506032b6570032100b7ad72a5e4cc0a7dc61b8c4b6b54ed4e9d9761bd951c163f11b6e8b370437921a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e0416041474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341009137b62c12d4890b4bf8d32537c9c991094ba026b57243690434f34757a8b0b6e2b4d9a4c4863ec320a0bf287326769e64b81c8f9ee6bc24dd277548f154a00a";
+
+// 2026-11-26T00:00:00Z, inside the validity window of the OCSP responses.
+const OCSP_NOW_MS: i64 = 1795651200000;
+
 const WALL_MS: i64 = 1700000000000;
 
 const NOT_BEFORE_MS: i64 = 1577836800000;
@@ -57,8 +73,12 @@ function connect(cfg: client.Config, alpn: string[], forge: boolean): Result[Pai
 }
 
 function connect_at(cfg: client.Config, alpn: string[], forge: boolean, now: i64): Result[Pair, tls.TlsError] {
-  let start = begin(cfg, now)?;
   let sc = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), alpn: alpn };
+  return connect_to(cfg, sc, forge, now);
+}
+
+function connect_to(cfg: client.Config, sc: handshake.ServerConfig, forge: boolean, now: i64): Result[Pair, tls.TlsError] {
+  let start = begin(cfg, now)?;
   let server = srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?;
   let s1 = srv(server.read(start.output))?;
   if (s1.events.len() == 0) {
@@ -270,8 +290,12 @@ function test_untrusted(): test.TestOutcome {
 }
 
 function refusal_alert(): Result[string, tls.TlsError] {
-  let start = begin(client.config("tls.example", roots(OTHER_ROOT)), WALL_MS)?;
-  let sc = handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]);
+  return alert_of(client.config("tls.example", roots(OTHER_ROOT)), handshake.server_config([__codec_bytes(hex.decode(LEAF))], [0x0807]), WALL_MS);
+}
+
+// What the server reads from the alert of a client that refuses it.
+function alert_of(cfg: client.Config, sc: handshake.ServerConfig, now: i64): Result[string, tls.TlsError] {
+  let start = begin(cfg, now)?;
   let s1 = srv(srv(handshake.server_new(sc, rand.bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
   match (signed_with(leaf_seed(), signing(s1.events))) {
@@ -283,7 +307,7 @@ function refusal_alert(): Result[string, tls.TlsError] {
     }
   }
   let s2 = srv(s1.server.signature(sig))?;
-  match (start.session.read(cat(s1.output, s2.output), time.timestamp_from_unix_millis(WALL_MS))) {
+  match (start.session.read(cat(s1.output, s2.output), time.timestamp_from_unix_millis(now))) {
     Ok(step) => {
       return Ok("accepted");
     },
@@ -310,6 +334,65 @@ function test_validity_window(): test.TestOutcome {
     return test.fail("after notAfter: " + outcome(connect_at(cfg, [], false, NOT_AFTER_MS + 1000)));
   }
   return test.assert_eq(outcome(connect_at(cfg, [], false, NOT_BEFORE_MS + 1000)) + "; " + outcome(connect_at(cfg, [], false, NOT_AFTER_MS - 1000)), "connected ; connected ");
+}
+
+// The result of a handshake with a server that staples `staple`, under the
+// revocation check `r`, at the time `now`.
+function revocation_outcome(r: client.Revocation, staple: string, now: i64): string {
+  let cfg = client.config("tls.example", roots(OCSP_ROOT)).with_revocation(r);
+  let sc = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(OCSP_LEAF))], [0x0807]), ocsp: __codec_bytes(hex.decode(staple)) };
+  return outcome(connect_to(cfg, sc, false, now));
+}
+
+function test_revocation(): test.TestOutcome {
+  let connected = "connected ";
+  let checks: (client.Revocation, string, i64, string)[] = [
+    (client.CheckStapled, OCSP_GOOD, OCSP_NOW_MS, connected),
+    (client.RequireStapled, OCSP_GOOD, OCSP_NOW_MS, connected),
+    (client.CheckStapled, "", OCSP_NOW_MS, connected),
+    (client.RequireStapled, "", OCSP_NOW_MS, "the server stapled no OCSP response"),
+    (client.CheckStapled, OCSP_REVOKED, OCSP_NOW_MS, "the issuer revoked the server certificate at 1793491200"),
+    (client.CheckStapled, OCSP_UNKNOWN, OCSP_NOW_MS, "the OCSP response does not know the server certificate"),
+    // 2026-12-03T00:00:00Z, after the nextUpdate of the response.
+    (client.CheckStapled, OCSP_GOOD, 1796256000000, "the stapled OCSP response was refused: ocsp: the response expired at 1796203698"),
+    // A client with no revocation check does not ask, so the server staples nothing.
+    (client.NoRevocationCheck, OCSP_REVOKED, OCSP_NOW_MS, connected),
+  ];
+  let i = 0;
+  while (i < checks.len()) {
+    let c = checks[i];
+    let got = revocation_outcome(c.0, c.1, c.2);
+    if (got != c.3) {
+      return test.fail("case " + i.to_string() + ": " + got);
+    }
+    i += 1;
+  }
+  return test.pass();
+}
+
+// A revoked leaf gets the alert certificate_revoked, and a refused response
+// the alert bad_certificate_status_response.
+function test_revocation_alerts(): test.TestOutcome {
+  let sent = "tls handshake: the peer sent alert ";
+  let got = [revocation_alert(OCSP_REVOKED, OCSP_NOW_MS), revocation_alert(OCSP_GOOD, 1796256000000), revocation_alert("", OCSP_NOW_MS)];
+  if (got[0] != sent + "44" || got[1] != sent + "113" || got[2] != sent + "113") {
+    return test.fail(got[0] + "; " + got[1] + "; " + got[2]);
+  }
+  return test.pass();
+}
+
+function revocation_alert(staple: string, now: i64): string {
+  let cfg = client.config("tls.example", roots(OCSP_ROOT)).with_revocation(client.RequireStapled);
+  let sc = handshake.ServerConfig { ...handshake.server_config([__codec_bytes(hex.decode(OCSP_LEAF))], [0x0807]), ocsp: __codec_bytes(hex.decode(staple)) };
+  match (alert_of(cfg, sc, now)) {
+    Ok(a) => {
+      return a;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
 }
 
 function test_forged(): test.TestOutcome {
@@ -682,6 +765,8 @@ function main(): i32 {
   r = r.it("an untrusted root", test_untrusted);
   r = r.it("the certificate validity window, at the given time", test_validity_window);
   r = r.it("a forged CertificateVerify", test_forged);
+  r = r.it("the revocation check of a stapled OCSP response", test_revocation);
+  r = r.it("the alerts of a refused revocation check", test_revocation_alerts);
   r = r.it("a session without verification still checks the signature", test_without_verification);
   r = r.it("save and restore", test_save_restore);
   r = r.it("close_notify", test_close);

@@ -217,6 +217,21 @@ function identity_of(leaf: string, key_pem: string): identity.Identity {
   return identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
 }
 
+// An Ed25519 root, a leaf for tls.example and a good OCSP response about the
+// leaf, from tests/stdlib/tls_ocsp_test.fern.
+const OCSP_ROOT: string = "3082012e3081e1a003020102020101300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323830375a180f32313236313130313039323830375a301e311c301a06035504030c134665726e204f435350205465737420526f6f74302a300506032b6570032100b7ad72a5e4cc0a7dc61b8c4b6b54ed4e9d9761bd951c163f11b6e8b370437921a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e0416041474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341009137b62c12d4890b4bf8d32537c9c991094ba026b57243690434f34757a8b0b6e2b4d9a4c4863ec320a0bf287326769e64b81c8f9ee6bc24dd277548f154a00a";
+
+const OCSP_LEAF: string = "3082017530820127a00302010202021001300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323831385a180f32313236313130313039323831385a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8aa3818e30818b300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130160603551d11040f300d820b746c732e6578616d706c65301d0603551d0e04160414a6022ebedf33498fdba9281c9a41790f744bf8c8301f0603551d2304183016801474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341005a9a3a785c0f667ed563d464cd550d4e699451e8bb55731b0f95afbae1cf9549a33b169871828da9c16c7b35bb179bf7c9d33f183f4306fbd8fcc4f365e97804";
+
+const OCSP_GOOD: string = "3082023f0a0100a08202383082023406092b0601050507300101048202253082022130819aa120301e311c301a06035504030c134665726e204f435350205465737420526f6f74180f32303236313132353039323831385a30653063303b300906052b0e03021a05000414f0568322fd377aedca14de19fe339658b4318d70041474ef1131d1f2b078c9006c6d9a632eb13813fcd0020210018000180f32303236313132353039323831385aa011180f32303236313230323039323831385a300506032b6570034100a8f7ee1e30d075c2907fc2f219b825ab175036df1187c40de570dc9b2c41067c68cc803101406784b660e3db8d597fc35d725422c8c1a2d076c62d05e5dbfe0da0820136308201323082012e3081e1a003020102020101300506032b6570301e311c301a06035504030c134665726e204f435350205465737420526f6f743020170d3236313132353039323830375a180f32313236313130313039323830375a301e311c301a06035504030c134665726e204f435350205465737420526f6f74302a300506032b6570032100b7ad72a5e4cc0a7dc61b8c4b6b54ed4e9d9761bd951c163f11b6e8b370437921a3423040300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106301d0603551d0e0416041474ef1131d1f2b078c9006c6d9a632eb13813fcd0300506032b65700341009137b62c12d4890b4bf8d32537c9c991094ba026b57243690434f34757a8b0b6e2b4d9a4c4863ec320a0bf287326769e64b81c8f9ee6bc24dd277548f154a00a";
+
+const OCSP_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MC4CAQAwBQYDK2VwBCIEIBYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYW\n"
+  + "-----END PRIVATE KEY-----\n";
+
+// 2026-11-26T00:00:00Z, inside the validity window of the OCSP response.
+const OCSP_NOW_MS: i64 = 1795651200000;
+
 const WALL_MS: i64 = 1700000000000;
 
 const NOT_BEFORE_MS: i64 = 1577836800000;
@@ -226,7 +241,11 @@ const NOT_AFTER_MS: i64 = 4102444800000;
 struct Pair { client: client.Session, server: server.Session, tickets: client.Ticket[] }
 
 function crd(s: client.Session, input: u8[]): Result[client.Step, string] {
-  match (s.read(input, time.timestamp_from_unix_millis(WALL_MS))) {
+  return crd_at(s, input, WALL_MS);
+}
+
+function crd_at(s: client.Session, input: u8[], now: i64): Result[client.Step, string] {
+  match (s.read(input, time.timestamp_from_unix_millis(now))) {
     Ok(step) => {
       return Ok(step);
     },
@@ -353,6 +372,46 @@ function served(leaf: string, key_pem: string): string {
     }
   }
   return "";
+}
+
+// The handshake of a client that requires a stapled OCSP response.
+function stapled_outcome(sc: server.Config): string {
+  let cc = client.config("tls.example", verify.roots([__codec_bytes(hex.decode(OCSP_ROOT))])).with_revocation(client.RequireStapled);
+  match (started(cc)) {
+    Ok(c0) => {
+      match (stapled_rest(c0, sc)) {
+        Ok(t) => {
+          return t;
+        },
+        Err(e) => {
+          return e;
+        }
+      }
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+function stapled_rest(c0: client.Step, sc: server.Config): Result[string, string] {
+  let s1 = srd_at(listening(sc)?, c0.output, OCSP_NOW_MS)?;
+  let c1 = crd_at(c0.session, s1.output, OCSP_NOW_MS)?;
+  let s2 = srd_at(s1.session, c1.output, OCSP_NOW_MS)?;
+  if (!c1.session.connected() || !s2.session.connected()) {
+    return Err("not connected");
+  }
+  return Ok("connected");
+}
+
+function test_ocsp_staple(): test.TestOutcome {
+  let sc = fixture_config(identity_of(OCSP_LEAF, OCSP_PKCS8), rand.bytes(32));
+  let got = stapled_outcome(sc.with_ocsp_staple(__codec_bytes(hex.decode(OCSP_GOOD))));
+  if (got != "connected") {
+    return test.fail("a stapled response: " + got);
+  }
+  return test.assert_eq(stapled_outcome(sc), "client: the server stapled no OCSP response");
 }
 
 function test_leaves(): test.TestOutcome {
@@ -1165,6 +1224,7 @@ function main(): i32 {
   r = r.it("start gives a Step with no output", test_start_is_a_step);
   r = r.it("start refuses short entropy", test_start_refuses_short_entropy);
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);
+  r = r.it("an OCSP staple", test_ocsp_staple);
   r = r.it("key refusals", test_key_refusals);
   r = r.it("an identity and its leaf", test_identity);
   r = r.it("P-256, P-384 and Ed25519 leaves", test_leaves);

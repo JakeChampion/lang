@@ -170,7 +170,7 @@ function verification(events: handshake.Event[]): handshake.Verification {
       }
     }
   }
-  return handshake.Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false };
+  return handshake.Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false, ocsp: [] };
 }
 
 function signing(events: handshake.Event[]): handshake.Signing {
@@ -505,6 +505,65 @@ function test_certificate_entry_extension_is_refused(): test.TestOutcome {
   return test.fail("no result");
 }
 
+// The Verification event of a handshake between `cc` and `sc`.
+function first_verification(cc: handshake.ClientConfig, sc: handshake.ServerConfig): Result[handshake.Verification, handshake.HandshakeError] {
+  let start = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
+  let server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
+  let s1 = server.read(start.output)?;
+  let sig: u8[] = [];
+  match (signed_with(seed(), signing(s1.events).signed)) {
+    Ok(b) => {
+      sig = b;
+    },
+    Err(e) => {
+      return Err(handshake.Misuse("sign"));
+    }
+  }
+  let s2 = s1.server.signature(sig)?;
+  let c1 = start.client.read(cat(s1.output, s2.output))?;
+  return Ok(verification(c1.events));
+}
+
+function stapled(cc: handshake.ClientConfig, sc: handshake.ServerConfig): string {
+  match (first_verification(cc, sc)) {
+    Ok(v) => {
+      return "stapled " + hex.encode(v.ocsp);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// RFC 8446 section 4.4.2.1: the server staples an OCSP response to the entry
+// of its leaf only for a client that asks for one.
+function test_stapled_status(): test.TestOutcome {
+  let staple: u8[] = [0x30 as u8, 0x03 as u8, 0x0a as u8, 0x01 as u8, 0x00 as u8];
+  let sc = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), ocsp: staple };
+  let asks = handshake.ClientConfig { ...handshake.client_config("example.com"), status_request: true };
+  let got = stapled(asks, sc);
+  if (got != "stapled 30030a0100") {
+    return test.fail("a client that asks: " + got);
+  }
+  got = stapled(handshake.client_config("example.com"), sc);
+  if (got != "stapled ") {
+    return test.fail("a client that does not ask: " + got);
+  }
+  got = stapled(asks, handshake.server_config([ed_public()], [0x0807]));
+  if (got != "stapled ") {
+    return test.fail("a server with no response: " + got);
+  }
+  let other = message.Extension { kind: 18, data: [] };
+  got = stapled(asks, handshake.ServerConfig { ...sc, entry_extensions: [other] });
+  if (got != handshake.Illegal("certificate entry extension").message()) {
+    return test.fail("an extension that the client did not ask for: " + got);
+  }
+  let bad = message.Extension { kind: message.EXT_STATUS_REQUEST, data: [2u8, 0u8, 0u8, 1u8, 0u8] };
+  got = stapled(asks, handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), entry_extensions: [bad] });
+  return test.assert_eq(got, handshake.Message(message.DecodeError("CertificateStatus")).message());
+}
+
 // RFC 8446 section 4.2: the extensions of CertificateRequest and of
 // NewSessionTicket.
 function test_extensions_of_request_and_ticket(): test.TestOutcome {
@@ -547,6 +606,9 @@ function test_extensions_that_encrypted_extensions_cannot_hold(): test.TestOutco
   let refused = "tls handshake: illegal extension in EncryptedExtensions";
   if (refused_in_encrypted_extensions(message.ext_psk_modes([1])) != refused) {
     return test.fail("psk_key_exchange_modes: " + refused_in_encrypted_extensions(message.ext_psk_modes([1])));
+  }
+  if (refused_in_encrypted_extensions(message.ext_status_request()) != refused) {
+    return test.fail("status_request: " + refused_in_encrypted_extensions(message.ext_status_request()));
   }
   if (refused_in_encrypted_extensions(message.ext_server_name("other.example")) != refused) {
     return test.fail("a server_name with a name: " + refused_in_encrypted_extensions(message.ext_server_name("other.example")));
@@ -1550,6 +1612,7 @@ function main(): i32 {
   r = r.it("no record comes between the parts of a handshake message", test_no_record_between_the_parts_of_a_message);
   r = r.it("extensions that EncryptedExtensions cannot hold", test_extensions_that_encrypted_extensions_cannot_hold);
   r = r.it("an extension of a certificate entry that the client did not ask for", test_certificate_entry_extension_is_refused);
+  r = r.it("a stapled OCSP response", test_stapled_status);
   r = r.it("the handshake secrets do not stay after the handshake", test_handshake_secrets_do_not_stay);
   r = r.it("the extensions of CertificateRequest and NewSessionTicket", test_extensions_of_request_and_ticket);
   r = r.it("the server name goes out with no trailing dot", test_the_name_goes_out_with_no_trailing_dot);
