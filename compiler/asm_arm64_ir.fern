@@ -2095,12 +2095,12 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
   };
 }
 
-function ssa_imm_right(): string[] {
-  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u", "vishl", "vishru", "vishrs"];
+function ssa_imm_right(): i32[] {
+  return [ir.K_ADD, ir.K_SUB, ir.K_EQ, ir.K_NE, ir.K_LT_S, ir.K_LE_S, ir.K_GT_S, ir.K_GE_S, ir.K_LT_U, ir.K_LE_U, ir.K_GT_U, ir.K_GE_U, ir.K_SHL, ir.K_SHR_S, ir.K_SHR_U, ir.K_DIV_S, ir.K_DIV_U, ir.K_REM_S, ir.K_REM_U, ir.K_VISHL, ir.K_VISHRU, ir.K_VISHRS];
 }
 
-function ssa_imm_left(): string[] {
-  return ["add", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u"];
+function ssa_imm_left(): i32[] {
+  return [ir.K_ADD, ir.K_EQ, ir.K_NE, ir.K_LT_S, ir.K_LE_S, ir.K_GT_S, ir.K_GE_S, ir.K_LT_U, ir.K_LE_U, ir.K_GT_U, ir.K_GE_U];
 }
 
 function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, scratch: string): string {
@@ -2514,7 +2514,7 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
 
 // The ops on integer lanes. `ins.imm` is the width of a lane: 8, 16 or 32
 // bits. An op that a width does not have is a refusal that names the op.
-function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint(ins: ssa.SInst, b: i32, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let id = ins.ir_kind;
   let w = ins.imm;
   if (w != 8 && w != 16 && w != 32) {
@@ -2526,7 +2526,7 @@ function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: as
   if (id < ir.K_VINEG || id == ir.K_VIMUL) {
     return ssa_vint_bin(ins, b, reg_of, s);
   }
-  if (b == "visplat") {
+  if (b == ir.K_VISPLAT) {
     s = ssa_load(reg_of, ins.args[0], "x16", s);
     let d = ssa_fdst(reg_of, ins.result);
     s = s.write("    dup " + ssa_viarr(d, w) + ", w16\n");
@@ -2534,12 +2534,12 @@ function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: as
   }
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
-  if (b == "vineg" || b == "viabs") {
+  if (b == ir.K_VINEG || b == ir.K_VIABS) {
     let d = ssa_fdst(reg_of, ins.result);
-    s = s.write("    " + (if (b == "vineg") { "neg " } else { "abs " }) + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + "\n");
+    s = s.write("    " + (if (b == ir.K_VINEG) { "neg " } else { "abs " }) + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + "\n");
     return ssa_fput(reg_of, ins.result, d, s);
   }
-  if (b == "vireplace") {
+  if (b == ir.K_VIREPLACE) {
     s = ssa_load(reg_of, ins.args[1], "x16", s);
     let d = ssa_fdst(reg_of, ins.result);
     if (a != d) {
@@ -2549,7 +2549,7 @@ function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: as
     return ssa_fput(reg_of, ins.result, d, s);
   }
   let d = ssa_dst(reg_of, ins.result);
-  if (b == "vibitmask") {
+  if (b == ir.K_VIBITMASK) {
     // One byte for each lane, then one bit of its place for each byte.
     // The sum of a half is the mask of that half.
     s = s.write("    cmlt " + ssa_viarr("d0", w) + ", " + ssa_viarr(a, w) + ", #0\n");
@@ -2568,7 +2568,7 @@ function ssa_vint(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: as
     }
   } else {
     // An i32 fills its register with its sign.
-    let read = if (b == "viextracts") { "smov " + d } else { "umov " + ssa_wreg(d) };
+    let read = if (b == ir.K_VIEXTRACTS) { "smov " + d } else { "umov " + ssa_wreg(d) };
     s = s.write("    " + read + ", " + ssa_vi_lane(a, w, asmcore.ssa_lane_index(ins.str)) + "\n");
   }
   return ssa_store(reg_of, ins.result, d, s);
@@ -2587,16 +2587,16 @@ function ssa_vi_lane(d: string, w: i32, lane: i32): string {
 
 // A binary op on integer lanes. `mode` 1 has the operands in the other
 // order, and 2 gives the complement of the compare.
-function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let names: string[] = ["viadd", "visub", "viadds", "viaddu", "visubs", "visubu", "vimins", "viminu", "vimaxs", "vimaxu", "viavg", "vieq", "vine", "vilts", "viltu", "vimul"];
+function ssa_vint_bin(ins: ssa.SInst, b: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let kinds: i32[] = [ir.K_VIADD, ir.K_VISUB, ir.K_VIADDS, ir.K_VIADDU, ir.K_VISUBS, ir.K_VISUBU, ir.K_VIMINS, ir.K_VIMINU, ir.K_VIMAXS, ir.K_VIMAXU, ir.K_VIAVG, ir.K_VIEQ, ir.K_VINE, ir.K_VILTS, ir.K_VILTU, ir.K_VIMUL];
   let mnems: string[] = ["add", "sub", "sqadd", "uqadd", "sqsub", "uqsub", "smin", "umin", "smax", "umax", "urhadd", "cmeq", "cmeq", "cmgt", "cmhi", "mul"];
   let modes: i32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1, 1, 0];
-  let i = util.index_of_str(names, b);
+  let i = util.index_of_i32(kinds, b);
   let w = ins.imm;
   // The other backends have no saturating form and no average for lanes
   // of 32 bits, and no multiply for lanes of 8 bits. So this one refuses
   // them too.
-  if (w == 32 && i >= 2 && i <= 5 || w == 32 && b == "viavg" || w == 8 && b == "vimul") {
+  if (w == 32 && i >= 2 && i <= 5 || w == 32 && b == ir.K_VIAVG || w == 8 && b == ir.K_VIMUL) {
     ircore.unsupported_op_refuse(ins.ir_kind, "arm64");
   }
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
@@ -2618,7 +2618,7 @@ function ssa_vint_bin(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitS
 
 // A shift of each lane by one count. The count is modulo the lane width.
 // A shift to the right is a shift to the left by the negative count.
-function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint_shift(ins: ssa.SInst, b: i32, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "d1");
@@ -2627,7 +2627,7 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms,
     // A count that the compiler knows is in the instruction. A shift to
     // the right by 0 has no encoding, and it is a copy.
     let count = imm.value[ins.args[1]] as i32 & w - 1;
-    let mnem = if (b == "vishl") { "shl " } else if (b == "vishrs") { "sshr " } else { "ushr " };
+    let mnem = if (b == ir.K_VISHL) { "shl " } else if (b == ir.K_VISHRS) { "sshr " } else { "ushr " };
     if (count == 0) {
       if (a != d) {
         s = s.write("    mov " + ssa_vbytes(d) + ", " + ssa_vbytes(a) + "\n");
@@ -2639,25 +2639,25 @@ function ssa_vint_shift(ins: ssa.SInst, b: string, reg_of: i32[], imm: ssa.Imms,
   }
   s = ssa_load(reg_of, ins.args[1], "x16", s);
   s = s.write("    and w16, w16, #" + util.i32_to_string(w - 1) + "\n");
-  if (b != "vishl") {
+  if (b != ir.K_VISHL) {
     s = s.write("    neg w16, w16\n");
   }
-  s = s.write("    dup " + ssa_viarr("d2", w) + ", w16\n    " + (if (b == "vishrs") { "sshl " } else { "ushl " }) + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + ", " + ssa_viarr("d2", w) + "\n");
+  s = s.write("    dup " + ssa_viarr("d2", w) + ", w16\n    " + (if (b == ir.K_VISHRS) { "sshl " } else { "ushl " }) + ssa_viarr(d, w) + ", " + ssa_viarr(a, w) + ", " + ssa_viarr("d2", w) + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
 // A widen is a shift to the left by zero bits into lanes of two times the
 // width. The form with `2` reads the last half of the lanes.
-function arm64_lane_widen(b: string, w: i32, a: string, d: string): string {
-  let low = b == "viwidenlos" || b == "viwidenlou";
-  let mnem = (if (b == "viwidenlos" || b == "viwidenhis") { "sshll" } else { "ushll" }) + (if (low) { " " } else { "2 " });
+function arm64_lane_widen(b: i32, w: i32, a: string, d: string): string {
+  let low = b == ir.K_VIWIDENLOS || b == ir.K_VIWIDENLOU;
+  let mnem = (if (b == ir.K_VIWIDENLOS || b == ir.K_VIWIDENHIS) { "sshll" } else { "ushll" }) + (if (low) { " " } else { "2 " });
   let from = if (low) { ssa_vi_half(a, w) } else { ssa_viarr(a, w) };
   return "    " + mnem + ssa_viarr(d, w * 2) + ", " + from + ", #0\n";
 }
 
 // The ops that change the shape of integer lanes. `ins.imm` is the width
 // of a lane of the first value. v0 is the scratch register.
-function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_vint_shape(ins: ssa.SInst, b: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let id = ins.ir_kind;
   let w = ins.imm;
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
@@ -2671,7 +2671,7 @@ function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
   }
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
   let y = ssa_fsrc(reg_of, ins.args[1], "d2");
-  if (b == "viswizzle") {
+  if (b == ir.K_VISWIZZLE) {
     if (w != 8) {
       ircore.unsupported_op_refuse(id, "arm64");
     }
@@ -2683,7 +2683,7 @@ function ssa_vint_shape(ins: ssa.SInst, b: string, reg_of: i32[], s: asmcore.Emi
   }
   // The result can share a register with the second value, so the two
   // halves go to the scratch register first.
-  let mnem = if (b == "vinarrows") { "sqxtn" } else { "sqxtun" };
+  let mnem = if (b == ir.K_VINARROWS) { "sqxtn" } else { "sqxtun" };
   s = s.write("    " + mnem + " " + ssa_vi_half("d0", w / 2) + ", " + ssa_viarr(a, w) + "\n    " + mnem + "2 " + ssa_viarr("d0", w / 2) + ", " + ssa_viarr(y, w) + "\n");
   return ssa_fput(reg_of, ins.result, d, s.write("    mov " + ssa_vbytes(d) + ", v0.16b\n"));
 }
@@ -2696,17 +2696,17 @@ function ssa_vi_half(d: string, w: i32): string {
 }
 
 function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.EmitState): asmcore.EmitState {
-  let b = ssa.lane_base(ins.str);
+  let b = ins.ir_kind;
   if (ir.is_lane_int_kind(ins.ir_kind)) {
     return ssa_vint(ins, b, reg_of, imm, s);
   }
   if (ir.is_lane_shape_kind(ins.ir_kind)) {
     return ssa_vint_shape(ins, b, reg_of, s);
   }
-  if (b == "vpermute") {
+  if (b == ir.K_VPERMUTE) {
     return ssa_vpermute(ins, reg_of, s);
   }
-  if (b == "vextract_bits") {
+  if (b == ir.K_VEXTRACT_BITS) {
     s = ssa_fread(reg_of, ins.args[0], "d1", s);
     let ar = ssa_fsrc(reg_of, ins.args[0], "d1");
     let a = "v" + slice_unchecked(ar, 1, ar.len());
@@ -2716,10 +2716,10 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     s = s.write("    umov " + target + ", " + a + lane + util.i32_to_string(asmcore.ssa_lane_index(ins.str)) + "]\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (b == "vbitmask") {
+  if (b == ir.K_VBITMASK) {
     return ssa_vbitmask(ins, reg_of, s);
   }
-  if (b == "vpack") {
+  if (b == ir.K_VPACK) {
     s = ssa_fread(reg_of, ins.args[0], "d1", s);
     s = ssa_fread(reg_of, ins.args[1], "d2", s);
     let a = slice_unchecked(ssa_fsrc(reg_of, ins.args[0], "d1"), 1, ssa_fsrc(reg_of, ins.args[0], "d1").len());
@@ -2729,16 +2729,16 @@ function ssa_lane_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
     s = s.write("    mov v" + slice_unchecked(d, 1, d.len()) + ".16b, v0.16b\n");
     return ssa_fput(reg_of, ins.result, d, s);
   }
-  if (b == "vsplat") {
+  if (b == ir.K_VSPLAT) {
     return ssa_vsplat(ins, reg_of, s);
   }
-  if (b == "vextract") {
+  if (b == ir.K_VEXTRACT) {
     return ssa_vextract(ins, reg_of, s);
   }
-  if (b == "vreplace") {
+  if (b == ir.K_VREPLACE) {
     return ssa_vreplace(ins, reg_of, s);
   }
-  if (b == "vfma" || b == "vselect") {
+  if (b == ir.K_VFMA || b == ir.K_VSELECT) {
     return ssa_vternary(ins, reg_of, s);
   }
   if (ssa.lane_memory(b)) {
@@ -2861,38 +2861,38 @@ function ssa_vreplace(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 }
 
 function ssa_vbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let b = ssa.lane_base(ins.str);
+  let b = ins.ir_kind;
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   s = ssa_fread(reg_of, ins.args[1], "d2", s);
   let d = ssa_fdst(reg_of, ins.result);
   let vd = ssa_varr(d, ins.imm);
   let va = ssa_varr(ssa_fsrc(reg_of, ins.args[0], "d1"), ins.imm);
   let vb = ssa_varr(ssa_fsrc(reg_of, ins.args[1], "d2"), ins.imm);
-  if (b == "vmin" || b == "vmax") {
-    if (b == "vmin") {
+  if (b == ir.K_VMIN || b == ir.K_VMAX) {
+    if (b == ir.K_VMIN) {
       s = s.write("    fcmgt " + vd + ", " + va + ", " + vb + "\n");
     } else {
       s = s.write("    fcmgt " + vd + ", " + vb + ", " + va + "\n");
     }
     s = s.write("    bsl " + ssa_vbytes(d) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[1], "d2")) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[0], "d1")) + "\n");
-  } else if (b == "vand" || b == "vor" || b == "vxor" || b == "vandnot") {
-    let names: string[] = ["vand", "vor", "vxor", "vandnot"];
+  } else if (b == ir.K_VAND || b == ir.K_VOR || b == ir.K_VXOR || b == ir.K_VANDNOT) {
+    let kinds: i32[] = [ir.K_VAND, ir.K_VOR, ir.K_VXOR, ir.K_VANDNOT];
     let mnems: string[] = ["and", "orr", "eor", "bic"];
-    s = s.write("    " + mnems[util.index_of_str(names, b)] + " " + ssa_vbytes(d) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[0], "d1")) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[1], "d2")) + "\n");
+    s = s.write("    " + mnems[util.index_of_i32(kinds, b)] + " " + ssa_vbytes(d) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[0], "d1")) + ", " + ssa_vbytes(ssa_fsrc(reg_of, ins.args[1], "d2")) + "\n");
   } else {
     s = s.write(ssa_vbin_asm(b, vd, va, vb) + "\n");
-    if (b == "vne") {
+    if (b == ir.K_VNE) {
       s = s.write("    not " + ssa_vbytes(d) + ", " + ssa_vbytes(d) + "\n");
     }
   }
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-function ssa_vbin_asm(b: string, vd: string, va: string, vb: string): string {
-  let names: string[] = ["vadd", "vsub", "vmul", "vdiv", "veq", "vne", "vlt", "vle", "vgt", "vge"];
+function ssa_vbin_asm(b: i32, vd: string, va: string, vb: string): string {
+  let kinds: i32[] = [ir.K_VADD, ir.K_VSUB, ir.K_VMUL, ir.K_VDIV, ir.K_VEQ, ir.K_VNE, ir.K_VLT, ir.K_VLE, ir.K_VGT, ir.K_VGE];
   let mnems: string[] = ["fadd", "fsub", "fmul", "fdiv", "fcmeq", "fcmeq", "fcmgt", "fcmge", "fcmgt", "fcmge"];
   let swapped: boolean[] = [false, false, false, false, false, false, true, true, false, false];
-  let i = util.index_of_str(names, b);
+  let i = util.index_of_i32(kinds, b);
   if (swapped[i]) {
     return "    " + mnems[i] + " " + vd + ", " + vb + ", " + va;
   }
@@ -2900,11 +2900,11 @@ function ssa_vbin_asm(b: string, vd: string, va: string, vb: string): string {
 }
 
 function ssa_vunary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let names: string[] = ["vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround"];
+  let kinds: i32[] = [ir.K_VSQRT, ir.K_VABS, ir.K_VNEG, ir.K_VFLOOR, ir.K_VCEIL, ir.K_VTRUNC, ir.K_VROUND];
   let mnems: string[] = ["fsqrt", "fabs", "fneg", "frintm", "frintp", "frintz", "frinta"];
   s = ssa_fread(reg_of, ins.args[0], "d1", s);
   let d = ssa_fdst(reg_of, ins.result);
-  let m = mnems[util.index_of_str(names, ssa.lane_base(ins.str))];
+  let m = mnems[util.index_of_i32(kinds, ins.ir_kind)];
   s = s.write("    " + m + " " + ssa_varr(d, ins.imm) + ", " + ssa_varr(ssa_fsrc(reg_of, ins.args[0], "d1"), ins.imm) + "\n");
   return ssa_fput(reg_of, ins.result, d, s);
 }
@@ -2942,7 +2942,7 @@ function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let c = ssa_fsrc(reg_of, ins.args[2], "d3");
   let home = ssa_fhome(reg_of, ins.result);
   let d = ssa_fdst(reg_of, ins.result);
-  let fma = ssa.lane_base(ins.str) == "vfma";
+  let fma = ins.ir_kind == ir.K_VFMA;
   if (c != d && (d == a || d == b)) {
     if (!fma) {
       let form = if (d == a) { "    bif " + ssa_vbytes(d) + ", " + ssa_vbytes(b) } else { "    bit " + ssa_vbytes(d) + ", " + ssa_vbytes(a) };
@@ -2964,20 +2964,20 @@ function ssa_vternary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-function ssa_lane_memory(ins: ssa.SInst, reg_of: i32[], b: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (b == "vload" || b == "vload_f32") {
+function ssa_lane_memory(ins: ssa.SInst, reg_of: i32[], b: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (b == ir.K_VLOAD || b == ir.K_VLOAD_F32) {
     return ssa_vload(ins, reg_of, s);
   }
-  if (b == "vstore") {
+  if (b == ir.K_VSTORE) {
     return ssa_vstore(ins, reg_of, s);
   }
-  return ssa_vgroup(ins, reg_of, b == "vset", s);
+  return ssa_vgroup(ins, reg_of, b == ir.K_VSET, s);
 }
 
 function ssa_vload(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_read(reg_of, ins.args[0], "x4", s);
   let d = ssa_fdst(reg_of, ins.result);
-  if (ins.str == "vload_f32") {
+  if (ins.ir_kind == ir.K_VLOAD_F32) {
     s = s.write("    ldr d1, [" + ssa_src(reg_of, ins.args[0], "x4") + "]\n    fcvtl v0.2d, v1.2s\n    mov " + ssa_vbytes(d) + ", v0.16b\n");
   } else {
     s = s.write("    ldr " + ssa_vq(d) + ", [" + ssa_src(reg_of, ins.args[0], "x4") + "]\n");
