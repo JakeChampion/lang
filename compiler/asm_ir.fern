@@ -7296,7 +7296,7 @@ function ssa_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   if (k == ssa.BINARY) {
     return ssa_binary_nospill_mask(ins, imm);
   }
-  if (k == ssa.UNARY && ssa_integer_unary(ins.str)) {
+  if (k == ssa.UNARY && ssa_integer_unary(ins)) {
     return 0;
   }
   return -1;
@@ -7325,10 +7325,12 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   return -1;
 }
 
-function ssa_integer_unary(what: string): boolean {
-  return what == "!" || what == "int_extend" || what == "int_wrap"
-    || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16"
-    || what.starts_with("rotr:");
+function ssa_integer_unary(ins: ssa.SInst): boolean {
+  let k = ins.ir_kind;
+  let to = ssa.cast_target(ins);
+  return k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP
+    || to == "u32" || to == "i32" || to == "u16" || to == "i16"
+    || ins.str.starts_with("rotr:");
 }
 
 function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
@@ -8740,14 +8742,16 @@ function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.Emit
   return ssa_mov_ir(s, 32, v, text, d);
 }
 
-function ssa_unary_known(what: string): boolean {
-  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
+function ssa_unary_known(ins: ssa.SInst): boolean {
+  let k = ins.ir_kind;
+  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins.str)) {
     return true;
   }
-  if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
+  let to = ssa.cast_target(ins);
+  if (to == "u8" || to == "u16" || to == "i16" || to == "u32" || to == "i32") {
     return true;
   }
-  return ssa.rotr_count(what) >= 0 || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+  return ssa.rotr_count(ins.str) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "%rax") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -8756,10 +8760,10 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
     return true;
   }
   if (k == ssa.UNARY) {
-    return ssa_unary_known(ins.str);
+    return ssa_unary_known(ins);
   }
   if (k == ssa.TERNARY) {
-    return ins.str == "ffma" || ins.str == "ffma32";
+    return ins.ir_kind == ir.K_FFMA || ins.ir_kind == ir.K_FFMA32;
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -8788,24 +8792,27 @@ function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: 
   return ssa_jump(fr, lp, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, to), next, s);
 }
 
-function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): string {
-  let f = ssa_fmath_asm(what, d);
+function ssa_unary_asm(ins: ssa.SInst, lb: string, d: string): string {
+  let f = ssa_fmath_asm(ins, d);
   if (f == "") {
-    f = ssa_fconv_asm(what, unsigned, lb, d);
+    f = ssa_fconv_asm(ins, lb, d);
   }
   if (f == "") {
-    f = ssa_bits_asm(what, d);
+    f = ssa_bits_asm(ins, d);
   }
   if (f != "") {
     return f;
   }
+  let what = ins.str;
   if (what == "load_i32") {
     return "    movslq (" + d + "), " + d + "\n";
   }
   if (what == "load_u16") {
     return "    movzwl (" + d + "), " + ssa_r32(d) + "\n";
   }
-  if (what == "!") {
+  let k = ins.ir_kind;
+  let to = ssa.cast_target(ins);
+  if (k == ir.K_NOT) {
     return "    testq " + d + ", " + d + "\n    setz " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
   }
   if (what.starts_with("rotr:")) {
@@ -8815,23 +8822,23 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
     }
     return "    rorl $" + n + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "u32_wrap" || what == "int_cast:u32") {
+  if (k == ir.K_U32_WRAP || to == "u32") {
     return "    movl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:u8") {
+  if (to == "u8") {
     return "    andq $255, " + d + "\n";
   }
-  if (what == "int_cast:u16") {
+  if (to == "u16") {
     return "    movzwl " + ssa_r16(d) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:i16") {
+  if (to == "i16") {
     return "    movswq " + ssa_r16(d) + ", " + d + "\n";
   }
-  if (what == "int_cast:i32") {
+  if (to == "i32") {
     return "    movslq " + ssa_r32(d) + ", " + d + "\n";
   }
-  if (what == "int_extend" || what == "int_wrap") {
-    if (unsigned) {
+  if (k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP) {
+    if (ins.imm == 1) {
       return "    movl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
     }
     return "    movslq " + ssa_r32(d) + ", " + d + "\n";
@@ -8839,7 +8846,8 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   return "";
 }
 
-function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
+  let what = ins.str;
   if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
     if (ssa.rotr_width(what) == 64) {
@@ -8856,70 +8864,88 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   if (what == "load_u16") {
     return "    movzwl (" + src + "), " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
+  let k = ins.ir_kind;
+  let to = ssa.cast_target(ins);
+  if (asmcore.ssa_sext32(ins)) {
     return "    movslq " + ssa_r32(src) + ", " + d + "\n";
   }
-  if (what == "int_cast:u16") {
+  if (to == "u16") {
     return "    movzwl " + ssa_r16(src) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:i16") {
+  if (to == "i16") {
     return "    movswq " + ssa_r16(src) + ", " + d + "\n";
   }
-  if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
+  if (k == ir.K_U32_WRAP || to == "u32" || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP) {
     return "    movl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "clz:64") {
-    return "    lzcntq " + src + ", " + d + "\n";
+  let mnem = ssa_bits_mnem(k);
+  if (mnem == "" || k == ir.K_BSWAP) {
+    return "";
   }
-  if (what == "clz:32") {
-    return "    lzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  let w = ssa.op_width(ins);
+  if (w == 64) {
+    return "    " + mnem + "q " + src + ", " + d + "\n";
   }
-  if (what == "ctz:64") {
-    return "    tzcntq " + src + ", " + d + "\n";
-  }
-  if (what == "ctz:32") {
-    return "    tzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
-  }
-  if (what == "popcount:64") {
-    return "    popcntq " + src + ", " + d + "\n";
-  }
-  if (what == "popcount:32") {
-    return "    popcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  if (w == 32) {
+    return "    " + mnem + "l " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
   }
   return "";
 }
 
-function ssa_bits_asm(what: string, d: string): string {
-  return match (what) {
-    "clz:64" => "    lzcntq " + d + ", " + d + "\n",
-    "clz:32" => "    lzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
-    "ctz:64" => "    tzcntq " + d + ", " + d + "\n",
-    "ctz:32" => "    tzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
-    "popcount:64" => "    popcntq " + d + ", " + d + "\n",
-    "popcount:32" => "    popcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
-    "bswap:64" => "    bswapq " + d + "\n",
-    "bswap:32" => "    bswapl " + ssa_r32(d) + "\n    movslq " + ssa_r32(d) + ", " + d + "\n",
-    _ => "",
-  };
+// The x86-64 mnemonic, with no size suffix, of a count or byte-swap op.
+function ssa_bits_mnem(k: i32): string {
+  if (k == ir.K_CLZ) {
+    return "lzcnt";
+  }
+  if (k == ir.K_CTZ) {
+    return "tzcnt";
+  }
+  if (k == ir.K_POPCOUNT) {
+    return "popcnt";
+  }
+  if (k == ir.K_BSWAP) {
+    return "bswap";
+  }
+  return "";
 }
 
-function ssa_fmath_asm(what: string, d: string): string {
-  if (what == "fabs") {
+function ssa_bits_asm(ins: ssa.SInst, d: string): string {
+  let mnem = ssa_bits_mnem(ins.ir_kind);
+  let w = ssa.op_width(ins);
+  if (mnem == "" || w == 0) {
+    return "";
+  }
+  if (ins.ir_kind == ir.K_BSWAP) {
+    if (w == 64) {
+      return "    bswapq " + d + "\n";
+    }
+    return "    bswapl " + ssa_r32(d) + "\n    movslq " + ssa_r32(d) + ", " + d + "\n";
+  }
+  if (w == 64) {
+    return "    " + mnem + "q " + d + ", " + d + "\n";
+  }
+  return "    " + mnem + "l " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
+}
+
+function ssa_fmath_asm(ins: ssa.SInst, d: string): string {
+  if (ins.ir_kind == ir.K_FABS) {
     return "    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, " + d + "\n";
   }
-  if (what == "fneg") {
+  if (ins.ir_kind == ir.K_FNEG) {
     return "    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, " + d + "\n";
   }
   return "";
 }
 
-function ssa_fconv_asm(what: string, unsigned: boolean, lb: string, d: string): string {
-  if (what == "fround") {
+function ssa_fconv_asm(ins: ssa.SInst, lb: string, d: string): string {
+  let k = ins.ir_kind;
+  let unsigned = ins.imm == 1;
+  if (k == ir.K_FROUND) {
     return ir_fround_rax(lb, d);
   }
-  if (what == "f64_to_i32" || what == "f64_to_i64") {
+  if (k == ir.K_F64_TO_I32 || k == ir.K_F64_TO_I64) {
     let w = 32;
-    if (what == "f64_to_i64") {
+    if (k == ir.K_F64_TO_I64) {
       w = 64;
     }
     if (unsigned) {
@@ -8927,16 +8953,13 @@ function ssa_fconv_asm(what: string, unsigned: boolean, lb: string, d: string): 
     }
     return ir_f2i_sat_rax(w, lb, d);
   }
-  if (what == "i32_to_f64:64") {
-    return ir_i2f_rax(64, unsigned, lb, d);
+  if (k == ir.K_I32_TO_F64 && ssa.op_width(ins) != 0) {
+    return ir_i2f_rax(ssa.op_width(ins), unsigned, lb, d);
   }
-  if (what == "i32_to_f64:32") {
-    return ir_i2f_rax(32, unsigned, lb, d);
-  }
-  if (what == "f32_bits") {
+  if (k == ir.K_F32_BITS) {
     return "    movq " + d + ", %xmm0\n    cvtsd2ss %xmm0, %xmm0\n    movd %xmm0, " + ssa_r32(d) + "\n    movsxd " + ssa_r32(d) + ", " + d + "\n";
   }
-  if (what == "f32_from_bits") {
+  if (k == ir.K_F32_FROM_BITS) {
     return "    movd " + ssa_r32(d) + ", %xmm0\n    cvtss2sd %xmm0, %xmm0\n    movq %xmm0, " + d + "\n";
   }
   return "";
@@ -8977,7 +9000,7 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     if (d != a) {
       s = ssa_mov_rr(s, d, a);
     }
-    s = s.write("    " + ssa_sse_arith(ins.str) + " " + b + ", " + d + "\n");
+    s = s.write("    " + ssa_sse_arith(ins.ir_kind) + " " + b + ", " + d + "\n");
     if (d == "%xmm0" && ssa_fhome(reg_of, ins.result) != "") {
       return ssa_mov_rr(s, ssa_fhome(reg_of, ins.result), d);
     }
@@ -9632,24 +9655,36 @@ function emit_lane_consts(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function ssa_sse_arith(what: string): string {
-  return match (what) {
-    "fadd" => "addsd",
-    "fsub" => "subsd",
-    "fmul" => "mulsd",
-    _ => "divsd",
-  };
+function ssa_sse_arith(k: i32): string {
+  if (k == ir.K_FADD) {
+    return "addsd";
+  }
+  if (k == ir.K_FSUB) {
+    return "subsd";
+  }
+  if (k == ir.K_FMUL) {
+    return "mulsd";
+  }
+  return "divsd";
 }
 
-function ssa_fmath_op(what: string): string {
-  return match (what) {
-    "fsqrt" => "sqrtsd",
-    "ffloor" => "roundsd $1,",
-    "fceil" => "roundsd $2,",
-    "ftrunc" => "roundsd $3,",
-    "f32_round" => "cvtsd2ss",
-    _ => "",
-  };
+function ssa_fmath_op(k: i32): string {
+  if (k == ir.K_FSQRT) {
+    return "sqrtsd";
+  }
+  if (k == ir.K_FFLOOR) {
+    return "roundsd $1,";
+  }
+  if (k == ir.K_FCEIL) {
+    return "roundsd $2,";
+  }
+  if (k == ir.K_FTRUNC) {
+    return "roundsd $3,";
+  }
+  if (k == ir.K_F32_ROUND) {
+    return "cvtsd2ss";
+  }
+  return "";
 }
 
 function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -9659,8 +9694,8 @@ function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   if (d != a) {
     s = s.write("    xorpd " + d + ", " + d + "\n");
   }
-  s = s.write("    " + ssa_fmath_op(ins.str) + " " + a + ", " + d + "\n");
-  if (ins.str == "f32_round") {
+  s = s.write("    " + ssa_fmath_op(ins.ir_kind) + " " + a + ", " + d + "\n");
+  if (ins.ir_kind == ir.K_F32_ROUND) {
     s = s.write("    cvtss2sd " + d + ", " + d + "\n");
   }
   return ssa_fput(reg_of, ins.result, d, s);
@@ -11171,7 +11206,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let cmp = last;
   let n = 1;
   let inverted = false;
-  if (last.kind_tag == ssa.UNARY && last.str == "!") {
+  if (last.kind_tag == ssa.UNARY && last.ir_kind == ir.K_NOT) {
     let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
     if (blk.insts.len() < 2) {
       return value_test;
@@ -11789,10 +11824,10 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == ssa.BINARY && (ssa.float_arith(ins.ir_kind) || ssa.float_cmp(ins.ir_kind))) {
     return ssa_fbin(ins, reg_of, s);
   }
-  if (k == ssa.UNARY && ssa_fmath_op(ins.str) != "") {
+  if (k == ssa.UNARY && ssa_fmath_op(ins.ir_kind) != "") {
     return ssa_fmath(ins, reg_of, s);
   }
-  if (k == ssa.TERNARY && ins.str == "ffma32") {
+  if (k == ssa.TERNARY && ins.ir_kind == ir.K_FFMA32) {
     return ssa_fma32(ins, reg_of, s);
   }
   if (k == ssa.TERNARY) {
@@ -11830,9 +11865,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     }
     let from = "";
     if (src != "") {
-      from = ssa_unary_from(ins.str, ins.imm == 1, src, d);
+      from = ssa_unary_from(ins, src, d);
     }
-    if (s.records() && asmcore.ssa_sext32(ins.str, ins.imm == 1) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
+    if (s.records() && asmcore.ssa_sext32(ins) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
       if (src == "") {
         s = ssa_load(reg_of, ins.args[0], d, s);
         src = d;
@@ -11842,7 +11877,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
       s = s.write(from);
     } else {
       s = ssa_load(reg_of, ins.args[0], d, s);
-      s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+      s = s.write(ssa_unary_asm(ins, lp + "u" + util.i32_to_string(ins.result), d));
     }
   } else {
     ircore.ssa_inst_refuse(ssa.kind_name(k), ins.str, "x86-64");
