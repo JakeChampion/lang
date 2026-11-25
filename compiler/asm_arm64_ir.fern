@@ -3772,7 +3772,6 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.ssa_x0_forget(s);
-  s = s.need("str_eq");
   s = ssa_read(reg_of, ins.args[0], "x4", s);
   let a = ssa_src(reg_of, ins.args[0], "x4");
   s = ssa_read(reg_of, ins.args[1], "x5", s);
@@ -3783,24 +3782,39 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   s = dn.state;
   let neq = nn.lab;
   let done = dn.lab;
-  s = ssa_ldst(s, true, "x6", a, 8);
-  s = ssa_ldst(s, true, "x7", b, 8);
-  s = ssa_cmp_rr(s, "x6", "x7");
-  s = ssa_bcond(s, CC_NE, neq);
-  let lit_a = fr.lit0[ins.args[0]];
-  let lit_b = fr.lit0[ins.args[1]];
-  if (lit_b >= 0 || lit_a >= 0) {
-    let other = a;
-    let lit = lit_b;
-    if (lit_b < 0) {
-      other = b;
-      lit = lit_a;
-    }
-    s = ssa_ldst0(s, true, "x6", other);
-    s = ssa_ldrb0(s, "w6", "x6");
-    s = ssa_cmp_imm(s, "w6", lit);
+  let lit = ssa.eq_literal(fr.lits, ins.args[0], ins.args[1]);
+  if (lit.other < 0 || lit.text.len() >= 4096) {
+    s = ssa_ldst(s, true, "x6", a, 8);
+    s = ssa_ldst(s, true, "x7", b, 8);
+    s = ssa_cmp_rr(s, "x6", "x7");
     s = ssa_bcond(s, CC_NE, neq);
   }
+  if (lit.other >= 0) {
+    let other = if (lit.other == 0) { a } else { b };
+    if (lit.text.len() < 4096) {
+      s = ssa_ldst(s, true, "x6", other, 8);
+      s = ssa_cmp_imm(s, "x6", lit.text.len());
+      s = ssa_bcond(s, CC_NE, neq);
+    }
+    let nbytes = ssa.inline_eq_bytes(lit.text);
+    if (nbytes > 0) {
+      s = ssa_ldst0(s, true, "x6", other);
+    }
+    for k in 0..nbytes {
+      s = if (k == 0) { ssa_ldrb0(s, "w7", "x6") } else { ssa_ldrb(s, "w7", "x6", k) };
+      s = ssa_cmp_imm(s, "w7", lit.text[k] as i32);
+      s = ssa_bcond(s, CC_NE, neq);
+    }
+    if (nbytes == lit.text.len()) {
+      s = ssa_mov_imm(s, "x0", "1");
+      s = ssa_b(s, done);
+      s = s.lab_def(neq);
+      s = ssa_mov_imm(s, "x0", "0");
+      s = s.lab_def(done);
+      return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
+    }
+  }
+  s = s.need("str_eq");
   s = ssa_parallel_moves([reg_of[ins.args[0]], reg_of[ins.args[1]]], [0, 1], s);
   s = ssa_bl_sym(s, "__fn___fern_str_eq.r");
   s = ssa_b(s, done);
@@ -4315,7 +4329,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 
 // frameless says the block runs before the function makes its frame
 // (ssa.frame_split), so its return takes no frame down.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32, frameless: boolean }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lits: ssa.Literals, lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32, frameless: boolean }
 
 // `shape` names the shape whose tag `b` is, when the fused test covers the
 // instruction that makes `b`.
@@ -5640,7 +5654,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let lanes = ssa.lane_values(f);
   let cold = ssa_cold_saves(f, alloc);
   let uses = ssa.use_counts(f);
-  let fr = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary, frameless: false };
+  let fr = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, imm: imm, lits: ssa.literals(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary, frameless: false };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa.view_count(views)) * 8;
   if (cold.any) {

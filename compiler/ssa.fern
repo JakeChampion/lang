@@ -4283,16 +4283,51 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], c: i64, right: string[], 
   return false;
 }
 
-pub function literal_first_bytes(f: SFunc): i32[] {
-  let out = util.minus_ones(f.nvals);
+// The text of each value that is the address of a string literal. `len` is
+// -1 for a value that is no literal.
+pub struct Literals { text: string[], len: i32[] }
+
+pub function literals(f: SFunc): Literals {
+  let text: string[] = [];
+  for _ in 0..f.nvals {
+    text = text.append("");
+  }
+  let len = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == STR_LIT && ins.str.len() > 0) {
-        out = out.with(ins.result, ins.str[0] as i32);
+      if (ins.kind_tag == STR_LIT) {
+        text = text.with(ins.result, ins.str);
+        len = len.with(ins.result, ins.str.len());
       }
     }
   }
-  return out;
+  return Literals { text: text, len: len };
+}
+
+// A string compare with a literal operand. `other` is the position (0 or 1)
+// of the operand that is no literal, or -1 when neither operand is one.
+pub struct EqLiteral { other: i32, text: string }
+
+pub function eq_literal(l: Literals, a: i32, b: i32): EqLiteral {
+  if (l.len[b] >= 0) {
+    return EqLiteral { other: 0, text: l.text[b] };
+  }
+  if (l.len[a] >= 0) {
+    return EqLiteral { other: 1, text: l.text[a] };
+  }
+  return EqLiteral { other: -1, text: "" };
+}
+
+// A literal of up to this many bytes is compared inline, with no call.
+pub const INLINE_EQ_MAX: i32 = 8;
+
+// How many bytes of a literal a compare tests inline: all of a short literal,
+// and the first byte of a longer one before the call.
+pub function inline_eq_bytes(text: string): i32 {
+  if (text.len() <= INLINE_EQ_MAX) {
+    return text.len();
+  }
+  return 1;
 }
 
 pub function use_counts(f: SFunc): i32[] {
