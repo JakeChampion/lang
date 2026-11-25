@@ -191,6 +191,8 @@ pub enum HandshakeError {
   HandshakeFailure(string),
   NoApplicationProtocol,
   BadCertificate,
+  CertificateRevoked,
+  BadCertificateStatus,
   CertificateRequired,
   DecryptError,
   PeerAlert(i32),
@@ -308,6 +310,12 @@ pub function (e: HandshakeError) alert(): i32 {
     BadCertificate => {
       return 42;
     },
+    CertificateRevoked => {
+      return 44;
+    },
+    BadCertificateStatus => {
+      return 113;
+    },
     CertificateRequired => {
       return 116;
     },
@@ -371,6 +379,12 @@ pub function (e: HandshakeError) message(): string {
     },
     BadCertificate => {
       return "tls handshake: the peer's certificate was refused";
+    },
+    CertificateRevoked => {
+      return "tls handshake: the peer's certificate is revoked";
+    },
+    BadCertificateStatus => {
+      return "tls handshake: the peer's OCSP response was refused";
     },
     CertificateRequired => {
       return "tls handshake: a client certificate is required";
@@ -440,7 +454,8 @@ pub const EARLY_REJECTED: i32 = 3;
 pub struct Resumption { identity: u8[], psk: u8[], suite: keyschedule.CipherSuite, obfuscated_age: u32 }
 
 // tls12 marks the signature of a TLS 1.2 ServerKeyExchange, whose schemes allow RSA-PKCS1 and any ECDSA curve.
-pub struct Verification { chain: u8[][], scheme: i32, signed: u8[], signature: u8[], tls12: boolean }
+// stapled is the DER OCSP response that the server stapled, empty when it stapled none.
+pub struct Verification { chain: u8[][], scheme: i32, signed: u8[], signature: u8[], tls12: boolean, stapled: u8[] }
 
 pub struct Signing { scheme: i32, signed: u8[] }
 ```
@@ -1089,6 +1104,7 @@ pub struct Client {
   key_exchange: tls12.KeyExchange,
   master12: u8[],
   early: i32,
+  stapled: u8[],
 }
 
 pub struct ClientStep { client: Client, output: u8[], data: u8[], events: Event[] }
@@ -1322,7 +1338,7 @@ function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientS
   let bytes = message.encode(message.ClientHelloMsg(hello));
   let w = __plain_out(Conn { ...__conn_for(config.quic), transcript: bytes }, 0x0301, bytes);
   let hs = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: config.tls12, suite12: 0, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE };
+  let c = Client { conn: w.conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, more_shares: [], spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: config.tls12, suite12: 0, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE, stapled: [] };
   match (config.resume) {
     Some(r) => {
       if (message.find(hello.extensions, message.EXT_EARLY_DATA).is_some()) {
@@ -1662,7 +1678,7 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
   let i = 0;
   while (i < exts.len()) {
     let k = exts[i].kind;
-    if (__not_encrypted(k) || k == message.EXT_SERVER_NAME && exts[i].data.len() > 0) {
+    if (!__encrypted_ok(exts[i])) {
       return Err(Illegal("extension in EncryptedExtensions"));
     }
     if (!__has(offered, k)) {
@@ -1681,6 +1697,11 @@ function __encrypted_extensions(c: Client, exts: message.Extension[]): Result[Cl
     return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_FINISHED, early: early });
   }
   return Ok(Client { ...c, alpn: alpn, peer_extensions: exts, state: C_WAIT_CERTIFICATE_OR_REQUEST, early: early });
+}
+
+// RFC 8446 section 4.4.2.1: a TLS 1.3 server staples in the CertificateEntry.
+function __encrypted_ok(e: message.Extension): boolean {
+  return !__not_encrypted(e.kind) && !(e.kind == message.EXT_SERVER_NAME && e.data.len() > 0) && e.kind != message.EXT_STATUS_REQUEST;
 }
 
 // __early_in reads whether EncryptedExtensions accepts the early data. Only
@@ -1869,7 +1890,8 @@ function __on_certificate(c: Client, kind: i32, m: message.Message, out: Out): R
       }
     },
     message.CertificateMsg(cert) => {
-      return Ok(ClientRun { client: Client { ...c, chain: __chain(cert)?, state: C_WAIT_CERTIFICATE_VERIFY }, out: out });
+      let (chain, stapled) = __chain(c, cert)?;
+      return Ok(ClientRun { client: Client { ...c, chain: chain, stapled: stapled, state: C_WAIT_CERTIFICATE_VERIFY }, out: out });
     },
     _ => {
       return Err(OutOfOrder(kind));
@@ -1878,25 +1900,46 @@ function __on_certificate(c: Client, kind: i32, m: message.Message, out: Out): R
   return Err(OutOfOrder(kind));
 }
 
-function __chain(cert: message.Certificate): Result[u8[][], HandshakeError] {
+// The chain of a Certificate and the OCSP response stapled to its leaf.
+function __chain(c: Client, cert: message.Certificate): Result[(u8[][], u8[]), HandshakeError] {
   if (cert.context.len() != 0) {
     return Err(Illegal("certificate_request_context"));
   }
   if (cert.entries.len() == 0) {
     return Err(Message(message.DecodeError("certificate_list")));
   }
+  let asked = __has_extension(c.hello.extensions, message.EXT_STATUS_REQUEST);
   let chain: u8[][] = [];
+  let stapled: u8[] = [];
   let i = 0;
   while (i < cert.entries.len()) {
     // RFC 8446 section 4.4.2: an entry has only the extensions that the
-    // ClientHello asked for, and this client asks for none.
-    if (cert.entries[i].extensions.len() != 0) {
-      return Err(Illegal("certificate entry extension"));
+    // ClientHello asked for. This client can ask only for status_request.
+    for e in cert.entries[i].extensions {
+      if (e.kind != message.EXT_STATUS_REQUEST || !asked) {
+        return Err(Illegal("certificate entry extension"));
+      }
+      let response = __status(message.ocsp_response(e.data))?;
+      if (i == 0) {
+        stapled = response;
+      }
     }
     chain = chain.append(cert.entries[i].data);
     i += 1;
   }
-  return Ok(chain);
+  return Ok((chain, stapled));
+}
+
+function __status(r: Result[u8[], message.MsgError]): Result[u8[], HandshakeError] {
+  match (r) {
+    Ok(b) => {
+      return Ok(b);
+    },
+    Err(e) => {
+      return Err(Message(e));
+    }
+  }
+  return Err(BadCertificateStatus);
 }
 
 function __on_certificate_verify(c: Client, next: Client, kind: i32, m: message.Message, out: Out): Result[ClientRun, HandshakeError] {
@@ -1906,7 +1949,7 @@ function __on_certificate_verify(c: Client, next: Client, kind: i32, m: message.
         return Err(Illegal("signature scheme"));
       }
       let signed = certificate_verify_content(true, __hash(c.conn));
-      let ev = VerifyServer(Verification { chain: c.chain, scheme: v.scheme, signed: signed, signature: v.signature, tls12: false });
+      let ev = VerifyServer(Verification { chain: c.chain, scheme: v.scheme, signed: signed, signature: v.signature, tls12: false, stapled: c.stapled });
       return Ok(ClientRun { client: Client { ...next, state: C_WAIT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
     },
     _ => {
@@ -2011,6 +2054,11 @@ function __server_hello12(c: Client, raw: message.Raw, h: message.ServerHello, o
       if (e.data.len() != 0 || !__has_extension(c.hello.extensions, message.EXT_SERVER_NAME)) {
         return Err(UnsupportedExtension(e.kind));
       }
+    } else if (e.kind == message.EXT_STATUS_REQUEST) {
+      // RFC 6066 section 8: an empty status_request says that a CertificateStatus can follow the Certificate.
+      if (e.data.len() != 0 || !__has_extension(c.hello.extensions, message.EXT_STATUS_REQUEST)) {
+        return Err(UnsupportedExtension(e.kind));
+      }
     } else if (e.kind != tls12.EXT_EC_POINT_FORMATS) {
       return Err(UnsupportedExtension(e.kind));
     }
@@ -2044,6 +2092,10 @@ function __client_message12(c: Client, raw: message.Raw, out: Out): Result[Clien
         return Err(Message(e));
       }
     }
+  }
+  // A server can omit the CertificateStatus that its ServerHello announced.
+  if (c.state == C12_WAIT_KEY_EXCHANGE && raw.kind == message.CERTIFICATE_STATUS && c.stapled.len() == 0 && __has_extension(c.peer_extensions, message.EXT_STATUS_REQUEST)) {
+    return Ok(ClientRun { client: Client { ...next, stapled: __status(tls12.certificate_status(raw.bytes))? }, out: out });
   }
   if (c.state == C12_WAIT_KEY_EXCHANGE && raw.kind == message.SERVER_KEY_EXCHANGE) {
     return __key_exchange12(next, raw, out);
@@ -2086,7 +2138,7 @@ function __key_exchange12(c: Client, raw: message.Raw, out: Out): Result[ClientR
     return Err(Illegal("signature scheme"));
   }
   let signed = __cat(__join(c.hello.random, c.server_random), kx.params);
-  let ev = VerifyServer(Verification { chain: c.chain, scheme: kx.scheme, signed: signed, signature: kx.signature, tls12: true });
+  let ev = VerifyServer(Verification { chain: c.chain, scheme: kx.scheme, signed: signed, signature: kx.signature, tls12: true, stapled: c.stapled });
   return Ok(ClientRun { client: Client { ...c, key_exchange: kx, state: C12_WAIT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
@@ -2484,7 +2536,7 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
       return Err(Misuse("client_restore"));
     }
   }
-  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: false, suite12: 0, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE });
+  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, more_shares: [], spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [], peer_extensions: [], tls12: false, suite12: 0, server_random: [], key_exchange: __no_key_exchange(), master12: [], early: EARLY_NONE, stapled: [] });
 }
 ```
 
@@ -2547,7 +2599,7 @@ function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] 
 
 ```fern
 <<46 pub struct ServerConfig>>=
-pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[], early_data: boolean, entry_extensions: message.Extension[] }
+pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean, quic: boolean, extensions: message.Extension[], early_data: boolean, ocsp_response: u8[] }
 ```
 
 ### `47 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig`
@@ -2555,7 +2607,7 @@ pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.Cip
 ```fern
 <<47 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig>>=
 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig {
-  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [], early_data: false, entry_extensions: [] };
+  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false, quic: false, extensions: [], early_data: false, ocsp_response: [] };
 }
 ```
 
@@ -2883,11 +2935,10 @@ function __server_flight(s: Server, alpn: string): u8[] {
   let entries: message.CertificateEntry[] = [];
   let i = 0;
   while (i < s.config.chain.len()) {
-    // The extensions of the entry of the leaf, such as a stapled status.
-    // The caller gives them only when the ClientHello asked for them.
+    // The leaf has the stapled OCSP response when the ClientHello asks for one.
     let exts: message.Extension[] = [];
-    if (i == 0) {
-      exts = s.config.entry_extensions;
+    if (i == 0 && s.config.ocsp_response.len() > 0 && message.asks_ocsp(message.find(s.peer_extensions, message.EXT_STATUS_REQUEST).unwrap_or([]))) {
+      exts = [message.ext_certificate_status(s.config.ocsp_response)];
     }
     entries = entries.append(message.CertificateEntry { data: s.config.chain[i], extensions: exts });
     i += 1;
@@ -3093,7 +3144,7 @@ function __client_certificate(s: Server, raw: message.Raw, cert: message.Certifi
   }
   let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
   if (cert.entries.len() == 0) {
-    let ev = VerifyClient(Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false });
+    let ev = VerifyClient(Verification { chain: [], scheme: 0, signed: [], signature: [], tls12: false, stapled: [] });
     return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
   }
   let chain: u8[][] = [];
@@ -3109,7 +3160,7 @@ function __client_verify(s: Server, raw: message.Raw, v: message.CertificateVeri
   }
   let signed = certificate_verify_content(false, __hash(s.conn));
   let conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
-  let ev = VerifyClient(Verification { chain: s.client_chain, scheme: v.scheme, signed: signed, signature: v.signature, tls12: false });
+  let ev = VerifyClient(Verification { chain: s.client_chain, scheme: v.scheme, signed: signed, signature: v.signature, tls12: false, stapled: [] });
   return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
 }
 

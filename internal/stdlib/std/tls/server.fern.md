@@ -6,6 +6,8 @@ This module provides TLS 1.3 server sessions and connections.
 
 Server configuration combines an identity, ALPN policy, ticket policy, and optional client trust roots. Session state manages handshake and application records.
 
+`with_ocsp_response` gives a DER OCSP response for the leaf. The server staples it to the leaf's `CertificateEntry` when the ClientHello asks for an OCSP status. The server does not get or refresh the response. Give a new configuration before the `nextUpdate` of the response.
+
 ## Contracts
 
 A session draws no randomness of its own: `start` takes exactly `entropy(config)` bytes from the caller, covering the handshake's random and key share and the ticket it issues, so a session given the same bytes and clock writes the same records. `accept` draws those bytes from the platform's random source. The configuration shares the supplied identity. The caller can release its own key holder while the configured identity continues to sign. For session tickets, `config` borrows the supplied secret bytes and stores a derived key. Servers configured with the same secret can resume each other's tickets.
@@ -101,7 +103,7 @@ import "std/utf8";
 
 ```fern
 <<3 pub struct Config>>=
-pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots] }
+pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots], ocsp_response: u8[] }
 ```
 
 ### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]`
@@ -110,7 +112,7 @@ pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolea
 <<4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]>>=
 // Construct a configuration that never issues or accepts session tickets.
 pub function config_without_tickets(id: identity.Identity): Config {
-  return Config { identity: id, alpn: [], tickets: false, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: [], client_roots: None };
+  return Config { identity: id, alpn: [], tickets: false, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: [], client_roots: None, ocsp_response: [] };
 }
 
 // Supply at least 32 bytes from a cryptographic random source for session tickets.
@@ -152,6 +154,12 @@ pub function (c: Config) without_tickets(): Config {
 
 pub function (c: Config) with_client_roots(roots: verify.Roots): Config {
   return Config { ...c, client_roots: Some(roots) };
+}
+
+// Staple a DER OCSP response for the leaf to each handshake whose client asks
+// for one. Give a new response before the nextUpdate of the old one.
+pub function (c: Config) with_ocsp_response(response: [u8]): Config {
+  return Config { ...c, ocsp_response: __bytes_owned(response) };
 }
 ```
 
@@ -198,7 +206,7 @@ function __handshake_config(config: Config): handshake.ServerConfig {
     },
     None => {}
   }
-  return handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks };
+  return handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks, ocsp_response: config.ocsp_response };
 }
 
 pub function (s: Session) read(input: [u8], now: time.Timestamp): Result[Step, tls.Failure] {

@@ -329,6 +329,11 @@ function __body(raw: [u8], what: string): Result[u8[], message.MsgError] {
   return Ok(__bytes_owned(raw[4:raw.len()]));
 }
 
+// The DER OCSP response of a TLS 1.2 CertificateStatus message.
+pub function certificate_status(raw: [u8]): Result[u8[], message.MsgError] {
+  return message.ocsp_response(__body(raw, "certificate_status")?);
+}
+
 // The DER certificates of a TLS 1.2 Certificate message, leaf first.
 pub function certificate_chain(raw: [u8]): Result[u8[][], message.MsgError] {
   let b = __body(raw, "certificate")?;
