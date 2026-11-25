@@ -8,6 +8,12 @@ Use `ensure_key_with_options(e, alias, options)` when provisioning a new key. St
 
 Use `seal_with_context(e, alias, value, context)` and `open_with_context(e, alias, sealed, context)` for records that share a key. Choose a stable label for each purpose. The cipher authenticates this label alongside the ciphertext. Opening requires the same label. The original functions use empty context and can read existing envelopes.
 
+Use `make_signing_key(e, alias, challenge, options)` to make an EC P-256 signing key with an attestation chain. It needs Android 7.0 or later. The challenge has 1 to 128 bytes, and the leaf certificate of the chain carries it. A peer gives a fresh challenge and checks the chain with `std/android/attestation`. The call refuses an alias that already has a key.
+
+The result gives the DER SubjectPublicKeyInfo of the key and the DER chain from the leaf to the root. `signing_key(e, alias)` reads them again later. The chain keeps the challenge of the generation.
+
+`sign(e, alias, message)` signs with SHA-256 and ECDSA and gives a DER ECDSA-Sig-Value. `delete_key(e, alias)` deletes the key of an alias.
+
 The Android JNI test app provisions a key that requires an unlocked device. It checks legacy and context-bound envelopes, distinct IVs, and rejection of a changed tag or context. The module clears its Java plaintext input and output arrays before releasing the local frame. The caller owns the input to sealing and the plaintext returned by opening. Run its emulator check for provider behavior. Hardware backing requires testing on the intended physical device.
 
 ```fern
@@ -19,6 +25,8 @@ The Android JNI test app provisions a key that requires an unlocked device. It c
 <<byte arrays>>
 
 <<sealed values>>
+
+<<signing keys>>
 ```
 
 ### Session
@@ -30,6 +38,7 @@ import "std/android/keystore/bindings";
 import "std/jni";
 import "std/crypto";
 import "std/result";
+import "std/tls/x509";
 
 const PROVIDER: string = "AndroidKeyStore";
 
@@ -65,11 +74,15 @@ function close(e: usize, c: bindings.Classes): void {
   jni.pop_local_frame(e, 0 as usize);
 }
 
-function lookup(e: usize, c: bindings.Classes, alias: string): Result[jni.Object, jni.JavaError] {
+function loaded(e: usize, c: bindings.Classes): Result[bindings.KeyStore, jni.JavaError] {
   let store = c.key_store.get_instance(e, PROVIDER)?;
-  let none = jni.Object { ref: 0 as usize };
-  c.key_store.load(e, store, none)?;
-  return c.key_store.get_key(e, store, alias, none);
+  c.key_store.load(e, store, jni.Object { ref: 0 as usize })?;
+  return Ok(store);
+}
+
+function lookup(e: usize, c: bindings.Classes, alias: string): Result[jni.Object, jni.JavaError] {
+  let store = loaded(e, c)?;
+  return c.key_store.get_key(e, store, alias, jni.Object { ref: 0 as usize });
 }
 ```
 
@@ -98,11 +111,7 @@ pub function ensure_key(e: usize, alias: string): Result[void, jni.JavaError] {
 pub function ensure_key_with_options(e: usize, alias: string, options: KeyOptions): Result[void, jni.JavaError] {
   let c = session(e, alias)?;
   defer close(e, c);
-  // MonitorEnter and MonitorExit on the shared Java class cover lookup and generation.
-  if (jni.call1(e, 217, c.key_store.class) as i32 != 0) {
-    jni.check(e)?;
-    return Err(failure("cannot lock key creation"));
-  }
+  lock(e, c)?;
   defer unlock(e, c.key_store.class);
   let existing = lookup(e, c, alias)?;
   if (!existing.is_null()) {
@@ -129,6 +138,11 @@ function key_parameters(e: usize, c: bindings.Classes, alias: string, options: K
   let padding = jni.string_array(e, ["NoPadding"]);
   jni.check(e)?;
   spec.set_encryption_paddings(e, builder, jni.Object { ref: padding })?;
+  return restricted(e, c, builder, options);
+}
+
+function restricted(e: usize, c: bindings.Classes, builder: bindings.KeyGenParameterSpec_Builder, options: KeyOptions): Result[jni.Object, jni.JavaError] {
+  let spec = c.key_gen_parameter_spec_builder;
   if (options.unlocked_device_required) {
     spec.set_unlocked_device_required(e, builder, true)?;
   }
@@ -139,6 +153,15 @@ function key_parameters(e: usize, c: bindings.Classes, alias: string, options: K
     spec.set_is_strong_box_backed(e, builder, true)?;
   }
   return spec.build(e, builder);
+}
+
+// MonitorEnter on the shared Java class serializes lookup with generation and deletion.
+function lock(e: usize, c: bindings.Classes): Result[void, jni.JavaError] {
+  if (jni.call1(e, 217, c.key_store.class) as i32 != 0) {
+    jni.check(e)?;
+    return Err(failure("cannot lock key creation"));
+  }
+  return Ok(());
 }
 
 function unlock(e: usize, class: usize): void {
@@ -175,6 +198,17 @@ function read_bytes(e: usize, array: jni.Object, size: i32): Result[u8[], jni.Ja
     return Err(err);
   }
   return Ok(out);
+}
+
+function array_bytes(e: usize, array: jni.Object, limit: i32): Result[u8[], jni.JavaError] {
+  if (array.is_null()) {
+    return Err(failure("missing provider output"));
+  }
+  let size = jni.get_array_length(e, array.ref);
+  if (size < 1 || size > limit) {
+    return Err(failure("unexpected provider output length"));
+  }
+  return read_bytes(e, array, size);
 }
 ```
 
@@ -263,5 +297,128 @@ function take_plaintext(e: usize, c: bindings.Classes, output: jni.Object, size:
     return Err(err);
   }
   return plain;
+}
+```
+
+### Signing keys
+
+```fern
+<<signing keys>>=
+const ATTESTED: string = "EC";
+
+const SIGNATURE: string = "SHA256withECDSA";
+
+const MAX_CHALLENGE: i32 = 128;
+
+const MAX_CHAIN: i32 = 16;
+
+const MAX_CERTIFICATE: i32 = 65536;
+
+const MAX_SIGNATURE: i32 = 72;
+
+const MAX_MESSAGE: i32 = 1048576;
+
+// The DER SubjectPublicKeyInfo of the key, and its attestation chain from the leaf to the root.
+pub struct SigningKey { public_key: u8[], chain: u8[][] }
+
+// Makes an EC P-256 signing key whose leaf certificate carries `challenge`.
+pub function make_signing_key(e: usize, alias: string, challenge: [u8], options: KeyOptions): Result[SigningKey, jni.JavaError] {
+  if (challenge.len() < 1 || challenge.len() > MAX_CHALLENGE) {
+    return Err(failure("challenge must have 1 to 128 bytes"));
+  }
+  let c = session(e, alias)?;
+  defer close(e, c);
+  if (!c.key_gen_parameter_spec_builder.has_set_attestation_challenge()) {
+    return Err(failure("key attestation needs Android 7.0 or later"));
+  }
+  lock(e, c)?;
+  defer unlock(e, c.key_store.class);
+  let existing = lookup(e, c, alias)?;
+  if (!existing.is_null()) {
+    return Err(failure("alias already has a key"));
+  }
+  let params = signing_parameters(e, c, alias, challenge, options)?;
+  let generator = c.key_pair_generator.get_instance(e, ATTESTED, PROVIDER)?;
+  c.key_pair_generator.initialize(e, generator, params)?;
+  c.key_pair_generator.generate_key_pair(e, generator)?;
+  return attested(e, c, alias);
+}
+
+function signing_parameters(e: usize, c: bindings.Classes, alias: string, challenge: [u8], options: KeyOptions): Result[jni.Object, jni.JavaError] {
+  let spec = c.key_gen_parameter_spec_builder;
+  // PURPOSE_SIGN | PURPOSE_VERIFY
+  let builder = spec.new(e, alias, 12)?;
+  // An EC key of 256 bits is on the curve P-256.
+  spec.set_key_size(e, builder, 256)?;
+  let digests = jni.string_array(e, ["SHA-256"]);
+  jni.check(e)?;
+  spec.set_digests(e, builder, jni.Object { ref: digests })?;
+  let nonce = java_bytes(e, challenge)?;
+  spec.set_attestation_challenge(e, builder, nonce)?;
+  return restricted(e, c, builder, options);
+}
+
+// Reads the public key and the attestation chain of an existing signing key.
+pub function signing_key(e: usize, alias: string): Result[SigningKey, jni.JavaError] {
+  let c = session(e, alias)?;
+  defer close(e, c);
+  return attested(e, c, alias);
+}
+
+function attested(e: usize, c: bindings.Classes, alias: string): Result[SigningKey, jni.JavaError] {
+  let store = loaded(e, c)?;
+  let certs = c.key_store.get_certificate_chain(e, store, alias)?;
+  if (certs.is_null()) {
+    return Err(failure("missing key"));
+  }
+  let n = jni.get_array_length(e, certs.ref);
+  if (n < 1 || n > MAX_CHAIN) {
+    return Err(failure("unexpected certificate chain length"));
+  }
+  let chain: u8[][] = [];
+  for i in 0..n {
+    chain = chain.append(encoded(e, c, certs, i)?);
+  }
+  return match (x509.parse(chain[0])) {
+    Ok(leaf) => Ok(SigningKey { public_key: leaf.spki, chain: chain }),
+    Err(err) => Err(failure("leaf certificate: " + err.message())),
+  };
+}
+
+function encoded(e: usize, c: bindings.Classes, certs: jni.Object, i: i32): Result[u8[], jni.JavaError] {
+  let cert = jni.get_object_array_element(e, certs.ref, i);
+  jni.check(e)?;
+  defer jni.delete_local_ref(e, cert);
+  let der = c.certificate.get_encoded(e, bindings.Certificate { ref: cert })?;
+  defer jni.delete_local_ref(e, der.ref);
+  return array_bytes(e, der, MAX_CERTIFICATE);
+}
+
+// Signs `message` with SHA-256 and ECDSA. The result is a DER ECDSA-Sig-Value.
+pub function sign(e: usize, alias: string, message: [u8]): Result[u8[], jni.JavaError] {
+  if (message.len() > MAX_MESSAGE) {
+    return Err(failure("message must have at most 1048576 bytes"));
+  }
+  let c = session(e, alias)?;
+  defer close(e, c);
+  let handle = key(e, c, alias)?;
+  let signer = c.signature.get_instance(e, SIGNATURE)?;
+  c.signature.init_sign(e, signer, handle)?;
+  if (message.len() > 0) {
+    let input = java_bytes(e, message)?;
+    c.signature.update(e, signer, input)?;
+  }
+  let sig = c.signature.sign(e, signer)?;
+  return array_bytes(e, sig, MAX_SIGNATURE);
+}
+
+// Deletes the key of an alias. A missing alias is not an error.
+pub function delete_key(e: usize, alias: string): Result[void, jni.JavaError] {
+  let c = session(e, alias)?;
+  defer close(e, c);
+  lock(e, c)?;
+  defer unlock(e, c.key_store.class);
+  let store = loaded(e, c)?;
+  return c.key_store.delete_entry(e, store, alias);
 }
 ```
