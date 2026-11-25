@@ -356,6 +356,37 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	{"mldsa", `import "std/crypto/mldsa";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, ((i * 29 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function main(): i32 {
+  let seed: u8[] = filled(32, 3);
+  let rnd: u8[] = filled(32, 5);
+  let message: u8[] = filled(40, 9);
+  __ct_secret(seed);
+  __ct_secret(rnd);
+  let Ok(k) = mldsa.keygen_derand(seed) else { return 1; };
+  __ct_public(k.public_key);
+  let Ok(hedged) = mldsa.sign_derand(k.private_key, message, [], rnd) else { return 2; };
+  let Ok(fixed) = mldsa.sign_deterministic(k.private_key, message, []) else { return 3; };
+  if (!mldsa.verify(k.public_key, message, [], hedged)) {
+    return 4;
+  }
+  if (!mldsa.verify(k.public_key, message, [], fixed)) {
+    return 5;
+  }
+  return 0;
+}
+`, false},
 	{"hpke", `import "std/crypto/hpke";
 
 function filled(n: i32, seed: i32): u8[] {

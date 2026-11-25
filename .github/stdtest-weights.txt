@@ -242,6 +242,7 @@ map_verbs 8
 math 7
 metrics 20
 mitigations 102
+mldsa 70
 mlkem768 14
 mock_platform_canned 124
 montgomery 10
