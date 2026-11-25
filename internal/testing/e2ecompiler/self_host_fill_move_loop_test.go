@@ -41,6 +41,15 @@ const fillMoveLoopFunctions = `@noinline function fill8(own a: u8[], at: i32, n:
   while (i < n) { w = w.with(i, w[i + 7]); i += 1; }
   return w;
 }
+@noinline function ahead8(own w: u8[], n: i32): u8[] {
+  let i = 0;
+  while (i < n) { w = w.with(i + 7, w[i]); i += 1; }
+  return w;
+}
+@noinline function shift8(own w: u8[], n: i32): u8[] {
+  for i in 0..n { w = w.with(i + 2, w[i + 9]); }
+  return w;
+}
 @noinline function move8(own w: u8[], at: i32, from: i32, n: i32): u8[] {
   let i = 0;
   while (i < n) { w = w.with(at + i, w[from + i]); i += 1; }
@@ -211,6 +220,8 @@ const fillMoveLoopMain = `function main(): i32 {
   }
   let s = slide8(seq8(64), 50);
   if (!same8(s, rmove8(seq8(64), 0, 7, 50))) { return 4; }
+  if (!same8(ahead8(seq8(64), 50), rmove8(seq8(64), 7, 0, 50))) { return 20; }
+  if (!same8(shift8(seq8(64), 50), rmove8(seq8(64), 2, 9, 50))) { return 21; }
   let f = fill8(seq8(50), 3, 9, 200u8);
   if (f.len() != 50 || f[2] != seq8(50)[2] || f[3] != 200u8 || f[11] != 200u8 || f[12] != seq8(50)[12]) { return 5; }
   let z = zero32(seq32(40), 40);
@@ -288,6 +299,23 @@ func TestSelfHostFillMoveLoops(t *testing.T) {
 					t.Errorf("no loop became a call to %s", name)
 				}
 			}
+			// The checks of these loops are grouped into one probe, which the
+			// move kernel replaces.
+			for _, fn := range []string{"slide8", "ahead8", "shift8"} {
+				body := asmFunction(string(assembly), "__fn_"+fn+":")
+				call := regexp.MustCompile(`(?m)^\s+(?:call|bl|jmp|b) L?__fn___fern_arr_move_u8(?:\.r)?\s*$`)
+				if target == "wasm32-wasi" {
+					bodies := wasmFuncBodies(string(assembly), "$"+fn+" ")
+					body = strings.Join(bodies, "\n")
+					call = regexp.MustCompile(`(?m)call \$__fern_arr_move_u8\b`)
+				}
+				if body == "" {
+					t.Fatalf("no function %s in the assembly", fn)
+				}
+				if !call.MatchString(body) {
+					t.Errorf("the loop of %s did not become a call to __fern_arr_move_u8:\n%s", fn, body)
+				}
+			}
 			if target == "wasm32-wasi" {
 				bin := cli.wasmComponent(t, src, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 				out, err := exec.Command(e2eharness.Wasmtime(t), "run", bin).CombinedOutput()
@@ -305,14 +333,16 @@ func TestSelfHostFillMoveLoops(t *testing.T) {
 func TestSelfHostFillMoveLoopBounds(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	calls := map[string]string{
-		"fill-end":   "fill8(seq8(10), 5, 6, 1u8)",
-		"fill-start": "fill8(seq8(10), 0 - 1, 2, 1u8)",
-		"move-read":  "move8(seq8(10), 0, 5, 6)",
-		"move-write": "move8(seq8(10), 5, 0, 6)",
-		"fill-wide":  "fill32(seq32(10), 9, 2, 3)",
-		"move-wide":  "move32(seq32(10), 0, 9, 2)",
-		"fill-half":  "fill16(seq16(10), 9, 2, 1 as u16)",
-		"move-half":  "movei16(seqi16(10), 0, 9, 2)",
+		"fill-end":    "fill8(seq8(10), 5, 6, 1u8)",
+		"fill-start":  "fill8(seq8(10), 0 - 1, 2, 1u8)",
+		"move-read":   "move8(seq8(10), 0, 5, 6)",
+		"move-write":  "move8(seq8(10), 5, 0, 6)",
+		"fill-wide":   "fill32(seq32(10), 9, 2, 3)",
+		"move-wide":   "move32(seq32(10), 0, 9, 2)",
+		"fill-half":   "fill16(seq16(10), 9, 2, 1 as u16)",
+		"move-half":   "movei16(seqi16(10), 0, 9, 2)",
+		"slide-read":  "slide8(seq8(10), 4)",
+		"ahead-write": "ahead8(seq8(10), 4)",
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		for name, call := range calls {
