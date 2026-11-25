@@ -7,7 +7,10 @@ Residual overflow falls back to verbatim coding.
 
 `encode_frame` emits one independent frame with a frame number or sample position.
 `stream_header` supplies STREAMINFO for a caller that writes frames incrementally.
-`encode` writes a complete fixed-block stream with the exact total count and PCM MD5.
+`writer` starts a stream with a STREAMINFO block that gives no total count and no PCM MD5.
+`push` appends the frames of each complete block to the output, and keeps less than one block of PCM.
+`finish` appends the final short block and returns the STREAMINFO block with the total count and PCM MD5.
+`encode` writes a complete fixed-block stream through the same writer.
 Each encoded frame includes its header CRC-8 and frame CRC-16.
 
 The default options select fixed predictors without LPC analysis.
@@ -204,35 +207,85 @@ pub function encode_frame(input: [i32], format: pcm.Format, at: Position, option
   return Ok(EncodedFrame { frames: frames, number: number_value, variable: variable, assignment: selected.assignment, bytes: output.finish()? });
 }
 
-pub function encode(input: [i32], format: pcm.Format, options: Options, limits: pcm.Limits): Result[u8[], pcm.AudioError] {
-  let frames = input_frames(input, format, options, limits)?;
-  let digest: u8[] = [];
-  for _ in 0..16 {
-    digest = digest.append(0u8);
+pub struct Writer { format: pcm.Format, options: Options, limits: pcm.Limits, pending: i32[], frames: u64, index: u32, written: i32, hash: crypto.Md5 }
+
+const UNKNOWN_MD5: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+// Return a writer and a STREAMINFO block with an unknown total and digest.
+pub function writer(format: pcm.Format, options: Options, limits: pcm.Limits): Result[(Writer, u8[]), pcm.AudioError] {
+  pcm.check_input([], limits)?;
+  if (!valid_format(format) || !valid_options(options)) {
+    return Err(pcm.Header);
   }
-  let output = stream_header(StreamInfo { format: format, frames: frames as u64, min_block: options.block_frames, max_block: options.block_frames, md5: digest }, limits)?;
-  let hash = crypto.md5_new();
+  let header = stream_header(StreamInfo { format: format, frames: 0u64, min_block: options.block_frames, max_block: options.block_frames, md5: UNKNOWN_MD5 }, limits)?;
+  let state = Writer { format: format, options: options, limits: limits, pending: [], frames: 0u64, index: 0u32, written: header.len(), hash: crypto.md5_new() };
+  return Ok((state, header));
+}
+
+function (own state: Writer) emit(block: [i32], own output: u8[]): Result[(Writer, u8[]), pcm.AudioError] {
+  let frame = encode_frame(block, state.format, FrameNumber(state.index), state.options, pcm.Limits { ...state.limits, max_input_bytes: state.limits.max_input_bytes - state.written })?;
+  for byte in frame.bytes {
+    output = output.append(byte);
+  }
+  return Ok((Writer { ...state, index: state.index + 1u32, written: state.written + frame.bytes.len() }, output));
+}
+
+// Append the frames of each complete block to `output`. The writer keeps less than one block.
+pub function (own state: Writer) push(samples: [i32], own output: u8[]): Result[(Writer, u8[]), pcm.AudioError] {
+  let frames = pcm.validate(samples, state.format, state.limits)?;
+  if (frames as u64 > 68719476735u64 - state.frames) {
+    return Err(pcm.Limit);
+  }
+  let raw: u8[] = [];
+  for value in samples {
+    raw = wire.put_le(raw, value as u64, (state.format.bits_per_sample + 7) / 8);
+  }
+  let block = state.options.block_frames * state.format.channels;
+  let pending = state.pending;
+  let current = Writer { ...state, pending: [], frames: state.frames + frames as u64, hash: state.hash.update(raw) };
+  let bytes = output;
   let at = 0;
-  let index = 0u32;
-  while (at < frames) {
-    let count = if (frames - at < options.block_frames) { frames - at } else { options.block_frames };
-    let samples = input[at * format.channels:(at + count) * format.channels];
-    let frame = encode_frame(samples, format, FrameNumber(index), options, pcm.Limits { ...limits, max_input_bytes: limits.max_input_bytes - output.len() })?;
-    for byte in frame.bytes {
-      output = output.append(byte);
+  if (pending.len() > 0) {
+    while (at < samples.len() && pending.len() < block) {
+      pending = pending.append(samples[at]);
+      at += 1;
     }
-    let raw: u8[] = [];
-    for value in samples {
-      raw = wire.put_le(raw, value as u64, (format.bits_per_sample + 7) / 8);
+    if (pending.len() < block) {
+      return Ok((Writer { ...current, pending: pending }, bytes));
     }
-    hash = hash.update(raw);
-    at += count;
-    index += 1u32;
+    let (next, appended) = current.emit(pending, bytes)?;
+    current = next;
+    bytes = appended;
+    pending = [];
   }
-  let complete = hash.finish();
-  for i in 0..16 {
-    output = output.with(26 + i, complete[i]);
+  while (samples.len() - at >= block) {
+    let (next, appended) = current.emit(samples[at:at + block], bytes)?;
+    current = next;
+    bytes = appended;
+    at += block;
   }
-  return Ok(output);
+  for i in at..samples.len() {
+    pending = pending.append(samples[i]);
+  }
+  return Ok((Writer { ...current, pending: pending }, bytes));
+}
+
+// Append the final short block to `output`, and return the STREAMINFO block with the total and digest.
+pub function (own state: Writer) finish(own output: u8[]): Result[(u8[], u8[]), pcm.AudioError] {
+  let pending = state.pending;
+  let (done, bytes) = if (pending.len() > 0) { state.emit(pending, output)? } else { (state, output) };
+  let header = stream_header(StreamInfo { format: done.format, frames: done.frames, min_block: done.options.block_frames, max_block: done.options.block_frames, md5: done.hash.finish() }, done.limits)?;
+  return Ok((bytes, header));
+}
+
+pub function encode(input: [i32], format: pcm.Format, options: Options, limits: pcm.Limits): Result[u8[], pcm.AudioError] {
+  let _ = input_frames(input, format, options, limits)?;
+  let (state, start) = writer(format, options, limits)?;
+  let (pushed, body) = state.push(input, start)?;
+  let (complete, header) = pushed.finish(body)?;
+  for i in 0..header.len() {
+    complete = complete.with(i, header[i]);
+  }
+  return Ok(complete);
 }
 ```
