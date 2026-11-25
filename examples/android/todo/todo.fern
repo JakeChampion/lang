@@ -87,7 +87,7 @@ pub function update(own m: Model, msg: Msg): Model {
     Add => {
       return added(m);
     },
-    Done(i) => {
+    Msg.Done(i) => {
       return toggled(m, i);
     },
     Remove(i) => {

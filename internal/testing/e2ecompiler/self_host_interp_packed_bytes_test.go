@@ -36,14 +36,27 @@ function main(): i32 {
   if (text != "hi") { return 7; }
   let back = text.as_bytes();
   if (back.len() != 2 || back[1] != 105) { return 8; }
+  let original = __alloc_u8(4);
+  let changed = original.with(0, 9u8);
+  let grown = original.append(7u8);
+  let short = original.truncate(3);
+  let same = original.truncate(4);
+  let long = original.truncate(8);
+  unsafe {
+    __arr_set_len(changed, 2);
+    __arr_set_len(grown, 2);
+    __arr_set_len(short, 2);
+    __arr_set_len(same, 2);
+    __arr_set_len(long, 2);
+  }
+  if (original.len() != 4 || original[0] != 0 || changed[0] != 9) { return 9; }
+  if (original.truncate(-1).len() != 0) { return 10; }
   print("ok");
   return 0;
 }
 `
 
 // A u8[] of 256 MiB, which is past the element limit of a compiled Value[].
-// The Go oracle holds 16 bytes for each element (#17245), so only the
-// self-host interpreter runs it.
 const interpLargeBytesSrc = `function main(): i32 {
   let a = __alloc_u8(268435456);
   a = a.with(268435455, 7 as u8);
@@ -68,8 +81,8 @@ func TestSelfHostInterpPackedBytes(t *testing.T) {
 		if out, err := exec.Command(cli, "-interp", small, stdlib).CombinedOutput(); err != nil || string(out) != "ok\n" {
 			t.Fatalf("%s -interp: %v\n%s", cli, err, out)
 		}
-	}
-	if out, err := exec.Command(self, "-interp", large, stdlib).CombinedOutput(); err != nil || string(out) != "268435456 7 0\n" {
-		t.Fatalf("self-host -interp of a 256 MiB u8[]: %v\n%s", err, out)
+		if out, err := exec.Command(cli, "-interp", large, stdlib).CombinedOutput(); err != nil || string(out) != "268435456 7 0\n" {
+			t.Fatalf("%s -interp of a 256 MiB u8[]: %v\n%s", cli, err, out)
+		}
 	}
 }

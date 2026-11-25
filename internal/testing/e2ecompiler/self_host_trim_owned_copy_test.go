@@ -55,6 +55,23 @@ function round(i: i32): i32 {
 function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }`,
 			want: 17, allocs: 200, frees: 200,
 		},
+		{
+			name: "untrimmed_slice_outlives_its_frame",
+			src: `import "std/string";
+struct Line { tag: i32, rest: string }
+@noinline
+function parse(line: string, sp: i32): Line { return Line { tag: 1, rest: slice_unchecked(line, sp + 1, line.len()).trim() }; }
+@noinline
+function clobber(k: i32): i32 { let a = [k, k + 1, k + 2, k + 3, k + 4, k + 5, k + 6, k + 7]; let t = 0; for x in a { t += x; } return t; }
+function main(): i32 {
+    let l = parse("vpsrlw $3, %ymm1", 6);
+    let t = clobber(3);
+    if (__rc_underflow_count() != 0) { return 99; }
+    if (l.rest != "$3, %ymm1") { return 1; }
+    return t - 52 + 42;
+}`,
+			want: 42, allocs: 2, frees: 2,
+		},
 	}
 }
 

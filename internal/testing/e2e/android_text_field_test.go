@@ -42,24 +42,28 @@ pub function changed(env: usize, thiz: usize, editable: usize): void { text_chan
 #include <unistd.h>
 #include <dlfcn.h>
 
-static int locals, globals;
+static int locals, globals, frames, frame_locals[16];
 static char log_[4096], text[64], pending_text[64];
 static uintptr_t fern_field, ctx_;
 static void (*changed)(uintptr_t, uintptr_t, uintptr_t);
 static uintptr_t env;
-static char names[64][64];
+static char names[1024][64];
 static int nnames;
 static void require(int ok, const char *what) { if (!ok) { fprintf(stderr, "text field: %s (locals=%d globals=%d)\nlog: %s\n", what, locals, globals, log_); exit(1); } }
 static void note(const char *s) { strcat(log_, s); strcat(log_, ";"); }
+// The classes of the wrappers. A global reference to class k is k + 5000.
+static const char *classes[] = {"android/widget/EditText", "android/view/ViewGroup$LayoutParams", "", "android/widget/TextView", "android/view/View", "android/app/Activity", "android/content/Context", "android/view/inputmethod/InputMethodManager", "android/text/Editable"};
 static uintptr_t find_class(uintptr_t e, const char *name) {
   locals++;
-  if (!strcmp(name, "android/widget/EditText")) return 2001;
-  require(!strcmp(name, "android/view/ViewGroup$LayoutParams"), name);
-  return 2002;
+  for (int k = 0; k < (int)(sizeof classes / sizeof classes[0]); k++) if (!strcmp(name, classes[k])) return 2001 + k;
+  require(0, name);
+  return 0;
 }
+static int32_t push_frame(uintptr_t e, int32_t n) { require(frames < 16, "too many frames"); frame_locals[frames++] = locals; return 0; }
+static uintptr_t pop_frame(uintptr_t e, uintptr_t keep) { require(frames > 0, "a pop with no frame"); locals = frame_locals[--frames]; return 0; }
 static uintptr_t get_class(uintptr_t e, uintptr_t obj) { locals++; return obj + 1000; }
 static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char *sig) {
-  require(nnames < 64, "too many method ids");
+  require(nnames < 1024, "too many method ids");
   require(strlen(name) < sizeof names[0], "method name too long");
   strcpy(names[nnames++], name);
   return nnames;
@@ -67,8 +71,8 @@ static uintptr_t method(uintptr_t e, uintptr_t cls, const char *name, const char
 static const char *name_of(uintptr_t id) { return names[id - 1]; }
 static uintptr_t new_object(uintptr_t e, uintptr_t cls, uintptr_t ctor, const uint64_t *args) {
   locals++;
-  if (cls == 2001) { require(args[0] == 100, "an EditText for the activity"); note("new EditText"); return 300; }
-  if (cls == 2002) { require(args[0] == 1 && args[1] == 1, "a field of one pixel"); return 301; }
+  if (cls == 7001) { require(args[0] == 100, "an EditText for the activity"); note("new EditText"); return 300; }
+  if (cls == 7002) { require(args[0] == 1 && args[1] == 1, "a field of one pixel"); return 301; }
   require(cls == 2003, "a TextField");
   note("new TextField");
   return 302;
@@ -161,6 +165,8 @@ int main(int argc, char **argv) {
   table[6] = (uintptr_t)find_class;
   table[15] = (uintptr_t)none;
   table[17] = (uintptr_t)none;
+  table[19] = (uintptr_t)push_frame;
+  table[20] = (uintptr_t)pop_frame;
   table[21] = (uintptr_t)new_global;
   table[22] = (uintptr_t)delete_global;
   table[23] = (uintptr_t)release;
@@ -187,7 +193,7 @@ int main(int argc, char **argv) {
 
   show(ctx_);
   require(log_[0] == 0, "a request waits for the UI thread");
-  require(pump(ctx_) == 1 && locals == 0 && globals == 2, "the first request adds the field");
+  require(pump(ctx_) == 1 && locals == 0 && globals == 2 && frames == 0, "the first request adds the field");
   require(!strcmp(log_, "new EditText;setSingleLine 300 1;addContentView 100 300;new TextField;addTextChangedListener 300 302;setOnEditorActionListener 300 302;setSingleLine 900 1;setInputType 900 1;setImeOptions 900 268435458;setText ab;setSelection 900 2;requestFocus 900;showSoftInput 900;"), "show");
   require(fern_field == ctx_ && !ready(message_fd(ctx_)), "a request changes the text with no message");
 

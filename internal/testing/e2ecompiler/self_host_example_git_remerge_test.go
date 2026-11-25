@@ -1,6 +1,7 @@
 package e2ecompiler
 
 import (
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"os"
@@ -740,6 +741,42 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 	}
 }
 
+// Old trees can store extra permission bits. Git normalizes them before
+// it compares the parents and before it compares the result of the merge.
+func TestSelfHostExampleGitRemergeOldModes(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, run := range gitRuns() {
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			port := gitPort(t, cli, run.target)
+			dir := t.TempDir()
+			gitInit(t, oracle, dir, run)
+			g := &gitRemergeRepo{t: t, oracle: oracle, dir: dir, when: 1700000000}
+			hash := func(kind, body string) string {
+				t.Helper()
+				out, errText, code := oracle.run(t, dir, body, "hash-object", "--literally", "-w", "-t", kind, "--stdin")
+				if code != 0 {
+					t.Fatalf("write %s: %s", kind, errText)
+				}
+				return strings.TrimSpace(out)
+			}
+			tree := func(mode, value string) string {
+				t.Helper()
+				id, err := hex.DecodeString(hash("blob", value))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return hash("tree", mode+" file\x00"+string(id))
+			}
+			base := g.git("commit-tree", tree("100644", "base\n"), "-m", "base")
+			left := g.git("commit-tree", tree("100664", "left\n"), "-p", base, "-m", "left")
+			right := g.git("commit-tree", tree("100744", "right\n"), "-p", base, "-m", "right")
+			merged := g.git("commit-tree", tree("100775", "resolved\n"), "-p", left, "-p", right, "-m", "merge")
+			gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", merged)
+		})
+	}
+}
+
 // gitRemergeGaps runs the merges that the port does not have: the port
 // stops with a message that names the part, and prints no diff of the
 // merge.
@@ -782,10 +819,12 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--format=%s", "-n", "1", "module-merge")
 	// With no form of the diff, the port does not do the merge.
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-s", "--format=%s", "module-merge")
-	g.git("config", "merge.custom.driver", "true")
+	g.git("config", "merge.custom.name", "custom merge")
 	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("file.txt merge=custom\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
+	g.git("config", "merge.custom.driver", "true")
 	refuse("the merge driver 'custom' of the configuration", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
 	os.Remove(filepath.Join(dir, ".git", "info", "attributes"))
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")

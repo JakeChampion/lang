@@ -1859,6 +1859,7 @@ TestSelfHostKVConfigDriver 8
 TestSelfHostKVConfigDriverArguments 5
 TestSelfHostKVConfigModel 16
 TestSelfHostKVConfigOrdinaryBoundaries 7
+TestSelfHostKeepGateBeforeRetain 9
 TestSelfHostKeptCallHolderX86_64 3
 TestSelfHostKeptReadPastUpdate 3
 TestSelfHostKernelIRQOps 3

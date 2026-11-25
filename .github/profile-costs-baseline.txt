@@ -69,7 +69,7 @@ profile/arm64-linux/int_loop.safe.emit	376
 profile/arm64-linux/map_string.diagnostic.bytes	144568
 profile/arm64-linux/map_string.diagnostic.emit	11754
 profile/arm64-linux/map_string.hardened.bytes	50680
-profile/arm64-linux/map_string.hardened.emit	11571
+profile/arm64-linux/map_string.hardened.emit	11692
 profile/arm64-linux/map_string.minimal.bytes	41784
 profile/arm64-linux/map_string.minimal.emit	9346
 profile/arm64-linux/map_string.safe.bytes	42856
