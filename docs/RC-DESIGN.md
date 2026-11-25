@@ -97,7 +97,12 @@ ancestor of the parent counts too (`ancestor_spent_past`). It does not
 re-read a value while a read off its first read lives into the block and is
 not read again there (`child_kept_across`). The plan holds that old read
 across the new one, and an update of it then copies. A `length` does not
-spend.
+spend. A child that lives out of the block can still let a re-read occur
+(`child_held_out`). This is so when a block below spends that child,
+because the plan then takes it. A spliced chain needs this: its payload
+lives past the block that stores the element back. A projection that the
+block only measures gives the plan nothing to take. So its parent is not
+read again for it (`used_through`).
 `semcse.fern` then merges a block's repeated reads of one slot of one value,
 which the re-reads at a block's head most often make, so the slot has one
 holder for the plan to hold or take where its box is consumed. Last,
