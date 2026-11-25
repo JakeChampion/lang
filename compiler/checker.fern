@@ -15129,7 +15129,6 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
       }
     }
   }
-  let named_bindings: Option[(string[], typeinfo.Type[], typeinfo.Type[])] = None;
   match (c.callee) {
     ast.ExprFieldAccess(mfa) => {
       let cqen = qual_enum_name(mfa.obj, s);
@@ -15189,7 +15188,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
         }
       }
       if (c.args.len() > 0 && !s.method_missing(receiver, mfa.field)) {
-        out = call_argument_diags(c, s.field_call_param_types(c, mfa.field, receiver), s, out);
+        out = call_argument_diags(c, dest, s.field_call_param_types(c, mfa.field, receiver), s, out);
       }
       return field_call_diags(c, mfa, receiver, s, out);
     },
@@ -15201,98 +15200,36 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
       if (is_map_new_name(cid.name) && !s.module_imported("core/map")) {
         out = out.append(dg_at("E001", map_import_msg(), c.line, c.col));
       }
-      if (resolved && c.args.len() > 0) {
-        let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
+      if (s.ident_binding(cid) < 0) {
         if let Some(sig) = s.lookup_sig(cid.name) {
-          if (binds_argument_dests(sig, cid.name, s)) {
-            let bindings = diagnostic_call_bindings(sig, c, s);
-            let (names, _, types) = bindings;
-            named_bindings = Some(bindings);
-            dests = argument_dests_from_bindings(sig, c, dest, s, dests, names, types);
-          }
+          return declared_call_diags(c, cid, sig, resolved, dest, s, out);
         }
-        out = call_argument_diags(c, dests, s, out);
+      }
+      if (resolved && c.args.len() > 0) {
+        out = call_argument_diags(c, dest, s.call_param_types(c), s, out);
       }
     },
     _ => {
       out = callee_diags(c, s, dest);
       if (c.args.len() > 0) {
-        out = call_argument_diags(c, [], s, out);
+        out = call_argument_diags(c, dest, [], s, out);
       }
     }
   }
   let calleet = check_expr(c.callee, s);
-  if (!is_unknown(calleet) && !is_func_type(calleet)) {
-    out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
-  }
+  out = non_function_call_diags(c, calleet, out);
   match (c.callee) {
     ast.ExprIdent(id) => {
-      if ((id.name == "__set_field" || id.name == "__set_index") && c.args.len() == 2) {
-        out = util.append_diags(out, place_assign_diags(c.args[0], c.args[1], c.line, c.col, s));
-      }
-      if (id.name == "cell_new" && c.args.len() == 1 && s.ident_binding(id) < 0) {
-        let cnat = check_expr(c.args[0], s);
-        out = util.append_diags(out, e057_diag(type_label(named_tparams(cnat)), cnat, s, expr_line(c.args[0]), expr_col(c.args[0])));
-      }
-
-      if (scope_variant_owner(id.name, s).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
-        for arg in c.args {
-          out = util.append_diags(out, value_diags(arg, s));
-        }
-      }
+      out = named_callee_diags(c, id, s, out);
       if (s.ident_binding(id) < 0) {
-        if let Some(sig) = s.lookup_sig(id.name) {
-          if (sig.all_type_params.len() > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.all_type_params.len()) {
-            out = out.append(dg_at("E040", util.arity_message(id.name, sig.all_type_params.len(), c.type_args.len(), "type argument"), c.line, c.col));
-          } else if (c.type_args.len() > 0) {
-            out = util.append_diags(out, const_arg_diags(sig, c, s));
-          }
-          if (c.args.len() != sig.param_types.len()) {
-            out = out.append(dg_at("E004", util.arity_message(call_subject(c), sig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
-          } else {
-            let cbn: string[] = [];
-            let cbt: typeinfo.Type[] = [];
-            let inferred_types = cbt;
-            if (sig.all_type_params.len() > 0) {
-              let bindings = match (named_bindings) {
-                Some(prior) => prior,
-                None => diagnostic_call_bindings(sig, c, s)
-              };
-              let (names, original, types) = bindings;
-              cbn = names;
-              inferred_types = original;
-              cbt = types;
-            }
-            for ai in 0..c.args.len() {
-              let at = check_expr(c.args[ai], s);
-              out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
-              let bound_checked = param_has_bindings(sig, ai, cbn);
-              if (bound_checked && ai < sig.param_type_names.len()) {
-                out = util.append_diags(out, bound_type_arg_diags(sig, c, ai, at, s, cbn, cbt));
-              }
-              out = util.append_diags(out, vec_arg_diags(sig, c, ai, at, s));
-              out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
-              if (!bound_checked && !(sig.all_type_params.len() > 0 && type_contains_unknown(sig.param_types[ai]) && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
-                out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + argument_type_label(c.args[ai], at, s), expr_line(c.args[ai]), expr_col(c.args[ai])));
-              }
-              out = util.append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
-            }
-            if (sig.all_type_params.len() > 0) {
-              out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
-              out = util.append_diags(out, bound_arg_diags(sig, c, cbn, inferred_types, s));
-              out = util.append_diags(out, uninferred_call_diags(sig, c, cbn, id.name, s, dest));
-            }
-          }
-        } else {
-          out = util.append_diags(out, callable_arg_diags(c, free_builtin_sig(id.name, s), s));
-          out = util.append_diags(out, lane_index_diags(id.name, c));
-          out = util.append_diags(out, sysreg_name_diags(id.name, c));
-          out = util.append_diags(out, display_arg_diags(c, s));
-          if (is_display_builtin(id.name) && c.args.len() != 1) {
-            out = out.append(dg_at("E004", util.arity_message(call_subject(c), 1, c.args.len(), "argument"), c.line, c.col));
-          }
-          out = util.append_diags(out, variant_ctor_diags(id.name, c, s));
+        out = util.append_diags(out, callable_arg_diags(c, free_builtin_sig(id.name, s), s));
+        out = util.append_diags(out, lane_index_diags(id.name, c));
+        out = util.append_diags(out, sysreg_name_diags(id.name, c));
+        out = util.append_diags(out, display_arg_diags(c, s));
+        if (is_display_builtin(id.name) && c.args.len() != 1) {
+          out = out.append(dg_at("E004", util.arity_message(call_subject(c), 1, c.args.len(), "argument"), c.line, c.col));
         }
+        out = util.append_diags(out, variant_ctor_diags(id.name, c, s));
       } else {
         out = util.append_diags(out, callable_arg_diags(c, s.lookup(id.name), s));
       }
@@ -15305,12 +15242,89 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
   return out;
 }
 
-function diagnostic_call_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[], typeinfo.Type[]) {
-  let (names, original) = call_bindings(sig, c, s);
-  return (names, original, call_literal_binding_types(sig, c, s, names, original));
+function non_function_call_diags(c: ast.ExprCall, calleet: typeinfo.Type, out: util.Diag[]): util.Diag[] {
+  if (!is_unknown(calleet) && !is_func_type(calleet)) {
+    out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
+  }
+  return out;
 }
 
-function call_argument_diags(c: ast.ExprCall, dests: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
+function named_callee_diags(c: ast.ExprCall, id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.Diag[] {
+  if ((id.name == "__set_field" || id.name == "__set_index") && c.args.len() == 2) {
+    out = util.append_diags(out, place_assign_diags(c.args[0], c.args[1], c.line, c.col, s));
+  }
+  if (id.name == "cell_new" && c.args.len() == 1 && s.ident_binding(id) < 0) {
+    let cnat = check_expr(c.args[0], s);
+    out = util.append_diags(out, e057_diag(type_label(named_tparams(cnat)), cnat, s, expr_line(c.args[0]), expr_col(c.args[0])));
+  }
+
+  if (scope_variant_owner(id.name, s).len() > 0 || parser.builtin_enum_of(id.name).len() > 0) {
+    for arg in c.args {
+      out = util.append_diags(out, value_diags(arg, s));
+    }
+  }
+  return out;
+}
+
+function declared_call_diags(c: ast.ExprCall, id: ast.ExprIdent, sig: FuncSig, resolved: boolean, dest: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  let arity_matches = c.args.len() == sig.param_types.len();
+  let check_args = resolved && c.args.len() > 0;
+  let bind_dests = check_args && sig.all_type_params.len() > 0 && sig.param_type_names.len() > 0 && !s.defines(id.name);
+  let cbn: string[] = [];
+  let cbt: typeinfo.Type[] = [];
+  let inferred_types = cbt;
+  if (sig.all_type_params.len() > 0 && (arity_matches || bind_dests)) {
+    let (names, types) = call_bindings(sig, c, s);
+    cbn = names;
+    inferred_types = types;
+    cbt = call_literal_binding_types(sig, c, s, names, types);
+  }
+  if (check_args) {
+    let dests = variant_payload_dests(c, dest, s, sig.param_types);
+    if (bind_dests) {
+      dests = argument_dests_from_bindings(sig, c, dest, s, dests, cbn, cbt);
+    }
+    out = argument_diags_for_dests(c, dests, s, out);
+  }
+  out = non_function_call_diags(c, check_expr(c.callee, s), out);
+  out = named_callee_diags(c, id, s, out);
+  if (sig.all_type_params.len() > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.all_type_params.len()) {
+    out = out.append(dg_at("E040", util.arity_message(id.name, sig.all_type_params.len(), c.type_args.len(), "type argument"), c.line, c.col));
+  } else if (c.type_args.len() > 0) {
+    out = util.append_diags(out, const_arg_diags(sig, c, s));
+  }
+  if (!arity_matches) {
+    out = out.append(dg_at("E004", util.arity_message(call_subject(c), sig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+  } else {
+    for ai in 0..c.args.len() {
+      let at = check_expr(c.args[ai], s);
+      out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
+      let bound_checked = param_has_bindings(sig, ai, cbn);
+      if (bound_checked && ai < sig.param_type_names.len()) {
+        out = util.append_diags(out, bound_type_arg_diags(sig, c, ai, at, s, cbn, cbt));
+      }
+      out = util.append_diags(out, vec_arg_diags(sig, c, ai, at, s));
+      out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
+      if (!bound_checked && !(sig.all_type_params.len() > 0 && type_contains_unknown(sig.param_types[ai]) && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
+        out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + argument_type_label(c.args[ai], at, s), expr_line(c.args[ai]), expr_col(c.args[ai])));
+      }
+      out = util.append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
+    }
+    if (sig.all_type_params.len() > 0) {
+      out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
+      out = util.append_diags(out, bound_arg_diags(sig, c, cbn, inferred_types, s));
+      out = util.append_diags(out, uninferred_call_diags(sig, c, cbn, id.name, s, dest));
+    }
+  }
+  return out;
+}
+
+function call_argument_diags(c: ast.ExprCall, dest: typeinfo.Type, params: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
+  let dests = bound_argument_dests(c, dest, s, variant_payload_dests(c, dest, s, params));
+  return argument_diags_for_dests(c, dests, s, out);
+}
+
+function argument_diags_for_dests(c: ast.ExprCall, dests: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
   let di = 0;
   while (di < c.args.len()) {
     let arg_dest = t_unknown("no declared parameter");
@@ -16843,15 +16857,11 @@ function bound_argument_dests(c: ast.ExprCall, outer: typeinfo.Type, s: Scope, d
   let Some(sig) = s.lookup_sig(cid.name) else {
     return dests;
   };
-  if (!binds_argument_dests(sig, cid.name, s)) {
+  if (sig.all_type_params.len() == 0 || sig.param_type_names.len() == 0 || s.defines(cid.name)) {
     return dests;
   }
   let (bn, bt) = call_type_bindings(sig, c, s);
   return argument_dests_from_bindings(sig, c, outer, s, dests, bn, bt);
-}
-
-function binds_argument_dests(sig: FuncSig, name: string, s: Scope): boolean {
-  return sig.all_type_params.len() > 0 && sig.param_type_names.len() > 0 && !s.defines(name);
 }
 
 function argument_dests_from_bindings(sig: FuncSig, c: ast.ExprCall, outer: typeinfo.Type, s: Scope, dests: typeinfo.Type[], bn: string[], bt: typeinfo.Type[]): typeinfo.Type[] {
