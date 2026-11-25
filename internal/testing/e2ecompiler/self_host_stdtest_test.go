@@ -359,7 +359,11 @@ type selfHostStdTestCase struct {
 
 func selfHostStdTestShard(t *testing.T, cases []selfHostStdTestCase) []selfHostStdTestCase {
 	t.Helper()
-	selected, err := corpus.ShardBy(cases, os.Getenv("FERN_STDTEST_SHARD"), func(tc selfHostStdTestCase) string { return tc.name })
+	weights, err := corpus.ReadWeights(langSrcAbs(t, ".github/stdtest-weights.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := corpus.ShardByWeight(cases, os.Getenv("FERN_STDTEST_SHARD"), func(tc selfHostStdTestCase) string { return tc.name }, weights)
 	if err != nil {
 		t.Fatal(err)
 	}
