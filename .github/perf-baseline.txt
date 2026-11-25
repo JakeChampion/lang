@@ -137,7 +137,7 @@ aarch64/call_overhead.ir	10313038
 aarch64/closure_call.text	1309
 aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	25800113
-aarch64/deflate_decode.text	15384
+aarch64/deflate_decode.text	14642
 aarch64/deflate_encode.ir	40167832
 aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
