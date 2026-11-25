@@ -1,6 +1,6 @@
 # WebP files
 
-This module decodes still lossless WebP files to pixels, and it makes an animated WebP file from still WebP files, one for each frame.
+This module decodes lossless WebP files to pixels, still or animated. It also makes an animated WebP file from still WebP files, one for each frame.
 
 ## Model
 
@@ -16,9 +16,30 @@ No frames, or a count of durations that is not the count of frames, gives `NoFra
 
 `decode` reads a still file with a `VP8L` chunk, the lossless format of RFC 9649. It gives an `Image` with four bytes for each pixel: red, green, blue and alpha. A file without alpha gives 255 for each alpha byte.
 
-A lossy file (a `VP8 ` chunk) and an animated file give `Unsupported`. A file that is not WebP gives `NotWebpFile`. A `VP8L` chunk that is not valid gives `BadHeader`, `BadCode`, `BadData` or `Truncated`.
+A lossy file (a `VP8 ` chunk) gives `Unsupported`, and an animated file gives `Animated`. A file that is not WebP gives `NotWebpFile`. A `VP8L` chunk that is not valid gives `BadHeader`, `BadCode`, `BadData` or `Truncated`.
 
 `decode` accepts the files that libwebp accepts. Thus the bitstream can read past the end of its chunk, to the end of the file. An `ALPH` chunk has no effect on a lossless image.
+
+`decode_animation` reads an animated file whose frames are lossless. It gives the canvas after each frame, as the animation decoder of libwebp gives it.
+
+The canvas is transparent at the start. A frame with the blend flag is blended over the canvas, with its alpha. A frame without the flag replaces its rectangle of the canvas. A frame with the dispose flag makes its rectangle transparent before the next frame. The background color of the `ANIM` chunk has no effect, as in libwebp. A loop count of 0 means that the animation loops for ever.
+
+`decode_animation` also reads a still lossless file, as one frame with a duration of 0. A lossy frame gives `Unsupported`. A `VP8L` frame cannot read past the end of its chunk. These files give `BadHeader`:
+
+- a frame that is not inside the canvas,
+- a frame before the `ANIM` chunk,
+- an animation with no frame,
+- a canvas of more than 2^28 pixels.
+
+## Compatibility
+
+| Part of the format | Status |
+| --- | --- |
+| RIFF container, `VP8X`, and `ICCP`, `EXIF`, `XMP ` and unknown chunks | Read. The metadata chunks are skipped. |
+| Lossless still image (`VP8L`) | Decoded by `decode`. |
+| Lossless animation (`ANIM`, `ANMF` with `VP8L` frames) | Decoded by `decode_animation`. Written by `animate`. |
+| Lossy image (`VP8 `) and lossy alpha (`ALPH`) | Not decoded. `animate` copies these chunks into frames. |
+| Metadata (ICC profile, Exif, XMP) | Not given to the caller. |
 
 ## Executable example
 
@@ -64,6 +85,8 @@ import "std/i32";
 <<transforms>>
 
 <<decoding>>
+
+<<animated decoding>>
 ```
 
 ### `errors`
@@ -94,7 +117,7 @@ impl error.Error for AnimateError {}
 
 impl cmp.Display for AnimateError {}
 
-pub enum DecodeError { NotWebpFile, Unsupported, BadHeader, BadCode, BadData, Truncated }
+pub enum DecodeError { NotWebpFile, Unsupported, Animated, BadHeader, BadCode, BadData, Truncated }
 
 pub function (e: DecodeError) message(): string {
   match (e) {
@@ -102,7 +125,10 @@ pub function (e: DecodeError) message(): string {
       return "webp: not a WebP file";
     },
     Unsupported => {
-      return "webp: only still lossless files can be decoded";
+      return "webp: only lossless images can be decoded";
+    },
+    Animated => {
+      return "webp: the file is animated, so decode_animation must read it";
     },
     BadHeader => {
       return "webp: the header of the lossless image is not valid";
@@ -129,6 +155,13 @@ impl cmp.Display for DecodeError {}
 
 // Red, green, blue and alpha bytes for each pixel, row by row.
 pub struct Image { width: i32, height: i32, pixels: u8[] }
+
+// The canvas after a frame, and the time to show it in milliseconds.
+pub struct Frame { image: Image, duration_ms: i32 }
+
+// The frames of an animation on a canvas of `width` by `height`. A
+// `loop_count` of 0 means that the animation loops for ever.
+pub struct Animation { width: i32, height: i32, loop_count: i32, frames: Frame[] }
 ```
 
 ### `chunks`
@@ -1003,7 +1036,7 @@ function lossless_chunk(file: [u8]): Result[Located, DecodeError] {
     return Err(Truncated);
   }
   if ((file[20] as i32 & 2) != 0) {
-    return Err(Unsupported);
+    return Err(Animated);
   }
   let at = after_extended(file, riff)?;
   return Ok(Located { start: lossless_at(file, at, riff)?, canvas_width: le24_at(file, 24) + 1, canvas_height: le24_at(file, 27) + 1 });
@@ -1062,8 +1095,12 @@ function read_transforms(own b: Bits, data: [u8], width: i32, height: i32): (Tra
 // file.
 pub function decode(file: [u8]): Result[Image, DecodeError] {
   let found = lossless_chunk(file)?;
-  let start = found.start;
-  let end = file.len();
+  return lossless_image(file, found.start, file.len(), found.canvas_width, found.canvas_height);
+}
+
+// The image of the `VP8L` data that starts at `start`, with the bytes before
+// `end`. Its size must be `want_width` by `want_height`, unless that is 0 by 0.
+function lossless_image(file: [u8], start: i32, end: i32, want_width: i32, want_height: i32): Result[Image, DecodeError] {
   if (end - start < 5 || file[start] != 47u8) {
     return Err(BadHeader);
   }
@@ -1077,7 +1114,7 @@ pub function decode(file: [u8]): Result[Image, DecodeError] {
   }
   let width = w + 1;
   let height = h + 1;
-  if (found.canvas_width > 0 && (found.canvas_width != width || found.canvas_height != height)) {
+  if (want_width > 0 && (want_width != width || want_height != height)) {
     return Err(BadHeader);
   }
   let (transforms, coded_width, cur) = read_transforms(b4, file, width, height);
@@ -1089,5 +1126,238 @@ pub function decode(file: [u8]): Result[Image, DecodeError] {
     return Err(b9.error);
   }
   return Ok(Image { width: width, height: height, pixels: rgba(undone_all(px, transforms, height)) });
+}
+```
+
+### `animated decoding`
+
+An `ANMF` chunk starts with five fields of 24 bits and a byte of flags. The fields are the place of the frame in units of two pixels, the width minus one, the height minus one, and the duration. Bit 1 of the flags turns the blend off, and bit 0 disposes of the frame. The image chunks of the frame follow.
+
+The canvas has the same bytes as the canvas of the animation decoder of libwebp, so the frames follow its rules:
+
+- A key frame goes on a transparent canvas, with no blend. The first frame is a key frame. A frame that covers the canvas, without alpha or without the blend flag, is a key frame. A frame after a disposed frame that covered the canvas or was a key frame is a key frame.
+- A blend uses the integer formula of libwebp for pixels that are not premultiplied. A pixel with an alpha of 255 replaces the pixel of the canvas, and a pixel with an alpha of 0 leaves it.
+- A pixel inside the rectangle of a disposed frame replaces the transparent pixel of the canvas, with no blend.
+
+```fern
+<<animated decoding>>=
+struct Placed { image: Image, x: i32, y: i32, duration_ms: i32, flags: i32, alpha: boolean }
+
+function covers(f: Placed, width: i32, height: i32): boolean {
+  return f.image.width == width && f.image.height == height;
+}
+
+function inside(f: Placed, x: i32, y: i32): boolean {
+  return x >= f.x && x < f.x + f.image.width && y >= f.y && y < f.y + f.image.height;
+}
+
+// The image of the first `VP8L` chunk from `at` to `end`, which must be
+// `width` by `height`, and whether the image uses alpha. `ALPH` chunks before
+// it are skipped.
+function frame_image(file: [u8], at: i32, end: i32, width: i32, height: i32): Result[(Image, boolean), DecodeError] {
+  let inner = at;
+  while (inner + 8 <= end) {
+    let size = u32_at(file, inner + 4);
+    if (size < 0 || size > end - inner - 8) {
+      return Err(BadHeader);
+    }
+    if (tag_at(file, inner, "VP8 ")) {
+      return Err(Unsupported);
+    }
+    if (tag_at(file, inner, "VP8L")) {
+      let image = lossless_image(file, inner + 8, inner + 8 + size, width, height)?;
+      return Ok((image, (file[inner + 12] as i32 >> 4 & 1) == 1));
+    }
+    if (!tag_at(file, inner, "ALPH")) {
+      return Err(BadHeader);
+    }
+    inner += 8 + size + size % 2;
+  }
+  return Err(BadHeader);
+}
+
+// The frame of the `ANMF` chunk at `at`, with `size` bytes of data, on a
+// canvas of `width` by `height`.
+function placed_frame(file: [u8], at: i32, size: i32, width: i32, height: i32): Result[Placed, DecodeError] {
+  if (size < 24) {
+    return Err(BadHeader);
+  }
+  let d = at + 8;
+  let x = le24_at(file, d) * 2;
+  let y = le24_at(file, d + 3) * 2;
+  let w = le24_at(file, d + 6) + 1;
+  let h = le24_at(file, d + 9) + 1;
+  if (x + w > width || y + h > height) {
+    return Err(BadHeader);
+  }
+  let (image, alpha) = frame_image(file, d + 16, d + size, w, h)?;
+  return Ok(Placed { image: image, x: x, y: y, duration_ms: le24_at(file, d + 12), flags: file[d + 15] as i32, alpha: alpha });
+}
+
+// The canvas with the pixel `p` of `px` blended over its pixel at `at`.
+function blended(own canvas: u8[], at: i32, px: [u8], p: i32): u8[] {
+  let src_a = px[p + 3] as i32;
+  if (src_a == 0) {
+    return canvas;
+  }
+  if (src_a == 255) {
+    return replaced(canvas, at, px, p);
+  }
+  let dst_a = canvas[at + 3] as i32 * (256 - src_a) >> 8;
+  let a = src_a + dst_a;
+  let scale = (1i64 << 24i64) / (a as i64);
+  let r = (px[p] as i32 * src_a + canvas[at] as i32 * dst_a) as i64 * scale >> 24i64;
+  let g = (px[p + 1] as i32 * src_a + canvas[at + 1] as i32 * dst_a) as i64 * scale >> 24i64;
+  let b = (px[p + 2] as i32 * src_a + canvas[at + 2] as i32 * dst_a) as i64 * scale >> 24i64;
+  return canvas.with(at, r as u8).with(at + 1, g as u8).with(at + 2, b as u8).with(at + 3, a as u8);
+}
+
+function replaced(own canvas: u8[], at: i32, px: [u8], p: i32): u8[] {
+  return canvas.with(at, px[p]).with(at + 1, px[p + 1]).with(at + 2, px[p + 2]).with(at + 3, px[p + 3]);
+}
+
+// The canvas, `width` pixels wide, with the frame `f` drawn on it. A pixel
+// inside the rectangle of `no_blend` is not blended.
+function drawn(own canvas: u8[], width: i32, f: Placed, blend: boolean, no_blend: Option[Placed]): u8[] {
+  let px = f.image.pixels;
+  for row in 0..f.image.height {
+    for col in 0..f.image.width {
+      let p = (row * f.image.width + col) * 4;
+      let at = ((f.y + row) * width + f.x + col) * 4;
+      let mix = blend && match (no_blend) {
+        Some(d) => !inside(d, f.x + col, f.y + row),
+        None => true,
+      };
+      canvas = if (mix) { blended(canvas, at, px, p) } else { replaced(canvas, at, px, p) };
+    }
+  }
+  return canvas;
+}
+
+// The canvas, `width` pixels wide, with the rectangle of the frame `f` made
+// transparent.
+function disposed(own canvas: u8[], width: i32, f: Placed): u8[] {
+  for row in 0..f.image.height {
+    let at = ((f.y + row) * width + f.x) * 4;
+    for k in at..at + f.image.width * 4 {
+      canvas = canvas.with(k, 0u8);
+    }
+  }
+  return canvas;
+}
+
+function still_animation(file: [u8]): Result[Animation, DecodeError] {
+  let image = decode(file)?;
+  return Ok(Animation { width: image.width, height: image.height, loop_count: 0, frames: [Frame { image: image, duration_ms: 0 }] });
+}
+
+// The canvas after the frames so far, the last frame, and whether that frame
+// was a key frame.
+struct Canvas { width: i32, height: i32, pixels: u8[], last: Option[Placed], last_key: boolean }
+
+function disposes(f: Placed): boolean {
+  return (f.flags & 1) != 0;
+}
+
+function is_key(c: Canvas, f: Placed, blend: boolean): boolean {
+  return match (c.last) {
+    None => true,
+    Some(prev) => (!f.alpha || !blend) && covers(f, c.width, c.height) || disposes(prev) && (covers(prev, c.width, c.height) || c.last_key),
+  };
+}
+
+// The canvas with the frame `f` drawn on it.
+function with_frame(own c: Canvas, f: Placed): Canvas {
+  let blend = (f.flags & 2) == 0;
+  let key = is_key(c, f, blend);
+  let gone = match (c.last) {
+    Some(prev) => if (disposes(prev)) { Some(prev) } else { None },
+    None => None,
+  };
+  let pixels = c.pixels;
+  if (key) {
+    pixels = drawn(__alloc_u8(c.width * c.height * 4), c.width, f, false, None);
+  } else {
+    if let Some(prev) = gone {
+      pixels = disposed(pixels, c.width, prev);
+    }
+    pixels = drawn(pixels, c.width, f, blend, gone);
+  }
+  return Canvas { ...c, pixels: pixels, last: Some(f), last_key: key };
+}
+
+// The size of the data of the chunk at `at`. The chunk must be inside the size
+// `riff` of the RIFF header and inside the file.
+function chunk_size(file: [u8], at: i32, riff: i32): Result[i32, DecodeError] {
+  if (at + 8 > file.len()) {
+    return Err(Truncated);
+  }
+  let size = u32_at(file, at + 4);
+  if (size < 0 || size > riff - at - size % 2) {
+    return Err(BadHeader);
+  }
+  if (size + size % 2 > file.len() - at - 8) {
+    return Err(Truncated);
+  }
+  return Ok(size);
+}
+
+// The canvas of the `VP8X` chunk of an animated file.
+function animation_canvas(file: [u8]): Result[Canvas, DecodeError] {
+  if (u32_at(file, 16) != 10) {
+    return Err(BadHeader);
+  }
+  let width = le24_at(file, 24) + 1;
+  let height = le24_at(file, 27) + 1;
+  if (width as i64 * (height as i64) > 268435456i64) {
+    return Err(BadHeader);
+  }
+  return Ok(Canvas { width: width, height: height, pixels: __alloc_u8(width * height * 4), last: None, last_key: false });
+}
+
+// The canvas and the frames so far, and the loop count of the `ANIM` chunk,
+// or -1 before it.
+struct Reading { canvas: Canvas, frames: Frame[], loop_count: i32 }
+
+// The reading after the chunk at `at`, with `size` bytes of data.
+function with_chunk(own r: Reading, file: [u8], at: i32, size: i32): Result[Reading, DecodeError] {
+  if (tag_at(file, at, "ANIM")) {
+    if (size < 6) {
+      return Err(BadHeader);
+    }
+    return Ok(Reading { ...r, loop_count: file[at + 12] as i32 | file[at + 13] as i32 << 8 });
+  }
+  if (tag_at(file, at, "ANMF")) {
+    if (r.loop_count < 0) {
+      return Err(BadHeader);
+    }
+    let f = placed_frame(file, at, size, r.canvas.width, r.canvas.height)?;
+    let c = with_frame(r.canvas, f);
+    let frame = Frame { image: Image { width: c.width, height: c.height, pixels: c.pixels }, duration_ms: f.duration_ms };
+    return Ok(Reading { ...r, canvas: c, frames: r.frames.append(frame) });
+  }
+  if (is_image(file, at)) {
+    return Err(BadHeader);
+  }
+  return Ok(r);
+}
+
+// The frames of the lossless WebP file `file`, animated or still.
+pub function decode_animation(file: [u8]): Result[Animation, DecodeError] {
+  let riff = riff_size(file)?;
+  if (!tag_at(file, 12, "VP8X") || file.len() < 30 || (file[20] as i32 & 2) == 0) {
+    return still_animation(file);
+  }
+  let r = Reading { canvas: animation_canvas(file)?, frames: [], loop_count: -1 };
+  let at = 30;
+  while (at + 8 <= riff + 8) {
+    let size = chunk_size(file, at, riff)?;
+    r = with_chunk(r, file, at, size)?;
+    at += 8 + size + size % 2;
+  }
+  if (r.frames.len() == 0) {
+    return Err(BadHeader);
+  }
+  return Ok(Animation { width: r.canvas.width, height: r.canvas.height, loop_count: r.loop_count, frames: r.frames });
 }
 ```
