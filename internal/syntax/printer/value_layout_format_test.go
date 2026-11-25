@@ -101,6 +101,36 @@ function size(s: Shape, k: i32): f64 {
   return d;
 }
 `},
+		{"let-else in a value branch", `enum Shape { Circle(i32), Square(i32), Dot }
+
+function two(a: Option[i32], b: Option[i32]): i32 {
+  let r = {
+    // first
+    let Some(x) = a else {
+      return -1;
+    };
+
+    let Some(y) = b else {
+      return -2;
+    };
+    let z = x + y;
+    z * 2
+  };
+  return r;
+}
+
+function arm(x: Shape): Result[i32, string] {
+  return match (x) {
+    Shape.Dot => Err("dot"),
+    _ => {
+      let Shape.Circle(c) | Shape.Square(c) = x else {
+        return Err("none");
+      };
+      Ok(c * 2)
+    },
+  };
+}
+`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatSrc(t, tc.source)
