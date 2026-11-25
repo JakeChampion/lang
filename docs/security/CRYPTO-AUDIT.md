@@ -57,8 +57,12 @@ The AEAD open folds the tag difference into one byte, marks that byte public wit
 
 `__ct_secret(b)` tells Valgrind's memcheck that the bytes of `b` are undefined, and `__ct_public(b)` that they are defined again.
 Memcheck then reports every branch and every address that depends on a secret byte.
-`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, HOTP-SHA256, and RSA private-key construction with RSA-OAEP decryption.
+`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, HOTP-SHA256, XChaCha20-Poly1305, and RSA private-key construction with RSA-OAEP decryption.
 The gate also checks equal-length matching and mismatching inputs to `consteq`, multi-block PBKDF2-HMAC-SHA256 and HKDF-SHA256/SHA384 outputs, and scrypt with a secret password. In ROMix the implementation marks the password-dependent lookup index public before reading its table.
+
+The gate checks SHA-256 of a secret message, in one call and in parts.
+It checks HMAC-SHA256 with a key longer than a block, and the eight lanes of `Sha256x8`.
+It checks Argon2id with a secret password. The Argon2d part of Argon2id takes the reference of each block from the data, as RFC 9106 section 3.4 specifies. The implementation marks that word public before it selects the reference.
 Memcheck must report the control programs that branch or index on a secret, which proves the gate sees what it looks for.
 
 ## Remaining limits
