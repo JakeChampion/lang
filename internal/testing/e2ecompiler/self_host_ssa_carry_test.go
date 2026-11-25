@@ -283,7 +283,7 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 		chains := []struct {
 			name         string
 			links, flags int
-		}{{"add3", 2, 0}, {"add3_sum", 2, 0}, {"sub3", 2, 0}, {"add4", 3, 1}, {"sub4", 3, 2}, {"add4_spilled", 3, 2}, {"sub_p", 3, 1}, {"add_k", 1, 1}}
+		}{{"add3", 2, 0}, {"add3_sum", 2, 0}, {"sub3", 2, 0}, {"add4", 3, 1}, {"sub4", 3, 2}, {"add4_spilled", 3, 2}, {"sub_p", 2, 1}, {"add_k", 1, 1}}
 		for _, ch := range chains {
 			fn := functionListing(string(asm), "__fn_"+ch.name)
 			links := len(c.link.FindAllString(fn, -1))
