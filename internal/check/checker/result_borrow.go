@@ -431,6 +431,24 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	return c.signatureResultBorrows(id.Name)
 }
 
+// argsFresh reports a call whose arguments are each a fresh owned value, so
+// its result has no source for a loan: `cell_new(S { ... })`.
+func (c *checker) argsFresh(x *ast.Call, owned func(ast.Expr) bool) bool {
+	for _, a := range x.Args {
+		if c.scalarArgs[a] {
+			continue
+		}
+		switch a.(type) {
+		case *ast.Ident, *ast.FieldAccess, *ast.Lambda:
+			return false
+		}
+		if !owned(a) {
+			return false
+		}
+	}
+	return true
+}
+
 // ownFlagsOf reports which arguments of x go to own parameters.
 func (c *checker) ownFlagsOf(x *ast.Call) []bool {
 	flags := c.callOwnFlags[x]

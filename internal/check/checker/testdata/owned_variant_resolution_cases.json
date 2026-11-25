@@ -70,9 +70,9 @@
     "want": "E051"
   },
   {
-    "name": "borrowed generic qualifier",
+    "name": "fresh generic qualifier",
     "source": "struct H { fd: i32 }\nfunction (own h: H) close(): void {}\nenum Tail { Held(H), Empty }\nfunction consume(own x: Tail): i32 { return 0; }\nfunction take_h(own h: H): i32 { return h.fd; }\nfunction id[T](x: T): T { return x; } trait Factory { const Empty: Self; } function take_generic[T](own x: T): i32 { return 0; } function f[Tail: Factory](): i32 { return take_generic(id(Tail.Empty)); }\nfunction main(): i32 { return 0; }\n",
-    "want": "E051"
+    "want": ""
   },
   {
     "name": "fresh function shadow",

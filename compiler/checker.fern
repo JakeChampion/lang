@@ -21974,6 +21974,34 @@ function ow_variant_args_owned(c: ast.ExprCall, ctx: OwnCtx): boolean {
   return true;
 }
 
+// A call whose arguments are each a fresh owned value has no source for a
+// loan: `cell_new(S { ... })`.
+function ow_args_fresh(c: ast.ExprCall, ctx: OwnCtx): boolean {
+  for a in c.args {
+    if (!ow_fresh_arg(a, ctx)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A value that no name holds and that is owned.
+function ow_fresh_arg(e: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_expr_is_scalar(e, ctx)) {
+    return true;
+  }
+  if let ast.ExprIdent(_) = e {
+    return false;
+  }
+  if let ast.ExprFieldAccess(_) = e {
+    return false;
+  }
+  if let ast.ExprLambda(_) = e {
+    return false;
+  }
+  return ow_is_owned_expr(e, ctx);
+}
+
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_expr_is_scalar(e, ctx)) {
     return true;
@@ -22053,7 +22081,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
             return ow_variant_args_owned(c, ctx);
           }
-          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && ctx.fresh.has(cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
+          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && ctx.fresh.has(cid.name) || ow_callback_args_owned(c, ctx.last_use.get()) || !ow_name_bound(ctx, cid.name) && ow_args_fresh(c, ctx);
         },
         ast.ExprFieldAccess(mfa) => {
           // An associated call with no arguments has no source for a loan.
