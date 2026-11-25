@@ -65,3 +65,17 @@ The Layer I and II decoders now process each complete protected byte in two four
 | ISO Layer I | 52,344,463 / 51,380,991 | 0.884 / 0.858 |
 
 Callgrind 3.24 counted the complete benchmark process with one measured decode, including warmups and the final PCM dump. Wall times cover seven alternating pairs of thirty decodes pinned to one CPU. A separate run during local checks produced mixed timing results. The instruction counts are the more repeatable comparison. [Timing trials](crc-frame-trials.csv)
+
+## Keeping the allocation and scalefactor arrays
+
+The decoder now keeps the 64-byte allocation table and the 64-float scalefactor array between frames. Before the change, each frame made a new copy of both. The table compares `bench/audio/mp1.fern` in `frames` mode on x86-64 Linux, built from main `e87f4173` with and without the change. The input streams are the dense streams above. The complete PCM is the same before and after the change.
+
+| Stream | Allocations for each stream, before / after | Instructions, before / after |
+| --- | ---: | ---: |
+| Dense mono | 606 / 368 | 87,836,182 / 87,918,278 |
+| Dense stereo | 606 / 368 | 127,484,151 / 127,550,854 |
+| Dense joint stereo | 606 / 368 | 120,048,897 / 120,129,073 |
+
+Callgrind counted the complete process with one measured decode. The instruction counts change by less than 0.1%. Wall times on the 4-core container changed by less than the noise between trials.
+
+Each frame now makes three allocations: the boxed frame header, the returned frame record and the decoder record. These are boxes of returned records. #16964 tracks that compiler cost.

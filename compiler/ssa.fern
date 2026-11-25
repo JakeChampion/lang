@@ -4624,13 +4624,12 @@ function rewrite_through(f: SFunc, flat: i32[]): SFunc {
 }
 
 // A constant merges into the same constant anywhere. A pure operation merges
-// into the same operation in its own block, and with `across` also in a block
-// that dominates it. The blocks go in reverse postorder, so a block comes after
-// each block that dominates it. thread_forwarding and thread_bool_joins copy a
-// block and make only its phis again, so a merge across blocks runs after
-// them. A compare does not merge across
-// blocks: it costs less next to its branch than as a value that stays live,
-// and split_tokens decides each token test in the block that holds it.
+// into the same operation in its own block. With `across`, only a costly_op
+// merges, into the same operation in its own block or in a block that
+// dominates it. The blocks go in reverse postorder, so a block comes after
+// each block that dominates it. thread_forwarding and thread_bool_joins copy
+// a block and make only its phis again, so a merge across blocks runs after
+// them.
 pub function merge_duplicates(f: SFunc, across: boolean): Formed {
   let canon = identity_repl(f.nvals);
   let n = 0;
@@ -4654,7 +4653,11 @@ pub function merge_duplicates(f: SFunc, across: boolean): Formed {
   for bi in order {
     for ins in f.blocks[bi].insts {
       let scope: i32 = -2;
-      if (is_constant(ins, f.nvals)) {
+      if (across) {
+        if (costly_op(ins)) {
+          scope = bi;
+        }
+      } else if (is_constant(ins, f.nvals)) {
         scope = -1;
       } else if (mergeable(ins)) {
         scope = bi;
@@ -4664,7 +4667,7 @@ pub function merge_duplicates(f: SFunc, across: boolean): Formed {
         let found: i32 = -1;
         let j = head[bk];
         while (j >= 0 && found < 0) {
-          let reach = if (scope < 0) { seen_block[j] < 0 } else { seen_block[j] == scope || across && !ir.is_int_cmp_kind(ins.ir_kind) && seen_block[j] >= 0 && single[seen[j].result] && single[ins.result] && single_args(ins, single) && dominates(idom, seen_block[j], scope) };
+          let reach = if (scope < 0) { seen_block[j] < 0 } else { seen_block[j] == scope || across && seen_block[j] >= 0 && single[seen[j].result] && single[ins.result] && single_args(ins, single) && dominates(idom, seen_block[j], scope) };
           if (reach && same_operation(seen[j], ins, canon)) {
             found = seen[j].result;
           }
@@ -4712,6 +4715,13 @@ function single_defs(f: SFunc): boolean[] {
     out = out.with(v, count[v] == 1);
   }
   return out;
+}
+
+// A multiply, divide or remainder costs more to compute again than to keep
+// live. A cheaper operation that stays live across blocks takes a register in
+// each block between, and in a loop that is a spill and a reload.
+function costly_op(ins: SInst): boolean {
+  return ins.kind_tag == BINARY && (ins.ir_kind == ir.K_MUL || binary_fixes_abi(ins.ir_kind));
 }
 
 function single_args(ins: SInst, single: boolean[]): boolean {
@@ -7721,7 +7731,10 @@ function position_preds(f: SFunc, at: i32[]): i32[][] {
 // A pure integer computation in a loop whose operands do not change in the
 // loop moves to the block before the loop, so it runs one time. The loop must
 // have one way in. Inner loops go first, so a value can leave several loops.
-// Computations that become equal in one block merge.
+// A constant of the loop stays in the loop, where a target can use it as an
+// immediate. The moved computation reads a copy of it in front of the loop.
+// Equal computations that move from several blocks of one loop merge. Each
+// other computation stays as it is, so a value does not stay live longer.
 pub function hoisted_invariants(f: SFunc): Formed {
   if (f.blocks.len() < 3) {
     return Formed { f: f, repl: [] };
@@ -7732,36 +7745,83 @@ pub function hoisted_invariants(f: SFunc): Formed {
   let defs = inst_defs(f);
   let def_pos = def_positions(f);
   let blocks = f.blocks;
+  let made: i32[] = [];
   let changed = false;
+  let merged = false;
+  let single: boolean[] = [];
+  let canon: i32[] = [];
   let h = latch.len() - 1;
   while (h >= 0) {
     let last = latch[h];
     let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
     if (pre >= 0) {
-      let inv = invariant_values(blocks, f, defs, def_pos, h, last);
-      let consts: SInst[] = [];
-      let others: SInst[] = [];
+      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, defs, def_pos, h, last);
+      let moving: SInst[] = [];
+      let originals: i32[] = [];
+      let copies: i32[] = [];
       for bi in h..=last {
         let kept: SInst[] = [];
         for ins in blocks[bi].insts {
           if (ins.result < 0 || !inv[ins.result]) {
             kept = kept.append(ins);
-          } else if (is_constant(ins, f.nvals)) {
-            consts = consts.append(ins);
-          } else {
-            others = others.append(ins);
+            continue;
           }
+          let args: i32[] = [];
+          for a in ins.args {
+            if (!is_constant(defs[a], defs.len()) || def_pos[a] < h || def_pos[a] > last) {
+              args = args.append(a);
+              continue;
+            }
+            let k = util.index_of_i32(originals, a);
+            if (k < 0) {
+              k = originals.len();
+              let id = f.nvals + made.len();
+              made = made.append(a);
+              originals = originals.append(a);
+              copies = copies.append(id);
+              let c = SInst { ...defs[a], result: id };
+              moving = moving.append(c);
+              defs = defs.append(c);
+              def_pos = def_pos.append(-1);
+              if (single.len() > 0) {
+                single = single.append(true);
+                canon = canon.append(id);
+              }
+            }
+            args = args.append(copies[k]);
+          }
+          let moved = SInst { ...ins, args: args };
+          moving = moving.append(moved);
+          defs = defs.with(ins.result, moved);
         }
         if (kept.len() != blocks[bi].insts.len()) {
           blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: kept });
         }
       }
-      if (others.len() > 0) {
-        let lifted = consts.concat(others);
-        blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(lifted) });
-        for ins in lifted {
-          def_pos = def_pos.with(ins.result, pre);
+      if (moving.len() > 0) {
+        if (single.len() == 0) {
+          single = single_defs(f).concat(made.map((v: i32): boolean => true));
+          canon = identity_repl(f.nvals + made.len());
         }
+        let lifted: SInst[] = [];
+        for ins in moving {
+          let found: i32 = -1;
+          if (single[ins.result]) {
+            for prior in lifted {
+              if (found < 0 && single[prior.result] && same_operation(prior, ins, canon)) {
+                found = prior.result;
+              }
+            }
+          }
+          if (found >= 0) {
+            canon = canon.with(ins.result, found);
+            merged = true;
+          } else {
+            lifted = lifted.append(ins);
+            def_pos = def_pos.with(ins.result, pre);
+          }
+        }
+        blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(lifted) });
         changed = true;
       }
     }
@@ -7770,13 +7830,26 @@ pub function hoisted_invariants(f: SFunc): Formed {
   if (!changed) {
     return Formed { f: f, repl: [] };
   }
-  return merge_duplicates(SFunc { ...f, blocks: blocks }, false);
+  let moved = SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
+  if (!merged) {
+    return Formed { f: moved, repl: [] };
+  }
+  let flat = canon;
+  for v in 0..flat.len() {
+    let t = flat[v];
+    while (flat[t] != t) {
+      t = flat[t];
+    }
+    flat = flat.with(v, t);
+  }
+  return Formed { f: rewrite_through(moved, flat), repl: flat };
 }
 
 // The values of the loop from `h` to `last` that can move in front of it: a
 // pure integer computation of operands defined before the loop, of constants,
-// or of values that move. The constants that such a computation reads move
-// with it.
+// or of values that move. At least one operand must not be a constant: a
+// computation of constants only gains nothing in front of the loop, and it
+// holds a register across the loop there.
 function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32): boolean[] {
   let inv = __alloc_bool(f.nvals);
   for bi in h..=last {
@@ -7785,17 +7858,19 @@ function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i3
         continue;
       }
       let ok = true;
+      let reads_non_constant = false;
       for a in ins.args {
-        if (!(a >= 0 && a < f.nvals && (inv[a] || defined_before(f, def_pos, a, h, last) || is_constant(defs[a], f.nvals)))) {
+        if (!(a >= 0 && a < f.nvals)) {
+          ok = false;
+        } else if (is_constant(defs[a], f.nvals)) {
+          continue;
+        } else if (inv[a] || defined_before(f, def_pos, a, h, last)) {
+          reads_non_constant = true;
+        } else {
           ok = false;
         }
       }
-      if (ok) {
-        for a in ins.args {
-          if (is_constant(defs[a], f.nvals) && def_pos[a] >= h && def_pos[a] <= last) {
-            inv = inv.with(a, true);
-          }
-        }
+      if (ok && reads_non_constant) {
         inv = inv.with(ins.result, true);
       }
     }
@@ -9425,6 +9500,177 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
     return no;
   }
   return SInst { ir_kind: 0, kind_tag: UNARY, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
+}
+
+// The most bytes that one fused append takes. Each emitter moves the array
+// and the bytes to the registers that a cold append changes, and it has five.
+pub const FUSED_PUSH_MAX: i32 = 4;
+
+// The imm bit of a fused append whose operand 1 holds its bytes, low byte
+// first. The count of bytes is the imm shifted right by 4.
+pub const PUSH_PACKED: i32 = 2;
+
+// A byte append that is not fused.
+function byte_push(ins: SInst): boolean {
+  return ins.kind_tag == RT_CALL && ins.result >= 0 && ins.args.len() == 2 && (ins.imm & PUSH_PACKED) == 0 && ins.str == "arr_push_owned_u8";
+}
+
+// An append of more than one byte, which `fuse_byte_pushes` makes. Operand 0
+// is the array. The other operands are the bytes in order, or one word that
+// holds them (PUSH_PACKED).
+pub function fused_push(ins: SInst): boolean {
+  return ins.kind_tag == RT_CALL && ins.str == "arr_push_owned_u8" && (ins.args.len() > 2 || (ins.imm & PUSH_PACKED) != 0);
+}
+
+// The count of bytes that a fused append writes.
+pub function fused_count(ins: SInst): i32 {
+  return if ((ins.imm & PUSH_PACKED) != 0) { ins.imm >> 4 } else { ins.args.len() - 1 };
+}
+
+// Each chain of byte appends in a block, where each result is read only by
+// the next append, becomes appends of up to FUSED_PUSH_MAX bytes. The fused
+// append takes the place of the last append of its group. No call can be
+// between two appends of a group, and nothing between them can read the
+// array of the first.
+pub function fuse_byte_pushes(f: SFunc): SFunc {
+  if (!has_byte_push(f)) {
+    return f;
+  }
+  let uses = use_counts(f);
+  let defs = inst_defs(f);
+  let nblocks: SBlock[] = [];
+  let changed = false;
+  for blk in f.blocks {
+    let insts = fuse_block_pushes(blk.insts, uses, defs);
+    if (insts.len() != blk.insts.len()) {
+      changed = true;
+    }
+    nblocks = nblocks.append(SBlock { ...blk, insts: insts });
+  }
+  return if (changed) { prune_dead(SFunc { ...f, blocks: nblocks }) } else { f };
+}
+
+function has_byte_push(f: SFunc): boolean {
+  for blk in f.blocks {
+    let seen = false;
+    for ins in blk.insts {
+      if (byte_push(ins)) {
+        if (seen) {
+          return true;
+        }
+        seen = true;
+      }
+    }
+  }
+  return false;
+}
+
+function fuse_block_pushes(insts: SInst[], uses: i32[], defs: SInst[]): SInst[] {
+  let out: SInst[] = [];
+  let gone = __alloc_bool(insts.len());
+  let at = __alloc_i32(insts.len());
+  let fused: SInst[] = [];
+  for i in 0..insts.len() {
+    at = at.with(i, -1);
+  }
+  for i in 0..insts.len() {
+    if (gone[i] || !byte_push(insts[i])) {
+      continue;
+    }
+    let first = insts[i];
+    let args: i32[] = [first.args[0], first.args[1]];
+    let last = i;
+    let j = next_push(insts, last, first.args[0], uses);
+    while (j >= 0 && args.len() <= FUSED_PUSH_MAX) {
+      args = args.append(insts[j].args[1]);
+      gone = gone.with(last, true);
+      last = j;
+      j = next_push(insts, last, first.args[0], uses);
+    }
+    if (last != i) {
+      gone = gone.with(last, true);
+      at = at.with(last, fused.len());
+      fused = fused.append(fused_of(insts[last], args, first, defs));
+    }
+  }
+  if (fused.len() == 0) {
+    return insts;
+  }
+  for i in 0..insts.len() {
+    if (at[i] >= 0) {
+      out = out.append(fused[at[i]]);
+    } else if (!gone[i]) {
+      out = out.append(insts[i]);
+    }
+  }
+  return out;
+}
+
+// The fused append in the place of `last`. When the bytes are the low bytes
+// of one value in order, that value is the one operand of the bytes.
+function fused_of(last: SInst, args: i32[], first: SInst, defs: SInst[]): SInst {
+  let word = -1;
+  for k in 1..args.len() {
+    let b = byte_source(args[k], defs);
+    if (b.shift != 8 * (k - 1) || word >= 0 && b.value != word) {
+      word = -1;
+      break;
+    }
+    word = b.value;
+  }
+  if (word >= 0) {
+    return SInst { ...last, args: [args[0], word], imm: first.imm & 1 | PUSH_PACKED | args.len() - 1 << 4, ir_kind: first.ir_kind };
+  }
+  return SInst { ...last, args: args, imm: first.imm, ir_kind: first.ir_kind };
+}
+
+struct ByteSource { value: i32, shift: i32 }
+
+// The value and the right shift that byte `v` is the low byte of. A wrap, a
+// cast and a mask of 255 keep the low byte.
+function byte_source(v: i32, defs: SInst[]): ByteSource {
+  v = low_byte_source(v, defs);
+  let d = defs[v];
+  if (d.kind_tag == BINARY && (d.str == "shr_u" || d.str == "shr_s") && d.args.len() == 2) {
+    let c = const_value(defs, d.args[1]);
+    if (c > 0i64 && c < 32i64) {
+      return ByteSource { value: d.args[0], shift: c as i32 };
+    }
+  }
+  return ByteSource { value: v, shift: 0 };
+}
+
+function low_byte_source(v: i32, defs: SInst[]): i32 {
+  let d = defs[v];
+  while (d.kind_tag == UNARY && low_byte_cast(d.str) || d.kind_tag == BINARY && d.str == "and" && d.args.len() == 2 && const_value(defs, d.args[1]) == 255i64) {
+    v = d.args[0];
+    d = defs[v];
+  }
+  return v;
+}
+
+function low_byte_cast(what: string): boolean {
+  return what == "int_wrap" || what == "int_extend" || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16";
+}
+
+// The position of the byte append that reads the result of the append at
+// `k` as its only use, or -1. Nothing between them can be a call or read
+// `array`.
+function next_push(insts: SInst[], k: i32, array: i32, uses: i32[]): i32 {
+  let v = insts[k].result;
+  if (uses[v] != 1) {
+    return -1;
+  }
+  for j in k + 1..insts.len() {
+    let ins = insts[j];
+    if (byte_push(ins) && ins.args[0] == v) {
+      return j;
+    }
+    if (inst_is_call(ins) || ins.args.contains(array)) {
+      return -1;
+    }
+  }
+  return -1;
 }
 
 pub function fuse_and_not(f: SFunc): SFunc {

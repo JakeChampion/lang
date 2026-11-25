@@ -130,7 +130,7 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
         hits += 1;
       } else if (mode == 8 && op.kind_tag == ssa.LD_AT && op.imm == 0) {
         ops = ops.append(op);
-        changed = ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
+        changed = ssa.SInst { ir_kind: ir.K_EQ, kind_tag: ssa.BINARY, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
         nvals = f.nvals + 1;
         hits += 1;
       }

@@ -4170,6 +4170,10 @@ function direct_need_deps(name: string): string[] {
     let du8: string[] = ["heap"];
     return du8;
   }
+  if (name == "arr_pushn_u8") {
+    let dn8: string[] = ["heap", "arr_push_u8"];
+    return dn8;
+  }
   if (name == "buf") {
     let dbuf: string[] = ["heap", "memcpy"];
     return dbuf;

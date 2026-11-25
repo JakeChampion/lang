@@ -585,6 +585,66 @@ function roots_over(f: ssa.SFunc, defs: ssa.DefSites, sigs: rcsigs.Table, start:
   return Roots { root: root, derived: derived };
 }
 
+// In a children-only drop, a counted load of a slot that an earlier counted
+// load of the same slot dominates reads the same unit: it takes that root.
+function shared_slot_roots(f: ssa.SFunc, defs: ssa.DefSites, dom: ssadeps.Dom, self_abi: Abi, own rt: Roots): Roots {
+  let boxes = children_params(self_abi, f.nparams, __alloc_bool(f.nvals));
+  let loads: i32[] = [];
+  let stores: ssa.SInst[] = [];
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.args.len() == 0 || ins.args[0] < 0) {
+        continue;
+      }
+      let base = rt.root[ins.args[0]];
+      if (base >= boxes.len() || !boxes[base]) {
+        continue;
+      }
+      if (ins.kind_tag == ssa.ST_AT || ins.kind_tag == ssa.ARR_ST) {
+        stores = stores.append(ins);
+      } else if (ins.kind_tag == ssa.LD_AT && ins.result >= 0 && ins.str.ends_with("rc")) {
+        loads = loads.append(ins.result);
+      }
+    }
+  }
+  for v in loads {
+    let lv = def_of(f, defs, v);
+    let base = rt.root[lv.args[0]];
+    if (slot_written(rt.root, stores, base, lv.imm)) {
+      continue;
+    }
+    let top = -1;
+    for u in loads {
+      let lu = def_of(f, defs, u);
+      if (u != v && rt.root[lu.args[0]] == base && lu.imm == lv.imm && lu.str == lv.str && def_dominates(defs, dom, u, v) && (top < 0 || def_dominates(defs, dom, u, top))) {
+        top = u;
+      }
+    }
+    if (top >= 0) {
+      rt = Roots { ...rt, root: rt.root.with(v, rt.root[top]) };
+    }
+  }
+  return rt;
+}
+
+function slot_written(root: i32[], stores: ssa.SInst[], base: i32, key: i32): boolean {
+  for st in stores {
+    if (root[st.args[0]] == base && (st.kind_tag == ssa.ARR_ST || st.imm == key)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function def_dominates(defs: ssa.DefSites, dom: ssadeps.Dom, a: i32, b: i32): boolean {
+  let ab = defs.block[a];
+  let bb = defs.block[b];
+  if (ab == bb) {
+    return defs.at[a] < defs.at[b];
+  }
+  return ssadeps.dom_holds(dom, bb, ab);
+}
+
 struct Cond { root: i32, on_true: boolean, also: i32[] }
 
 function no_cond(): Cond {
@@ -1064,10 +1124,10 @@ function children_phi(w: Walk, regions: i32[][], out: boolean[], b: ssa.SBlock, 
   return true;
 }
 
-function children_params(w: Walk, own out: boolean[]): boolean[] {
+function children_params(abi: Abi, nparams: i32, own out: boolean[]): boolean[] {
   let pi = 0;
-  while (w.self_abi.known && pi < w.self_abi.modes.len() && pi < w.f.nparams) {
-    if (w.self_abi.modes[pi] == children_mode()) {
+  while (abi.known && pi < abi.modes.len() && pi < nparams) {
+    if (abi.modes[pi] == children_mode()) {
       out = out.with(pi, true);
     }
     pi += 1;
@@ -1077,7 +1137,7 @@ function children_params(w: Walk, own out: boolean[]): boolean[] {
 
 function children_boxes(w: Walk, regions: i32[][]): boolean[] {
   let f = w.f;
-  let out = children_params(w, __alloc_bool(f.nvals));
+  let out = children_params(w.self_abi, f.nparams, __alloc_bool(f.nvals));
   let grown = true;
   while (grown) {
     grown = false;
@@ -4133,7 +4193,7 @@ function resumes(f: ssa.SFunc): boolean {
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[], hold: Hold, base: Base): Walk {
   let defs = ssa.def_sites_of(f);
   let local = region_values(f, base.on);
-  let rt = roots_over(f, defs, sigs, starting_roots(f, local, base));
+  let rt = shared_slot_roots(f, defs, dom, self_abi, roots_over(f, defs, sigs, starting_roots(f, local, base)));
   let uses = base.uses;
   let paired = base.paired;
   if (!base.on) {

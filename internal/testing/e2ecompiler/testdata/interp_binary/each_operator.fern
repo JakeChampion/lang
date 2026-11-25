@@ -1,0 +1,189 @@
+import "core/cmp";
+
+@derive(cmp.Ord)
+struct V { n: i32 }
+
+function grade(x: i32): string {
+  return match (x) {
+    0..=9 => "low",
+    10..20 => "mid",
+    _ => "high",
+  };
+}
+
+function opt(o: Option[i32]): string {
+  return match (o) {
+    Some(x) => x.to_string(),
+    None => "none",
+  };
+}
+
+function main(): i32 {
+  let a: i32 = 29;
+  let b: i32 = 6;
+  let u: u32 = 4000000000;
+  let v: u32 = 7;
+  let w: i64 = -9000000000;
+  let k: i64 = 7;
+  let big: u64 = 18000000000000000000;
+  let two: u64 = 3;
+  let z: usize = 40;
+  let y: usize = 6;
+  let c: u8 = 200;
+  let d: u8 = 100;
+  let h: u16 = 65000;
+  let m: i16 = -32000;
+  let n: i16 = 1000;
+  let s: i32 = 2147483000;
+  let f: f64 = 7.5;
+  let g: f64 = 2.0;
+  let p: f32 = 1.5;
+  let q: f32 = 4.0;
+  let t = true;
+  let e = false;
+  print((a + b).to_string());
+  print((a - b).to_string());
+  print((a * b).to_string());
+  print((a / b).to_string());
+  print((a % b).to_string());
+  print((a & b).to_string());
+  print((a | b).to_string());
+  print((a ^ b).to_string());
+  print((a < b).to_string());
+  print((a <= b).to_string());
+  print((a > b).to_string());
+  print((a >= b).to_string());
+  print((a == b).to_string());
+  print((a != b).to_string());
+  print((a << 2).to_string());
+  print((a >> 1).to_string());
+  print((u + v).to_string());
+  print((u - v).to_string());
+  print((u / v).to_string());
+  print((u % v).to_string());
+  print((u & v).to_string());
+  print((u | v).to_string());
+  print((u ^ v).to_string());
+  print((u < v).to_string());
+  print((u <= v).to_string());
+  print((u > v).to_string());
+  print((u >= v).to_string());
+  print((u == v).to_string());
+  print((u != v).to_string());
+  print((u << 3).to_string());
+  print((u >> 1).to_string());
+  print((w + k).to_string());
+  print((w - k).to_string());
+  print((w * k).to_string());
+  print((w / k).to_string());
+  print((w % k).to_string());
+  print((w & k).to_string());
+  print((w | k).to_string());
+  print((w ^ k).to_string());
+  print((w < k).to_string());
+  print((w <= k).to_string());
+  print((w > k).to_string());
+  print((w >= k).to_string());
+  print((w == k).to_string());
+  print((w != k).to_string());
+  print((w << 2).to_string());
+  print((w >> 1).to_string());
+  print((big + two).to_string());
+  print((big / two).to_string());
+  print((big % two).to_string());
+  print((big & two).to_string());
+  print((big | two).to_string());
+  print((big ^ two).to_string());
+  print((big < two).to_string());
+  print((big <= two).to_string());
+  print((big > two).to_string());
+  print((big >= two).to_string());
+  print((big == two).to_string());
+  print((big != two).to_string());
+  print((big << 2).to_string());
+  print((big >> 1).to_string());
+  print((z + y).to_string());
+  print((z - y).to_string());
+  print((z * y).to_string());
+  print((z / y).to_string());
+  print((z % y).to_string());
+  print((z & y).to_string());
+  print((z | y).to_string());
+  print((z ^ y).to_string());
+  print((z < y).to_string());
+  print((z <= y).to_string());
+  print((z > y).to_string());
+  print((z >= y).to_string());
+  print((z == y).to_string());
+  print((z != y).to_string());
+  print((z << 2).to_string());
+  print((z >> 1).to_string());
+  print((c +| d).to_string());
+  print((d -| c).to_string());
+  print((c *| d).to_string());
+  print((c <<| 3).to_string());
+  print((h +| h).to_string());
+  print((m -| n).to_string());
+  print((m *| n).to_string());
+  print((s +| s).to_string());
+  print((0 - s -| s).to_string());
+  print((s *| 4).to_string());
+  print((s <<| 4).to_string());
+  print((w +| w).to_string());
+  print((w *| w).to_string());
+  print((u +| u).to_string());
+  print((big +| big).to_string());
+  print((two -| big).to_string());
+  print((big *| two).to_string());
+  print((f + g).to_string());
+  print((p + q).to_string());
+  print((f - g).to_string());
+  print((p - q).to_string());
+  print((f * g).to_string());
+  print((p * q).to_string());
+  print((f / g).to_string());
+  print((p / q).to_string());
+  print((f < g).to_string());
+  print((p < q).to_string());
+  print((f <= g).to_string());
+  print((p <= q).to_string());
+  print((f > g).to_string());
+  print((p > q).to_string());
+  print((f >= g).to_string());
+  print((p >= q).to_string());
+  print((f == g).to_string());
+  print((p == q).to_string());
+  print((f != g).to_string());
+  print((p != q).to_string());
+  print(("ab" + "c").to_string());
+  print(("b" < "a").to_string());
+  print(("a" <= "a").to_string());
+  print(("b" > "a").to_string());
+  print(("a" >= "b").to_string());
+  print(("x" == "x").to_string());
+  print(("x" != "y").to_string());
+  print((t && e).to_string());
+  print((t || e).to_string());
+  print((e || e).to_string());
+  print((e && t).to_string());
+  print((a < b && b < a).to_string());
+  print((a < b || b < a).to_string());
+  print((V { n: 1 } < V { n: 2 }).to_string());
+  print((V { n: 3 } <= V { n: 2 }).to_string());
+  print((V { n: 3 } > V { n: 2 }).to_string());
+  print((V { n: 2 } >= V { n: 2 }).to_string());
+  print(opt(s +? 1));
+  print(opt(s +? s));
+  print(opt(s -? 1));
+  print(opt(a *? b));
+  print(opt(a /? 0));
+  print(opt(a %? b));
+  print(opt(1 <<? 40));
+  print(opt(b >>? 1));
+  print(grade(4));
+  print(grade(9));
+  print(grade(10));
+  print(grade(19));
+  print(grade(20));
+  return 0;
+}

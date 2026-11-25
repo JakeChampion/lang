@@ -71,9 +71,15 @@ lowered function it:
    reads to that branch's targets, on the arm's own comparison or to the side
    its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
    caller brings its `&&` or `||` as such a phi), and prunes again; then
+   maps a multiply, divide or remainder onto the same operation in a block
+   that dominates it (`ssa.merge_duplicates` with `across`). A cheaper
+   operation stays, because it costs less to compute again than to keep live
+   across blocks. Then it
    moves each pure integer computation in a loop whose operands do not
-   change in the loop to the one block that enters the loop, with the
-   constants that it reads (`ssa.hoisted_invariants`). Inner loops go first.
+   change in the loop to the one block that enters the loop
+   (`ssa.hoisted_invariants`). A computation of constants only stays. A
+   constant stays in the loop, where a target can use it as an immediate,
+   and the moved computation reads a copy of it. Inner loops go first.
    A loop with a second way in keeps its instructions. A division moves
    only when its divisor is a constant other than 0 and -1. Equal
    computations that move to the same block become one value;
@@ -134,7 +140,13 @@ lowered function it:
    it. The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
-   `&&` or an `||` that the function returns is then a tail call;
+   `&&` or an `||` that the function returns is then a tail call. Last,
+   a chain of byte appends in one block, where only the next append reads
+   each result, becomes appends of up to four bytes (`ssa.fuse_byte_pushes`).
+   A fused append checks the room one time, stores the bytes with one move
+   and adds their count to the length. When the bytes are the low bytes of
+   one value in order, it stores that value. The slow path is one call to
+   `__fern_arr_pushn_owned_u8`, which appends the bytes one at a time;
 5. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved
