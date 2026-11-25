@@ -27850,19 +27850,52 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
 }
 
 // An owned binding keeps ownership after an assignment, so the new value
-// must be owned too, unless it can hold no handle. A value that reads the
+// must not borrow, unless it can hold no handle. A call that takes the
 // binding itself is a self-update, which the call rules check.
 function ow_borrowed_replacement(a: ast.StmtAssign, ctx: OwnCtx): boolean {
   if (!ow_is_owned(ctx, a.target) || util.has_str(ctx.borrowed, a.target)) {
     return false;
   }
-  if (ow_count_ident(a.value, a.target) > 0) {
+  if (ow_self_update(a.target, a.value, ctx.borrowed)) {
     return false;
   }
   if (ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(a.target)), ctx.decls)) {
     return false;
   }
-  return !ow_is_owned_expr(a.value, ctx);
+  return !ow_is_owned_expr(a.value, ctx) && ow_result_loan(a.value, ctx);
+}
+
+// value is a call with target as its receiver or as an argument, or a
+// literal with base target that sets no field to a borrowed name.
+function ow_self_update(target: string, value: ast.Expr, borrowed: string[]): boolean {
+  if let ast.ExprUnary(u) = value {
+    return u.op == "try_" && ow_self_update(target, u.operand, borrowed);
+  }
+  if let ast.ExprStructLit(sl) = value {
+    if (!sl.has_base || ow_ident_name(sl.base) != target) {
+      return false;
+    }
+    for v in sl.field_values {
+      if (util.has_str(borrowed, ow_ident_name(v))) {
+        return false;
+      }
+    }
+    return true;
+  }
+  let ast.ExprCall(c) = value else {
+    return false;
+  };
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (ow_ident_name(fa.obj) == target) {
+      return true;
+    }
+  }
+  for arg in c.args {
+    if (ow_ident_name(arg) == target) {
+      return true;
+    }
+  }
+  return false;
 }
 
 struct OwnLocalScope { parent: OwnCtx, moved: MovedEntry[], name: string }

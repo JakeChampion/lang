@@ -11298,19 +11298,80 @@ func SupersededFieldMoves(sl *ast.StructLit, target string, consumed func(field 
 }
 
 // An owned binding keeps ownership after an assignment, so the new value
-// must be owned too, unless it can hold no handle. A value that reads the
+// must not borrow, unless it can hold no handle. A call that takes the
 // binding itself is a self-update, which the call rules check.
-func (c *checker) borrowedReplacement(asn *ast.Assign, id *ast.Ident, owned, borrowedParam map[string]bool, ownedTypes map[string]ast.Type, isOwnedExpr func(ast.Expr) bool) bool {
+func (c *checker) borrowedReplacement(fn *ast.FuncDecl, asn *ast.Assign, id *ast.Ident, owned, borrowedParam map[string]bool, ownedTypes map[string]ast.Type, isOwnedExpr func(ast.Expr) bool) bool {
 	if asn.Op != "" || asn.Value == nil || !owned[id.Name] || borrowedParam[id.Name] {
 		return false
 	}
-	if StmtReferencesName(asn.Value, id.Name) {
+	if selfUpdate(id.Name, asn.Value, borrowedParam) {
 		return false
 	}
 	if t := ownedTypes[id.Name]; t == nil || c.holdsNoHandle(t) {
 		return false
 	}
-	return !isOwnedExpr(asn.Value)
+	if isOwnedExpr(asn.Value) {
+		return false
+	}
+	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, owned: owned, ownedResult: true}
+	for _, p := range fn.Params {
+		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
+			b.borrowed[p.Name] = true
+			if elem := elemType(p.Type); elem != nil && !mayRetainBorrow(elem) {
+				b.values[p.Name] = true
+			}
+		}
+	}
+	for name := range borrowedParam {
+		if !b.borrowed[name] && !c.isParamOf(fn, name) {
+			b.borrowed[name] = true
+		}
+	}
+	b.locals = c.borrowedLocals(fn, b)
+	return c.exprBorrows(asn.Value, b)
+}
+
+func (c *checker) isParamOf(fn *ast.FuncDecl, name string) bool {
+	for _, p := range fn.Params {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// selfUpdate reports a call with target as its receiver or as an argument,
+// or a literal with base target that sets no field to a borrowed name.
+func selfUpdate(target string, value ast.Expr, borrowed map[string]bool) bool {
+	if t, ok := value.(*ast.TryOp); ok {
+		return selfUpdate(target, t.Inner, borrowed)
+	}
+	if sl, ok := value.(*ast.StructLit); ok {
+		if base, ok := sl.Base.(*ast.Ident); !ok || base.Name != target {
+			return false
+		}
+		for _, f := range sl.Fields {
+			if id, ok := f.Value.(*ast.Ident); ok && borrowed[id.Name] {
+				return false
+			}
+		}
+		return true
+	}
+	call, ok := value.(*ast.Call)
+	if !ok {
+		return false
+	}
+	if fa, ok := call.Callee.(*ast.FieldAccess); ok {
+		if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+			return true
+		}
+	}
+	for _, a := range call.Args {
+		if id, ok := a.(*ast.Ident); ok && id.Name == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
@@ -12350,7 +12411,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 						}
 					}
 				}
-				if id, ok := asn.Target.(*ast.Ident); ok && c.borrowedReplacement(asn, id, owned, borrowedParam, ownedTypes, isOwnedExpr) {
+				if id, ok := asn.Target.(*ast.Ident); ok && c.borrowedReplacement(fn, asn, id, owned, borrowedParam, ownedTypes, isOwnedExpr) {
 					c.errfCode(asn.Value.Pos(), "E051", "assignment to owned binding %q must take an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", id.Name)
 				}
 				if id, ok := asn.Target.(*ast.Ident); ok {

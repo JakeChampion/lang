@@ -22,6 +22,8 @@ func TestOwnReplacementRejectsBorrowedValues(t *testing.T) {
 		{"read-only", `function f(own value: Holder, borrowed: Handle): i32 { value = Holder { value: borrowed, n: 0 }; return value.n; }`},
 		{"alias", `function f(own value: Holder, other: Holder): i32 { value = other; return consume(value); }`},
 		{"helper", `function f(own value: Holder, other: Holder): i32 { value = same(other); return consume(value); }`},
+		{"beside-self", `function f(own value: Holder, borrowed: Handle): i32 { value = Holder { value: borrowed, n: value.n }; return consume(value); }`},
+		{"spread-self", `function f(own value: Holder, borrowed: Handle): i32 { value = Holder { ...value, value: borrowed }; return consume(value); }`},
 		{"match-binder", `function f(own b: Box, other: Handle): i32 { match (b) { Full(h) => { h = other; return h.fd; }, Empty => { return 0; } } return 0; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -34,6 +36,7 @@ func TestOwnReplacementAcceptsOwnedValues(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"fresh-literal", `function f(own value: Holder): i32 { value = Holder { value: Handle { fd: 2 }, n: 0 }; return consume(value); }`},
 		{"fresh-call", `function f(own value: Holder): i32 { let n = value.n; value = fresh(); return consume(value) + n; }`},
+		{"spread-self", `function f(own value: Holder): i32 { value = Holder { ...value, n: value.n + 1 }; return consume(value); }`},
 		{"self-update", `function f(own value: Holder): i32 { value = bump(value); return consume(value); }`},
 		{"other-own-parameter", `function f(own value: Holder, own other: Holder): i32 { let n = consume(value); value = other; return consume(value) + n; }`},
 		{"local-last-use", `function f(own value: Holder): i32 { let n = consume(value); let next = fresh(); value = next; return consume(value) + n; }`},
