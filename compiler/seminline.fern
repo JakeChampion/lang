@@ -1125,7 +1125,8 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
     alone = alone.append(sp.once[i] && !sp.shared[i]);
   }
   let once = alone;
-  let sizes = sizes_of(funcs0);
+  let planned = sizes_of(funcs0);
+  let sizes = planned;
   let callees = callees_of_all(funcs0, sp.ix);
   let words = unknown_words(funcs0.len());
   let tries = no_tries(funcs0.len());
@@ -1150,7 +1151,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, settled, s.shared, s.small, j));
       j += 1;
     }
-    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small, words, tries);
+    let next = splice_round(out, sizes, planned, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small, words, tries);
     tries = next.tries;
     more = next.changed;
     sizes = next.sizes;
@@ -1178,7 +1179,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
   while (tiny_more && tiny_rounds < 4) {
     let grown = grown_tiny(out, s, tiny, words);
     tiny = grown.tiny;
-    let next = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small, grown.words, tries);
+    let next = splice_round(out, sizes, planned, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small, grown.words, tries);
     tries = next.tries;
     sizes = next.sizes;
     callees = next.callees;
@@ -1300,7 +1301,7 @@ function tried_at(own t: Tries, i: i32, changed: boolean): Tries {
   return Tries { ...t, tried: t.tried.with(i, t.event), event: t.event + 1 };
 }
 
-function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], own w: Words, own t0: Tries): Round {
+function splice_round(prev: Inlined, own sizes: i32[], planned: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], own w: Words, own t0: Tries): Round {
   let funcs = prev.funcs;
   let state = current_words(w, funcs, ix, owners);
   let words = state.found;
@@ -1309,8 +1310,8 @@ function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rew
   let changed = false;
   let i = 0;
   while (i < funcs.len()) {
-    if (rewrite[i] && (sizes[i] <= max_caller_insts() || sizes[i] <= max_box_saving_caller_insts() && any_box_saving(funcs, sizes, callees[i], ready, shared)) && any_ready(callees[i], ready) && !tried_already(t, i, callees[i], state)) {
-      let spliced = splice_calls(funcs[i], sizes[i], i, funcs, sizes, ix, words, owners, ready, ctors, shared, small, false);
+    if (rewrite[i] && (sizes[i] <= max_caller_insts() || sizes[i] <= max_box_saving_caller_insts() && any_box_saving(funcs, sizes, planned, callees[i], ready, shared)) && any_ready(callees[i], ready) && !tried_already(t, i, callees[i], state)) {
+      let spliced = splice_calls(funcs[i], sizes[i], i, funcs, sizes, planned, ix, words, owners, ready, ctors, shared, small, false);
       if (spliced.changed) {
         spliced = Rewrite { ...spliced, f: semdead.prune(split_constructions(spliced.f, modes[i]).f).f };
       }
@@ -1654,7 +1655,7 @@ pub function splice_closures(funcs: ssasem.Func[], candidates: ssasem.Func[], ix
     let f = funcs[i];
     let size = count_insts(f.graph);
     if (rewrite[i] && size <= max_caller_insts()) {
-      f = drop_unread(splice_calls(f, size, i, candidates, sizes, ix, words, owners, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
+      f = drop_unread(splice_calls(f, size, i, candidates, sizes, sizes, ix, words, owners, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
     }
     out = out.append(f);
   }
@@ -2180,7 +2181,7 @@ function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32
   return -1;
 }
 
-function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
+function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[], sizes: i32[], planned: i32[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
   let f = f0;
   let fsize = size;
   let done = 0;
@@ -2209,7 +2210,7 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
       // Every splice path must keep an owner alive through a borrowed-word call.
       if (at >= 0 && at != self && !calls_with_read_word(funcs[at], funcs, ix, words, owners)
         && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0
-        || fsize + sizes[at] <= max_box_saving_caller_insts() && saves_box(funcs, sizes, at, shared))) {
+        || fsize + sizes[at] <= max_box_saving_caller_insts() && saves_box(funcs, sizes, planned, at, shared))) {
         done += 1;
         if (straight(funcs[at])) {
           let ip = splice_in_place(f, bi, k, funcs[at]);
@@ -3074,16 +3075,18 @@ function callees_of_all(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
   return out;
 }
 
-function saves_box(funcs: ssasem.Func[], sizes: i32[], at: i32, shared: boolean[]): boolean {
+// planned[at] is the size at which the splice plan admitted the callee, before
+// the splices of its own callees made it larger.
+function saves_box(funcs: ssasem.Func[], sizes: i32[], planned: i32[], at: i32, shared: boolean[]): boolean {
   if (shared[at]) {
     return sizes[at] <= max_reuse_shared_insts();
   }
-  return sizes[at] <= max_once_insts() && returns_boxes(funcs[at]);
+  return (sizes[at] <= max_once_insts() || planned[at] <= max_once_insts()) && returns_boxes(funcs[at]);
 }
 
-function any_box_saving(funcs: ssasem.Func[], sizes: i32[], callees: i32[], ready: boolean[], shared: boolean[]): boolean {
+function any_box_saving(funcs: ssasem.Func[], sizes: i32[], planned: i32[], callees: i32[], ready: boolean[], shared: boolean[]): boolean {
   for j in callees {
-    if (ready[j] && saves_box(funcs, sizes, j, shared)) {
+    if (ready[j] && saves_box(funcs, sizes, planned, j, shared)) {
       return true;
     }
   }

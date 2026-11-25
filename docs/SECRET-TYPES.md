@@ -21,6 +21,10 @@ The drop also does the same for an enum value that the record holds alone, such 
 It zeroes the scalars of the variant, and the numeric arrays that the variant holds alone.
 The drop zeroes a scalar payload of an `Option` or a `Result` of each width, also a 64-bit integer or a float.
 
+The drop also does the same for each element of an array of boxes that the record holds alone.
+Examples are a `u8[][]`, a `string[]` and an array of records.
+An element that another value still holds keeps its contents.
+
 This holds in each build, not only under `-harden`.
 
 A numeric array has elements of 1, 2, 4 or 8 bytes: `u8[]`, `u16[]`, `i32[]`, `u64[]`, `f64[]` and the other integer and float element types.
@@ -58,7 +62,6 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 ## Limits
 
 - The drop does not wipe a string whose bytes are in another block, such as a mapped file.
-- The drop does not wipe an array, a string or a scalar inside an array of records.
 - The drop does not wipe a value of a `type A | B` union.
 - The drop does not wipe a nested record or enum that has a `core/mem.Drop` finalizer, because the finalizer reads the fields after the wipe.
   Give a record of that kind the attribute `@secret`, and its own drop then wipes it after the finalizer.
@@ -70,4 +73,4 @@ The semantic index is [spec/semantics.md](../spec/semantics.md).
 `TestSelfHostSecretRecordWipesItsArrays` reads the released blocks back through raw allocations on x86-64 and arm64.
 Its control is the same record without the attribute, which must read the secret bytes back.
 `TestSelfHostSecretRecordWipesItsScalars` does the same for the scalar fields, `TestSelfHostSecretRecordWipesItsNestedBoxes` for a nested record and a tuple, and `TestSelfHostSecretRecordWipesItsEnums` for an enum value.
-`TestSelfHostSecretRecordWipesItsStrings` does the same for a string.
+`TestSelfHostSecretRecordWipesItsStrings` does the same for a string, and `TestSelfHostSecretRecordWipesItsArraysOfBoxes` for the elements of a `u8[][]` and of an array of records.
