@@ -187,6 +187,21 @@ struct W3 { a: u64, b: u64, c: u64 }
     let c: u64 = (x & y | (x | y) & (s ^ ALL)) >> 63u64;
     return (((h + c) as u32) as u64) ^ s;
 }
+@noinline function carried_imm(x: u64, y: u64): u64 {
+    let s: u64 = x + y;
+    let c: u64 = (x & y | (x | y) & (s ^ ALL)) >> 63u64;
+    return (7u64 + c) ^ s;
+}
+@noinline function borrowed_imm(x: u64, y: u64): u64 {
+    let d: u64 = x - y;
+    let b: u64 = ((x ^ ALL) & y | ((x ^ ALL) | y) & d) >> 63u64;
+    return (d - b) ^ (9u64 - b);
+}
+@noinline function linked_imm(x: u64, y: u64, z: u64): u64 {
+    let s: u64 = x + y;
+    let c: u64 = (x & y | (x | y) & (s ^ ALL)) >> 63u64;
+    return (5u64 + z + c) ^ s;
+}
 function main(): i32 {
     let edges: u64[] = [0u64, 1u64, 2u64, 0x7fffffffffffffffu64, 0x8000000000000000u64, 0xfffffffffffffffeu64, 0xffffffffffffffffu64, 0x123456789abcdef0u64, 0xedcba98765432110u64];
     let acc: u64 = 0u64;
@@ -200,6 +215,7 @@ function main(): i32 {
             acc = acc ^ add4(x, y, x ^ y, y - x, y, x, x + 1u64, ALL - y);
             for h in [0u64, x ^ y, ALL] {
                 acc = acc * 31u64 + add_carried(x, y, h) + 3u64 * add_carried_left(x, y, h) + 5u64 * sub_borrowed(x, y, h);
+                acc = acc * 41u64 + carried_imm(x, y) + 3u64 * borrowed_imm(x, y) + 5u64 * linked_imm(x, y, h);
                 acc = acc * 31u64 + carried_far(x, y, h, y + 3u64) + 3u64 * carried_twice(x, y, h, x) + 5u64 * carried_late(x, y, h, y) + 7u64 * carried_masked(x, y, h) + 11u64 * carried_narrow(x, y, h);
                 let p = W3 { a: x, b: h, c: y };
                 let q = W3 { a: y, b: ALL - h, c: x ^ 1u64 };
@@ -274,7 +290,7 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 				t.Errorf("%s: %s should read its carries off the flags, with no shift by 63:\n%s", c.target, name, fn)
 			}
 		}
-		for _, name := range []string{"add_carried", "add_carried_left", "sub_borrowed", "carried_far", "carried_late", "carried_masked", "carried_narrow"} {
+		for _, name := range []string{"add_carried", "add_carried_left", "sub_borrowed", "carried_far", "carried_late", "carried_masked", "carried_narrow", "carried_imm"} {
 			fn := functionListing(string(asm), "__fn_"+name)
 			if !c.kept.MatchString(fn) || c.flags.MatchString(fn) || c.shift.MatchString(fn) {
 				t.Errorf("%s: %s's carry should stay in the flags for the add or subtract that reads it:\n%s", c.target, name, fn)
