@@ -25,6 +25,7 @@ No module defines a cipher, a hash or a signature scheme of its own.
 | `std/crypto/mlkem768` | ML-KEM-768 (FIPS 203) | `mlkem768` | implicit rejection of a changed ciphertext, modulus and hash checks on the keys |
 | `std/crypto/mldsa` | ML-DSA-65 (FIPS 204), hedged and deterministic signing | `mldsa`, `mldsa_acvp`, `wycheproof_mldsa65_*` | a changed message, context, challenge or `z`, another key, wrong lengths, a long context, and an `s1` or `s2` coefficient out of range |
 | `std/crypto/hpke` | HPKE base mode with X-Wing, MLKEM768-P256 or DHKEM(P-256), HKDF-SHA256 and ChaCha20-Poly1305 | `hpke` | invalid public keys, lengths and ciphertexts |
+| `std/noise` | the Noise Protocol Framework (revision 34): NN, NK, XX, IK and KK with `psk0` to `psk2`, 25519, ChaChaPoly or AESGCM, SHA256 | `noise`, with the 26 cacophony vectors of these protocols | names, keys, turns, lengths, damaged messages and the nonce limit |
 | `std/tls` | TLS 1.3 and client-side TLS 1.2 | the `tls_*` suites | the record, handshake and certificate suites refuse malformed and unauthenticated input |
 
 The random source is `random_bytes`, which reads the kernel's entropy service and never returns a short result ([ENTROPY.md](ENTROPY.md)).

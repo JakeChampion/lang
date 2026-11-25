@@ -83,7 +83,7 @@ import "core/cmp";
 
 ```fern
 <<2 pub const CLIENT_HELLO: i32>>=
-// HelloRequest, ServerKeyExchange, ServerHelloDone and ClientKeyExchange are TLS 1.2 messages: split and head
+// HelloRequest, ServerKeyExchange, ServerHelloDone, ClientKeyExchange and CertificateStatus are TLS 1.2 messages: split and head
 // frame them for the TLS 1.2 client, and decode refuses them.
 pub const HELLO_REQUEST: i32 = 0;
 
@@ -111,9 +111,13 @@ pub const CLIENT_KEY_EXCHANGE: i32 = 16;
 
 pub const FINISHED: i32 = 20;
 
+pub const CERTIFICATE_STATUS: i32 = 22;
+
 pub const KEY_UPDATE: i32 = 24;
 
 pub const EXT_SERVER_NAME: i32 = 0;
+
+pub const EXT_STATUS_REQUEST: i32 = 5;
 
 pub const EXT_SUPPORTED_GROUPS: i32 = 10;
 
@@ -692,7 +696,7 @@ pub function decode(r: Raw): Result[Message, MsgError] {
 <<17 pub struct Split>>=
 pub struct Split { messages: Raw[], rest: u8[] }
 
-const KINDS: i32[] = [HELLO_REQUEST, CLIENT_HELLO, SERVER_HELLO, NEW_SESSION_TICKET, END_OF_EARLY_DATA, ENCRYPTED_EXTENSIONS, CERTIFICATE, SERVER_KEY_EXCHANGE, CERTIFICATE_REQUEST, SERVER_HELLO_DONE, CERTIFICATE_VERIFY, CLIENT_KEY_EXCHANGE, FINISHED, KEY_UPDATE];
+const KINDS: i32[] = [HELLO_REQUEST, CLIENT_HELLO, SERVER_HELLO, NEW_SESSION_TICKET, END_OF_EARLY_DATA, ENCRYPTED_EXTENSIONS, CERTIFICATE, SERVER_KEY_EXCHANGE, CERTIFICATE_REQUEST, SERVER_HELLO_DONE, CERTIFICATE_VERIFY, CLIENT_KEY_EXCHANGE, FINISHED, CERTIFICATE_STATUS, KEY_UPDATE];
 ```
 
 ### `18 function __known(kind: i32): boolean`
@@ -1057,6 +1061,40 @@ pub function early_data_max(d: [u8]): Result[u32, MsgError] {
     return Err(__decode_error("early_data"));
   }
   return Ok(__get32(d, 0));
+}
+
+// ext_status_request asks for an OCSP response with no responder IDs and no
+// request extensions (RFC 6066 section 8).
+pub function ext_status_request(): Extension {
+  return Extension { kind: EXT_STATUS_REQUEST, data: [1u8, 0u8, 0u8, 0u8, 0u8] };
+}
+
+// asks_ocsp reads whether the status_request of a ClientHello asks for OCSP.
+pub function asks_ocsp(d: [u8]): boolean {
+  return d.len() >= 1 && d[0] == 1u8;
+}
+
+// ext_certificate_status is a status_request of a TLS 1.3 CertificateEntry:
+// a CertificateStatus that holds a DER OCSP response.
+pub function ext_certificate_status(response: [u8]): Extension {
+  return Extension { kind: EXT_STATUS_REQUEST, data: certificate_status(response) };
+}
+
+// certificate_status is the body of a CertificateStatus (RFC 6066 section 8).
+pub function certificate_status(response: [u8]): u8[] {
+  return __vec24(__u8([], 1), response);
+}
+
+// ocsp_response reads the DER OCSP response of the body of a CertificateStatus.
+pub function ocsp_response(d: [u8]): Result[u8[], MsgError] {
+  if (d.len() < 1 || d[0] != 1u8) {
+    return Err(__decode_error("CertificateStatus"));
+  }
+  let r = __vec(d, 1, 3, 1, 16777215, "CertificateStatus")?;
+  if (r.to != d.len()) {
+    return Err(__decode_error("CertificateStatus"));
+  }
+  return Ok(__copy(d, r.from, r.to));
 }
 
 pub function ext_psk_modes(modes: i32[]): Extension {

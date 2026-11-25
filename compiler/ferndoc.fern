@@ -260,32 +260,11 @@ function param_type_str(p: ast.ParamDecl): string {
   if (p.type_name != "fn") {
     return type_str(p.type_name);
   }
-  let out = "(";
-  if (p.fn_param_types.len() > 0) {
-    let parts = split_commas(p.fn_param_types);
-    for i in 0..parts.len() {
-      if (i > 0) {
-        out += ", ";
-      }
-      out += parts[i];
-    }
-  }
+  let out = "(" + p.fn_param_types.join(", ");
   if (p.fn_ret.len() == 0) {
     return out + ") => void";
   }
   return out + ") => " + p.fn_ret;
-}
-
-function split_commas(s: string): string[] {
-  let out: string[] = [];
-  let start = 0;
-  for i in 0..s.len() {
-    if (s[i] as i32 == 44) {
-      out = out.append(own(slice_unchecked(s, start, i)));
-      start = i + 1;
-    }
-  }
-  return out.append(own(slice_unchecked(s, start, s.len())));
 }
 
 function join_plus(names: string[]): string {

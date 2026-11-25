@@ -14,7 +14,7 @@ function cell_read(name: string, line: i32, col: i32): ast.Expr {
 
 pub function cell_decl(name: string, ty: string, init: ast.Expr, line: i32, col: i32): ast.Stmt {
   let cell: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "cell_new", line: line, col: col, ty: "", builtin: false }, args: [init], line: line, col: col, type_args: [], ty: "" };
-  return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: "", destr: ast.no_destr(), header: false };
+  return ast.StmtVar { name: cell_name(name), type_name: "Cell[" + ty + "]", init: cell, line: line, col: col, fn_ret: "", fn_param_types: [], destr: ast.no_destr(), header: false };
 }
 
 function cell_type(elem: typeinfo.Type): typeinfo.Type {

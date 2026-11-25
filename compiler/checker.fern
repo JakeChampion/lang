@@ -8505,14 +8505,12 @@ function (s: Scope) resolve_param(p: ast.ParamDecl): typeinfo.Type {
   return s.resolve_type(p.type_name);
 }
 
-function declared_callable_type(name: string, ret: string, params: string, tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
+function declared_callable_type(name: string, ret: string, params: string[], tparams: string[], subst: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
   let pts: typeinfo.Type[] = [];
   let powns: boolean[] = [];
-  if (params.len() > 0) {
-    for seg in parser.split_type_list(params) {
-      powns = powns.append(parser.spelling_is_own(seg));
-      pts = pts.append(type_from_name_subst(parser.spelling_without_own(seg), tparams, subst, tn));
-    }
+  for seg in params {
+    powns = powns.append(parser.spelling_is_own(seg));
+    pts = pts.append(type_from_name_subst(parser.spelling_without_own(seg), tparams, subst, tn));
   }
   let ft = t_func_result(pts, powns, type_from_name_subst(parser.spelling_without_own(ret), tparams, subst, tn), parser.spelling_is_own(ret));
   if (name == "fn[]") {
@@ -14637,9 +14635,9 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
     if (in_focus(focus, efn)) {
       for param in efn.params {
         let (pl, pc) = param_pos(param, efn.line, efn.col);
-        out = util.append_diags(out, lanes_inside_diags(type_from_spelling(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn), pl, pc));
+        out = util.append_diags(out, lanes_inside_diags(type_from_spelling(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn), pl, pc));
       }
-      out = util.append_diags(out, lanes_inside_diags(type_from_spelling(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), tn), efn.line, efn.col));
+      out = util.append_diags(out, lanes_inside_diags(type_from_spelling(parser.fn_tag_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), tn), efn.line, efn.col));
       for an in annots[k] {
         out = util.append_diags(out, lanes_inside_diags(type_from_spelling(an.type_name, tn), an.line, an.col));
       }
@@ -14647,7 +14645,7 @@ function e085_decl_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeName
   }
   for esd in mod.structs {
     for field in esd.fields {
-      let ft = type_from_spelling(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
+      let ft = type_from_spelling(parser.fn_tag_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn);
       if (holds_lanes(ft)) {
         let (fl, fc) = field_pos(field, esd.line, esd.col);
         out = out.append(dg_at("E085", "a field or payload of type " + type_label(ft) + " holds a lane value; a lane value lives only in a local, a parameter or a result", fl, fc));
@@ -20393,7 +20391,7 @@ function ocl_bound_source(capture: OclCapture, param: ast.ParamDecl, fn: parser.
   return OclCapture { ...capture, source: source, result: result, wide: capture.wide || folded || recursive };
 }
 
-function ocl_signature(params: ast.ParamDecl[], ret: string, fn_ret: string, fn_params: string): string {
+function ocl_signature(params: ast.ParamDecl[], ret: string, fn_ret: string, fn_params: string[]): string {
   let inputs: string[] = [];
   for p in params {
     let spelling = parser.fn_tag_spelling(p.type_name, p.fn_ret, p.fn_param_types);
@@ -29780,7 +29778,7 @@ function ow_result_module(mod: parser.Module, env: ModuleEnv, dx: OwnDecls, type
       fn = parser.FuncDecl { ...fn, body: body };
     }
     if (fn.receiver_name.len() > 0) {
-      let receiver = ast.ParamDecl { name: fn.receiver_name, type_name: fn.receiver_type, own: fn.receiver_own, send: false, has_default: false, default_value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, fn_ret: "", fn_param_types: "", line: fn.line, col: fn.col };
+      let receiver = ast.ParamDecl { name: fn.receiver_name, type_name: fn.receiver_type, own: fn.receiver_own, send: false, has_default: false, default_value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, fn_ret: "", fn_param_types: [], line: fn.line, col: fn.col };
       let params: ast.ParamDecl[] = [receiver];
       for p in fn.params {
         params = params.append(p);
@@ -30610,10 +30608,6 @@ function type_ref_depth(tr: parser.TypeRef, limit: i32): i32 {
   return most + 1 + tr.array_depth;
 }
 
-function e064_decl_spelling(type_name: string, fn_ret: string, fn_params: string): string {
-  return parser.fn_tag_spelling(type_name, fn_ret, fn_params);
-}
-
 function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: string[], tparams: string[]): string {
   if (tr.array_depth > 0) {
     let elem = parser.elem_type_ref(tr);
@@ -30694,7 +30688,7 @@ function collect_annots(stmts: ast.Stmt[]): Annot[] {
 function annot_of_stmt(st: ast.Stmt, own acc: Annot[]): Annot[] {
   match (st) {
     ast.StmtVar(v) => {
-      return acc.append(Annot { type_name: e064_decl_spelling(v.type_name, v.fn_ret, v.fn_param_types), line: v.line, col: v.col });
+      return acc.append(Annot { type_name: parser.fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types), line: v.line, col: v.col });
     },
     _ => {
       return acc;
@@ -30722,9 +30716,9 @@ function annot_of_expr(e: ast.Expr, own acc: Annot[]): Annot[] {
       }
       for param in lm.params {
         let (pl, pc) = param_pos(param, lm.line, lm.col);
-        acc = acc.append(Annot { type_name: e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), line: pl, col: pc });
+        acc = acc.append(Annot { type_name: parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types), line: pl, col: pc });
       }
-      return acc.append(Annot { type_name: e064_decl_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types), line: lm.line, col: lm.col });
+      return acc.append(Annot { type_name: parser.fn_tag_spelling(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types), line: lm.line, col: lm.col });
     },
     ast.ExprStructLit(sl) => {
       if (sl.written.len() > 0) {
@@ -30916,9 +30910,9 @@ function handle_type_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeNa
     let fd = mod.funcs[k];
     if (in_focus(focus, fd)) {
       for param in fd.params {
-        out = util.append_diags(out, handle_misuse_diags(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn, fd.line, fd.col));
+        out = util.append_diags(out, handle_misuse_diags(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types), tn, fd.line, fd.col));
       }
-      out = util.append_diags(out, handle_misuse_diags(e064_decl_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), tn, fd.line, fd.col));
+      out = util.append_diags(out, handle_misuse_diags(parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types), tn, fd.line, fd.col));
       for an in annots[k] {
         out = util.append_diags(out, handle_misuse_diags(an.type_name, tn, an.line, an.col));
       }
@@ -30927,7 +30921,7 @@ function handle_type_diags(mod: parser.Module, focus: util.NameIndex, tn: TypeNa
   for sd in mod.structs {
     let (line, col) = struct_decl_pos(mod, sd);
     for field in sd.fields {
-      out = util.append_diags(out, handle_misuse_diags(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn, line, col));
+      out = util.append_diags(out, handle_misuse_diags(parser.fn_tag_spelling(field.type_name, field.fn_ret, field.fn_param_types), tn, line, col));
     }
   }
   return out;
@@ -33392,7 +33386,7 @@ function expanding_type_diags(mod: parser.Module): util.Diag[] {
         if (sd.enum_owner.len() > 0) {
           member = sd.name;
         }
-        edges = member_edges(edges, owner, gparams[gi], member, field.type_name + " " + field.fn_ret + " " + field.fn_param_types, gnames, gparams);
+        edges = member_edges(edges, owner, gparams[gi], member, field.type_name + " " + field.fn_ret + " " + field.fn_param_types.join(","), gnames, gparams);
       }
     }
   }
@@ -33834,13 +33828,13 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (in_focus(focus, efn) && efn.receiver_name.len() == 0) {
       let efn_tps = e064_fn_tparams(efn);
       for param in efn.params {
-        let pu = e064_unknown_name(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), e064_tn, e064_extra, efn_tps);
+        let pu = e064_unknown_name(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types), e064_tn, e064_extra, efn_tps);
         if (pu.len() > 0) {
           let (pl, pc) = param_pos(param, efn.line, efn.col);
           signature_diags = signature_diags.append(unknown_type_diag(pu, e064_traits, pl, pc));
         }
       }
-      let ru = e064_unknown_name(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), e064_tn, e064_extra, efn_tps);
+      let ru = e064_unknown_name(parser.fn_tag_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
         signature_diags = signature_diags.append(unknown_type_diag(ru, e064_traits, efn.line, efn.col));
       }
@@ -33938,7 +33932,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   for esd in mod.structs {
     if (esd.type_params.len() == 0 && esd.enum_owner.len() == 0) {
       for field in esd.fields {
-        let fu = e064_unknown_name(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), e064_tn, e064_extra, esd.type_params);
+        let fu = e064_unknown_name(parser.fn_tag_spelling(field.type_name, field.fn_ret, field.fn_param_types), e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
           let (fl, fc) = field_pos(field, esd.line, esd.col);
           body_diags = body_diags.append(unknown_type_diag(fu, e064_traits, fl, fc));
@@ -35264,6 +35258,22 @@ function settle_at(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
   return settle_struct_lit_wide(e, t, s);
 }
 
+// Only these argument expressions can change when settle_at sees the parameter type.
+function args_need_param_types(args: ast.Expr[]): boolean {
+  for arg in args {
+    if let ast.ExprArray(_) = arg {
+      return true;
+    }
+    if let ast.ExprStructLit(_) = arg {
+      return true;
+    }
+    if (int_literal_tree(arg)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[], s: Scope): ast.Expr[] {
   if (params.len() != args.len()) {
     return args;
@@ -35448,7 +35458,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      if (nargs.len() > 0) {
+      if (args_need_param_types(nargs)) {
         nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
       }
       nargs = display_rewrite(c, nargs, s);

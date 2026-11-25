@@ -831,9 +831,21 @@ function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.Nam
   if (read.len() == 0) {
     return false;
   }
+  let managed: u8[] = [];
   for b in f.graph.blocks {
     for ins in b.insts {
-      if ((ins.kind_tag == ssasem.call() && (!ssasem.scalar_primitive(ins.str) || util.has_str(f.shadows, ins.str)) || ins.kind_tag == ssasem.call_value()) && reads_any(ins.args, read)) {
+      if (!(ins.kind_tag == ssasem.call() && (!ssasem.scalar_primitive(ins.str) || util.has_str(f.shadows, ins.str)) || ins.kind_tag == ssasem.call_value()) || !reads_any(ins.args, read)) {
+        continue;
+      }
+      // A number loaded from managed storage reads its owner at once, as an
+      // element read does, and keeps no word.
+      if (!numeric_load(ins, f)) {
+        return true;
+      }
+      if (managed.len() == 0) {
+        managed = managed_addresses(f);
+      }
+      if (!marked_address(managed, ins.args[0])) {
         return true;
       }
     }
@@ -843,11 +855,8 @@ function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.Nam
 
 function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
   let k = ins.kind_tag;
-  if (k == ssasem.call() && raw_load(ins.str)) {
+  if (k == ssasem.call() && raw_word_read(ins.str)) {
     return true;
-  }
-  if (k == ssasem.call() && raw_address(ins.str) && !util.has_str(f.shadows, ins.str)) {
-    return false;
   }
   // Pair operations transfer their input dependency without a new memory read.
   if (k == ssasem.call() && (sempair.pair_set_slot(ins.str) >= 0 || sempair.pair_word_slot(ins.str).is_some() || sempair.pair_lane_slot(ins.str).is_some() || ins.str.starts_with(sempair.word_as_prefix()))) {
@@ -1860,13 +1869,7 @@ function term_reads(t: ssa.STerm, v: i32): boolean {
 }
 
 function raw_word_read(name: string): boolean {
-  return raw_address(name) || raw_load(name);
-}
-
-// An address of an array or a string reads no word from memory. The borrow
-// of the address keeps its owner alive (ssasem.address_base).
-function raw_address(name: string): boolean {
-  return name == "__raw_arr_ptr" || name == "__raw_data";
+  return name == "__raw_arr_ptr" || name == "__raw_data" || raw_load(name);
 }
 
 function raw_load(name: string): boolean {

@@ -529,6 +529,38 @@ function pick(name: string): Case {
         let b12: ssa.SBlock = block(12, [1], [], ret(2));
         return Case { f: func(2, 19, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "loop-takes-a-field-under-each-arms-token" || name == "loop-takes-a-field-under-each-arms-token-unretained") {
+        // The loop carries v2. Each arm gives v2 to take, then reads the
+        // field of a fresh record under the record's reuse token: retained
+        // where the token is null, and the record's shell released where the
+        // token is the box. The field goes round the loop as the next v2.
+        // Each arm has its own token, so no walk under one token proves v2.
+        let retain_b: ssa.SInst[] = [call(29, "__fern_rc_inc", [26])];
+        if (name == "loop-takes-a-field-under-each-arms-token-unretained") { retain_b = []; }
+        let b0: ssa.SBlock = block(0, [], [param(0), fresh_box(1)], br(1));
+        let b1: ssa.SBlock = block(1, [0, 21, 18], [inst(8, 2, [1, 12, 26], 0, ""), const_int(3, 0), inst(9, 4, [0, 3], 0, "eq")], brif(4, 2, 19));
+        let b19: ssa.SBlock = block(19, [1], [const_int(6, 1), inst(9, 7, [0, 6], 0, "eq")], brif(7, 10, 20));
+        let b20: ssa.SBlock = block(20, [19], [], ret(2));
+        let b2: ssa.SBlock = block(2, [1], [call(33, "take", [2]), fresh_box(8), call(9, "__fern_rc_is_unique", [8])], brif(9, 3, 4));
+        let b3: ssa.SBlock = block(3, [2], [], br(5));
+        let b4: ssa.SBlock = block(4, [2], [const_int(10, 0)], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [inst(8, 11, [8, 10], 0, ""), counted_load(12, 8, 8), const_int(13, 0), inst(9, 14, [11, 13], 0, "eq")], brif(14, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [call(15, "__fern_rc_inc", [12])], br(7));
+        let b7: ssa.SBlock = block(7, [5, 6], [inst(9, 16, [11, 13], 0, "ne")], brif(16, 8, 9));
+        let b8: ssa.SBlock = block(8, [7], [call(17, "__fern_rc_dec", [8])], br(21));
+        let b9: ssa.SBlock = block(9, [7], [call(18, "__sem_release_T", [8])], br(21));
+        let b21: ssa.SBlock = block(21, [8, 9], [], br(1));
+        let b10: ssa.SBlock = block(10, [19], [call(34, "take", [2]), fresh_box(22), call(23, "__fern_rc_is_unique", [22])], brif(23, 11, 12));
+        let b11: ssa.SBlock = block(11, [10], [], br(13));
+        let b12: ssa.SBlock = block(12, [10], [const_int(24, 0)], br(13));
+        let b13: ssa.SBlock = block(13, [11, 12], [inst(8, 25, [22, 24], 0, ""), counted_load(26, 22, 8), const_int(27, 0), inst(9, 28, [25, 27], 0, "eq")], brif(28, 14, 15));
+        let b14: ssa.SBlock = block(14, [13], retain_b, br(15));
+        let b15: ssa.SBlock = block(15, [13, 14], [inst(9, 30, [25, 27], 0, "ne")], brif(30, 16, 17));
+        let b16: ssa.SBlock = block(16, [15], [call(31, "__fern_rc_dec", [22])], br(18));
+        let b17: ssa.SBlock = block(17, [15], [call(32, "__sem_release_T", [22])], br(18));
+        let b18: ssa.SBlock = block(18, [16, 17], [], br(1));
+        return Case { f: func(1, 35, [b0, b1, b19, b20, b2, b3, b4, b5, b6, b7, b8, b9, b21, b10, b11, b12, b13, b14, b15, b16, b17, b18]), modes: [rccertify.value_mode()], returns_unit: true };
+    }
     if (name == "push-joins-its-parameter" || name == "push-joins-its-parameter-unretained") {
         // One arm pushes onto the borrowed v0, and the join v7 meets the push
         // with v0 itself. A test of v7 against v0 then decides whether the
@@ -899,6 +931,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"pair-word-settled-past-its-token-test", nil, 0},
 		{"loop-box-copied-under-its-null-token", nil, 0},
 		{"loop-reuses-its-carried-box", nil, 0},
+		{"loop-takes-a-field-under-each-arms-token", nil, 0},
+		{"loop-takes-a-field-under-each-arms-token-unretained", nil, 1},
 		{"push-joins-its-parameter", nil, 0},
 		{"push-joins-its-parameter-unretained", nil, 1},
 		{"loop-reuses-its-carried-box-leaked", []string{"leaked where it dies of v2"}, 0},

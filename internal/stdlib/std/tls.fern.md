@@ -49,6 +49,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/dns";
 import "std/net";
 import "std/tls/handshake";
+import "std/tls/ocsp";
 import "std/tls/verify";
 import "core/error";
 import "core/cmp";
@@ -61,6 +62,7 @@ import "core/cmp";
 pub enum TlsError {
   HandshakeFailed(handshake.HandshakeError),
   Untrusted(verify.VerifyError),
+  Revocation(ocsp.OcspError),
   CertificateMissing,
   SignatureInvalid,
   SchemeMismatch,
@@ -111,6 +113,9 @@ pub function (e: TlsError) message(): string {
     },
     Untrusted(v) => {
       return "the peer's certificate is not trusted: " + v.message();
+    },
+    Revocation(o) => {
+      return "the revocation check of the peer's certificate failed: " + o.message();
     },
     CertificateMissing => {
       return "the peer sent no certificate";

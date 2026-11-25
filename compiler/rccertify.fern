@@ -450,6 +450,8 @@ struct Walk {
   params_at_entry: boolean,
   debt: boolean[],
   kept: boolean[],
+  // The state a load starts with where a tested token decides its origin.
+  token_loads: i32[],
 }
 
 function returns_pair(f: ssa.SFunc, irops: ir.Op[]): boolean {
@@ -2690,6 +2692,9 @@ function define(own p: Progress, w: Walk, v: i32, block: i32): Progress {
     p = found(p, w, "redefined while held", v, block, "the previous value's unit was never spent");
   }
   p = forget_key(p, v);
+  if (v < w.token_loads.len() && w.token_loads[v] != absent()) {
+    return Progress { ...p, state: p.state.with(k, w.token_loads[v]) };
+  }
   return Progress { ...p, state: p.state.with(k, initial_count(w.origin[v])) };
 }
 
@@ -3977,7 +3982,7 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
     uses = ssa.use_counts(f);
     paired = returns_pair(f, irops);
   }
-  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] }, insts: ssa.inst_defs(f) };
+  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] }, insts: ssa.inst_defs(f), token_loads: [] };
   w = Walk { ...w, splits: splits_of(w) };
   w = Walk { ...w, carried: carried_of(w) };
   let rg = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
@@ -4715,24 +4720,113 @@ function without_dropped_preds(w: Walk, b: ssa.SBlock, dropped: i32[], reach: bo
 
 struct Assumed { ok: boolean, w: Walk, p: Progress, rounds: i32 }
 
-function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean): Assumed {
+// The token's region under one value of the token. `on` is false where
+// that value cannot reach the token's block.
+struct TokenRegion { on: boolean, w: Walk, at: i32[], reach: boolean[] }
+
+function pruned_walk(w: Walk, tok: i32, hold: boolean): TokenRegion {
   let pf = prune_token(w, tok, hold);
   let from = w.defs.block[tok];
   if (!ssadeps.reachable_blocks(pf.f)[from]) {
-    return Assumed { ok: true, w: w, p: progress_of(w, lv), rounds: 0 };
+    return TokenRegion { on: false, w: w, at: [], reach: [] };
   }
   let sub = extracted(pf.f, w.at, from);
   let at = ssa.block_positions(sub);
   let dom = ssadeps.dominates_at(sub, at);
   let reach = ssadeps.reachable_from_dom(dom);
   let wa = walk_of(sub, w.irops, w.self_abi, w.abis, w.sigs, w.ops, at, dom, reach, pf.hold, base_of(w));
+  return TokenRegion { on: true, w: wa, at: at, reach: reach };
+}
+
+function walk_assuming(w: Walk, lv: Live, p0: Progress, tok: i32, hold: boolean): Assumed {
+  let pr = pruned_walk(w, tok, hold);
+  if (!pr.on) {
+    return Assumed { ok: true, w: w, p: progress_of(w, lv), rounds: 0 };
+  }
+  let wa = pr.w;
   let lva = live_of(wa, wa.takes);
   if (!lva.ok) {
     return Assumed { ok: false, w: wa, p: progress_of(wa, lva), rounds: 0 };
   }
-  let pa = seeded(progress_of(wa, lva), wa, lva, reach, w, lv, p0);
-  let done = settle(pa, wa, lva, ssa.reverse_postorder(sub, at), reach, wa.takes);
+  let pa = seeded(progress_of(wa, lva), wa, lva, pr.reach, w, lv, p0);
+  let done = settle(pa, wa, lva, ssa.reverse_postorder(wa.f, pr.at), pr.reach, wa.takes);
   return Assumed { ok: !done.changed, w: wa, p: done.p, rounds: done.rounds };
+}
+
+// A load in the region of a tested token can be the frame's where the token
+// is the box and a borrow where it is null. Such a load starts as a twin
+// keyed on the token, with the count of its origin under each value. Where
+// a value does not reach the load, that side is absent. The token's block
+// dominates the load, so the token has the value of the current pass.
+function token_loads(w: Walk, reach: boolean[], unproved: boolean[], maybe_at: i32[]): i32[] {
+  let out: i32[] = [];
+  while (out.len() < w.f.nvals) {
+    out = out.append(absent());
+  }
+  let clash = __alloc_bool(w.f.nvals);
+  for tok in tested_tokens(w, reach) {
+    let from = w.defs.block[tok];
+    if (from < 0 || count_true(decided_by(w, tok, unproved, maybe_at)) == 0) {
+      continue;
+    }
+    let held = pruned_walk(w, tok, true);
+    let null_tok = pruned_walk(w, tok, false);
+    for bi in 0..w.f.blocks.len() {
+      if (!reach[bi] || !ssadeps.dom_holds(w.dom, bi, from)) {
+        continue;
+      }
+      for ins in w.f.blocks[bi].insts {
+        let v = ins.result;
+        if (!is_load(ins) || v < 0 || w.root[v] != v || w.idx[v] < 0) {
+          continue;
+        }
+        let base = initial_count(w.origin[v]);
+        let same = count_under(held, v);
+        let apart = count_under(null_tok, v);
+        if (same < 0 || apart < 0 || (same == base || same == no_side()) && (apart == base || apart == no_side())) {
+          continue;
+        }
+        let s = twin(tok, same, apart);
+        if (out[v] != absent() && out[v] != s) {
+          clash = clash.with(v, true);
+        }
+        out = out.with(v, s);
+      }
+    }
+  }
+  for v in 0..clash.len() {
+    if (clash[v]) {
+      out = out.with(v, absent());
+    }
+  }
+  return out;
+}
+
+// The units the origin of `v` gives it under one value of a token:
+// `no_side()` where that value does not reach `v`, and -1 where the
+// origin gives no plain count.
+function count_under(pr: TokenRegion, v: i32): i32 {
+  if (!pr.on) {
+    return no_side();
+  }
+  let b = pr.w.defs.block[v];
+  if (b < 0 || b >= pr.reach.len() || !pr.reach[b]) {
+    return no_side();
+  }
+  let c = initial_count(pr.w.origin[v]);
+  if (c < 0 || c > 1) {
+    return -1;
+  }
+  return c;
+}
+
+function any_token_load(loads: i32[]): boolean {
+  for s in loads {
+    if (s != absent()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function extracted(f: ssa.SFunc, at: i32[], from: i32): ssa.SFunc {
@@ -5015,7 +5109,22 @@ function certify_graph(f0: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis,
   if (done.p.opaque.len() > 0) {
     return failed("calls " + done.p.opaque[0] + ", which has no rc signature and no ABI");
   }
-  let findings = done.p.findings;
+  // A finding of the walk before the twins is a finding too.
+  let first: Finding[] = [];
+  if (count_true(done.p.unproved) > 0) {
+    let loads = token_loads(w, reach, done.p.unproved, done.p.maybe_at);
+    if (any_token_load(loads)) {
+      let wt = Walk { ...w, token_loads: loads };
+      let again = settle(progress_of(wt, lv), wt, lv, ssa.reverse_postorder(f, at), reach, wt.takes);
+      if (again.changed) {
+        return failed("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
+      }
+      first = done.p.findings;
+      w = wt;
+      done = Settled { ...again, rounds: most(done.rounds, again.rounds) };
+    }
+  }
+  let findings = with_findings(first, done.p.findings);
   let unproved = done.p.unproved;
   let rounds = done.rounds;
   if (count_true(unproved) > 0) {

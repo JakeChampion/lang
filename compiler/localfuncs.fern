@@ -416,7 +416,7 @@ function hl_hoist_cycle(members: NestedFn[], sc: HlScope, hoisted: parser.FuncDe
         pname = "__cap_" + pname;
       }
       fwd = fwd.append(pname);
-      new_params = new_params.append(ast.ParamDecl { name: pname, type_name: hl_cap_type(sc, caps[ci]), own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 });
+      new_params = new_params.append(ast.ParamDecl { name: pname, type_name: hl_cap_type(sc, caps[ci]), own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 });
     }
     let inner_encl = parser.param_names(new_params);
     inner_encl = hl_append_str(inner_encl, hl_collect_var_names(lam.body));
