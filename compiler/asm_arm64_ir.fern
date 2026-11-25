@@ -4481,7 +4481,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == ssa.SELECT) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(ssa_fuse_view(fr), blk, ii), s);
   }
-  if (ins.kind_tag == ssa.BINARY && ins.str == "and_not") {
+  if (ins.kind_tag == ssa.BINARY && ins.ir_kind == ir.K_AND_NOT) {
     return ssa_and_not(ins, reg_of, s);
   }
   let role = ssa.carry_role(fr.carry, ins);

@@ -530,3 +530,4 @@ storage_bytes=580
 secret_map=581
 secret_lock=582
 secret_unmap=583
+and_not=584

@@ -3258,7 +3258,7 @@ pub function spill_count(reg_of: i32[]): i32 {
 
 // An integer binary op that cannot trap: no division and no remainder.
 function int_binary(ins: SInst): boolean {
-  return ins.ir_kind >= ir.K_AND && ins.ir_kind <= ir.K_SHR_U || ir.is_int_cmp_kind(ins.ir_kind) || ins.str == "and_not" || int_arith(ins.ir_kind);
+  return ins.ir_kind >= ir.K_AND && ins.ir_kind <= ir.K_SHR_U || ir.is_int_cmp_kind(ins.ir_kind) || ins.ir_kind == ir.K_AND_NOT || int_arith(ins.ir_kind);
 }
 
 function int_arith(kind: i32): boolean {
@@ -9705,11 +9705,11 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
   }
   let v = not_of(defs, ins.args[1]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[0], v], str: "and_not", ir_kind: 0 };
+    return SInst { ...ins, args: [ins.args[0], v], str: "and_not", ir_kind: ir.K_AND_NOT };
   }
   v = not_of(defs, ins.args[0]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[1], v], str: "and_not", ir_kind: 0 };
+    return SInst { ...ins, args: [ins.args[1], v], str: "and_not", ir_kind: ir.K_AND_NOT };
   }
   return no_inst();
 }
