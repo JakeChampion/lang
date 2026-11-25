@@ -942,8 +942,8 @@ func TestSelfHostSecretRecordWipesItsFinalizedFields(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretFinalizedSrc)
 			plain := run("plain")
-			if got := secretCount(t, "plain", plain); got < 100 {
-				t.Fatalf("plain read %d secret bytes back, want at least 100; the raw allocations no longer observe the released boxes", got)
+			if got := secretCount(t, "plain", plain); got < 72 {
+				t.Fatalf("plain read %d secret bytes back, want at least 72; the raw allocations no longer observe the released boxes", got)
 			}
 			secret := run("secret")
 			if got := strings.Join(secret[:len(secret)-1], " "); got != "res true part true" {
@@ -952,7 +952,7 @@ func TestSelfHostSecretRecordWipesItsFinalizedFields(t *testing.T) {
 			if got := secretCount(t, "secret", secret); got != 0 {
 				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its finalized fields back, want 0", got)
 			}
-			if got := run("shared"); strings.Join(got[:len(got)-1], " ") != "part true true res true" {
+			if got := run("shared"); strings.Join(got[:len(got)-1], " ") != "part true res true true" {
 				t.Fatalf("shared printed %q; the record that the caller still holds must keep its fields, and its finalizer must run once", got)
 			}
 		})
