@@ -1,6 +1,6 @@
 # `@secret` record types
 
-Status: [policy] normative for the native targets. Part of [SEC-025](https://github.com/JakeChampion/lang/issues/13527).
+Status: [policy] normative for the native targets and for wasm32-wasi. Part of [SEC-025](https://github.com/JakeChampion/lang/issues/13527).
 
 A struct with the attribute `@secret` holds secret data, such as a key.
 When the last reference to a record of such a struct goes away, its drop zeroes each numeric array that the record holds alone.
@@ -72,17 +72,18 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 - The drop does not wipe a string from `map_file_unchecked`.
   Its bytes are the pages of the file, mapped read-only, so the secret stays in the file.
 - A copy of the elements into another array, such as a slice that a program copies out, is not wiped.
-- The wasm allocator does not give a released block to a raw allocation of the same size.
-  The read-back test therefore runs on the native targets only.
 
 The semantic index is [spec/semantics.md](../spec/semantics.md).
-`TestSelfHostSecretRecordWipesItsArrays` reads the released blocks back through raw allocations on x86-64 and arm64.
+`TestSelfHostSecretRecordWipesItsArrays` reads the released blocks back through raw allocations on x86-64, arm64 and wasm32-wasi.
+A raw allocation takes a released block of its size class back without a zero-fill, so each test takes blocks of each size class.
 Its control is the same record without the attribute, which must read the secret bytes back.
+
 `TestSelfHostSecretRecordWipesItsScalars` does the same for the scalar fields, `TestSelfHostSecretRecordWipesItsNestedBoxes` for a nested record and a tuple, and `TestSelfHostSecretRecordWipesItsEnums` for an enum value.
 `TestSelfHostSecretRecordWipesItsStrings` does the same for a string, and `TestSelfHostSecretRecordWipesItsArraysOfBoxes` for the elements of a `u8[][]` and of an array of records.
 `TestSelfHostSecretRecordWipesItsUnions` does the same for a union value, and `TestSelfHostSecretRecordWipesItsFinalizedFields` for a field with a finalizer.
 
 `TestSelfHostSecretRecordWipesItsBuiltStrings` does the same for the strings that the runtime builds, and for a mapped file that the drop must leave.
+It runs on x86-64 and arm64 only, because it maps a file.
 
 `TestSelfHostSecretRecordWipesItsDeepFinalizedValues` does the same for a deeper value with a finalizer.
 Its record holds such a value in a nested record, a tuple, an array, an enum and a recursive enum.
