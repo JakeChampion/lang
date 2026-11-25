@@ -15186,6 +15186,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
           out = out.append(dg_at("E045", kmsg, expr_line(c.args[0]), expr_col(c.args[0])));
         }
       }
+      out = call_argument_diags(c, dest, s, out);
+      return field_call_diags(c, mfa, receiver, s, out);
     },
     ast.ExprIdent(cid) => {
       if (!is_resolvable_value(cid.name, s)) {
@@ -15199,29 +15201,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
       out = callee_diags(c, s, dest);
     }
   }
-  let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
-  let di = 0;
-  if (!s.callee_resolves(c)) {
-    di = c.args.len();
-  }
-  while (di < c.args.len()) {
-    let arg_dest = t_unknown("no declared parameter");
-    if (di < dests.len()) {
-      arg_dest = dests[di];
-    }
-    arg_dest = bound_param_dest(c, di, arg_dest, dest, s);
-    out = util.append_diags(out, dest_call_diags(c.args[di], arg_dest, s));
-    di += 1;
-  }
-  match (c.callee) {
-    ast.ExprFieldAccess(_) => {},
-    _ => {
-      let calleet = check_expr(c.callee, s);
-      let callee_is_fn = is_func_type(calleet);
-      if (!is_unknown(calleet) && !callee_is_fn) {
-        out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
-      }
-    }
+  out = call_argument_diags(c, dest, s, out);
+  let calleet = check_expr(c.callee, s);
+  if (!is_unknown(calleet) && !is_func_type(calleet)) {
+    out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
   }
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -15288,197 +15271,216 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
         out = util.append_diags(out, callable_arg_diags(c, s.lookup(id.name), s));
       }
     },
-    ast.ExprFieldAccess(mfa) => {
-      let recv = check_expr(mfa.obj, s);
-      if (mfa.display && !display_unjudged(recv) && !display_resolves(recv, s)) {
-        return out.append(dg_at(
-          "E038", "an interpolated value of type " + type_label(recv) + " does not implement `Display` — " + display_advice(recv),
-          expr_line(mfa.obj), expr_col(mfa.obj),
-        ));
-      }
-      match (recv) {
-        typeinfo.TypeTuple(tup) => {
-          if (tuple_element_field(recv, mfa.field)) {
-            out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
-          } else if let Some(tmsig) = s.lookup_method(mfa.field, parser.tuple_arity_namespace(tup.elements.len())) {
-            if (c.args.len() != tmsig.param_types.len()) {
-              out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", tmsig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
-            } else {
-              out = util.append_diags(out, method_arg_diags(c, mfa.field, tmsig, recv, s));
-              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, tmsig, recv, s));
-            }
-          }
-        },
-        typeinfo.TypeI32(it) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, int_label(it), mfa.field, s));
-        },
-        typeinfo.TypeFloat(f) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, float_label(f), mfa.field, s));
-        },
-        typeinfo.TypeBool(_) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("boolean", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
-        },
-        typeinfo.TypeLanes(l) => {
-          let lanes = typeinfo.lanes_spelling(l.width, l.kind);
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, lanes, mfa.field, s));
-        },
-        typeinfo.TypeString(_) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, "string", mfa.field, s));
-        },
-        typeinfo.TypeArray(ar) => {
-          if (!ar.view && mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
-            let aat = check_expr(c.args[0], s);
-            out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
-            if (!is_unknown(aat) && !settles_to_dest(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
-              out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
-            }
-            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[0], s));
-          }
-          if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
-            let wit = check_expr(c.args[0], s);
-            if (!is_unknown(wit) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(wit, typeinfo.t_i32(), s)) {
-              out = out.append(dg_at("E038", "argument 1 to \"with\": expected i32, got " + type_label(wit), expr_line(c.args[0]), expr_col(c.args[0])));
-            }
-            let wvt = check_expr(c.args[1], s);
-            out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
-            if (!is_unknown(wvt) && !settles_to_dest(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
-              out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt) + str_copy_hint(wvt, ar.elem), expr_line(c.args[1]), expr_col(c.args[1])));
-            }
-            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[1], s));
-          }
-          if (!ar.view && mfa.field == "truncate" && c.args.len() == 1) {
-            let tnt = check_expr(c.args[0], s);
-            if (!is_unknown(tnt) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(tnt, typeinfo.t_i32(), s)) {
-              out = out.append(dg_at("E038", "argument 1 to \"truncate\": expected i32, got " + type_label(tnt), expr_line(c.args[0]), expr_col(c.args[0])));
-            }
-          }
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          let arr_label = "Array";
-          if (ar.view) {
-            arr_label = "slice";
-          }
-          let avk = 0;
-          if (ar.view) {
-            avk = 1;
-          }
-          out = util.append_diags(out, inherent_tie_diags(mfa, "", avk, s));
-          if let Some(asig) = s.array_recv_method(mfa.field, ar.view) {
-            out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
-            if (c.args.len() == asig.param_types.len()) {
-              out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
-              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
-            }
-          }
-          let abw = array_builtin_arity(mfa.field, ar.view);
-          if (abw >= 0 && c.args.len() != abw) {
-            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", abw, c.args.len(), "argument"), c.line, c.col));
-          }
-        },
-        typeinfo.TypeMap(mt) => {
-          out = map_arg_diags(c, mfa.field, mt, s, out);
-          out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
-          out = util.append_diags(out, map_method_arg_diags(c, recv, mfa.field, s));
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col), mfa, recv));
-          }
-        },
-        typeinfo.TypeDyn(d) => {
-          out = util.append_diags(out, dyn_call_diags(c, mfa, d.traits, s));
-        },
-        typeinfo.TypeStruct(sn) => {
-          if (typeinfo.is_cell(recv)) {
-            out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
-          } else {
-            out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
-            out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, -1, s));
-            out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
-            if let Some(msig) = s.scoped_method(mfa.field, sn.name) {
-              if (c.args.len() != msig.param_types.len()) {
-                out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
-              } else {
-                out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
-                out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
-                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig, s));
-                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args, s));
-              }
-            } else {
-              let bms = builtin_method_sig(sn.name, mfa.field);
-              if (!is_unknown(bms)) {
-                out = util.append_diags(out, callable_arg_diags(c, bms, s));
-              } else if let Some(fsig) = s.lookup_struct(sn.name) {
-                let fldi = util.index_of_str(fsig.field_names, mfa.field);
-                if (fldi < 0 && s.lookup_assoc_sig(sn.name, mfa.field).is_some()) {
-                  out = out.append(dg_at("E043", assoc_on_value_message(sn.name, mfa.field), mfa.line, mfa.col));
-                } else if (fldi < 0) {
-                  out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
-                } else {
-                  let fldt = field_access_result_type(mfa, sn, s);
-                  let fld_is_fn = false;
-                  match (fldt) {
-                    typeinfo.TypeFunc(_) => {
-                      fld_is_fn = true;
-                    },
-                    _ => {}
-                  }
-                  if (!fld_is_fn) {
-                    out = out.append(dg_at("E038", "calling non-function value of type " + type_label(fldt), mfa.line, mfa.col));
-                  } else {
-                    out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
-                  }
-                }
-              } else if (semtypes.is_fd_handle_name(sn.name)) {
-                out = out.append(handle_member_diag(sn.name, mfa));
-              }
-            }
-          }
-        },
-        typeinfo.TypeUnion(un) => {
-          out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
-          out = util.append_diags(out, inherent_tie_diags(mfa, un.name, -1, s));
-          out = util.append_diags(out, finalizer_call_diags(mfa, un.name, s));
-          if let Some(umsig) = s.lookup_method(mfa.field, un.name) {
-            if (c.args.len() == umsig.param_types.len()) {
-              out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
-              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
-              out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
-              out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
-            }
-          }
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-        },
-        _ => {
-          // A rejected initializer does not retain an array receiver for later calls.
-          if (unbound_column(recv, ARRAY_TUPLE_UNRESOLVED)) {
-            out = out.append(dg_at("E043", "no method \"" + mfa.field + "\" on unresolved array", mfa.line, mfa.col));
-          }
-          out = util.append_diags(out, type_param_method_diags(c, mfa, recv, s));
-        }
-      }
-    },
     _ => {
       out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
     }
   }
 
+  return out;
+}
+
+function call_argument_diags(c: ast.ExprCall, dest: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
+  let di = 0;
+  if (!s.callee_resolves(c)) {
+    di = c.args.len();
+  }
+  while (di < c.args.len()) {
+    let arg_dest = t_unknown("no declared parameter");
+    if (di < dests.len()) {
+      arg_dest = dests[di];
+    }
+    arg_dest = bound_param_dest(c, di, arg_dest, dest, s);
+    out = util.append_diags(out, dest_call_diags(c.args[di], arg_dest, s));
+    di += 1;
+  }
+  return out;
+}
+
+function field_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  if (mfa.display && !display_unjudged(recv) && !display_resolves(recv, s)) {
+    return out.append(dg_at(
+      "E038", "an interpolated value of type " + type_label(recv) + " does not implement `Display` — " + display_advice(recv),
+      expr_line(mfa.obj), expr_col(mfa.obj),
+    ));
+  }
+  match (recv) {
+    typeinfo.TypeTuple(tup) => {
+      if (tuple_element_field(recv, mfa.field)) {
+        out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+      } else if let Some(tmsig) = s.lookup_method(mfa.field, parser.tuple_arity_namespace(tup.elements.len())) {
+        if (c.args.len() != tmsig.param_types.len()) {
+          out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", tmsig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+        } else {
+          out = util.append_diags(out, method_arg_diags(c, mfa.field, tmsig, recv, s));
+          out = util.append_diags(out, method_type_arg_diags(c, mfa.field, tmsig, recv, s));
+        }
+      }
+    },
+    typeinfo.TypeI32(it) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, int_label(it), mfa.field, s));
+    },
+    typeinfo.TypeFloat(f) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, float_label(f), mfa.field, s));
+    },
+    typeinfo.TypeBool(_) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("boolean", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
+    },
+    typeinfo.TypeLanes(l) => {
+      let lanes = typeinfo.lanes_spelling(l.width, l.kind);
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, lanes, mfa.field, s));
+    },
+    typeinfo.TypeString(_) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, "string", mfa.field, s));
+    },
+    typeinfo.TypeArray(ar) => {
+      if (!ar.view && mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
+        let aat = check_expr(c.args[0], s);
+        out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
+        if (!is_unknown(aat) && !settles_to_dest(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
+          out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
+        }
+        out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[0], s));
+      }
+      if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
+        let wit = check_expr(c.args[0], s);
+        if (!is_unknown(wit) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(wit, typeinfo.t_i32(), s)) {
+          out = out.append(dg_at("E038", "argument 1 to \"with\": expected i32, got " + type_label(wit), expr_line(c.args[0]), expr_col(c.args[0])));
+        }
+        let wvt = check_expr(c.args[1], s);
+        out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
+        if (!is_unknown(wvt) && !settles_to_dest(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
+          out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt) + str_copy_hint(wvt, ar.elem), expr_line(c.args[1]), expr_col(c.args[1])));
+        }
+        out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[1], s));
+      }
+      if (!ar.view && mfa.field == "truncate" && c.args.len() == 1) {
+        let tnt = check_expr(c.args[0], s);
+        if (!is_unknown(tnt) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(tnt, typeinfo.t_i32(), s)) {
+          out = out.append(dg_at("E038", "argument 1 to \"truncate\": expected i32, got " + type_label(tnt), expr_line(c.args[0]), expr_col(c.args[0])));
+        }
+      }
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      let arr_label = "Array";
+      if (ar.view) {
+        arr_label = "slice";
+      }
+      let avk = 0;
+      if (ar.view) {
+        avk = 1;
+      }
+      out = util.append_diags(out, inherent_tie_diags(mfa, "", avk, s));
+      if let Some(asig) = s.array_recv_method(mfa.field, ar.view) {
+        out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
+        if (c.args.len() == asig.param_types.len()) {
+          out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
+          out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
+        }
+      }
+      let abw = array_builtin_arity(mfa.field, ar.view);
+      if (abw >= 0 && c.args.len() != abw) {
+        out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", abw, c.args.len(), "argument"), c.line, c.col));
+      }
+    },
+    typeinfo.TypeMap(mt) => {
+      out = map_arg_diags(c, mfa.field, mt, s, out);
+      out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
+      out = util.append_diags(out, map_method_arg_diags(c, recv, mfa.field, s));
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col), mfa, recv));
+      }
+    },
+    typeinfo.TypeDyn(d) => {
+      out = util.append_diags(out, dyn_call_diags(c, mfa, d.traits, s));
+    },
+    typeinfo.TypeStruct(sn) => {
+      if (typeinfo.is_cell(recv)) {
+        out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
+      } else {
+        out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
+        out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, -1, s));
+        out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
+        if let Some(msig) = s.scoped_method(mfa.field, sn.name) {
+          if (c.args.len() != msig.param_types.len()) {
+            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+          } else {
+            out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
+            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
+            out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig, s));
+            out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args, s));
+          }
+        } else {
+          let bms = builtin_method_sig(sn.name, mfa.field);
+          if (!is_unknown(bms)) {
+            out = util.append_diags(out, callable_arg_diags(c, bms, s));
+          } else if let Some(fsig) = s.lookup_struct(sn.name) {
+            let fldi = util.index_of_str(fsig.field_names, mfa.field);
+            if (fldi < 0 && s.lookup_assoc_sig(sn.name, mfa.field).is_some()) {
+              out = out.append(dg_at("E043", assoc_on_value_message(sn.name, mfa.field), mfa.line, mfa.col));
+            } else if (fldi < 0) {
+              out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
+            } else {
+              let fldt = field_access_result_type(mfa, sn, s);
+              let fld_is_fn = false;
+              match (fldt) {
+                typeinfo.TypeFunc(_) => {
+                  fld_is_fn = true;
+                },
+                _ => {}
+              }
+              if (!fld_is_fn) {
+                out = out.append(dg_at("E038", "calling non-function value of type " + type_label(fldt), mfa.line, mfa.col));
+              } else {
+                out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+              }
+            }
+          } else if (semtypes.is_fd_handle_name(sn.name)) {
+            out = out.append(handle_member_diag(sn.name, mfa));
+          }
+        }
+      }
+    },
+    typeinfo.TypeUnion(un) => {
+      out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
+      out = util.append_diags(out, inherent_tie_diags(mfa, un.name, -1, s));
+      out = util.append_diags(out, finalizer_call_diags(mfa, un.name, s));
+      if let Some(umsig) = s.lookup_method(mfa.field, un.name) {
+        if (c.args.len() == umsig.param_types.len()) {
+          out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
+          out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
+          out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
+          out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
+        }
+      }
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+    },
+    _ => {
+      // A rejected initializer does not retain an array receiver for later calls.
+      if (unbound_column(recv, ARRAY_TUPLE_UNRESOLVED)) {
+        out = out.append(dg_at("E043", "no method \"" + mfa.field + "\" on unresolved array", mfa.line, mfa.col));
+      }
+      out = util.append_diags(out, type_param_method_diags(c, mfa, recv, s));
+    }
+  }
   return out;
 }
 
