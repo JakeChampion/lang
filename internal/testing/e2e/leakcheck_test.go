@@ -709,13 +709,14 @@ const ctorRetainedContainerReadSrc = `function main(): i32 {
     return s % 251;
 }`
 
-const ctorRetainedEnumPayloadSrc = `@noinline function keep(o: Option[i32[]]): i32 { return 0; }
+const ctorRetainedEnumPayloadSrc = `enum Held { Items(i32[]), Count(i32) }
+@noinline function keep(o: Held): i32 { return 0; }
 function main(): i32 {
     let s: i32 = 0;
     let k: i32 = 0;
     while (k < 40) {
-        let xs: i32[] = [4, 5, 6];
-        let o = Some(xs);
+        let xs: i32[] = [k, 5, 6];
+        let o = Items(xs);
         s = s + xs[1] + keep(o);
         k = k + 1;
     }
@@ -823,26 +824,28 @@ func TestArm64LeakCheckCtorRetainedLoopSource(t *testing.T) {
 	}
 }
 
-const enumStringPayloadBoxSrc = `@noinline function keep(o: Option[string]): i32 { return 0; }
+const enumStringPayloadBoxSrc = `enum Held { Text(string), Count(i32) }
+@noinline function keep(o: Held): i32 { return 0; }
 function main(): i32 {
     let t: i32 = 0;
     let k: i32 = 0;
     while (k < 100) {
-        let st: string = "ab" + "cd";
-        let o = Some(st);
+        let st: string = "abc" + (k % 10).to_string();
+        let o = Text(st);
         t = t + st.len() + keep(o);
         k = k + 1;
     }
     return t % 251;
 }`
 
-const enumArrayPayloadBoxSrc = `@noinline function keep(o: Option[i32[]]): i32 { return 0; }
+const enumArrayPayloadBoxSrc = `enum Held { Items(i32[]), Count(i32) }
+@noinline function keep(o: Held): i32 { return 0; }
 function main(): i32 {
     let t: i32 = 0;
     let k: i32 = 0;
     while (k < 100) {
-        let xs: i32[] = [1, 2];
-        let o = Some(xs);
+        let xs: i32[] = [k, 2];
+        let o = Items(xs);
         t = t + xs[1] + keep(o);
         k = k + 1;
     }
