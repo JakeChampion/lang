@@ -7862,6 +7862,17 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
   return ssa_mov_rr(s, reg, home);
 }
 
+// `ssa_load`, which also takes an immediate. A move keeps the flags.
+function ssa_load_value(fr: SsaFrame, reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (!fr.imm.is_imm[v]) {
+    return ssa_load(reg_of, v, reg, s);
+  }
+  if (reg == "%r11") {
+    s = asmcore.ssa_x0_forget(s);
+  }
+  return s.write("    movq " + ssa_rhs(fr, reg_of, v, s) + ", " + reg + "\n");
+}
+
 const J_JB: i32 = 2;
 
 const J_JAE: i32 = 3;
@@ -11271,13 +11282,13 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   }
   let role = ssa.carry_role(fr.carry, ins);
   if (role == ssa.CARRY_HEAD) {
-    return ssa_carried_sum(ins, ins.result, false, reg_of, s);
+    return ssa_carried_sum(ins, ins.result, false, reg_of, fr, s);
   }
   if (role == ssa.CARRY_LINK) {
-    return ssa_carried_sum(blk.insts[ii - 1], ins.result, true, reg_of, s);
+    return ssa_carried_sum(blk.insts[ii - 1], ins.result, true, reg_of, fr, s);
   }
   if (role == ssa.CARRY_READ) {
-    return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, s);
+    return ssa_carry_reader(ins, blk.insts[ii - 1].result, reg_of, fr, s);
   }
   if (role == ssa.CARRY_KEEP) {
     return ssa_carry_set(ins, reg_of, s);
@@ -11398,7 +11409,7 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 
 // The add or the subtract of the operands of `ins` into `result`, which
 // makes the flags. With `carried`, it also adds the carry of the flags.
-function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   let op: string = if (ins.str == "sub") { "subq" } else { "addq" };
   if (carried) {
     op = if (ins.str == "sub") { "sbbq" } else { "adcq" };
@@ -11407,8 +11418,8 @@ function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: 
   if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[result]) {
     d = "%r11";
   }
-  s = ssa_load(reg_of, ins.args[0], d, s);
-  s = s.write("    " + op + " " + ssa_operand(reg_of, ins.args[1], s) + ", " + d + "\n");
+  s = ssa_load_value(fr, reg_of, ins.args[0], d, s);
+  s = s.write("    " + op + " " + ssa_rhs(fr, reg_of, ins.args[1], s) + ", " + d + "\n");
   if (d == "%r11") {
     s = asmcore.ssa_x0_forget(s);
   }
@@ -11428,14 +11439,14 @@ function ssa_carry_set(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asm
   return ssa_store(reg_of, ins.result, d, s);
 }
 
-function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   let other = ins.args[0];
   if (other == carry) {
     other = ins.args[1];
   }
   let op: string = if (ins.str == "sub") { "sbbq" } else { "adcq" };
   let d = ssa_dst(reg_of, ins.result);
-  s = ssa_load(reg_of, other, d, s);
+  s = ssa_load_value(fr, reg_of, other, d, s);
   s = s.write("    " + op + " $0, " + d + "\n");
   if (d == "%r11") {
     s = asmcore.ssa_x0_forget(s);
