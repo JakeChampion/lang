@@ -11469,6 +11469,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 	replaced := replacedReads(fn.Body)
 	var isOwnedExpr func(e ast.Expr) bool
+	// A fresh argument is a construction that no name holds.
+	freshArg := func(a ast.Expr) bool {
+		switch x := a.(type) {
+		case *ast.Call:
+			return c.scalarArgs[a] || c.callOwnResults[x]
+		case *ast.Ident, *ast.FieldAccess, *ast.Index, *ast.SliceExpr, *ast.Lambda:
+			return c.scalarArgs[a]
+		}
+		return isOwnedExpr(a)
+	}
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] || c.valueArgs[e] {
 			return true
@@ -11551,7 +11561,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					return true
 				}
 				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && mayRetainBorrow(sig.Result) {
-					if !c.calleeResultBorrows(x) || c.callbacksReturnOwned(x) {
+					// A result borrows only from its arguments, so fresh arguments give an owned result.
+					if !c.calleeResultBorrows(x) || c.callbacksReturnOwned(x) || !slices.ContainsFunc(x.Args, func(a ast.Expr) bool { return !freshArg(a) }) {
 						return true
 					}
 				}

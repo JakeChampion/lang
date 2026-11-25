@@ -22,6 +22,7 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 		"diag_e051_cell_setter_borrowed_result",
 		"diag_e051_cell_setter_alias",
 		"diag_e051_cell_setter_local",
+		"diag_e051_borrowing_call_own_argument",
 		"diag_e051_cell_setter_own_parameter",
 		"diag_e051_generic_result_index",
 		"diag_e051_generic_result_for",
@@ -33,6 +34,7 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 		"generic_result_owned_and_handle_free",
 		"cell_constructor_result_ownership",
 		"cell_setter_owned_payloads",
+		"fresh_call_own_argument",
 		"generic_callback_copies_and_shared_results",
 	} {
 		t.Run(name, func(t *testing.T) {

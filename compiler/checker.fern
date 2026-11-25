@@ -22052,7 +22052,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
             return ow_variant_args_owned(c, ctx);
           }
-          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && ctx.fresh.has(cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
+          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && (ctx.fresh.has(cid.name) || ow_call_args_fresh(c, ctx)) || ow_callback_args_owned(c, ctx.last_use.get());
         },
         ast.ExprFieldAccess(mfa) => {
           // An associated call with no arguments has no source for a loan.
@@ -23511,6 +23511,46 @@ function lu_payload_arg_lends(fx: LuFn, a: ast.Expr): boolean {
 
 // Direct own calls accept actual callbacks that cannot lend a capture.
 // Other borrowed parameters keep their conservative result contract.
+// A result borrows only from its arguments, so fresh arguments give an owned result.
+function ow_call_args_fresh(c: ast.ExprCall, ctx: OwnCtx): boolean {
+  for a in c.args {
+    if (!ow_fresh_arg(a, ctx)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A fresh argument is a construction that no name holds.
+function ow_fresh_arg(a: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_expr_is_scalar(a, ctx)) {
+    return true;
+  }
+  if let ast.ExprCall(c) = a {
+    return ow_call_checked_result(c, ctx.scope);
+  }
+  if (ow_ident_name(a).len() > 0 || ow_reads_a_part(a)) {
+    return false;
+  }
+  if let ast.ExprLambda(_) = a {
+    return false;
+  }
+  return ow_is_owned_expr(a, ctx);
+}
+
+function ow_reads_a_part(e: ast.Expr): boolean {
+  if let ast.ExprFieldAccess(_) = e {
+    return true;
+  }
+  if let ast.ExprIndex(_) = e {
+    return true;
+  }
+  if let ast.ExprSlice(_) = e {
+    return true;
+  }
+  return false;
+}
+
 function ow_callback_args_owned(c: ast.ExprCall, lu: LastUses): boolean {
   let row = lu.lenders.names.find(ow_ident_name(c.callee));
   if (row < 0) {
