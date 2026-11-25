@@ -11354,10 +11354,10 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == ssa.BINARY && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
-  if (ssa_mul_wide_at(blk, ii, fr)) {
+  if (ssa.wide_product_at(blk, ii)) {
     return s;
   }
-  if (ssa_mul_wide_at(blk, ii - 1, fr)) {
+  if (ssa.wide_product_at(blk, ii - 1)) {
     return ssa_mul_wide(blk.insts[ii - 1], ins, reg_of, s);
   }
   let role = ssa.carry_role(fr.carry, ins);
@@ -11391,25 +11391,8 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   return ssa_inst(ins, reg_of, lp, fr, r, s);
 }
 
-// The instruction at `ii` is `a * b` and the next one is the high half of the
-// same product, so one `mulq` makes both.
-function ssa_mul_wide_at(blk: ssa.SBlock, ii: i32, fr: SsaFrame): boolean {
-  if (ii < 0 || ii + 1 >= blk.insts.len()) {
-    return false;
-  }
-  let lo = blk.insts[ii];
-  let hi = blk.insts[ii + 1];
-  if (lo.kind_tag != ssa.BINARY || lo.ir_kind != ir.K_MUL || lo.imm != 64 || lo.args.len() != 2 || lo.result < 0) {
-    return false;
-  }
-  if (hi.kind_tag != ssa.BINARY || hi.ir_kind != ir.K_MULHI_U || hi.imm != 64 || hi.args.len() != 2 || fr.imm.is_imm[hi.args[0]] || fr.imm.is_imm[hi.args[1]]) {
-    return false;
-  }
-  return lo.args[0] == hi.args[0] && lo.args[1] == hi.args[1] || lo.args[0] == hi.args[1] && lo.args[1] == hi.args[0];
-}
-
-// The low half goes first: the home of the high half can be `%rax`, and the
-// low half is live across the `mulq`, so its home is not `%rax` or `%rdx`.
+// The low half goes first, because the home of the high half can be `%rax`.
+// No value has its home in `%rdx`.
 function ssa_mul_wide(lo: ssa.SInst, hi: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_widening_mul(hi, reg_of, s);
   s = ssa_store(reg_of, lo.result, "%rax", s);
