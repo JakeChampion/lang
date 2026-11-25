@@ -15189,7 +15189,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
           out = out.append(dg_at("E045", kmsg, expr_line(c.args[0]), expr_col(c.args[0])));
         }
       }
-      if (!s.method_missing(receiver, mfa.field)) {
+      if (c.args.len() > 0 && !s.method_missing(receiver, mfa.field)) {
         out = call_argument_diags(c, dest, s.field_call_param_types(c, mfa.field, receiver), s, out);
       }
       return field_call_diags(c, mfa, receiver, s, out);
@@ -15202,13 +15202,15 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
       if (is_map_new_name(cid.name) && !s.module_imported("core/map")) {
         out = out.append(dg_at("E001", map_import_msg(), c.line, c.col));
       }
-      if (resolved) {
+      if (resolved && c.args.len() > 0) {
         out = call_argument_diags(c, dest, s.call_param_types(c), s, out);
       }
     },
     _ => {
       out = callee_diags(c, s, dest);
-      out = call_argument_diags(c, dest, [], s, out);
+      if (c.args.len() > 0) {
+        out = call_argument_diags(c, dest, [], s, out);
+      }
     }
   }
   let calleet = check_expr(c.callee, s);
