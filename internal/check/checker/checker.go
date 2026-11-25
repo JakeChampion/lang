@@ -11318,7 +11318,7 @@ func (c *checker) borrowedReplacement(fn *ast.FuncDecl, asn *ast.Assign, id *ast
 	if asn.Op != "" || asn.Value == nil || !owned[id.Name] || borrowedParam[id.Name] {
 		return false
 	}
-	if selfUpdate(id.Name, asn.Value, borrowedParam) {
+	if selfUpdate(id.Name, asn.Value, borrowedParam) || boundFromSelfUpdate(fn, id.Name, asn.Value, borrowedParam) {
 		return false
 	}
 	if t := ownedTypes[id.Name]; t == nil || c.holdsNoHandle(t) {
@@ -11352,6 +11352,53 @@ func (c *checker) isParamOf(fn *ast.FuncDecl, name string) bool {
 		}
 	}
 	return false
+}
+
+// boundFromSelfUpdate reports a value whose root is a name that a let, a
+// destructure or a match pattern binds from a self-update of target:
+// `let Ok(p) = s.step(r); s = p.s;`.
+func boundFromSelfUpdate(fn *ast.FuncDecl, target string, value ast.Expr, borrowed map[string]bool) bool {
+	root := accessRoot(value)
+	if root == "" || root == target {
+		return false
+	}
+	found := false
+	from := func(src ast.Expr) {
+		found = found || src != nil && selfUpdate(target, src, borrowed)
+	}
+	arms := func(tag ast.Expr, binders [][]string) {
+		for _, names := range binders {
+			if slices.Contains(names, root) {
+				from(tag)
+			}
+		}
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			if x.Name == root {
+				from(x.Init)
+			}
+		case *ast.Destructure:
+			if slices.Contains(x.Names, root) {
+				from(x.Init)
+			}
+		case *ast.Match:
+			var b [][]string
+			for _, arm := range x.Arms {
+				b = append(b, arm.Binders())
+			}
+			arms(x.Tag, b)
+		case *ast.MatchExpr:
+			var b [][]string
+			for _, arm := range x.Arms {
+				b = append(b, arm.Binders())
+			}
+			arms(x.Tag, b)
+		}
+		return !found
+	})
+	return found
 }
 
 // selfUpdate reports a call with target as its receiver or as an argument,
