@@ -52,6 +52,47 @@ def mont_mul(name, p, n0, special):
     # t < 2p: subtract p, keep t when that borrows past the top limb.
     return finish(g, name, "a: Fe, b: Fe", t[:5], pl)
 
+# The Montgomery square a * a / R mod p: the eight limbs of a * a with each
+# cross product once, doubled, then four rounds that each clear a low limb.
+def mont_sq(name, p, n0, special):
+    g = Gen()
+    pl = limbs(p)
+    a = g.params("a")
+    w = [None] * 8
+    for i in range(3):
+        c = None
+        for j in range(i + 1, 4):
+            c, w[i + j] = g.mac(w[i + j], a[i], a[j], c)
+        w[i + 4] = c
+    # w[0] is zero and w[7] has no cross product: the doubled sum starts at
+    # w[1], and its carry out is the top limb.
+    t = [None]
+    k = None
+    for j in range(1, 7):
+        s, k = g.add(w[j], w[j], k)
+        t.append(s)
+    t.append(k)
+    c = None
+    for i in range(4):
+        hi, t[2 * i] = g.mac(t[2 * i], a[i], a[i], c)
+        t[2 * i + 1], c = g.add(t[2 * i + 1], hi)
+    # The square is below 2^512, so the last carry is zero.
+    top = None
+    for i in range(4):
+        if special:
+            m = t[i]
+            c = m
+        else:
+            m = g.let("%s * %s" % (t[i], lit(n0)), "m")
+            c, _ = g.mac(t[i], m, lit(pl[0]), None)
+        for j in range(1, 4):
+            if pl[j] == 0:
+                t[i + j], c = g.add(t[i + j], c)
+            else:
+                c, t[i + j] = g.mac(t[i + j], m, lit(pl[j]), c)
+        t[i + 4], top = g.add(t[i + 4], c, top)
+    return finish(g, name, "a: Fe", t[4:8] + [top], pl)
+
 def finish(g, name, params, t, pl):
     d = []
     bo = None
@@ -152,11 +193,13 @@ def check(fns):
         a = edge[k % len(edge)] if k < 49 else rnd.randrange(P)
         b = edge[k // len(edge) % len(edge)] if k < 49 else rnd.randrange(P)
         assert run(fns["__fp_mul"], {"a": a, "b": b}) == a * b * rinv % P
+        assert run(fns["__fp_sqr"], {"a": a}) == a * a * rinv % P
         assert run(fns["__fp_add"], {"a": a, "b": b}) == (a + b) % P
         assert run(fns["__fp_sub"], {"a": a, "b": b}) == (a - b) % P
         assert run(fns["__borrow"], {"a": a, "b": b}) == (1 if a < b else 0)
         an, bn = a % N, b % N
         assert run(fns["__fn_mul"], {"a": an, "b": bn}) == an * bn * rninv % N
+        assert run(fns["__fn_sqr"], {"a": an}) == an * an * rninv % N
         assert run(fns["__fn_add"], {"a": an, "b": bn}) == (an + bn) % N
         # One operand below the modulus is enough for the product.
         assert run(fns["__fn_mul"], {"a": a, "b": bn}) == a * bn * rninv % N
@@ -164,14 +207,16 @@ def check(fns):
 def region():
     fns = {
         "__fp_mul": mont_mul("__fp_mul", P, n0_of(P), True),
+        "__fp_sqr": mont_sq("__fp_sqr", P, n0_of(P), True),
         "__fp_add": mod_add("__fp_add", P),
         "__fp_sub": mod_sub("__fp_sub", P),
         "__fn_mul": mont_mul("__fn_mul", N, n0_of(N), False),
+        "__fn_sqr": mont_sq("__fn_sqr", N, n0_of(N), False),
         "__fn_add": mod_add("__fn_add", N),
         "__borrow": borrow_fn(),
     }
     check(fns)
-    parts = [fns[k] for k in ("__fp_mul", "__fp_add", "__fp_sub", "__fn_mul", "__fn_add", "__borrow")]
+    parts = [fns[k] for k in ("__fp_mul", "__fp_sqr", "__fp_add", "__fp_sub", "__fn_mul", "__fn_sqr", "__fn_add", "__borrow")]
     parts.append(fe_fn("__fp_one", R % P))
     parts.append(fe_fn("__fp_r2", R * R % P))
     parts.append(fe_fn("__fp_b", B * R % P))
