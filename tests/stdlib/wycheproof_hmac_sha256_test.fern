@@ -22,8 +22,12 @@ function bytes(h: string): u8[] {
 function check(key: string, msg: string, tag: string, size: i32, want: i32, id: i32): string {
   let mac = crypto.hmac_sha256(bytes(key), bytes(msg));
   let ok = hex.encode(mac[0:size]) == tag;
-  if (size == 32 && ok != crypto.hmac_sha256_verify(bytes(key), bytes(msg), bytes(tag))) { return "verify tc " + id.to_string(); }
-  if ((want == 0 && ok) || (want == 1 && !ok)) { return "HMAC tc " + id.to_string(); }
+  if (size == 32 && ok != crypto.hmac_sha256_verify(bytes(key), bytes(msg), bytes(tag))) {
+    return "verify tc " + id.to_string();
+  }
+  if (want == 0 && ok || want == 1 && !ok) {
+    return "HMAC tc " + id.to_string();
+  }
   return "";
 }
 

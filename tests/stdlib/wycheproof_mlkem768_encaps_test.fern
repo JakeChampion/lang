@@ -26,7 +26,11 @@ function check(ek: string, randomness: string, ct: string, secret: string, want:
         return "encaps tc " + id.to_string();
       }
     },
-    Err(_) => { if (want == 1) { return "encaps tc " + id.to_string(); } }
+    Err(_) => {
+      if (want == 1) {
+        return "encaps tc " + id.to_string();
+      }
+    }
   }
   return "";
 }

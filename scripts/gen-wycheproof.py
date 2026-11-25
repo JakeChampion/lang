@@ -248,18 +248,32 @@ def rsa_suite(data, scheme):
         init = "rsa.%s_key(%s)" % ("private" if private else "public", args)
         if private:
             helper = """function check_ID(ct: string, label: string, msg: string, want: i32, id: i32): string {
-  let Ok(k) = INIT else { return "private key refused"; };
+  let Ok(k) = INIT else {
+    return "private key refused";
+  };
   match (k.decrypt_oaep(sha2.Sha256, bytes(ct), bytes(label))) {
-    Ok(plain) => { if (want == 0 || hex.encode(plain) != msg) { return "OAEP tc " + id.to_string(); } },
-    Err(_) => { if (want == 1) { return "OAEP tc " + id.to_string(); } }
+    Ok(plain) => {
+      if (want == 0 || hex.encode(plain) != msg) {
+        return "OAEP tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "OAEP tc " + id.to_string();
+      }
+    }
   }
   return "";
 }"""
         else:
             helper = """function check_ID(msg: string, sig: string, want: i32, id: i32): string {
-  let Ok(k) = INIT else { return "public key refused"; };
+  let Ok(k) = INIT else {
+    return "public key refused";
+  };
   let ok = k.VERIFY(sha2.Sha256, bytes(msg), bytes(sig));
-  if ((want == 0 && ok) || (want == 1 && !ok)) { return "signature tc " + id.to_string(); }
+  if (want == 0 && ok || want == 1 && !ok) {
+    return "signature tc " + id.to_string();
+  }
   return "";
 }""".replace("VERIFY", "verify_pss" if scheme == "pss" else "verify_pkcs1v15")
         helpers.append(helper.replace("INIT", init).replace("check_ID", "check_" + str(i)))
@@ -288,8 +302,16 @@ def extended_suites(d):
     emit("hkdf_sha256", "hkdf_sha256_test.json", ["std/crypto"], """
 function check(ikm: string, salt: string, info: string, size: i32, okm: string, want: i32, id: i32): string {
   match (crypto.hkdf_sha256(bytes(salt), bytes(ikm), bytes(info), size)) {
-    Ok(out) => { if (want == 0 || hex.encode(out) != okm) { return "HKDF tc " + id.to_string(); } },
-    Err(_) => { if (want == 1) { return "HKDF tc " + id.to_string(); } }
+    Ok(out) => {
+      if (want == 0 || hex.encode(out) != okm) {
+        return "HKDF tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "HKDF tc " + id.to_string();
+      }
+    }
   }
   return "";
 }""", lambda g, t: vector_call(t, t["ikm"], t["salt"], t["info"], t["size"], t["okm"]))
@@ -297,16 +319,30 @@ function check(ikm: string, salt: string, info: string, size: i32, okm: string, 
 function check(key: string, msg: string, tag: string, size: i32, want: i32, id: i32): string {
   let mac = crypto.hmac_sha256(bytes(key), bytes(msg));
   let ok = hex.encode(mac[0:size]) == tag;
-  if (size == 32 && ok != crypto.hmac_sha256_verify(bytes(key), bytes(msg), bytes(tag))) { return "verify tc " + id.to_string(); }
-  if ((want == 0 && ok) || (want == 1 && !ok)) { return "HMAC tc " + id.to_string(); }
+  if (size == 32 && ok != crypto.hmac_sha256_verify(bytes(key), bytes(msg), bytes(tag))) {
+    return "verify tc " + id.to_string();
+  }
+  if (want == 0 && ok || want == 1 && !ok) {
+    return "HMAC tc " + id.to_string();
+  }
   return "";
 }""", lambda g, t: vector_call(t, t["key"], t["msg"], t["tag"], g["tagSize"] // 8))
     emit("ecdh_p256", "ecdh_secp256r1_ecpoint_test.json", ["std/crypto/ecdsa"], """
 function check(priv: string, point: string, shared: string, want: i32, id: i32): string {
-  let Ok(k) = ecdsa.private_key(ecdsa.P256, bytes(priv)) else { return "private key tc " + id.to_string(); };
+  let Ok(k) = ecdsa.private_key(ecdsa.P256, bytes(priv)) else {
+    return "private key tc " + id.to_string();
+  };
   match (k.ecdh(bytes(point))) {
-    Ok(secret) => { if (want == 0 || hex.encode(secret) != shared) { return "ECDH tc " + id.to_string(); } },
-    Err(_) => { if (want == 1) { return "ECDH tc " + id.to_string(); } }
+    Ok(secret) => {
+      if (want == 0 || hex.encode(secret) != shared) {
+        return "ECDH tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "ECDH tc " + id.to_string();
+      }
+    }
   }
   return "";
 }""", lambda g, t: vector_call(t, unsigned(t["private"]).zfill(64), t["public"], t["shared"]))
@@ -315,13 +351,25 @@ function check(seed: string, ek: string, ct: string, secret: string, want: i32, 
   let value = bytes(seed);
   let cut = value.len().min(32);
   let Ok(k) = mlkem768.keygen_derand(value[0:cut], value[cut:]) else {
-    if (want == 1) { return "keygen tc " + id.to_string(); }
+    if (want == 1) {
+      return "keygen tc " + id.to_string();
+    }
     return "";
   };
-  if (ek != "" && hex.encode(k.encapsulation_key) != ek) { return "public key tc " + id.to_string(); }
+  if (ek != "" && hex.encode(k.encapsulation_key) != ek) {
+    return "public key tc " + id.to_string();
+  }
   match (mlkem768.decaps(k.decapsulation_key, bytes(ct))) {
-    Ok(out) => { if (want == 0 || hex.encode(out) != secret) { return "decaps tc " + id.to_string(); } },
-    Err(_) => { if (want == 1) { return "decaps tc " + id.to_string(); } }
+    Ok(out) => {
+      if (want == 0 || hex.encode(out) != secret) {
+        return "decaps tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "decaps tc " + id.to_string();
+      }
+    }
   }
   return "";
 }""", lambda g, t: vector_call(t, t["seed"], t.get("ek", ""), t["c"], t["K"]))
@@ -333,7 +381,11 @@ function check(ek: string, randomness: string, ct: string, secret: string, want:
         return "encaps tc " + id.to_string();
       }
     },
-    Err(_) => { if (want == 1) { return "encaps tc " + id.to_string(); } }
+    Err(_) => {
+      if (want == 1) {
+        return "encaps tc " + id.to_string();
+      }
+    }
   }
   return "";
 }""", lambda g, t: vector_call(t, t["ek"], t["m"], t["c"], t["K"]))
@@ -347,7 +399,11 @@ function check(seed: string, ek: string, dk: string, want: i32, id: i32): string
         return "keygen tc " + id.to_string();
       }
     },
-    Err(_) => { if (want == 1) { return "keygen tc " + id.to_string(); } }
+    Err(_) => {
+      if (want == 1) {
+        return "keygen tc " + id.to_string();
+      }
+    }
   }
   return "";
 }""", lambda g, t: vector_call(t, t["seed"], t["ek"], t["dk"]))

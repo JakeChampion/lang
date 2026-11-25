@@ -23,13 +23,25 @@ function check(seed: string, ek: string, ct: string, secret: string, want: i32, 
   let value = bytes(seed);
   let cut = value.len().min(32);
   let Ok(k) = mlkem768.keygen_derand(value[0:cut], value[cut:]) else {
-    if (want == 1) { return "keygen tc " + id.to_string(); }
+    if (want == 1) {
+      return "keygen tc " + id.to_string();
+    }
     return "";
   };
-  if (ek != "" && hex.encode(k.encapsulation_key) != ek) { return "public key tc " + id.to_string(); }
+  if (ek != "" && hex.encode(k.encapsulation_key) != ek) {
+    return "public key tc " + id.to_string();
+  }
   match (mlkem768.decaps(k.decapsulation_key, bytes(ct))) {
-    Ok(out) => { if (want == 0 || hex.encode(out) != secret) { return "decaps tc " + id.to_string(); } },
-    Err(_) => { if (want == 1) { return "decaps tc " + id.to_string(); } }
+    Ok(out) => {
+      if (want == 0 || hex.encode(out) != secret) {
+        return "decaps tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "decaps tc " + id.to_string();
+      }
+    }
   }
   return "";
 }

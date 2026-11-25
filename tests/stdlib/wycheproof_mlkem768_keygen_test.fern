@@ -28,7 +28,11 @@ function check(seed: string, ek: string, dk: string, want: i32, id: i32): string
         return "keygen tc " + id.to_string();
       }
     },
-    Err(_) => { if (want == 1) { return "keygen tc " + id.to_string(); } }
+    Err(_) => {
+      if (want == 1) {
+        return "keygen tc " + id.to_string();
+      }
+    }
   }
   return "";
 }

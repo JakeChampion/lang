@@ -21,8 +21,16 @@ function bytes(h: string): u8[] {
 
 function check(ikm: string, salt: string, info: string, size: i32, okm: string, want: i32, id: i32): string {
   match (crypto.hkdf_sha256(bytes(salt), bytes(ikm), bytes(info), size)) {
-    Ok(out) => { if (want == 0 || hex.encode(out) != okm) { return "HKDF tc " + id.to_string(); } },
-    Err(_) => { if (want == 1) { return "HKDF tc " + id.to_string(); } }
+    Ok(out) => {
+      if (want == 0 || hex.encode(out) != okm) {
+        return "HKDF tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "HKDF tc " + id.to_string();
+      }
+    }
   }
   return "";
 }

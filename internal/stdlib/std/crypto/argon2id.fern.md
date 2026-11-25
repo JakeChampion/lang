@@ -222,9 +222,9 @@ function reference(j: u64, pass: i32, slice: i32, lane: i32, index: i32, segment
   // Only the final block number is public. Compute the lane adjustment
   // without branching on the password-dependent lane.
   let diff = other ^ lane;
-  let same = ((diff | (0 - diff)) as u32 >> 31u32) as i32 - 1;
+  let same = ((diff | 0 - diff) as u32 >> 31u32) as i32 - 1;
   let across = if (index == 0) { -1 } else { 0 };
-  span += ((index - 1) & same) | (across & ~same);
+  span += index - 1 & same | across & ~same;
   let low = j & 0xffffffffu64;
   let relative = span - 1 - (span as u64 * (low * low >> 32u64) >> 32u64) as i32;
   let start = if (pass == 0) { 0 } else { (slice + 1) % 4 * segment };
@@ -261,7 +261,7 @@ function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i
     if (!independent) {
       // RFC 9106 section 3.4.1 takes this address from the previous block.
       for byte in 0..4 {
-        public_index = public_index.with(byte, (ref_block >> (8 * byte)) as u8);
+        public_index = public_index.with(byte, (ref_block >> 8 * byte) as u8);
       }
       __ct_public(public_index);
       ref_block = binary.read_u32_le(public_index, 0).unwrap_or(0u32) as i32;

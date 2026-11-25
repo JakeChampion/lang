@@ -20,10 +20,20 @@ function bytes(h: string): u8[] {
 }
 
 function check(priv: string, point: string, shared: string, want: i32, id: i32): string {
-  let Ok(k) = ecdsa.private_key(ecdsa.P256, bytes(priv)) else { return "private key tc " + id.to_string(); };
+  let Ok(k) = ecdsa.private_key(ecdsa.P256, bytes(priv)) else {
+    return "private key tc " + id.to_string();
+  };
   match (k.ecdh(bytes(point))) {
-    Ok(secret) => { if (want == 0 || hex.encode(secret) != shared) { return "ECDH tc " + id.to_string(); } },
-    Err(_) => { if (want == 1) { return "ECDH tc " + id.to_string(); } }
+    Ok(secret) => {
+      if (want == 0 || hex.encode(secret) != shared) {
+        return "ECDH tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "ECDH tc " + id.to_string();
+      }
+    }
   }
   return "";
 }
