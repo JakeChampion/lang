@@ -23,6 +23,7 @@ No module defines a cipher, a hash or a signature scheme of its own.
 | `std/crypto/ecdsa`, `std/crypto/p256` | ECDSA over P-256 and P-384 with SHA-2, ECDH | `ecdsa`, `p256` | a flipped bit, another message, another key, another digest and malformed keys are refused |
 | `std/crypto/rsa` | RSASSA-PKCS1-v1_5 and RSASSA-PSS verification, RSAES-OAEP encryption and decryption | `rsa` | malformed keys, invalid signatures and OAEP decoding failures |
 | `std/crypto/mlkem768` | ML-KEM-768 (FIPS 203) | `mlkem768` | implicit rejection of a changed ciphertext, modulus and hash checks on the keys |
+| `std/crypto/mldsa` | ML-DSA-65 (FIPS 204), pure ML-DSA | `mldsa`, `acvp_mldsa65`, `wycheproof_mldsa65` | wrong lengths, a hint that is not canonical, a response out of range, a changed message, signature or context, a context of 256 bytes, and an expanded private key out of range or not in agreement with its public key are refused |
 | `std/crypto/hpke` | HPKE base mode with X-Wing, MLKEM768-P256 or DHKEM(P-256), HKDF-SHA256 and ChaCha20-Poly1305 | `hpke` | invalid public keys, lengths and ciphertexts |
 | `std/noise` | the Noise Protocol Framework (revision 34): NN, NK, XX, IK and KK with `psk0` to `psk2`, 25519, ChaChaPoly or AESGCM, SHA256 | `noise`, with the 26 cacophony vectors of these protocols | names, keys, turns, lengths, damaged messages and the nonce limit |
 | `std/tls` | TLS 1.3 and client-side TLS 1.2 | the `tls_*` suites | the record, handshake and certificate suites refuse malformed and unauthenticated input |
@@ -42,6 +43,12 @@ The ECDSA suites use the DER signatures, which the module reads as strict DER, s
 The std test gate runs the first four suites on both native targets and under the oracle.
 The oracle takes about 25 minutes for ECDSA P-256 with SHA-256. `TestSelfHostWycheproofNative` runs the remaining suites on both native targets.
 
+`scripts/gen-mldsa.py` writes `wycheproof_mldsa65` and `acvp_mldsa65` for ML-DSA-65.
+The ACVP suite has the 25 keyGen vectors, 15 deterministic and 15 hedged sigGen vectors, and 15 sigVer vectors of the NIST ACVP-Server files.
+Both suites take only the pure external interface, and the Wycheproof suite leaves out each vector that gives mu and no message.
+The oracle takes seconds for each signature, so the std test gate leaves both suites out.
+`TestSelfHostMlDsaVectors` runs them on the two native targets and on wasm.
+
 | Suite | Vectors | Groups |
 |---|---|---|
 | `wycheproof_aes_gcm` | 316 | 45, of which the 192-bit keys and the 64-bit and 128-bit nonces and the short tags are refused |
@@ -54,6 +61,7 @@ The oracle takes about 25 minutes for ECDSA P-256 with SHA-256. `TestSelfHostWyc
 | `wycheproof_ecdsa_p384_sha384` | 504 | 105 |
 | `wycheproof_hkdf_sha256` | 86 | 6 |
 | `wycheproof_hmac_sha256` | 174 | 10 |
+| `wycheproof_mldsa65` | 366 | 63 |
 | `wycheproof_mlkem768` | 201 | 8 |
 | `wycheproof_mlkem768_encaps` | 265 | 9 |
 | `wycheproof_mlkem768_keygen` | 100 | 4 |
@@ -70,7 +78,7 @@ The AEAD open folds the tag difference into one byte, marks that byte public wit
 
 `__ct_secret(b)` tells Valgrind's memcheck that the bytes of `b` are undefined, and `__ct_public(b)` that they are defined again.
 Memcheck then reports every branch and every address that depends on a secret byte.
-`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, HOTP-SHA256, XChaCha20-Poly1305, and RSA private-key construction with RSA-OAEP decryption.
+`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, ML-DSA-65 key generation and signing, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, HOTP-SHA256, XChaCha20-Poly1305, and RSA private-key construction with RSA-OAEP decryption.
 The gate also checks equal-length matching and mismatching inputs to `consteq`, multi-block PBKDF2-HMAC-SHA256 and HKDF-SHA256/SHA384 outputs, and scrypt with a secret password. In ROMix the implementation marks the password-dependent lookup index public before reading its table.
 
 The gate checks SHA-256 of a secret message, in one call and in parts.

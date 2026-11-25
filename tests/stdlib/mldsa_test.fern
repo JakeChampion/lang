@@ -1,0 +1,278 @@
+import "std/test";
+import "std/hex";
+import "std/string";
+import "std/crypto" as crypto;
+import "std/crypto/mldsa";
+
+// The tests share one key and one signature: the oracle interpreter takes
+// seconds for each key and each signature.
+
+function seq(n: i32, start: i32): u8[] {
+  let b = __alloc_u8(n);
+  for i in 0..n {
+    b = b.with(i, (start + i) as u8);
+  }
+  return b;
+}
+
+function h(b: [u8]): string {
+  return hex.encode(crypto.sha3_256(b));
+}
+
+function bytes(s: string): u8[] {
+  match (hex.decode(s)) {
+    Ok(b) => {
+      return b;
+    },
+    Err(e) => {
+      return [];
+    }
+  }
+  return [];
+}
+
+function verdict(r: Result[void, mldsa.MlDsaError]): string {
+  return match (r) { Ok(_) => "ok", Err(e) => e.message() };
+}
+
+function signed(r: Result[u8[], mldsa.MlDsaError]): string {
+  return match (r) { Ok(sig) => h(sig), Err(e) => e.message() };
+}
+
+function parsed(r: Result[mldsa.PrivateKey, mldsa.MlDsaError]): string {
+  return match (r) { Ok(_) => "ok", Err(e) => e.message() };
+}
+
+// The seed of ACVP keyGen tcId 26.
+function key(): mldsa.PrivateKey {
+  match (mldsa.private_key(bytes("A991FD42B071D49C48AE3E75C647459E0DAAD1E1BA356A04801912D3294BCFF8"))) {
+    Ok(k) => {
+      return k;
+    },
+    Err(e) => {
+      return mldsa.generate();
+    }
+  }
+  return mldsa.generate();
+}
+
+function signature(k: mldsa.PrivateKey, msg: [u8], ctx: [u8]): u8[] {
+  match (k.sign_deterministic(msg, ctx)) {
+    Ok(sig) => {
+      return sig;
+    },
+    Err(e) => {
+      return [];
+    }
+  }
+  return [];
+}
+
+// The digests of ACVP keyGen tcId 26 and of the signatures of Go's
+// crypto/mldsa for its seed. sig is the deterministic signature of "abc".
+function test_known_answers(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let got = [h(k.public_key().bytes()), h(k.bytes()), h(sig), signed(k.sign_deterministic("abc".bytes(), "ctx".bytes()))];
+  return test.assert_eq_array(got, ["0083e4d4f562780dd5ef685c88db5afcdac44d1b4be5e4253d0de771100316f3", "9a6fe5796bc8b61c6eb274cc5905b3d3ce21693c9e7fd32db79b1cff49e93717", "2af91b421535013291713a03f09cead26c644e654cc9aab820d9bacf09e906ce", "e648451d77f13cb170fb6d1e093df595ad89b9e3a3fab54de6786f15587ec360"]);
+}
+
+function test_sizes(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let got = [k.public_key().bytes().len(), k.bytes().len(), sig.len()];
+  return test.assert_eq_array(got, [mldsa.PUBLIC_KEY_SIZE, mldsa.PRIVATE_KEY_SIZE, mldsa.SIGNATURE_SIZE]);
+}
+
+function test_round_trip(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let pk = k.public_key();
+  let msg = seq(100, 1);
+  let one = seq(1, 9);
+  let full = seq(255, 3);
+  let got = [verdict(pk.verify("abc".bytes(), sig, [])), verdict(pk.verify(msg, signature(k, msg, one), one))];
+  match (k.sign(msg, full)) {
+    Ok(hedged) => {
+      got = got.append(verdict(pk.verify(msg, hedged, full)));
+    },
+    Err(e) => {
+      got = got.append(e.message());
+    }
+  }
+  return test.assert_eq_array(got, ["ok", "ok", "ok"]);
+}
+
+function test_encodings(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let Ok(pk) = mldsa.public_key(k.public_key().bytes()) else {
+    return test.fail("public key refused");
+  };
+  let Ok(expanded) = mldsa.expanded_private_key(k.bytes()) else {
+    return test.fail("expanded private key refused");
+  };
+  let seed = match (k.seed()) { Some(s) => hex.encode(s), None => "none" };
+  let none = match (expanded.seed()) { Some(s) => hex.encode(s), None => "none" };
+  let got = [verdict(pk.verify("abc".bytes(), sig, [])), h(signature(expanded, "abc".bytes(), [])), h(expanded.bytes()), h(expanded.public_key().bytes()), seed, none];
+  return test.assert_eq_array(got, ["ok", h(sig), h(k.bytes()), h(k.public_key().bytes()), "a991fd42b071d49c48ae3e75c647459e0daad1e1ba356a04801912d3294bcff8", "none"]);
+}
+
+// rnd of 32 zero bytes is the deterministic variant. Other bytes change the
+// signature, and hedged signing gives a new signature each time.
+function test_randomness(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let msg = "abc".bytes();
+  let zero = seq(32, 0);
+  for i in 0..32 {
+    zero = zero.with(i, 0u8);
+  }
+  let det = h(sig);
+  let given = signed(k.sign_derand(msg, [], seq(32, 1)));
+  let a = signed(k.sign(msg, []));
+  let b = signed(k.sign(msg, []));
+  let got = [signed(k.sign_derand(msg, [], zero)) == det, given != det, a != det, b != det, a != b, a != given];
+  return test.assert_eq_array(got, [true, true, true, true, true, true]);
+}
+
+function test_generate(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let a = mldsa.generate();
+  let msg = "generated".bytes();
+  let mine = signature(a, msg, []);
+  let got = [verdict(a.public_key().verify(msg, mine, [])), verdict(k.public_key().verify(msg, mine, [])), verdict(a.public_key().verify("abc".bytes(), sig, []))];
+  let mismatch = mldsa.SignatureMismatch.message();
+  return test.assert_eq_array(got, ["ok", mismatch, mismatch]);
+}
+
+function test_context_limit(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let pk = k.public_key();
+  let msg = "context".bytes();
+  let full = seq(255, 0);
+  let long = seq(256, 0);
+  let mine = signature(k, msg, full);
+  let got = [verdict(pk.verify(msg, mine, full)), signed(k.sign(msg, long)), signed(k.sign_deterministic(msg, long)), verdict(pk.verify(msg, mine, long)), verdict(pk.verify(msg, mine, seq(255, 1))), verdict(pk.verify(msg, mine, []))];
+  let too_long = mldsa.ContextLength(256).message();
+  let mismatch = mldsa.SignatureMismatch.message();
+  return test.assert_eq_array(got, ["ok", too_long, too_long, too_long, mismatch, mismatch]);
+}
+
+function test_length_refusals(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let pk = k.public_key();
+  let msg = "abc".bytes();
+  let got = [
+    parsed(mldsa.private_key(seq(31, 0))),
+    parsed(mldsa.private_key(seq(33, 0))),
+    parsed(mldsa.expanded_private_key(seq(4031, 0))),
+    parsed(mldsa.expanded_private_key(seq(4033, 0))),
+    match (mldsa.public_key(seq(1951, 0))) { Ok(_) => "ok", Err(e) => e.message() },
+    match (mldsa.public_key(seq(1953, 0))) { Ok(_) => "ok", Err(e) => e.message() },
+    verdict(pk.verify(msg, sig[0:3308], [])),
+    verdict(pk.verify(msg, sig.append(0u8), [])),
+    signed(k.sign_derand(msg, [], seq(31, 0))),
+    signed(k.sign_derand(msg, [], seq(33, 0))),
+  ];
+  return test.assert_eq_array(got, [
+    mldsa.SeedLength(31).message(),
+    mldsa.SeedLength(33).message(),
+    mldsa.PrivateKeyLength(4031).message(),
+    mldsa.PrivateKeyLength(4033).message(),
+    mldsa.PublicKeyLength(1951).message(),
+    mldsa.PublicKeyLength(1953).message(),
+    mldsa.SignatureLength(3308).message(),
+    mldsa.SignatureLength(3310).message(),
+    mldsa.RandomnessLength(31).message(),
+    mldsa.RandomnessLength(33).message(),
+  ]);
+}
+
+// The hint starts at byte 3248: 55 positions, then the six counts.
+function with_counts(sig: u8[], counts: u8[]): u8[] {
+  let out = sig.with(0, sig[0]);
+  for i in 0..6 {
+    out = out.with(3303 + i, counts[i]);
+  }
+  return out;
+}
+
+// Each change gives a hint that HintBitUnpack refuses, except the last: an
+// empty hint is canonical, so only the final hash comparison refuses it.
+function test_hint_refusals(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let pk = k.public_key();
+  let msg = "abc".bytes();
+  let empty = with_counts(sig, [0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+  for i in 3248..3303 {
+    empty = empty.with(i, 0u8);
+  }
+  let two = with_counts(empty, [2u8, 2u8, 2u8, 2u8, 2u8, 2u8]);
+  let got = [
+    verdict(pk.verify(msg, with_counts(sig, [0u8, 0u8, 0u8, 0u8, 0u8, 56u8]), [])),
+    verdict(pk.verify(msg, with_counts(empty, [1u8, 0u8, 1u8, 1u8, 1u8, 1u8]), [])),
+    verdict(pk.verify(msg, two.with(3248, 5u8).with(3249, 5u8), [])),
+    verdict(pk.verify(msg, two.with(3248, 9u8).with(3249, 5u8), [])),
+    verdict(pk.verify(msg, empty.with(3250, 1u8), [])),
+    verdict(pk.verify(msg, empty.with(3302, 1u8), [])),
+    verdict(pk.verify(msg, empty, [])),
+  ];
+  let bad = mldsa.HintEncoding.message();
+  return test.assert_eq_array(got, [bad, bad, bad, bad, bad, bad, mldsa.SignatureMismatch.message()]);
+}
+
+// z[0] = gamma1 - v for the first 20 bits v of the response.
+function with_first_z(sig: u8[], v: i32): u8[] {
+  return sig.with(48, (v & 255) as u8).with(49, (v >> 8 & 255) as u8).with(50, sig[50] & 240u8 | (v >> 16 & 15) as u8);
+}
+
+// The bound is |z| < gamma1 - beta = 524092.
+function test_response_range(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let pk = k.public_key();
+  let msg = "abc".bytes();
+  let got = [
+    verdict(pk.verify(msg, with_first_z(sig, 0), [])),
+    verdict(pk.verify(msg, with_first_z(sig, 1048575), [])),
+    verdict(pk.verify(msg, with_first_z(sig, 196), [])),
+    verdict(pk.verify(msg, with_first_z(sig, 1048380), [])),
+    verdict(pk.verify(msg, with_first_z(sig, 197), [])),
+    verdict(pk.verify(msg, with_first_z(sig, 1048379), [])),
+  ];
+  let range = mldsa.ResponseRange.message();
+  let mismatch = mldsa.SignatureMismatch.message();
+  return test.assert_eq_array(got, [range, range, range, range, mismatch, mismatch]);
+}
+
+function test_modified(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let pk = k.public_key();
+  let msg = "abc".bytes();
+  let mismatch = mldsa.SignatureMismatch.message();
+  let got = [verdict(pk.verify("abd".bytes(), sig, [])), verdict(pk.verify(msg, sig.with(0, sig[0] ^ 1u8), [])), verdict(pk.verify(msg, sig.with(1000, sig[1000] ^ 16u8), [])), verdict(pk.verify(msg, sig, [0u8]))];
+  return test.assert_eq_array(got, [mismatch, mismatch, mismatch, mismatch]);
+}
+
+// s1 starts at byte 128, s2 at 768 and t0 at 1536. tr is at byte 64 and K
+// at byte 32. A changed K gives another valid key.
+function test_private_key_refusals(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let sk = k.bytes();
+  let bad = mldsa.PrivateKeyEncoding.message();
+  let got: string[] = [];
+  for change in [sk.with(128, sk[128] & 240u8 | 9u8), sk.with(800, sk[800] & 15u8 | 160u8), sk.with(2000, sk[2000] ^ 1u8), sk.with(64, sk[64] ^ 1u8), sk.with(40, sk[40] ^ 1u8)] {
+    got = got.append(parsed(mldsa.expanded_private_key(change)));
+  }
+  return test.assert_eq_array(got, [bad, bad, bad, bad, "ok"]);
+}
+
+function test_erase(k: mldsa.PrivateKey, sig: u8[]): test.TestOutcome {
+  let other = key();
+  let pk = other.public_key();
+  other.erase();
+  return test.assert_eq(verdict(pk.verify("abc".bytes(), sig, [])), "ok");
+}
+
+function main(): i32 {
+  let k = key();
+  let sig = signature(k, "abc".bytes(), []);
+  let r = test.new("std/crypto/mldsa");
+  r = r.it("known answers for ACVP keyGen tcId 26", () => test_known_answers(k, sig));
+  r = r.it("sizes of keys and signatures", () => test_sizes(k, sig));
+  r = r.it("hedged and deterministic round trips with contexts", () => test_round_trip(k, sig));
+  r = r.it("public and private key encodings", () => test_encodings(k, sig));
+  r = r.it("zero, given and random signing randomness", () => test_randomness(k, sig));
+  r = r.it("generated keys", () => test_generate(k, sig));
+  r = r.it("a context of 255 bytes and of 256 bytes", () => test_context_limit(k, sig));
+  r = r.it("wrong lengths", () => test_length_refusals(k, sig));
+  r = r.it("hint encodings that are not canonical", () => test_hint_refusals(k, sig));
+  r = r.it("a response out of range", () => test_response_range(k, sig));
+  r = r.it("modified messages and signatures", () => test_modified(k, sig));
+  r = r.it("malformed expanded private keys", () => test_private_key_refusals(k, sig));
+  r = r.it("a key erased after signing", () => test_erase(k, sig));
+  return r.finish();
+}

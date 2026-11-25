@@ -14,7 +14,7 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interp := buildLangBinForInterp(t)
-	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "aes", "des", "field25519", "x25519", "ed25519", "mlkem768", "hpke", "montgomery", "p256", "rsa", "scrypt", "argon2id", "crypto_stream", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_identity_shared_key", "tls_verify", "tls_x509"} {
+	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "aes", "des", "field25519", "x25519", "ed25519", "mlkem768", "hpke", "montgomery", "p256", "rsa", "scrypt", "argon2id", "mldsa", "crypto_stream", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_mozilla", "tls_record", "tls_server", "tls_identity_shared_key", "tls_verify", "tls_x509"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
 			want, exit := e2eharness.InterpVerdict(t, interp, src)
@@ -102,6 +102,40 @@ func TestSelfHostECDSASuite(t *testing.T) {
 	})
 }
 
+// The ML-DSA-65 vector suites of scripts/gen-mldsa.py run natively and on
+// wasm only. The oracle takes seconds for each signature, so the std test
+// gate, which runs every suite under the oracle too, leaves them out.
+func TestSelfHostMlDsaVectors(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, suite := range []string{"acvp_mldsa65", "wycheproof_mldsa65"} {
+		src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
+		check := func(t *testing.T, out []byte, err error) {
+			t.Helper()
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", suite, err, out)
+			}
+			tap := string(out)
+			e2eharness.CheckTAPPlan(t, tap)
+			if !strings.Contains(tap, "\n# fail 0\n") || strings.Contains(tap, "\nnot ok") {
+				t.Fatalf("%s failed:\n%s", suite, tap)
+			}
+		}
+		t.Run(suite+"/x86-64", func(t *testing.T) {
+			out, err := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1")).Output()
+			check(t, out, err)
+		})
+		t.Run(suite+"/arm64", func(t *testing.T) {
+			_, qemu := arm64Tooling(t)
+			out, err := runArm64Bin(qemu, cli.arm64Binary(t, src, "FERN_STRICT_IR=1")).Output()
+			check(t, out, err)
+		})
+		t.Run(suite+"/wasm", func(t *testing.T) {
+			out, err := exec.Command(e2eharness.Wasmtime(t), "run", cli.wasmComponent(t, src, "FERN_STRICT_IR=1")).Output()
+			check(t, out, err)
+		})
+	}
+}
+
 // TestSelfHostScryptRFC7914 runs the two RFC 7914 vectors that the
 // interpreters are too slow for. Each one fills 1 MiB or 16 MiB.
 func TestSelfHostScryptRFC7914(t *testing.T) {
@@ -171,6 +205,11 @@ func TestSelfHostCryptoApiRefusals(t *testing.T) {
   let q = ed25519.PublicKey { ...p, bytes: [] };
   return 0;`, "E021"},
 		{"ed25519 montgomery_base outside the package", `return ed25519.montgomery_base(__alloc_u8(32)).len();`, "E087"},
+		{"mldsa private key built from fields", `let k = mldsa.PrivateKey { seed: [], has_seed: false, key: [], s1: [], s2: [], t0: [], encoded: [], public: mldsa.generate().public_key() };
+  return 0;`, "E021"},
+		{"mldsa public key built from fields", `let p = mldsa.generate().public_key();
+  let q = mldsa.PublicKey { ...p, tr: [] };
+  return 0;`, "E021"},
 		{"control", `let c = hpke.key_schedule(hpke.KEM_P256, __alloc_u8(32), []);
   let Ok((a, next)) = c.seal([], [1u8]) else { return 1; };
   let Ok((b, _)) = next.seal([], [2u8]) else { return 2; };
@@ -181,7 +220,7 @@ func TestSelfHostCryptoApiRefusals(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			src := filepath.Join(dir, "main.fern")
-			prog := "import \"std/crypto/ed25519\";\nimport \"std/crypto/hpke\";\n\nfunction main(): i32 {\n  " + c.body + "\n}\n"
+			prog := "import \"std/crypto/ed25519\";\nimport \"std/crypto/hpke\";\nimport \"std/crypto/mldsa\";\n\nfunction main(): i32 {\n  " + c.body + "\n}\n"
 			if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 				t.Fatal(err)
 			}

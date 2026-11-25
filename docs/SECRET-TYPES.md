@@ -44,11 +44,12 @@ These records of `std/crypto` and `std/noise` have the attribute:
 | `ed25519` | `PrivateKey` |
 | `chacha20poly1305` | `Key` |
 | `hpke` | `Context`, `HybridKey`, `HybridP256Key`, `P256Key`, `Encapsulation` |
+| `mldsa` | `PrivateKey` |
 | `mlkem768` | `KeyPair`, `Encapsulation` |
 | `noise` | `Setup`, `Handshake`, `CipherState`, `Transport` |
 | `rsa` | `PrivateKey` |
 
-A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.PrivateKey` and `ed25519.PrivateKey` have both.
+A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.PrivateKey`, `ed25519.PrivateKey` and `mldsa.PrivateKey` have both.
 
 ## Limits
 

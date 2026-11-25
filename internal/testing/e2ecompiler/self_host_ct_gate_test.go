@@ -356,6 +356,50 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	{"mldsa", `import "std/crypto/mldsa";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, ((i * 29 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function main(): i32 {
+  let seed: u8[] = filled(32, 3);
+  let rnd: u8[] = filled(32, 5);
+  let msg: u8[] = filled(40, 9);
+  __ct_secret(seed);
+  __ct_secret(rnd);
+  let Ok(k) = mldsa.private_key(seed) else { return 1; };
+  let pk = k.public_key();
+  let Ok(hedged) = k.sign_derand(msg, [7u8], rnd) else { return 2; };
+  let Ok(det) = k.sign_deterministic(msg, []) else { return 3; };
+  let Ok(_) = pk.verify(msg, hedged, [7u8]) else { return 4; };
+  let Ok(_) = pk.verify(msg, det, []) else { return 5; };
+  match (pk.verify(msg, det.with(100, det[100] ^ 1u8), [])) {
+    Ok(_) => { return 6; },
+    Err(_) => {}
+  }
+  let Ok(again) = mldsa.expanded_private_key(k.bytes()) else { return 7; };
+  let Ok(third) = again.sign_deterministic(msg, []) else { return 8; };
+  if (third.len() != det.len()) {
+    return 9;
+  }
+  let i: i32 = 0;
+  while (i < det.len()) {
+    if (third[i] != det[i]) {
+      return 10;
+    }
+    i = i + 1;
+  }
+  k.erase();
+  return 0;
+}
+`, false},
 	{"hpke", `import "std/crypto/hpke";
 
 function filled(n: i32, seed: i32): u8[] {
