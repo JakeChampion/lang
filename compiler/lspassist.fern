@@ -710,6 +710,9 @@ function known(t: typeinfo.Type): boolean {
   if let typeinfo.TypeVar(_) = t {
     return false;
   }
+  if let typeinfo.TypeUnbound(_) = t {
+    return false;
+  }
   return true;
 }
 

@@ -237,8 +237,8 @@ function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
 }
 
 pub function unbound_enum_argument(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeUnknown(u) = t {
-    return u.reason.starts_with("unbound ");
+  if let typeinfo.TypeUnbound(_) = t {
+    return true;
   }
   return false;
 }
@@ -489,6 +489,10 @@ function t_unknown(reason: string): typeinfo.Type {
 
 function t_var(name: string, declared: boolean): typeinfo.Type {
   return typeinfo.TypeVar { name: name, declared: declared };
+}
+
+function t_unbound(param: string): typeinfo.Type {
+  return typeinfo.TypeUnbound { param: param };
 }
 
 function cell_elem_type(t: typeinfo.Type): typeinfo.Type {
@@ -1434,6 +1438,9 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeVar(_) => {
       return "unknown(" + unknown_reason(t) + ")";
     },
+    typeinfo.TypeUnbound(_) => {
+      return "unknown(" + unknown_reason(t) + ")";
+    },
     typeinfo.TypeErased(e) => {
       return "erased(" + e.name + ")";
     }
@@ -1723,6 +1730,9 @@ function type_eq_in(a: typeinfo.Type, b: typeinfo.Type, modes: boolean): boolean
     typeinfo.TypeVar(_) => {
       return false;
     },
+    typeinfo.TypeUnbound(_) => {
+      return false;
+    },
     typeinfo.TypeNever(_) => {
       if let typeinfo.TypeNever(_) = b {
         return true;
@@ -1777,6 +1787,9 @@ pub function is_unknown(t: typeinfo.Type): boolean {
       return true;
     },
     typeinfo.TypeVar(_) => {
+      return true;
+    },
+    typeinfo.TypeUnbound(_) => {
       return true;
     },
     _ => {
@@ -1989,6 +2002,9 @@ function downcast_operand_ok(t: typeinfo.Type): boolean {
     typeinfo.TypeVar(_) => {
       return true;
     },
+    typeinfo.TypeUnbound(_) => {
+      return true;
+    },
     typeinfo.TypeNever(_) => {
       return true;
     },
@@ -2024,6 +2040,9 @@ function literal_match_type(t: typeinfo.Type): boolean {
       return false;
     },
     typeinfo.TypeVar(_) => {
+      return false;
+    },
+    typeinfo.TypeUnbound(_) => {
       return false;
     },
     typeinfo.TypeErased(_) => {
@@ -2637,6 +2656,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
     },
     typeinfo.TypeUnknown(_) => {},
     typeinfo.TypeVar(_) => {},
+    typeinfo.TypeUnbound(_) => {},
     _ => {
       out = out.append(dg_at("E024", "struct destructure needs a struct expression, got " + type_label(it), v.line, v.col));
     }
@@ -3663,7 +3683,7 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
         return u.args[arg];
       }
       if (index == 0 && bare == "Some" && u.args.len() == 0) {
-        return t_unknown("unbound T");
+        return t_unbound("T");
       }
       return t_unknown("unresolved generic pattern payload");
     }
@@ -3686,7 +3706,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   let args = u.args;
   if (args.len() == 0) {
     for tp in us.type_params {
-      args = args.append(t_unknown("unbound " + tp));
+      args = args.append(t_unbound(tp));
     }
   }
   if (us.type_params.len() == 0 || us.type_params.len() != args.len()) {
@@ -3720,7 +3740,7 @@ function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.Ex
   }
   let args: typeinfo.Type[] = [];
   for tp in us.type_params {
-    args = args.append(t_unknown("unbound " + tp));
+    args = args.append(t_unbound(tp));
   }
   for k in 0..c.args.len() {
     let ti = payload_type_param(s, us, name, k);
@@ -4857,7 +4877,7 @@ function callable_slot_open(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(_) = t {
     return true;
   }
-  return false;
+  return unbound_enum_argument(t);
 }
 
 function callable_slot_matches(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[]): boolean {
@@ -5109,10 +5129,10 @@ function builtin_ctor_type(en: string, name: string, c: ast.ExprCall, s: Scope):
     return t_union_g(en, [inferred_payload(c.args[0], s)]);
   }
   if (name == "Ok" && c.args.len() == 1) {
-    return t_union_g(en, [inferred_payload(c.args[0], s), t_unknown("unbound E")]);
+    return t_union_g(en, [inferred_payload(c.args[0], s), t_unbound("E")]);
   }
   if (name == "Err" && c.args.len() == 1) {
-    return t_union_g(en, [t_unknown("unbound T"), inferred_payload(c.args[0], s)]);
+    return t_union_g(en, [t_unbound("T"), inferred_payload(c.args[0], s)]);
   }
   return t_union(en);
 }
@@ -6076,7 +6096,7 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
     if (bi >= 0) {
       args = args.append(literal_bound_width(sl, ssig, tp, bt[bi], s));
     } else {
-      args = args.append(t_unknown("unbound " + tp));
+      args = args.append(t_unbound(tp));
     }
   }
   return args;
@@ -7032,6 +7052,9 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         typeinfo.TypeVar(_) => {
           return CheckResult { scope: s, ty: t };
         },
+        typeinfo.TypeUnbound(_) => {
+          return CheckResult { scope: s, ty: t };
+        },
         _ => {}
       }
       if (is_unknown(t)) {
@@ -7693,7 +7716,7 @@ function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
 
 function enum_argument_from_ref(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (parser.render_type_ref(r) == "$unbound") {
-    return t_unknown("unbound lifted enum argument");
+    return t_unbound("");
   }
   return type_from_ref_names(r, tn);
 }
@@ -8569,6 +8592,9 @@ pub function type_label(t: typeinfo.Type): string {
       return "unknown";
     },
     typeinfo.TypeVar(_) => {
+      return "unknown";
+    },
+    typeinfo.TypeUnbound(_) => {
       return "unknown";
     },
     typeinfo.TypeErased(e) => {
@@ -14795,6 +14821,9 @@ function display_unjudged(t: typeinfo.Type): boolean {
     typeinfo.TypeVar(_) => {
       return true;
     },
+    typeinfo.TypeUnbound(_) => {
+      return true;
+    },
     typeinfo.TypeErased(_) => {
       return true;
     },
@@ -17286,6 +17315,7 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
     },
     typeinfo.TypeUnknown(_) => {},
     typeinfo.TypeVar(_) => {},
+    typeinfo.TypeUnbound(_) => {},
     _ => {
       return [dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(t), line, col)];
     }
@@ -17457,6 +17487,7 @@ function cover_shape_diags(p: CoverPat, t: typeinfo.Type, s: Scope, line: i32, c
       },
       typeinfo.TypeUnknown(_) => {},
       typeinfo.TypeVar(_) => {},
+      typeinfo.TypeUnbound(_) => {},
       _ => {
         return [dg_at("E035", "tuple pattern needs a tuple value, got " + type_label(t), line, col)];
       }
@@ -33005,6 +33036,9 @@ function spellable(t: typeinfo.Type): boolean {
     typeinfo.TypeVar(_) => {
       return false;
     },
+    typeinfo.TypeUnbound(_) => {
+      return false;
+    },
     typeinfo.TypeErased(_) => {
       return false;
     },
@@ -37621,7 +37655,7 @@ function open_call_type(e: ast.Expr, s: Scope): (typeinfo.Type, boolean) {
   for tp in sig.all_type_params {
     if (util.index_of_str(bn, tp) < 0) {
       bn = bn.append(tp);
-      bt = bt.append(t_unknown("unbound " + tp));
+      bt = bt.append(t_unbound(tp));
       open = true;
     }
   }
@@ -37857,6 +37891,12 @@ pub function unknown_reason(t: typeinfo.Type): string {
       return "type parameter " + v.name;
     }
     return "unrecognised type name: " + v.name;
+  }
+  if let typeinfo.TypeUnbound(b) = t {
+    if (b.param.len() == 0) {
+      return "unbound lifted enum argument";
+    }
+    return "unbound " + b.param;
   }
   return "";
 }
