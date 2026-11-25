@@ -255,7 +255,7 @@ aarch64/http_hello.dr	4148093
 aarch64/int_loop.dr	3000003
 aarch64/map_int.dr	4523391
 aarch64/map_probe_chain.dr	38645307
-aarch64/map_string.dr	10136148 2
+aarch64/map_string.dr	9924846 2
 aarch64/ordmap_insert.dr	18665522
 aarch64/perceus_cfold.dr	10672483
 aarch64/perceus_deriv.dr	14395316
