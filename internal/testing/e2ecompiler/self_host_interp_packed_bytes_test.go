@@ -41,6 +41,31 @@ function main(): i32 {
 }
 `
 
+// Each copy has a store of its own, so a later __arr_set_len on the copy
+// leaves the original as it was.
+const interpPackedCopiesSrc = `function show(a: u8[], b: u8[]): string {
+  return a.len().to_string() + " " + a[0].to_string() + " " + b.len().to_string() + " " + b[0].to_string();
+}
+function main(): i32 {
+  let a = __alloc_u8(4);
+  let w = a.with(0, 9u8);
+  unsafe { __arr_set_len(w, 2); }
+  print("with " + show(a, w));
+  let p = a.append(5u8);
+  unsafe { __arr_set_len(p, 1); }
+  print("append " + show(a, p));
+  for n in [2, 4, 6] {
+    let t = a.truncate(n);
+    unsafe { __arr_set_len(t, 1); }
+    print("truncate " + n.to_string() + " " + show(a, t));
+  }
+  print("negative " + a.truncate(-1).len().to_string());
+  return 0;
+}
+`
+
+const interpPackedCopiesOut = "with 4 0 2 9\nappend 4 0 1 0\ntruncate 2 4 0 1 0\ntruncate 4 4 0 1 0\ntruncate 6 4 0 1 0\nnegative 0\n"
+
 // A u8[] of 256 MiB, which is past the element limit of a compiled Value[].
 // The Go oracle holds 16 bytes for each element (#17245), so only the
 // self-host interpreter runs it.
@@ -56,8 +81,12 @@ func TestSelfHostInterpPackedBytes(t *testing.T) {
 	stdlib := e2eharness.SelfHostStdlibRoot(t)
 	dir := t.TempDir()
 	small := filepath.Join(dir, "packed.fern")
+	copies := filepath.Join(dir, "copies.fern")
 	large := filepath.Join(dir, "large.fern")
 	if err := os.WriteFile(small, []byte(interpPackedBytesSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(copies, []byte(interpPackedCopiesSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(large, []byte(interpLargeBytesSrc), 0o644); err != nil {
@@ -67,6 +96,9 @@ func TestSelfHostInterpPackedBytes(t *testing.T) {
 	for _, cli := range []string{buildLangBinForInterp(t), self} {
 		if out, err := exec.Command(cli, "-interp", small, stdlib).CombinedOutput(); err != nil || string(out) != "ok\n" {
 			t.Fatalf("%s -interp: %v\n%s", cli, err, out)
+		}
+		if out, err := exec.Command(cli, "-interp", copies, stdlib).CombinedOutput(); err != nil || string(out) != interpPackedCopiesOut {
+			t.Fatalf("%s -interp of the copies: %v\n%s", cli, err, out)
 		}
 	}
 	if out, err := exec.Command(self, "-interp", large, stdlib).CombinedOutput(); err != nil || string(out) != "268435456 7 0\n" {
