@@ -111,7 +111,7 @@ function with_test(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], site: Loop, bi: i
 
 // Whether ins compares the index i with a constant and b branches on it.
 function index_test(defs: ssa.SInst[], b: ssa.SBlock, ins: ssa.SInst, i: i32): boolean {
-  if (ins.kind_tag != ssa.BINARY || ins.str != "eq" || ins.args[0] != i || defs[ins.args[1]].kind_tag != ssa.CONST_INT) {
+  if (ins.kind_tag != ssa.BINARY || ins.ir_kind != ir.K_EQ || ins.args[0] != i || defs[ins.args[1]].kind_tag != ssa.CONST_INT) {
     return false;
   }
   return b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == ins.result && b.term.t != b.term.f;
@@ -193,7 +193,7 @@ function results(b: ssa.SBlock): i32[] {
 }
 
 function null_test(defs: ssa.SInst[], ins: ssa.SInst, h: i32): boolean {
-  if (ins.kind_tag != ssa.BINARY || ins.str != "eq" && ins.str != "ne" || ins.args.len() != 2 || ins.args[0] != h) {
+  if (ins.kind_tag != ssa.BINARY || ins.ir_kind != ir.K_EQ && ins.ir_kind != ir.K_NE || ins.args.len() != 2 || ins.args[0] != h) {
     return false;
   }
   let z = defs[ins.args[1]];

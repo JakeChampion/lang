@@ -2071,7 +2071,7 @@ function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState):
 }
 
 function ssa_direct_bin(tag: i32): boolean {
-  return tag == ir.K_ADD || tag == ir.K_SUB || tag == ir.K_MUL || tag == ir.K_AND || tag == ir.K_OR || tag == ir.K_XOR || tag == ir.K_MULHI_U || tag == ir.K_MULHI_S || ircore.is_int_cmp_kind(tag);
+  return tag == ir.K_ADD || tag == ir.K_SUB || tag == ir.K_MUL || tag == ir.K_AND || tag == ir.K_OR || tag == ir.K_XOR || tag == ir.K_MULHI_U || tag == ir.K_MULHI_S || ir.is_int_cmp_kind(tag);
 }
 
 function ssa_div_tag(tag: i32): boolean {
@@ -2461,7 +2461,7 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   s = ssa_fread(reg_of, ins.args[1], "d1", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "d0");
   let b = ssa_fsrc(reg_of, ins.args[1], "d1");
-  if (ssa.float_arith(ins.str)) {
+  if (ssa.float_arith(ins.ir_kind)) {
     let d = ssa_fdst(reg_of, ins.result);
     s = s.write("    " + ins.str + " " + d + ", " + a + ", " + b + "\n");
     return ssa_fput(reg_of, ins.result, d, s);
@@ -4387,7 +4387,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
   }
-  if (ssa.float_cmp(cmp.str)) {
+  if (ssa.float_cmp(cmp.ir_kind)) {
     return SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
@@ -4423,7 +4423,7 @@ function ssa_shape_fuse(fv: FuseView, blk: ssa.SBlock, fu: SsaFuse): SsaFuse {
 }
 
 function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
-  return cmp.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(cmp.ir_kind) || ssa.float_cmp(cmp.str));
+  return cmp.kind_tag == ssa.BINARY && (ir.is_int_cmp_kind(cmp.ir_kind) || ssa.float_cmp(cmp.ir_kind));
 }
 
 function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
@@ -4436,7 +4436,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   }
   let role = ssa.carry_role(fr.carry, ins);
   if (role == ssa.CARRY_HEAD) {
-    return ssa_carried_sum(ins, ins.result, if (ins.str == "sub") { "subs" } else { "adds" }, reg_of, fr, s);
+    return ssa_carried_sum(ins, ins.result, if (ins.ir_kind == ir.K_SUB) { "subs" } else { "adds" }, reg_of, fr, s);
   }
   if (role == ssa.CARRY_LINK) {
     let t = blk.insts[ii - 1];
@@ -4553,7 +4553,7 @@ function ssa_shape_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean
 }
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
-  if (!ssa.float_cmp(cmp.str) && fv.imm.is_imm[cmp.args[0]]) {
+  if (!ssa.float_cmp(cmp.ir_kind) && fv.imm.is_imm[cmp.args[0]]) {
     return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" };
   }
   return SsaFuse { n: 1, tag: cmp.ir_kind, inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
@@ -4595,7 +4595,7 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 // The add or the subtract of an instruction that reads the carry of the
 // flags. With `sets`, it also makes the flags for the carry after it.
 function ssa_carry_op(ins: ssa.SInst, sets: boolean): string {
-  let op: string = if (ins.str == "sub") { "sbc" } else { "adc" };
+  let op: string = if (ins.ir_kind == ir.K_SUB) { "sbc" } else { "adc" };
   return if (sets) { op + "s" } else { op };
 }
 
@@ -4913,7 +4913,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   if ((k == ssa.CONST_INT || k == ssa.CONST_I64) && fr.imm.is_imm[ins.result]) {
     return s;
   }
-  if (k == ssa.BINARY && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
+  if (k == ssa.BINARY && (ssa.float_arith(ins.ir_kind) || ssa.float_cmp(ins.ir_kind))) {
     return ssa_fbin(ins, reg_of, s);
   }
   if (k == ssa.UNARY && ssa_funary_direct(ins.str)) {
@@ -5230,20 +5230,19 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
 }
 
 function ssa_fuse_cc(fu: SsaFuse, when_true: boolean): i32 {
-  let k = ir.kind_name(fu.tag);
-  if (!ssa.float_cmp(k)) {
+  if (!ssa.float_cmp(fu.tag)) {
     return ir_cmp_cc(fu.tag, when_true);
   }
   let cc = CC_NE;
-  if (k == "flt") {
+  if (fu.tag == ir.K_FLT) {
     cc = 4;
-  } else if (k == "fle") {
+  } else if (fu.tag == ir.K_FLE) {
     cc = CC_LS;
-  } else if (k == "fgt") {
+  } else if (fu.tag == ir.K_FGT) {
     cc = CC_GT;
-  } else if (k == "fge") {
+  } else if (fu.tag == ir.K_FGE) {
     cc = CC_GE;
-  } else if (k == "feq") {
+  } else if (fu.tag == ir.K_FEQ) {
     cc = CC_EQ;
   }
   if (when_true) {
@@ -5262,7 +5261,7 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   if (fu.unique) {
     return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
   }
-  if (ssa.float_cmp(ir.kind_name(fu.tag))) {
+  if (ssa.float_cmp(fu.tag)) {
     s = ssa_fread(reg_of, fu.a, "d0", s);
     s = ssa_fread(reg_of, fu.b, "d1", s);
     return s.write("    fcmp " + ssa_fsrc(reg_of, fu.a, "d0") + ", " + ssa_fsrc(reg_of, fu.b, "d1") + "\n");
@@ -5556,7 +5555,7 @@ function ssa_logical_imms(f: ssa.SFunc, imm: ssa.Imms): ssa.Imms {
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      let logical = ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "and" || ins.str == "or" || ins.str == "xor");
+      let logical = ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.ir_kind == ir.K_AND || ins.ir_kind == ir.K_OR || ins.ir_kind == ir.K_XOR);
       for a in 0..ins.args.len() {
         let v = ins.args[a];
         if (v >= 0 && fit[v] && !(logical && !imm.konst[ins.args[1 - a]])) {

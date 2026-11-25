@@ -7309,7 +7309,7 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
     return 0;
   }
   let tag = ins.ir_kind;
-  if (ircore.is_int_cmp_kind(tag)) {
+  if (ir.is_int_cmp_kind(tag)) {
     return 7;
   }
   if (tag == ir.K_SUB) {
@@ -8518,7 +8518,7 @@ function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState):
 }
 
 function ssa_direct_bin(tag: i32): boolean {
-  return tag == ir.K_ADD || tag == ir.K_SUB || tag == ir.K_MUL || tag == ir.K_AND || tag == ir.K_OR || tag == ir.K_XOR || ircore.is_int_cmp_kind(tag);
+  return tag == ir.K_ADD || tag == ir.K_SUB || tag == ir.K_MUL || tag == ir.K_AND || tag == ir.K_OR || tag == ir.K_XOR || ir.is_int_cmp_kind(tag);
 }
 
 function ssa_commutative(tag: i32): boolean {
@@ -8938,7 +8938,7 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
   let a = ssa_fsrc(reg_of, ins.args[0], "%xmm0");
   let b = ssa_fsrc(reg_of, ins.args[1], "%xmm1");
-  if (ssa.float_arith(ins.str)) {
+  if (ssa.float_arith(ins.ir_kind)) {
     let d = ssa_fsrc(reg_of, ins.result, "%xmm0");
     if (d == b && d != a) {
       d = "%xmm0";
@@ -8955,15 +8955,15 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
   let d = ssa_dst(reg_of, ins.result);
   let r8 = ssa_r8(d);
   let cc = "";
-  if (ins.str == "flt") {
+  if (ins.ir_kind == ir.K_FLT) {
     cc = "    setb " + r8 + "\n    setnp %dl\n    andb %dl, " + r8 + "\n";
-  } else if (ins.str == "fle") {
+  } else if (ins.ir_kind == ir.K_FLE) {
     cc = "    setbe " + r8 + "\n    setnp %dl\n    andb %dl, " + r8 + "\n";
-  } else if (ins.str == "fgt") {
+  } else if (ins.ir_kind == ir.K_FGT) {
     cc = "    seta " + r8 + "\n";
-  } else if (ins.str == "fge") {
+  } else if (ins.ir_kind == ir.K_FGE) {
     cc = "    setae " + r8 + "\n";
-  } else if (ins.str == "feq") {
+  } else if (ins.ir_kind == ir.K_FEQ) {
     cc = "    sete " + r8 + "\n    setnp %dl\n    andb %dl, " + r8 + "\n";
   } else {
     cc = "    setne " + r8 + "\n    setp %dl\n    orb %dl, " + r8 + "\n";
@@ -9697,7 +9697,7 @@ function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], mode: i32, s: asmcore.EmitSta
   }
   let d = ssa_dst(reg_of, ins.result);
   if (mode != 0) {
-    let mnem = if (ins.str == "shr_s") { "sarxl" } else { "shrxl" };
+    let mnem = if (ins.ir_kind == ir.K_SHR_S) { "sarxl" } else { "shrxl" };
     s = s.write("    " + mnem + " " + ssa_r32(count) + ", " + ssa_rhs32(src) + ", " + ssa_r32(d) + "\n");
     if (mode == 1) {
       s = s.write("    movslq " + ssa_r32(d) + ", " + d + "\n");
@@ -11118,7 +11118,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
   }
-  if (ssa.float_cmp(cmp.str)) {
+  if (ssa.float_cmp(cmp.ir_kind)) {
     let tag = cmp.ir_kind;
     if (tag == ir.K_FLT || tag == ir.K_FLE) {
       let flipped = if (tag == ir.K_FLT) { ir.K_FGT } else { ir.K_FGE };
@@ -11251,14 +11251,14 @@ function ssa_mask_at(fv: FuseView, ins: ssa.SInst): i32 {
 }
 
 function ssa_fusable_cmp(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(ins.ir_kind) || ssa.float_cmp(ins.str));
+  return ins.kind_tag == ssa.BINARY && (ir.is_int_cmp_kind(ins.ir_kind) || ssa.float_cmp(ins.ir_kind));
 }
 
 // An add and an immediate adjustment truncated to u32 fit in one LEA.
 // The immediate has no register home, so no move intervenes.
 function ssa_index_lea(blk: ssa.SBlock, ii: i32, end: i32, fr: SsaFrame, reg_of: i32[]): string {
   let sum = blk.insts[ii];
-  if (sum.kind_tag != ssa.BINARY || sum.str != "add" || ii + 3 >= end) {
+  if (sum.kind_tag != ssa.BINARY || sum.ir_kind != ir.K_ADD || ii + 3 >= end) {
     return "";
   }
   let k = blk.insts[ii + 1];
@@ -11266,14 +11266,14 @@ function ssa_index_lea(blk: ssa.SBlock, ii: i32, end: i32, fr: SsaFrame, reg_of:
   if (k.kind_tag != ssa.CONST_INT || !fr.imm.is_imm[k.result] || !ssa.low_word_pair(blk, ii + 2, fr.uses)) {
     return "";
   }
-  if (op.str != "sub" && op.str != "add" || op.args[0] != sum.result || op.args[1] != k.result || fr.uses[sum.result] != 1) {
+  if (op.ir_kind != ir.K_SUB && op.ir_kind != ir.K_ADD || op.args[0] != sum.result || op.args[1] != k.result || fr.uses[sum.result] != 1) {
     return "";
   }
   let dst = blk.insts[ii + 3].result;
   if (!ssa_in_x(reg_of, dst) || !ssa_in_x(reg_of, sum.args[0]) || !ssa_in_x(reg_of, sum.args[1])) {
     return "";
   }
-  let disp = if (op.str == "sub") { 0 - k.imm } else { k.imm };
+  let disp = if (op.ir_kind == ir.K_SUB) { 0 - k.imm } else { k.imm };
   return "    leal " + util.i32_to_string(disp) + "(" + ssa_reg(reg_of[sum.args[0]]) + "," + ssa_reg(reg_of[sum.args[1]]) + "), " + ssa_r32(ssa_reg(reg_of[dst])) + "\n";
 }
 
@@ -11330,10 +11330,10 @@ function ssa_mul_wide_at(blk: ssa.SBlock, ii: i32, fr: SsaFrame): boolean {
   }
   let lo = blk.insts[ii];
   let hi = blk.insts[ii + 1];
-  if (lo.kind_tag != ssa.BINARY || lo.str != "mul" || lo.imm != 64 || lo.args.len() != 2 || lo.result < 0) {
+  if (lo.kind_tag != ssa.BINARY || lo.ir_kind != ir.K_MUL || lo.imm != 64 || lo.args.len() != 2 || lo.result < 0) {
     return false;
   }
-  if (hi.kind_tag != ssa.BINARY || hi.str != "mulhi_u" || hi.imm != 64 || hi.args.len() != 2 || fr.imm.is_imm[hi.args[0]] || fr.imm.is_imm[hi.args[1]]) {
+  if (hi.kind_tag != ssa.BINARY || hi.ir_kind != ir.K_MULHI_U || hi.imm != 64 || hi.args.len() != 2 || fr.imm.is_imm[hi.args[0]] || fr.imm.is_imm[hi.args[1]]) {
     return false;
   }
   return lo.args[0] == hi.args[0] && lo.args[1] == hi.args[1] || lo.args[0] == hi.args[1] && lo.args[1] == hi.args[0];
@@ -11380,7 +11380,7 @@ function ssa_select_fuse(fv: FuseView, blk: ssa.SBlock, ii: i32): SelectCond {
     return none;
   }
   let cmp = blk.insts[run[0] - 1];
-  if (cmp.result != c || cmp.kind_tag != ssa.BINARY || !ircore.is_int_cmp_kind(cmp.ir_kind)) {
+  if (cmp.result != c || cmp.kind_tag != ssa.BINARY || !ir.is_int_cmp_kind(cmp.ir_kind)) {
     return none;
   }
   return SelectCond { fu: ssa_cmp_flags(fv, cmp), first: ii == run[0] };
@@ -11433,9 +11433,9 @@ function ssa_and_not(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmco
 // The add or the subtract of the operands of `ins` into `result`, which
 // makes the flags. With `carried`, it also adds the carry of the flags.
 function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
-  let op: string = if (ins.str == "sub") { "subq" } else { "addq" };
+  let op: string = if (ins.ir_kind == ir.K_SUB) { "subq" } else { "addq" };
   if (carried) {
-    op = if (ins.str == "sub") { "sbbq" } else { "adcq" };
+    op = if (ins.ir_kind == ir.K_SUB) { "sbbq" } else { "adcq" };
   }
   let d = ssa_dst(reg_of, result);
   if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[result]) {
@@ -11467,7 +11467,7 @@ function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], fr: SsaFram
   if (other == carry) {
     other = ins.args[1];
   }
-  let op: string = if (ins.str == "sub") { "sbbq" } else { "adcq" };
+  let op: string = if (ins.ir_kind == ir.K_SUB) { "sbbq" } else { "adcq" };
   let d = ssa_dst(reg_of, ins.result);
   s = ssa_load_value(fr, reg_of, other, d, s);
   s = s.write("    " + op + " $0, " + d + "\n");
@@ -11729,7 +11729,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if ((k == ssa.CONST_INT || k == ssa.CONST_I64) && fr.imm.is_imm[ins.result]) {
     return s;
   }
-  if (k == ssa.BINARY && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
+  if (k == ssa.BINARY && (ssa.float_arith(ins.ir_kind) || ssa.float_cmp(ins.ir_kind))) {
     return ssa_fbin(ins, reg_of, s);
   }
   if (k == ssa.UNARY && ssa_fmath_op(ins.str) != "") {
@@ -12024,23 +12024,22 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 }
 
 function ssa_cmp_branch(s: asmcore.EmitState, fu: SsaFuse, when_true: boolean, target: asmcore.Lab): asmcore.EmitState {
-  let k = ir.kind_name(fu.tag);
-  if (!ssa.float_cmp(k)) {
+  if (!ssa.float_cmp(fu.tag)) {
     return ssa_branch(s, ir_cmp_jcc(fu.tag, when_true), target);
   }
-  if (k == "fgt") {
+  if (fu.tag == ir.K_FGT) {
     if (when_true) {
       return ssa_branch(s, J_JA, target);
     }
     return ssa_branch(s, J_JBE, target);
   }
-  if (k == "fge") {
+  if (fu.tag == ir.K_FGE) {
     if (when_true) {
       return ssa_branch(s, J_JAE, target);
     }
     return ssa_branch(s, J_JB, target);
   }
-  if (k == "feq" == when_true) {
+  if (fu.tag == ir.K_FEQ == when_true) {
     let fresh = asmcore.fresh_label(s);
     let skip = asmcore.lab_new(fresh.state, fresh.name);
     s = ssa_branch(skip.state, J_JP, skip.lab);
@@ -12077,7 +12076,7 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   if (fu.load_bits != 0) {
     return ssa_load_compare(fr, reg_of, fu, s);
   }
-  if (ssa.float_cmp(ir.kind_name(fu.tag))) {
+  if (ssa.float_cmp(fu.tag)) {
     s = ssa_fread(reg_of, fu.a, "%xmm1", s);
     s = ssa_fread(reg_of, fu.b, "%xmm2", s);
     return s.write("    ucomisd " + ssa_fsrc(reg_of, fu.b, "%xmm2") + ", " + ssa_fsrc(reg_of, fu.a, "%xmm1") + "\n");
@@ -12376,7 +12375,7 @@ function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan
 }
 
 function ssa_shape_compare(ins: ssa.SInst, o: i32, imm: ssa.Imms, shape: boolean[]): boolean {
-  if (ins.kind_tag != ssa.BINARY || ins.args.len() != 2 || ins.str != "eq" && ins.str != "ne") {
+  if (ins.kind_tag != ssa.BINARY || ins.args.len() != 2 || ins.ir_kind != ir.K_EQ && ins.ir_kind != ir.K_NE) {
     return false;
   }
   let other = ins.args[o];
