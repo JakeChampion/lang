@@ -3559,6 +3559,13 @@ func (c *checker) methodDeclConflict(typeName, name, trait string) (int, methodC
 	return declOK, methodCand{}
 }
 
+// errAssocOnValue refuses `v.f()` where f is an associated function of v's
+// type: only a first parameter named `self` makes an impl function a method.
+func (c *checker) errAssocOnValue(pos ast.Position, typeName, name string) {
+	t := demangle(typeName)
+	c.errfCode(pos, "E043", "%s.%s is an associated function, not a method: its first parameter is not `self`, so call it as %s.%s(...)", t, name, t, name)
+}
+
 func (c *checker) errAmbiguousMethod(pos ast.Position, typeName, name string, cands []methodCand) {
 	c.errfCode(pos, "E074", "%s", ambiguousMethodMessage(typeName, name, cands))
 }
@@ -16527,6 +16534,13 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					prefer = []string{c.current.TraitDefault}
 				}
 				if mangled, ownerTrait, tied, ok := c.resolveMethodFrom(typeName, fa.Field, prefer); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+					if strings.HasPrefix(mangled, "__assoc_") {
+						c.errAssocOnValue(fa.P, typeName, fa.Field)
+						for _, arg := range n.Args {
+							c.checkExpr(arg, s)
+						}
+						return nil
+					}
 					if len(tied) > 0 {
 						c.errAmbiguousMethod(fa.FieldPos, typeName, fa.Field, tied)
 					}
