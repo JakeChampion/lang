@@ -10972,8 +10972,8 @@ function stamped_type(tag: string): string {
   return "";
 }
 
-function mono_cell_get_type(field: ast.ExprFieldAccess, argc: i32, env: MEnv, funcs: MFns): string {
-  if (field.field != "get" || argc != 0) {
+function mono_cell_read_type(field: ast.ExprFieldAccess, argc: i32, env: MEnv, funcs: MFns): string {
+  if (!(field.field == "get" && argc == 0 || field.field == "replace" && argc == 1)) {
     return "";
   }
   let receiver = parse_type_ref(mono_infer(field.obj, env, funcs));
@@ -11202,7 +11202,7 @@ pub function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           return mono_named_call_type(c, cid.name, env, funcs);
         },
         ast.ExprFieldAccess(cfa) => {
-          let cell_type = mono_cell_get_type(cfa, c.args.len(), env, funcs);
+          let cell_type = mono_cell_read_type(cfa, c.args.len(), env, funcs);
           if (cell_type.len() > 0) {
             return cell_type;
           }

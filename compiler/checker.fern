@@ -526,6 +526,9 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
   if (name == "set" && argc == 1) {
     return typeinfo.t_void();
   }
+  if (name == "replace" && argc == 1) {
+    return cell_elem_type(recv);
+  }
   return t_unknown("not a cell method");
 }
 
@@ -4175,7 +4178,7 @@ function preregistered_methods(ns: string): string[] {
     "slice" => ["len"],
     "string" => ["as_bytes", "len"],
     "Map" => ["cleared", "contains", "get", "get_or", "insert", "keys", "len", "remove", "values"],
-    "Cell" => ["get", "set"],
+    "Cell" => ["get", "replace", "set"],
     _ => [],
   };
 }
@@ -14757,11 +14760,11 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
   if (mfa.field == "get") {
     want = 0;
   }
-  if (mfa.field == "set") {
+  if (mfa.field == "set" || mfa.field == "replace") {
     want = 1;
   }
   if (want < 0) {
-    return [access_fix(dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, ["get", "set"])];
+    return [access_fix(dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, ["get", "replace", "set"])];
   }
   if (c.args.len() != want) {
     return [dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", want, c.args.len(), "argument"), c.line, c.col)];
@@ -15186,6 +15189,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
           out = out.append(dg_at("E045", kmsg, expr_line(c.args[0]), expr_col(c.args[0])));
         }
       }
+      out = call_argument_diags(c, dest, s, out);
+      return field_call_diags(c, mfa, receiver, s, out);
     },
     ast.ExprIdent(cid) => {
       if (!is_resolvable_value(cid.name, s)) {
@@ -15199,29 +15204,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
       out = callee_diags(c, s, dest);
     }
   }
-  let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
-  let di = 0;
-  if (!s.callee_resolves(c)) {
-    di = c.args.len();
-  }
-  while (di < c.args.len()) {
-    let arg_dest = t_unknown("no declared parameter");
-    if (di < dests.len()) {
-      arg_dest = dests[di];
-    }
-    arg_dest = bound_param_dest(c, di, arg_dest, dest, s);
-    out = util.append_diags(out, dest_call_diags(c.args[di], arg_dest, s));
-    di += 1;
-  }
-  match (c.callee) {
-    ast.ExprFieldAccess(_) => {},
-    _ => {
-      let calleet = check_expr(c.callee, s);
-      let callee_is_fn = is_func_type(calleet);
-      if (!is_unknown(calleet) && !callee_is_fn) {
-        out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
-      }
-    }
+  out = call_argument_diags(c, dest, s, out);
+  let calleet = check_expr(c.callee, s);
+  if (!is_unknown(calleet) && !is_func_type(calleet)) {
+    out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
   }
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -15288,197 +15274,216 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
         out = util.append_diags(out, callable_arg_diags(c, s.lookup(id.name), s));
       }
     },
-    ast.ExprFieldAccess(mfa) => {
-      let recv = check_expr(mfa.obj, s);
-      if (mfa.display && !display_unjudged(recv) && !display_resolves(recv, s)) {
-        return out.append(dg_at(
-          "E038", "an interpolated value of type " + type_label(recv) + " does not implement `Display` — " + display_advice(recv),
-          expr_line(mfa.obj), expr_col(mfa.obj),
-        ));
-      }
-      match (recv) {
-        typeinfo.TypeTuple(tup) => {
-          if (tuple_element_field(recv, mfa.field)) {
-            out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
-          } else if let Some(tmsig) = s.lookup_method(mfa.field, parser.tuple_arity_namespace(tup.elements.len())) {
-            if (c.args.len() != tmsig.param_types.len()) {
-              out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", tmsig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
-            } else {
-              out = util.append_diags(out, method_arg_diags(c, mfa.field, tmsig, recv, s));
-              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, tmsig, recv, s));
-            }
-          }
-        },
-        typeinfo.TypeI32(it) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, int_label(it), mfa.field, s));
-        },
-        typeinfo.TypeFloat(f) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, float_label(f), mfa.field, s));
-        },
-        typeinfo.TypeBool(_) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("boolean", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
-        },
-        typeinfo.TypeLanes(l) => {
-          let lanes = typeinfo.lanes_spelling(l.width, l.kind);
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, lanes, mfa.field, s));
-        },
-        typeinfo.TypeString(_) => {
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          out = util.append_diags(out, declared_method_diags(c, recv, "string", mfa.field, s));
-        },
-        typeinfo.TypeArray(ar) => {
-          if (!ar.view && mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
-            let aat = check_expr(c.args[0], s);
-            out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
-            if (!is_unknown(aat) && !settles_to_dest(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
-              out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
-            }
-            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[0], s));
-          }
-          if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
-            let wit = check_expr(c.args[0], s);
-            if (!is_unknown(wit) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(wit, typeinfo.t_i32(), s)) {
-              out = out.append(dg_at("E038", "argument 1 to \"with\": expected i32, got " + type_label(wit), expr_line(c.args[0]), expr_col(c.args[0])));
-            }
-            let wvt = check_expr(c.args[1], s);
-            out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
-            if (!is_unknown(wvt) && !settles_to_dest(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
-              out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt) + str_copy_hint(wvt, ar.elem), expr_line(c.args[1]), expr_col(c.args[1])));
-            }
-            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[1], s));
-          }
-          if (!ar.view && mfa.field == "truncate" && c.args.len() == 1) {
-            let tnt = check_expr(c.args[0], s);
-            if (!is_unknown(tnt) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(tnt, typeinfo.t_i32(), s)) {
-              out = out.append(dg_at("E038", "argument 1 to \"truncate\": expected i32, got " + type_label(tnt), expr_line(c.args[0]), expr_col(c.args[0])));
-            }
-          }
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-          let arr_label = "Array";
-          if (ar.view) {
-            arr_label = "slice";
-          }
-          let avk = 0;
-          if (ar.view) {
-            avk = 1;
-          }
-          out = util.append_diags(out, inherent_tie_diags(mfa, "", avk, s));
-          if let Some(asig) = s.array_recv_method(mfa.field, ar.view) {
-            out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
-            if (c.args.len() == asig.param_types.len()) {
-              out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
-              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
-            }
-          }
-          let abw = array_builtin_arity(mfa.field, ar.view);
-          if (abw >= 0 && c.args.len() != abw) {
-            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", abw, c.args.len(), "argument"), c.line, c.col));
-          }
-        },
-        typeinfo.TypeMap(mt) => {
-          out = map_arg_diags(c, mfa.field, mt, s, out);
-          out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
-          out = util.append_diags(out, map_method_arg_diags(c, recv, mfa.field, s));
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col), mfa, recv));
-          }
-        },
-        typeinfo.TypeDyn(d) => {
-          out = util.append_diags(out, dyn_call_diags(c, mfa, d.traits, s));
-        },
-        typeinfo.TypeStruct(sn) => {
-          if (typeinfo.is_cell(recv)) {
-            out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
-          } else {
-            out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
-            out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, -1, s));
-            out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
-            if let Some(msig) = s.scoped_method(mfa.field, sn.name) {
-              if (c.args.len() != msig.param_types.len()) {
-                out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
-              } else {
-                out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
-                out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
-                out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig, s));
-                out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args, s));
-              }
-            } else {
-              let bms = builtin_method_sig(sn.name, mfa.field);
-              if (!is_unknown(bms)) {
-                out = util.append_diags(out, callable_arg_diags(c, bms, s));
-              } else if let Some(fsig) = s.lookup_struct(sn.name) {
-                let fldi = util.index_of_str(fsig.field_names, mfa.field);
-                if (fldi < 0 && s.lookup_assoc_sig(sn.name, mfa.field).is_some()) {
-                  out = out.append(dg_at("E043", assoc_on_value_message(sn.name, mfa.field), mfa.line, mfa.col));
-                } else if (fldi < 0) {
-                  out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
-                } else {
-                  let fldt = field_access_result_type(mfa, sn, s);
-                  let fld_is_fn = false;
-                  match (fldt) {
-                    typeinfo.TypeFunc(_) => {
-                      fld_is_fn = true;
-                    },
-                    _ => {}
-                  }
-                  if (!fld_is_fn) {
-                    out = out.append(dg_at("E038", "calling non-function value of type " + type_label(fldt), mfa.line, mfa.col));
-                  } else {
-                    out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
-                  }
-                }
-              } else if (semtypes.is_fd_handle_name(sn.name)) {
-                out = out.append(handle_member_diag(sn.name, mfa));
-              }
-            }
-          }
-        },
-        typeinfo.TypeUnion(un) => {
-          out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
-          out = util.append_diags(out, inherent_tie_diags(mfa, un.name, -1, s));
-          out = util.append_diags(out, finalizer_call_diags(mfa, un.name, s));
-          if let Some(umsig) = s.lookup_method(mfa.field, un.name) {
-            if (c.args.len() == umsig.param_types.len()) {
-              out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
-              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
-              out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
-              out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
-            }
-          }
-          if (s.method_missing(recv, mfa.field)) {
-            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
-          }
-        },
-        _ => {
-          // A rejected initializer does not retain an array receiver for later calls.
-          if (unbound_column(recv, ARRAY_TUPLE_UNRESOLVED)) {
-            out = out.append(dg_at("E043", "no method \"" + mfa.field + "\" on unresolved array", mfa.line, mfa.col));
-          }
-          out = util.append_diags(out, type_param_method_diags(c, mfa, recv, s));
-        }
-      }
-    },
     _ => {
       out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
     }
   }
 
+  return out;
+}
+
+function call_argument_diags(c: ast.ExprCall, dest: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
+  let di = 0;
+  if (!s.callee_resolves(c)) {
+    di = c.args.len();
+  }
+  while (di < c.args.len()) {
+    let arg_dest = t_unknown("no declared parameter");
+    if (di < dests.len()) {
+      arg_dest = dests[di];
+    }
+    arg_dest = bound_param_dest(c, di, arg_dest, dest, s);
+    out = util.append_diags(out, dest_call_diags(c.args[di], arg_dest, s));
+    di += 1;
+  }
+  return out;
+}
+
+function field_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  if (mfa.display && !display_unjudged(recv) && !display_resolves(recv, s)) {
+    return out.append(dg_at(
+      "E038", "an interpolated value of type " + type_label(recv) + " does not implement `Display` — " + display_advice(recv),
+      expr_line(mfa.obj), expr_col(mfa.obj),
+    ));
+  }
+  match (recv) {
+    typeinfo.TypeTuple(tup) => {
+      if (tuple_element_field(recv, mfa.field)) {
+        out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+      } else if let Some(tmsig) = s.lookup_method(mfa.field, parser.tuple_arity_namespace(tup.elements.len())) {
+        if (c.args.len() != tmsig.param_types.len()) {
+          out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", tmsig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+        } else {
+          out = util.append_diags(out, method_arg_diags(c, mfa.field, tmsig, recv, s));
+          out = util.append_diags(out, method_type_arg_diags(c, mfa.field, tmsig, recv, s));
+        }
+      }
+    },
+    typeinfo.TypeI32(it) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(int_label(it), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, int_label(it), mfa.field, s));
+    },
+    typeinfo.TypeFloat(f) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(float_label(f), mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, float_label(f), mfa.field, s));
+    },
+    typeinfo.TypeBool(_) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("boolean", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
+    },
+    typeinfo.TypeLanes(l) => {
+      let lanes = typeinfo.lanes_spelling(l.width, l.kind);
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, lanes, mfa.field, s));
+    },
+    typeinfo.TypeString(_) => {
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      out = util.append_diags(out, declared_method_diags(c, recv, "string", mfa.field, s));
+    },
+    typeinfo.TypeArray(ar) => {
+      if (!ar.view && mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
+        let aat = check_expr(c.args[0], s);
+        out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
+        if (!is_unknown(aat) && !settles_to_dest(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
+          out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
+        }
+        out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[0], s));
+      }
+      if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
+        let wit = check_expr(c.args[0], s);
+        if (!is_unknown(wit) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(wit, typeinfo.t_i32(), s)) {
+          out = out.append(dg_at("E038", "argument 1 to \"with\": expected i32, got " + type_label(wit), expr_line(c.args[0]), expr_col(c.args[0])));
+        }
+        let wvt = check_expr(c.args[1], s);
+        out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
+        if (!is_unknown(wvt) && !settles_to_dest(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
+          out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt) + str_copy_hint(wvt, ar.elem), expr_line(c.args[1]), expr_col(c.args[1])));
+        }
+        out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[1], s));
+      }
+      if (!ar.view && mfa.field == "truncate" && c.args.len() == 1) {
+        let tnt = check_expr(c.args[0], s);
+        if (!is_unknown(tnt) && !settles_to_dest(c.args[0], typeinfo.t_i32(), s) && !coercible(tnt, typeinfo.t_i32(), s)) {
+          out = out.append(dg_at("E038", "argument 1 to \"truncate\": expected i32, got " + type_label(tnt), expr_line(c.args[0]), expr_col(c.args[0])));
+        }
+      }
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+      let arr_label = "Array";
+      if (ar.view) {
+        arr_label = "slice";
+      }
+      let avk = 0;
+      if (ar.view) {
+        avk = 1;
+      }
+      out = util.append_diags(out, inherent_tie_diags(mfa, "", avk, s));
+      if let Some(asig) = s.array_recv_method(mfa.field, ar.view) {
+        out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
+        if (c.args.len() == asig.param_types.len()) {
+          out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
+          out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
+        }
+      }
+      let abw = array_builtin_arity(mfa.field, ar.view);
+      if (abw >= 0 && c.args.len() != abw) {
+        out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", abw, c.args.len(), "argument"), c.line, c.col));
+      }
+    },
+    typeinfo.TypeMap(mt) => {
+      out = map_arg_diags(c, mfa.field, mt, s, out);
+      out = unbound_map_arg_diags(c, mfa.field, mt, s, out);
+      out = util.append_diags(out, map_method_arg_diags(c, recv, mfa.field, s));
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_message("Map", mfa.field, "Map", recv), mfa.line, mfa.col), mfa, recv));
+      }
+    },
+    typeinfo.TypeDyn(d) => {
+      out = util.append_diags(out, dyn_call_diags(c, mfa, d.traits, s));
+    },
+    typeinfo.TypeStruct(sn) => {
+      if (typeinfo.is_cell(recv)) {
+        out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
+      } else {
+        out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
+        out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, -1, s));
+        out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
+        if let Some(msig) = s.scoped_method(mfa.field, sn.name) {
+          if (c.args.len() != msig.param_types.len()) {
+            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+          } else {
+            out = util.append_diags(out, method_arg_diags(c, mfa.field, msig, recv, s));
+            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, msig, recv, s));
+            out = util.append_diags(out, uninferred_method_diags(c, sn.name, mfa.field, msig, s));
+            out = util.append_diags(out, uninferred_recv_diags(c, sn.name, mfa.field, msig, sn.args, s));
+          }
+        } else {
+          let bms = builtin_method_sig(sn.name, mfa.field);
+          if (!is_unknown(bms)) {
+            out = util.append_diags(out, callable_arg_diags(c, bms, s));
+          } else if let Some(fsig) = s.lookup_struct(sn.name) {
+            let fldi = util.index_of_str(fsig.field_names, mfa.field);
+            if (fldi < 0 && s.lookup_assoc_sig(sn.name, mfa.field).is_some()) {
+              out = out.append(dg_at("E043", assoc_on_value_message(sn.name, mfa.field), mfa.line, mfa.col));
+            } else if (fldi < 0) {
+              out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
+            } else {
+              let fldt = field_access_result_type(mfa, sn, s);
+              let fld_is_fn = false;
+              match (fldt) {
+                typeinfo.TypeFunc(_) => {
+                  fld_is_fn = true;
+                },
+                _ => {}
+              }
+              if (!fld_is_fn) {
+                out = out.append(dg_at("E038", "calling non-function value of type " + type_label(fldt), mfa.line, mfa.col));
+              } else {
+                out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+              }
+            }
+          } else if (semtypes.is_fd_handle_name(sn.name)) {
+            out = out.append(handle_member_diag(sn.name, mfa));
+          }
+        }
+      }
+    },
+    typeinfo.TypeUnion(un) => {
+      out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
+      out = util.append_diags(out, inherent_tie_diags(mfa, un.name, -1, s));
+      out = util.append_diags(out, finalizer_call_diags(mfa, un.name, s));
+      if let Some(umsig) = s.lookup_method(mfa.field, un.name) {
+        if (c.args.len() == umsig.param_types.len()) {
+          out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
+          out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
+          out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
+          out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
+        }
+      }
+      if (s.method_missing(recv, mfa.field)) {
+        out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+      }
+    },
+    _ => {
+      // A rejected initializer does not retain an array receiver for later calls.
+      if (unbound_column(recv, ARRAY_TUPLE_UNRESOLVED)) {
+        out = out.append(dg_at("E043", "no method \"" + mfa.field + "\" on unresolved array", mfa.line, mfa.col));
+      }
+      out = util.append_diags(out, type_param_method_diags(c, mfa, recv, s));
+    }
+  }
   return out;
 }
 
@@ -21682,7 +21687,7 @@ function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
 }
 
 function ow_fresh_builtin_methods(): string[] {
-  return ["Dir.open_dir", "Dir.open_reader", "Dir.open_writer", "Dir.open_reader_with", "Dir.open_writer_with"];
+  return ["Cell.replace", "Dir.open_dir", "Dir.open_reader", "Dir.open_writer", "Dir.open_reader_with", "Dir.open_writer_with"];
 }
 
 function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
@@ -22092,7 +22097,7 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 // nested field of a primitive type or of an array of one: an array can reach
 // a borrowed parameter as a view, so such a read is not always a copy.
 // scalar_sels holds the reads of a field of a scalar type, which are copies.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: i64[], scalar_sels: i64[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: i64[], scalar_sels: i64[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[], sets: LuVar[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -22166,6 +22171,12 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
         matched = lu_pattern_values(arm.pattern, m.scrutinee, matched);
       }
       return LuFacts { ...f, matched: matched, rebinds: lu_rebind_match(m, f.rebinds) };
+    },
+    ast.StmtExpr(x) => {
+      if let Some(set) = ow_cell_set(x.value) {
+        return LuFacts { ...f, sets: f.sets.append(LuVar { name: set.cell, init: set.payload }) };
+      }
+      return f;
     },
     _ => {
       return f;
@@ -23658,13 +23669,19 @@ function lu_admitted(fx: LuFn, name: string): boolean {
 }
 
 function lu_move_admitted(fx: LuFn, name: string, seen: string[]): boolean {
-  if (lu_base_admitted(fx, name)) {
-    return true;
-  }
   if (util.has_str(seen, name)) {
     return true;
   }
   let inner = seen.append(name);
+  // A payload set into a cell is in the cell, so it must be owned as well.
+  for set in fx.facts.sets {
+    if (set.name == name && !lu_value_owned(fx, name, set.init, inner)) {
+      return false;
+    }
+  }
+  if (lu_base_admitted(fx, name)) {
+    return true;
+  }
   if (!lu_alias_admitted(fx, name, inner)) {
     return false;
   }
@@ -24212,7 +24229,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [], sets: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
@@ -25408,7 +25425,8 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name) && !lu_unpacked_elem(fx, site, q.name)) {
     return false;
   }
-  if (astwalk.count_ident_expr(call, q.name) - lu_other_field_reads(call, q.name, fa.field) != 1) {
+  let replaced = lu_replaced_path_reads(call, q.name, fa.field);
+  if (astwalk.count_ident_expr(call, q.name) - lu_other_field_reads(call, q.name, fa.field) - replaced.len() != 1) {
     return false;
   }
   if (site.in_defer) {
@@ -25420,20 +25438,63 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
     return false;
   }
-  return lu_field_path_dead(fx, site, q, fa.field);
+  return lu_field_path_dead(fx, site, q, fa.field, replaced);
+}
+
+// The roots of the reads in e that a literal with base q.field replaces:
+// `S { ...q.field, f: g(q.field.f) }` takes q.field.f once, through its base.
+function lu_replaced_path_reads(e: ast.Expr, q: string, field: string): LuOcc[] {
+  function lits(n: ast.Expr, own acc: ast.ExprStructLit[]): ast.ExprStructLit[] {
+    if let ast.ExprStructLit(sl) = n {
+      if let ast.ExprFieldAccess(b) = sl.base {
+        if (sl.has_base && b.field == field && ow_ident_name(b.obj) == q) {
+          return acc.append(sl);
+        }
+      }
+    }
+    return acc;
+  }
+  let out: LuOcc[] = [];
+  for sl in astwalk.fold_expr(e, [], lits) {
+    for j in 0..sl.field_names.len() {
+      let scan = ow_replaced_scan(sl.field_values[j], sl.base, sl.field_names[j], q, []);
+      if (scan.found && scan.mentions == 1) {
+        out = out.append(LuOcc { name: q, line: scan.line, col: scan.col });
+      }
+    }
+  }
+  if (out.len() == 0) {
+    return out;
+  }
+  function roots(n: ast.Expr, own acc: LuOcc[]): LuOcc[] {
+    if let ast.ExprFieldAccess(fa) = n {
+      for r in out {
+        if (r.line == fa.line && r.col == fa.col) {
+          if let ast.ExprFieldAccess(mid) = fa.obj {
+            if let ast.ExprIdent(id) = mid.obj {
+              return acc.append(LuOcc { name: q, line: id.line, col: id.col });
+            }
+          }
+        }
+      }
+    }
+    return acc;
+  }
+  return astwalk.fold_expr(e, [], roots);
 }
 
 // No path after the statement that holds the call reads q.field, and the
-// statement does not read it after q. A later mention in a branch that the
-// call does not reach is not a read. No path goes on after a return.
-function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string): boolean {
+// statement does not read it after q, other than in the reads that skip
+// names. A later mention in a branch that the call does not reach is not a
+// read. No path goes on after a return.
+function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: string, skip: LuOcc[]): boolean {
   if (site.frames.len() == 0) {
     return false;
   }
   let inner = site.frames[site.frames.len() - 1];
   let facts = astwalk.fold_stmt_nodes(inner.stmts[inner.idx], lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
   for o in facts.occ {
-    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col) && lu_reads_path(facts, o.line, o.col, field)) {
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col) && !lu_occ_in(skip, LuOcc { name: o.name, line: o.line, col: o.col }) && lu_reads_path(facts, o.line, o.col, field)) {
       return false;
     }
   }
@@ -26112,6 +26173,12 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
         }
       },
       ast.StmtAssign(a) => {
+        // An own parameter takes the value that replaces it.
+        if (lu_own_param(fx, a.target)) {
+          for part in lu_arg_parts(a.value, []) {
+            acc = lu_own_arg(part, a.value, outer, has_outer, site, fx, acc);
+          }
+        }
         acc = lu_root(a.value, site, outer, has_outer, fx, acc);
       },
       ast.StmtReturn(r) => {
@@ -27723,6 +27790,9 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         actx = OwnCtx { ...actx, admit_fields: ow_field_move_fields(a.target, a.value, ctx) };
       }
       let rv = ru_expr(a.value, ow_retake(a.target, moved, ctx), actx);
+      if (ow_borrowed_replacement(a, actx)) {
+        rv = OwnWalk { ...rv, diags: rv.diags.append(dg_at("E051", "assignment to owned binding \"" + lexical.source_name(a.target) + "\" must take an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", ast.expr_line(a.value), ast.expr_col(a.value))) };
+      }
       let m = ow_drop_stale_loans(ow_moved_del(rv.moved, "~" + a.target), a.target);
       // A local that a callback captures is in moved only after a consume.
       if (ow_is_owned(ctx, a.target) || ow_moved_has(m, a.target)) {
@@ -27813,6 +27883,55 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: moved, diags: [] };
     }
   }
+}
+
+// An owned binding keeps ownership after an assignment, so the new value
+// must not borrow, unless it can hold no handle. A call that takes the
+// binding itself is a self-update, which the call rules check.
+function ow_borrowed_replacement(a: ast.StmtAssign, ctx: OwnCtx): boolean {
+  if (!ow_is_owned(ctx, a.target) || util.has_str(ctx.borrowed, a.target)) {
+    return false;
+  }
+  if (ow_self_update(a.target, a.value, ctx.borrowed)) {
+    return false;
+  }
+  if (ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(a.target)), ctx.decls)) {
+    return false;
+  }
+  return !ow_is_owned_expr(a.value, ctx) && ow_result_loan(a.value, ctx);
+}
+
+// value is a call with target as its receiver or as an argument, or a
+// literal with base target that sets no field to a borrowed name.
+function ow_self_update(target: string, value: ast.Expr, borrowed: string[]): boolean {
+  if let ast.ExprUnary(u) = value {
+    return u.op == "try_" && ow_self_update(target, u.operand, borrowed);
+  }
+  if let ast.ExprStructLit(sl) = value {
+    if (!sl.has_base || ow_ident_name(sl.base) != target) {
+      return false;
+    }
+    for v in sl.field_values {
+      if (util.has_str(borrowed, ow_ident_name(v))) {
+        return false;
+      }
+    }
+    return true;
+  }
+  let ast.ExprCall(c) = value else {
+    return false;
+  };
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (ow_ident_name(fa.obj) == target) {
+      return true;
+    }
+  }
+  for arg in c.args {
+    if (ow_ident_name(arg) == target) {
+      return true;
+    }
+  }
+  return false;
 }
 
 struct OwnLocalScope { parent: OwnCtx, moved: MovedEntry[], name: string }
@@ -29579,6 +29698,22 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
         name = a.target;
         init = a.value;
       }
+      // A cell that stores a borrowed payload lends it to each holder of the cell.
+      if let ast.StmtExpr(x) = st {
+        if let Some(set) = ow_cell_set(x.value) {
+          name = set.cell;
+          init = set.payload;
+        }
+      }
+      if let ast.StmtVar(v) = st {
+        if let ast.ExprIdent(src) = v.init {
+          if (util.has_str(locals, v.name) && !util.has_str(locals, src.name) && ow_is_cell(v.init)) {
+            locals = locals.append(src.name);
+            changed = true;
+            continue;
+          }
+        }
+      }
       // Scalar elements are copies. Other elements retain the iterable borrow.
       if let ast.StmtFor(f) = st {
         if (f.destr.binds.len() == 0 && !for_iter_is_range(f.iter) && !ow_value_element_iter(f.iter, values)) {
@@ -29596,6 +29731,27 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
     }
   }
   return locals;
+}
+
+struct OwCellSet { cell: string, payload: ast.Expr }
+
+// The cell name and the payload of a statement `cell.set(payload)`.
+function ow_cell_set(e: ast.Expr): Option[OwCellSet] {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if let ast.ExprIdent(recv) = fa.obj {
+        if (fa.field == "set" && c.args.len() == 1 && ow_is_cell(fa.obj)) {
+          return Some(OwCellSet { cell: recv.name, payload: c.args[0] });
+        }
+      }
+    }
+  }
+  return None;
+}
+
+function ow_is_cell(e: ast.Expr): boolean {
+  let tag = ast.receiver_tag(e);
+  return tag == "Cell" || tag.starts_with("Cell[");
 }
 
 function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext): boolean {

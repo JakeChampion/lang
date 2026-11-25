@@ -142,9 +142,7 @@ pub function cancel(subscription: Subscription): void {
 
 pub function dispose(subscription: Subscription): void {
   cancel(subscription);
-  let held = subscription.held.get();
-  subscription.held.set(None);
-  if let Some(sock) = held {
+  if let Some(sock) = subscription.held.replace(None) {
     let closed = net.close(sock);
   }
 }

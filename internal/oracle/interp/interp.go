@@ -759,6 +759,7 @@ func New() *Interp {
 	i.Builtins["cell_new"] = &Builtin{Fn: builtinCellNew}
 	i.Builtins["__method_Cell_get"] = &Builtin{Fn: builtinCellGet}
 	i.Builtins["__method_Cell_set"] = &Builtin{Fn: builtinCellSet}
+	i.Builtins["__method_Cell_replace"] = &Builtin{Fn: builtinCellReplace}
 	i.Builtins["__method_Map_len"] = &Builtin{Fn: builtinMapLen}
 	i.Builtins["__method_Map_contains"] = &Builtin{Fn: builtinMapHas}
 	i.Builtins["__method_Map_get"] = &Builtin{Fn: builtinMapGet}
@@ -2735,6 +2736,20 @@ func builtinCellSet(_ *Interp, args []Value) (Value, error) {
 	storeArray(args[1])
 	c.V = args[1]
 	return Void{}, nil
+}
+
+func builtinCellReplace(_ *Interp, args []Value) (Value, error) {
+	c, err := cellReceiver("Cell.replace", args)
+	if err != nil {
+		return nil, err
+	}
+	if len(args) != 2 {
+		return nil, fmt.Errorf("Cell.replace: expected 2 args, got %d", len(args))
+	}
+	storeArray(args[1])
+	old := c.V
+	c.V = args[1]
+	return old, nil
 }
 
 func mapReceiver(name string, args []Value) (*Map, error) {

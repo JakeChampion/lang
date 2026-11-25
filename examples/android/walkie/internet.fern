@@ -114,9 +114,7 @@ pub function request(host: string, port: i32, line: string, code: string, roots:
 }
 
 function close_slot(slot: Cell[Option[Socket]]): void {
-  let held = slot.get();
-  slot.set(None);
-  if let Some(sock) = held {
+  if let Some(sock) = slot.replace(None) {
     let closed = net.close(sock);
   }
 }
