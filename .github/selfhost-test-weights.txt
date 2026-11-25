@@ -4187,7 +4187,7 @@ TestSelfHostWriterIRArm64 2
 TestSelfHostWriterIRX86_64 2
 TestSelfHostWrittenLiteralImage 3
 TestSelfHostWrittenLiteralIsHeapX86_64 3
-TestSelfHostWycheproofNative 40
+TestSelfHostWycheproofNative 55
 TestSelfHostX25519Iterated1000 5
 TestSelfHostX86AlignHoldsForAddresses 2
 TestSelfHostX86AtomicsStringMiscGas 2

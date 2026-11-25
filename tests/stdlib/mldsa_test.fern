@@ -1,0 +1,230 @@
+import "std/test";
+import "std/hex";
+import "std/codec";
+import "std/crypto" as crypto;
+import "std/crypto/mldsa";
+
+function bytes(h: string): u8[] {
+  match (hex.decode(h)) {
+    Ok(b) => {
+      return b;
+    },
+    Err(e) => {
+      return [];
+    }
+  }
+  return [];
+}
+
+function filled(n: i32, v: i32): u8[] {
+  let b = __alloc_u8(n);
+  let i = 0;
+  while (i < n) {
+    b = b.with(i, v as u8);
+    i += 1;
+  }
+  return b;
+}
+
+function digest(b: [u8]): string {
+  return hex.encode(crypto.sha3_256(b));
+}
+
+function flip(b: [u8], at: i32, bit: u8): u8[] {
+  let out = __alloc_u8(b.len());
+  let i = 0;
+  while (i < b.len()) {
+    out = out.with(i, b[i]);
+    i += 1;
+  }
+  return out.with(at, out[at] ^ bit);
+}
+
+// The key pair of the first Wycheproof signing group: a seed of 32 bytes 0x2a.
+function keys(): mldsa.KeyPair {
+  let Ok(k) = mldsa.keygen_derand(filled(32, 42)) else {
+    return mldsa.KeyPair { public_key: [], private_key: [] };
+  };
+  return k;
+}
+
+function hello(): u8[] {
+  return bytes("48656c6c6f20776f726c64");
+}
+
+function signature(r: Result[u8[], mldsa.MlDsaError]): u8[] {
+  match (r) {
+    Ok(sig) => {
+      return sig;
+    },
+    Err(e) => {
+      return [];
+    }
+  }
+  return [];
+}
+
+function refusal(r: Result[u8[], mldsa.MlDsaError]): string {
+  match (r) {
+    Ok(sig) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function refusal_of_keygen(r: Result[mldsa.KeyPair, mldsa.MlDsaError]): string {
+  match (r) {
+    Ok(k) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_keygen(): test.TestOutcome {
+  let Ok(k) = mldsa.keygen_derand(bytes("A991FD42B071D49C48AE3E75C647459E0DAAD1E1BA356A04801912D3294BCFF8")) else {
+    return test.fail("seed refused");
+  };
+  if (k.public_key.len() != mldsa.PUBLIC_KEY_SIZE || k.private_key.len() != mldsa.PRIVATE_KEY_SIZE) {
+    return test.fail("key lengths");
+  }
+  if (digest(k.public_key) != "0083e4d4f562780dd5ef685c88db5afcdac44d1b4be5e4253d0de771100316f3") {
+    return test.fail("public key");
+  }
+  return test.assert_eq(digest(k.private_key), "9a6fe5796bc8b61c6eb274cc5905b3d3ce21693c9e7fd32db79b1cff49e93717");
+}
+
+function test_deterministic(): test.TestOutcome {
+  let k = keys();
+  if (digest(k.public_key) != "1d03e2a9e7c138287c5df09602562d02b94a8cc38a612d97a0922f554b0e2cee") {
+    return test.fail("public key");
+  }
+  let sig = signature(mldsa.sign_deterministic(k.private_key, hello(), []));
+  if (sig.len() != mldsa.SIGNATURE_SIZE) {
+    return test.fail("signature length");
+  }
+  if (digest(sig) != "77c944aaa59ead1318b9eeee229db108765f12000b49535756e2513d0e94de03") {
+    return test.fail("signature");
+  }
+  return test.assert_true(mldsa.verify(k.public_key, hello(), [], sig));
+}
+
+function test_hedged(): test.TestOutcome {
+  let k = keys();
+  let rnd = bytes("60879ebd4f33a5d8e6238983cca4b03abfafa716d836f2ab3f500cde36b3b1e3");
+  let sig = signature(mldsa.sign_derand(k.private_key, hello(), [], rnd));
+  if (digest(sig) != "c0504c6c0529623922ab85ddfdd21d0f71e7682a5ad9a49cd9314367864f0a5c") {
+    return test.fail("signature");
+  }
+  let fresh = signature(mldsa.sign(k.private_key, hello(), []));
+  if (!mldsa.verify(k.public_key, hello(), [], fresh)) {
+    return test.fail("a signature with fresh randomness is refused");
+  }
+  return test.assert_true(digest(fresh) != digest(signature(mldsa.sign_deterministic(k.private_key, hello(), []))));
+}
+
+function test_random_keys(): test.TestOutcome {
+  let k = mldsa.keygen();
+  let sig = signature(mldsa.sign(k.private_key, hello(), "ctx".as_bytes()));
+  if (!mldsa.verify(k.public_key, hello(), "ctx".as_bytes(), sig)) {
+    return test.fail("own signature refused");
+  }
+  return test.assert_false(mldsa.verify(keys().public_key, hello(), "ctx".as_bytes(), sig));
+}
+
+function test_mu_and_internal(): test.TestOutcome {
+  let k = keys();
+  let Ok(mu) = mldsa.external_mu(k.public_key, hello(), []) else {
+    return test.fail("mu refused");
+  };
+  if (hex.encode(mu) != "de30bd32395e1998bcdae79ad419cec6ea9e9a903fdc552c6e9801208174d80a9d2f3902a144e62f89d6e505cc9c69fb01de013fc1d0204ee4dcf5fcc25f1378") {
+    return test.fail("mu");
+  }
+  let want = "77c944aaa59ead1318b9eeee229db108765f12000b49535756e2513d0e94de03";
+  let sig = signature(mldsa.sign_mu(k.private_key, mu, filled(32, 0)));
+  if (digest(sig) != want || !mldsa.verify_mu(k.public_key, mu, sig)) {
+    return test.fail("sign_mu");
+  }
+  let prime = [0 as u8, 0 as u8].concat(hello());
+  if (digest(signature(mldsa.sign_internal(k.private_key, prime, filled(32, 0)))) != want) {
+    return test.fail("sign_internal");
+  }
+  return test.assert_true(mldsa.verify_internal(k.public_key, prime, sig));
+}
+
+function test_forgeries(): test.TestOutcome {
+  let k = keys();
+  let msg = hello();
+  let sig = signature(mldsa.sign_deterministic(k.private_key, msg, []));
+  if (mldsa.verify(k.public_key, flip(msg, 0, 1 as u8), [], sig)) {
+    return test.fail("changed message");
+  }
+  if (mldsa.verify(k.public_key, msg, "x".as_bytes(), sig)) {
+    return test.fail("changed context");
+  }
+  if (mldsa.verify(k.public_key, msg, [], flip(sig, 0, 1 as u8))) {
+    return test.fail("changed c~");
+  }
+  if (mldsa.verify(k.public_key, msg, [], flip(sig, 100, 4 as u8))) {
+    return test.fail("changed z");
+  }
+  if (mldsa.verify(k.public_key, msg, [], flip(sig, mldsa.SIGNATURE_SIZE - 1, 1 as u8))) {
+    return test.fail("changed hint count");
+  }
+  if (mldsa.verify(k.public_key, msg, [], sig[0:mldsa.SIGNATURE_SIZE - 1])) {
+    return test.fail("short signature");
+  }
+  if (mldsa.verify(k.public_key[0:mldsa.PUBLIC_KEY_SIZE - 1], msg, [], sig)) {
+    return test.fail("short public key");
+  }
+  if (mldsa.verify(flip(k.public_key, 40, 1 as u8), msg, [], sig)) {
+    return test.fail("changed public key");
+  }
+  return test.assert_false(mldsa.verify(k.public_key, msg, filled(256, 0), sig));
+}
+
+function test_refusals(): test.TestOutcome {
+  let k = keys();
+  if (refusal_of_keygen(mldsa.keygen_derand(filled(31, 0))) != "mldsa: the seed is 31 bytes, want 32") {
+    return test.fail("seed");
+  }
+  if (refusal(mldsa.sign_deterministic(k.private_key[0:4031], hello(), [])) != "mldsa: the private key is 4031 bytes, want 4032") {
+    return test.fail("private key");
+  }
+  if (refusal(mldsa.sign_deterministic(k.private_key, hello(), filled(256, 0))) != "mldsa: the context is 256 bytes, want at most 255") {
+    return test.fail("context");
+  }
+  if (refusal(mldsa.sign_derand(k.private_key, hello(), [], filled(31, 0))) != "mldsa: the randomness is 31 bytes, want 32") {
+    return test.fail("randomness");
+  }
+  if (refusal(mldsa.sign_mu(k.private_key, filled(63, 0), filled(32, 0))) != "mldsa: mu is 63 bytes, want 64") {
+    return test.fail("mu");
+  }
+  if (refusal(mldsa.sign_deterministic(k.private_key, hello(), filled(255, 0))) != "accepted") {
+    return test.fail("a context of 255 bytes");
+  }
+  let range = "mldsa: the private key has a coefficient of s1 or s2 outside [-4, 4]";
+  if (refusal(mldsa.sign_deterministic(k.private_key.with(128, 0xf0 as u8), hello(), [])) != range) {
+    return test.fail("s1");
+  }
+  return test.assert_eq(refusal(mldsa.sign_deterministic(k.private_key.with(1535, 0x09 as u8), hello(), [])), range);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("mldsa");
+  r = r.it("ACVP keyGen seed", test_keygen);
+  r = r.it("deterministic signature", test_deterministic);
+  r = r.it("hedged signature", test_hedged);
+  r = r.it("random key pair", test_random_keys);
+  r = r.it("external mu and the internal interface", test_mu_and_internal);
+  r = r.it("forgeries", test_forgeries);
+  r = r.it("refusals", test_refusals);
+  return r.finish();
+}
