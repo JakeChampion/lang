@@ -235,11 +235,32 @@ def vector_call(t, *args):
     return "check(" + ", ".join(fields + [str(want(t["result"])), str(t["tcId"])]) + ")"
 
 
-def rsa_suite(data, scheme):
+HASH_BYTES = {"SHA-256": 32, "SHA-384": 48, "SHA-512": 64}
+
+
+# The groups of each RSA scheme that the module takes. PSS has a salt of the
+# hash length and MGF1 over the same hash, and OAEP has MGF1 over the label
+# hash. The keys with three primes are left out.
+RSA_SCHEMES = [
+    ("pkcs1v15", "rsa_signature_", lambda g: g["sha"] in HASH_BYTES),
+    ("pss", "rsa_pss_", lambda g: g["sha"] in HASH_BYTES and g["mgf"] == "MGF1" and g["mgfSha"] == g["sha"] and g["sLen"] == HASH_BYTES[g["sha"]]),
+    ("oaep", "rsa_oaep_", lambda g: g["sha"] in HASH_BYTES and g["mgf"] == "MGF1" and g["mgfSha"] == g["sha"]),
+]
+
+
+def rsa_groups(d, prefix, ok):
+    out = []
+    for f in sorted(os.listdir(d)):
+        if f.startswith(prefix) and f.endswith("_test.json"):
+            out += [(f, g) for g in load(d, f)["testGroups"] if ok(g)]
+    return out
+
+
+def rsa_suite(file_groups, scheme):
     private = scheme == "oaep"
     helpers = []
     groups = []
-    for i, g in enumerate(data["testGroups"]):
+    for i, (f, g) in enumerate(file_groups):
         key = g["privateKey" if private else "publicKey"]
         fields = ["modulus", "publicExponent"]
         if private:
@@ -251,7 +272,7 @@ def rsa_suite(data, scheme):
   let Ok(k) = INIT else {
     return "private key refused";
   };
-  match (k.decrypt_oaep(sha2.Sha256, bytes(ct), bytes(label))) {
+  match (k.decrypt_oaep(sha2.HASH, bytes(ct), bytes(label))) {
     Ok(plain) => {
       if (want == 0 || hex.encode(plain) != msg) {
         return "OAEP tc " + id.to_string();
@@ -270,17 +291,18 @@ def rsa_suite(data, scheme):
   let Ok(k) = INIT else {
     return "public key refused";
   };
-  let ok = k.VERIFY(sha2.Sha256, bytes(msg), bytes(sig));
+  let ok = k.VERIFY(sha2.HASH, bytes(msg), bytes(sig));
   if (want == 0 && ok || want == 1 && !ok) {
     return "signature tc " + id.to_string();
   }
   return "";
 }""".replace("VERIFY", "verify_pss" if scheme == "pss" else "verify_pkcs1v15")
-        helpers.append(helper.replace("INIT", init).replace("check_ID", "check_" + str(i)))
+        digest = g["sha"].replace("SHA-", "Sha")
+        helpers.append(helper.replace("INIT", init).replace("check_ID", "check_" + str(i)).replace("sha2.HASH", "sha2." + digest))
         def call(_, t):
             names = ["ct", "label", "msg"] if private else ["msg", "sig"]
             return vector_call(t, *(t[n] for n in names)).replace("check(", "check_%d(" % i)
-        groups.extend(vector_groups({"testGroups": [g]}, call))
+        groups.extend((f[:-10] + " " + label, body) for label, body in vector_groups({"testGroups": [g]}, call))
     return "\n" + "\n\n".join(helpers), groups
 
 
@@ -407,11 +429,30 @@ function check(seed: string, ek: string, dk: string, want: i32, id: i32): string
   }
   return "";
 }""", lambda g, t: vector_call(t, t["seed"], t["ek"], t["dk"]))
-    for scheme, file in [("pkcs1v15", "rsa_signature_2048_sha256_test.json"), ("pss", "rsa_pss_2048_sha256_mgf1_32_test.json"),
-                         ("oaep", "rsa_oaep_2048_sha256_mgf1sha256_test.json")]:
-        data = load(d, file)
-        helpers, groups = rsa_suite(data, scheme)
-        suite("wycheproof_rsa_" + scheme + "_test.fern", "testvectors_v1/" + file, data,
+    emit("mlkem768_decaps", "mlkem_768_semi_expanded_decaps_test.json", ["std/crypto/mlkem768"], """
+function check(dk: string, ct: string, secret: string, want: i32, id: i32): string {
+  match (mlkem768.decaps(bytes(dk), bytes(ct))) {
+    Ok(out) => {
+      if (want == 0 || hex.encode(out) != secret) {
+        return "decaps tc " + id.to_string();
+      }
+    },
+    Err(_) => {
+      if (want == 1) {
+        return "decaps tc " + id.to_string();
+      }
+    }
+  }
+  return "";
+}""", lambda g, t: vector_call(t, t["dk"], t["c"], t.get("K", "")))
+    for scheme, prefix, ok in RSA_SCHEMES:
+        file_groups = rsa_groups(d, prefix, ok)
+        files = sorted({f for f, _ in file_groups})
+        data = load(d, files[0])
+        data = {"algorithm": data["algorithm"], "numberOfTests": sum(len(g["tests"]) for _, g in file_groups),
+                "generatorVersion": data.get("generatorVersion", "unknown")}
+        helpers, groups = rsa_suite(file_groups, scheme)
+        suite("wycheproof_rsa_" + scheme + "_test.fern", "testvectors_v1/" + prefix + "*: " + ", ".join(f[len(prefix):-10] for f in files), data,
               ["std/test", "std/hex", "std/codec", "std/i32", "std/crypto/rsa", "std/crypto/sha2"],
               helpers, groups, "wycheproof RSA " + scheme)
 
