@@ -4,8 +4,14 @@ type NamedOp struct {
 	ATT             string
 	Suffixed        bool
 	Prefix, Op, Ext byte
-	ATTProbe        string
+	// No66 marks a 0F 38 or 0F 3A row that has no 66 prefix, as the SHA
+	// extensions have none. opOnly packs it as No66Base + Op.
+	No66     bool
+	ATTProbe string
 }
+
+// No66Base is NO_66 in compiler/x86_native.fern.
+const No66Base = 256
 
 type NamedFamily struct {
 	Name   string
@@ -20,8 +26,13 @@ type NamedFamily struct {
 
 func (f NamedFamily) PredicateName() string { return "x86_gas_is_" + f.Name }
 
-func pfxOp(o NamedOp) int    { return int(o.Prefix)*256 + int(o.Op) }
-func opOnly(o NamedOp) int   { return int(o.Op) }
+func pfxOp(o NamedOp) int { return int(o.Prefix)*256 + int(o.Op) }
+func opOnly(o NamedOp) int {
+	if o.No66 {
+		return No66Base + int(o.Op)
+	}
+	return int(o.Op)
+}
 func pfxOnly(o NamedOp) int  { return int(o.Prefix) }
 func extOp(o NamedOp) int    { return int(o.Ext)*256 + int(o.Op) }
 func extOnly(o NamedOp) int  { return int(o.Ext) }
@@ -181,6 +192,8 @@ var Named = []NamedFamily{
 		{ATT: "pclmulqdq", Op: 0x44, ATTProbe: "pclmulqdq $0, %xmm1, %xmm0"},
 		{ATT: "aeskeygenassist", Op: 0xDF, ATTProbe: "aeskeygenassist $1, %xmm1, %xmm0"},
 		{ATT: "palignr", Op: 0x0F, ATTProbe: "palignr $4, %xmm1, %xmm0"},
+		{ATT: "pblendw", Op: 0x0E, ATTProbe: "pblendw $5, %xmm1, %xmm0"},
+		{ATT: "sha1rnds4", Op: 0xCC, No66: true, ATTProbe: "sha1rnds4 $1, %xmm1, %xmm0"},
 	}},
 	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles and the packed compares, whose imm8 is the predicate; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Sentinel: true, Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "pshufd", Prefix: 0x66, Op: 0x70, ATTProbe: "pshufd $0, %xmm2, %xmm1"},
@@ -219,7 +232,7 @@ var Named = []NamedFamily{
 			{ATT: "psrldq", Op: 0x73, Ext: 3, ATTProbe: "psrldq $8, %xmm0"},
 			{ATT: "pslldq", Op: 0x73, Ext: 7, ATTProbe: "pslldq $8, %xmm0"},
 		}},
-	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination. SSSE3, SSE4.1 and AES-NI, all inside the declared baseline", FernFn: "x86_gas_sse38_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination. SSSE3, SSE4.1, AES-NI and the SHA extensions, all inside the declared baseline", FernFn: "x86_gas_sse38_op", Pack: opOnly, Ops: []NamedOp{
 		{ATT: "pshufb", Op: 0x00, ATTProbe: "pshufb %xmm1, %xmm0"},
 		{ATT: "ptest", Op: 0x17, ATTProbe: "ptest %xmm1, %xmm0"},
 		{ATT: "pmulld", Op: 0x40, ATTProbe: "pmulld %xmm1, %xmm0"},
@@ -236,5 +249,11 @@ var Named = []NamedFamily{
 		{ATT: "aesdec", Op: 0xDE, ATTProbe: "aesdec %xmm1, %xmm0"},
 		{ATT: "aesdeclast", Op: 0xDF, ATTProbe: "aesdeclast %xmm1, %xmm0"},
 		{ATT: "aesimc", Op: 0xDB, ATTProbe: "aesimc %xmm1, %xmm0"},
+		{ATT: "sha1nexte", Op: 0xC8, No66: true, ATTProbe: "sha1nexte %xmm1, %xmm0"},
+		{ATT: "sha1msg1", Op: 0xC9, No66: true, ATTProbe: "sha1msg1 %xmm1, %xmm0"},
+		{ATT: "sha1msg2", Op: 0xCA, No66: true, ATTProbe: "sha1msg2 %xmm1, %xmm0"},
+		{ATT: "sha256rnds2", Op: 0xCB, No66: true, ATTProbe: "sha256rnds2 %xmm2, %xmm1"},
+		{ATT: "sha256msg1", Op: 0xCC, No66: true, ATTProbe: "sha256msg1 %xmm1, %xmm0"},
+		{ATT: "sha256msg2", Op: 0xCD, No66: true, ATTProbe: "sha256msg2 %xmm1, %xmm0"},
 	}},
 }
