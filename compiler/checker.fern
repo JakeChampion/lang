@@ -28686,7 +28686,7 @@ function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
       for i in 0..alias.variants.len() {
         let member = alias.variants[i];
         if (i < alias.variant_args.len() && alias.variant_args[i].len() > 0) {
-          member = member + "[" + alias.variant_args[i] + "]";
+          member = member + "[" + alias.variant_args[i].join(", ") + "]";
         }
         pending = pending.append(parser.subst_ty(member, alias.type_params, args));
       }
@@ -28861,7 +28861,7 @@ function ow_alias_holds_no_handle(al: parser.TypeAlias, dx: OwnDecls, seen: stri
   for i in 0..al.variants.len() {
     let member = al.variants[i];
     if (i < al.variant_args.len() && al.variant_args[i].len() > 0) {
-      member = member + "[" + al.variant_args[i] + "]";
+      member = member + "[" + al.variant_args[i].join(", ") + "]";
     }
     if (!ow_no_handle_in(member, dx, al.type_params, seen)) {
       return false;

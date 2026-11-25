@@ -170,7 +170,7 @@ pub function erase_view_module(mod: parser.Module): parser.Module {
   let structs = parser.erase_view_structs(mod.structs);
   let aliases: parser.TypeAlias[] = [];
   for al in mod.aliases {
-    aliases = aliases.append(parser.TypeAlias { ...al, variants: erase_view_list(al.variants), variant_args: erase_view_list(al.variant_args) });
+    aliases = aliases.append(parser.TypeAlias { ...al, variants: erase_view_list(al.variants), variant_args: al.variant_args.map((a: string[]): string[] => erase_view_list(a)) });
   }
   let impls: parser.ImplInfo[] = [];
   for im in mod.impls {
