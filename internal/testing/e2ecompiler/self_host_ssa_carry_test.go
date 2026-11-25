@@ -182,6 +182,13 @@ struct W3 { a: u64, b: u64, c: u64 }
     let c2: u64 = (a0 & 0u64 | (a0 | 0u64) & (s2 ^ ALL)) >> 63u64;
     return s0 * 3u64 + s1 * 5u64 + s2 * 7u64 + c2 * 11u64;
 }
+@noinline function add_ones(a0: u64, a1: u64): u64 {
+    let s0: u64 = a0 + 0xffffffffffffffffu64;
+    let c0: u64 = (a0 & 0xffffffffffffffffu64 | (a0 | 0xffffffffffffffffu64) & (s0 ^ ALL)) >> 63u64;
+    let s1: u64 = a1 + a0 + c0;
+    let c1: u64 = (a1 & a0 | (a1 | a0) & (s1 ^ ALL)) >> 63u64;
+    return s0 * 3u64 + s1 * 5u64 + c1 * 7u64;
+}
 @noinline function add4_spilled(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, b2: u64, b3: u64): u64 {
     let m0: u64 = a0 * b1;
     let m1: u64 = a1 * b2;
@@ -314,7 +321,7 @@ function main(): i32 {
                 let r2 = add3_sum(p, q);
                 let r3 = sub3(p, q);
                 acc = acc * 131u64 + r.a + 3u64 * r.b + 5u64 * r.c + 7u64 * r2.a + 11u64 * r2.b + 13u64 * r2.c + 17u64 * r3.a + 19u64 * r3.b + 23u64 * r3.c;
-                acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h) + 5u64 * add_sub_p(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
+                acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h) + 7u64 * add_ones(x, h) + 5u64 * add_sub_p(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
                 acc = acc ^ sub4(x, y, h, y - x, y, h, x + 1u64, ALL - y) ^ add4_spilled(x, h, x ^ y, y - x, y, ALL - h, x + 1u64, ALL - y);
                 acc = acc * 41u64 + mul_rows(x, y, h, x ^ y, y - h, ALL - x);
             }
@@ -391,7 +398,7 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 		chains := []struct {
 			name         string
 			links, flags int
-		}{{"add3", 2, 0}, {"add3_sum", 2, 0}, {"sub3", 2, 0}, {"add4", 3, 1}, {"sub4", 3, 2}, {"add4_spilled", 3, 2}, {"sub_p", 2, 1}, {"add_k", 1, 1}}
+		}{{"add3", 2, 0}, {"add3_sum", 2, 0}, {"sub3", 2, 0}, {"add4", 3, 1}, {"sub4", 3, 2}, {"add4_spilled", 3, 2}, {"sub_p", 2, 1}, {"add_k", 1, 1}, {"add_ones", 1, 1}}
 		for _, ch := range chains {
 			fn := functionListing(string(asm), "__fn_"+ch.name)
 			links := len(c.link.FindAllString(fn, -1))
