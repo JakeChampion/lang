@@ -1,5 +1,6 @@
 import "std/hash/crc32";
 import "std/result";
+import "std/string";
 import "std/test";
 import "std/utf8";
 import "std/webp";
@@ -180,8 +181,8 @@ function test_decode_errors(): test.TestOutcome {
   let animated = webp.animate(3, 2, [lossless()], [100]).unwrap_or([]);
   let bad_signature = lossless().with(20, 0u8);
   let bad_version = lossless().with(24, 32u8);
-  let got = [decoded(lossy()), decoded(lossy_alpha()), decoded(animated), decoded([1u8, 2u8, 3u8]), decoded(prefix(lossless(), 30)), decoded(prefix(palette_200(), 600)), decoded(bad_signature), decoded(bad_version)];
-  return test.assert_eq(got.join(" | "), "webp: only lossless images can be decoded | webp: only lossless images can be decoded | webp: the file is animated, so decode_animation must read it | webp: not a WebP file | webp: the data ends early | webp: the data ends early | webp: the header of the lossless image is not valid | webp: the header of the lossless image is not valid");
+  let got = [decoded(animated), decoded([1u8, 2u8, 3u8]), decoded(prefix(lossless(), 30)), decoded(prefix(palette_200(), 600)), decoded(bad_signature), decoded(bad_version)];
+  return test.assert_eq(got.join(" | "), "webp: the file is animated, so decode_animation must read it | webp: not a WebP file | webp: the data ends early | webp: the data ends early | webp: the header of the image is not valid | webp: the header of the image is not valid");
 }
 
 // Animations that the generator of the test wrote, with each frame a lossless
@@ -258,10 +259,163 @@ function test_decode_animation_errors(): test.TestOutcome {
   // At 0, 2, a frame width of 3 is inside the canvas, and it is not the width
   // of the VP8L image of the frame.
   let wider = a.with(52, 0u8).with(58, 2u8);
-  let lossy_frame = webp.animate(3, 2, [lossy()], [100]).unwrap_or([]);
   let no_frame = prefix(a, 44).with(4, 36u8);
-  let got = [animated(outside), animated(wider), animated(lossy_frame), animated(no_frame), animated(prefix(a, 120)), animated([1u8])];
-  return test.assert_eq(got.join(" | "), "webp: the header of the lossless image is not valid | webp: the header of the lossless image is not valid | webp: only lossless images can be decoded | webp: the header of the lossless image is not valid | webp: the data ends early | webp: not a WebP file");
+  let got = [animated(outside), animated(wider), animated(no_frame), animated(prefix(a, 120)), animated([1u8]), animated(alpha_before_lossless())];
+  return test.assert_eq(got.join(" | "), "webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the data ends early | webp: not a WebP file | webp: the header of the image is not valid");
+}
+
+// 37 by 29: 4x4 macroblocks, two segments and the normal loop filter with a sharpness of 3.
+function lossy_normal(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 72u8, 4u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 32u8, 60u8, 4u8, 0u8, 0u8, 176u8, 22u8, 0u8, 157u8, 1u8, 42u8, 37u8, 0u8, 29u8, 0u8, 62u8, 37u8, 18u8, 137u8, 68u8, 161u8, 3u8, 84u8, 4u8, 192u8, 144u8, 0u8, 78u8, 153u8, 66u8, 56u8, 27u8, 200u8, 63u8, 18u8, 127u8, 32u8, 62u8, 65u8, 41u8, 47u8, 204u8, 62u8, 204u8, 100u8, 129u8, 242u8, 53u8, 244u8, 239u8, 199u8, 175u8, 238u8, 158u8, 240u8, 63u8, 185u8, 116u8, 128u8, 126u8, 132u8, 255u8, 136u8, 254u8, 97u8, 208u8, 1u8, 234u8, 3u8, 246u8, 111u8, 246u8, 103u8, 223u8, 31u8, 208u8, 7u8, 160u8, 7u8, 233u8, 247u8, 88u8, 7u8, 236u8, 7u8, 176u8, 7u8, 235u8, 79u8, 165u8, 39u8, 237u8, 199u8, 192u8, 159u8, 235u8, 175u8, 252u8, 111u8, 247u8, 159u8, 1u8, 191u8, 172u8, 127u8, 245u8, 239u8, 13u8, 126u8, 111u8, 224u8, 15u8, 126u8, 111u8, 57u8, 158u8, 233u8, 250u8, 126u8, 16u8, 90u8, 62u8, 239u8, 1u8, 254u8, 87u8, 208u8, 14u8, 4u8, 15u8, 18u8, 95u8, 0u8, 243u8, 177u8, 254u8, 123u8, 208u8, 163u8, 231u8, 31u8, 50u8, 255u8, 51u8, 255u8, 215u8, 247u8, 10u8, 253u8, 75u8, 255u8, 131u8, 235u8, 71u8, 234u8, 243u8, 245u8, 219u8, 216u8, 207u8, 245u8, 128u8, 149u8, 150u8, 77u8, 192u8, 178u8, 107u8, 166u8, 162u8, 254u8, 3u8, 212u8, 105u8, 221u8, 97u8, 193u8, 246u8, 158u8, 104u8, 86u8, 114u8, 66u8, 187u8, 59u8, 82u8, 209u8, 141u8, 32u8, 102u8, 220u8, 153u8, 44u8, 63u8, 160u8, 0u8, 254u8, 254u8, 121u8, 105u8, 250u8, 111u8, 116u8, 105u8, 235u8, 239u8, 89u8, 193u8, 151u8, 226u8, 108u8, 241u8, 25u8, 176u8, 43u8, 53u8, 134u8, 182u8, 81u8, 27u8, 227u8, 103u8, 7u8, 166u8, 254u8, 136u8, 41u8, 70u8, 86u8, 38u8, 243u8, 99u8, 144u8, 143u8, 150u8, 52u8, 95u8, 211u8, 110u8, 168u8, 189u8, 248u8, 131u8, 73u8, 252u8, 78u8, 146u8, 46u8, 197u8, 68u8, 52u8, 69u8, 94u8, 159u8, 176u8, 247u8, 119u8, 80u8, 97u8, 209u8, 107u8, 29u8, 19u8, 88u8, 248u8, 92u8, 129u8, 126u8, 60u8, 244u8, 47u8, 149u8, 172u8, 22u8, 5u8, 99u8, 182u8, 138u8, 223u8, 4u8, 206u8, 53u8, 199u8, 208u8, 55u8, 251u8, 29u8, 30u8, 209u8, 42u8, 114u8, 119u8, 5u8, 71u8, 153u8, 49u8, 135u8, 162u8, 242u8, 173u8, 11u8, 17u8, 35u8, 149u8, 233u8, 51u8, 247u8, 119u8, 252u8, 156u8, 153u8, 223u8, 255u8, 58u8, 86u8, 255u8, 198u8, 250u8, 2u8, 91u8, 54u8, 171u8, 100u8, 100u8, 192u8, 243u8, 199u8, 3u8, 113u8, 237u8, 240u8, 37u8, 59u8, 232u8, 110u8, 209u8, 37u8, 255u8, 240u8, 177u8, 91u8, 25u8, 246u8, 186u8, 40u8, 122u8, 53u8, 186u8, 180u8, 157u8, 190u8, 167u8, 233u8, 39u8, 165u8, 24u8, 141u8, 203u8, 200u8, 238u8, 93u8, 27u8, 129u8, 93u8, 59u8, 99u8, 143u8, 64u8, 60u8, 101u8, 190u8, 125u8, 151u8, 132u8, 84u8, 72u8, 194u8, 177u8, 200u8, 86u8, 188u8, 215u8, 233u8, 162u8, 206u8, 189u8, 17u8, 58u8, 39u8, 88u8, 244u8, 43u8, 15u8, 200u8, 255u8, 219u8, 137u8, 24u8, 188u8, 113u8, 197u8, 185u8, 247u8, 246u8, 5u8, 223u8, 74u8, 167u8, 67u8, 250u8, 174u8, 178u8, 36u8, 159u8, 166u8, 244u8, 242u8, 182u8, 66u8, 229u8, 13u8, 246u8, 71u8, 240u8, 176u8, 162u8, 199u8, 210u8, 195u8, 155u8, 176u8, 204u8, 91u8, 190u8, 143u8, 82u8, 114u8, 39u8, 166u8, 32u8, 102u8, 13u8, 141u8, 121u8, 129u8, 89u8, 101u8, 14u8, 47u8, 224u8, 40u8, 253u8, 253u8, 143u8, 151u8, 220u8, 244u8, 97u8, 74u8, 187u8, 231u8, 111u8, 163u8, 187u8, 253u8, 80u8, 119u8, 215u8, 117u8, 238u8, 195u8, 35u8, 171u8, 179u8, 154u8, 36u8, 99u8, 121u8, 70u8, 114u8, 79u8, 244u8, 93u8, 127u8, 170u8, 20u8, 216u8, 127u8, 102u8, 182u8, 128u8, 156u8, 253u8, 97u8, 227u8, 137u8, 158u8, 43u8, 188u8, 109u8, 2u8, 179u8, 153u8, 50u8, 166u8, 201u8, 43u8, 209u8, 68u8, 177u8, 249u8, 243u8, 154u8, 108u8, 21u8, 48u8, 121u8, 33u8, 10u8, 149u8, 132u8, 204u8, 30u8, 156u8, 40u8, 126u8, 144u8, 165u8, 230u8, 227u8, 227u8, 42u8, 190u8, 254u8, 133u8, 36u8, 182u8, 198u8, 244u8, 11u8, 236u8, 90u8, 221u8, 24u8, 190u8, 200u8, 140u8, 168u8, 113u8, 196u8, 201u8, 219u8, 119u8, 8u8, 0u8, 162u8, 192u8, 46u8, 238u8, 234u8, 51u8, 26u8, 245u8, 64u8, 189u8, 189u8, 2u8, 152u8, 54u8, 233u8, 223u8, 44u8, 85u8, 105u8, 243u8, 242u8, 126u8, 75u8, 34u8, 101u8, 112u8, 33u8, 229u8, 31u8, 72u8, 157u8, 157u8, 150u8, 238u8, 222u8, 127u8, 86u8, 221u8, 176u8, 55u8, 30u8, 206u8, 91u8, 83u8, 52u8, 39u8, 166u8, 121u8, 33u8, 154u8, 179u8, 61u8, 123u8, 163u8, 53u8, 54u8, 117u8, 193u8, 6u8, 163u8, 89u8, 108u8, 175u8, 176u8, 246u8, 136u8, 23u8, 226u8, 29u8, 25u8, 224u8, 62u8, 3u8, 86u8, 125u8, 242u8, 189u8, 29u8, 14u8, 109u8, 59u8, 183u8, 189u8, 64u8, 5u8, 25u8, 97u8, 23u8, 199u8, 212u8, 151u8, 150u8, 175u8, 82u8, 92u8, 77u8, 201u8, 176u8, 250u8, 228u8, 154u8, 87u8, 61u8, 163u8, 4u8, 30u8, 59u8, 59u8, 62u8, 61u8, 186u8, 71u8, 154u8, 75u8, 95u8, 58u8, 119u8, 150u8, 243u8, 228u8, 136u8, 208u8, 101u8, 77u8, 176u8, 200u8, 184u8, 139u8, 157u8, 147u8, 213u8, 166u8, 236u8, 6u8, 49u8, 208u8, 43u8, 72u8, 182u8, 132u8, 94u8, 18u8, 135u8, 190u8, 110u8, 243u8, 42u8, 214u8, 177u8, 99u8, 242u8, 48u8, 243u8, 113u8, 249u8, 23u8, 82u8, 248u8, 35u8, 194u8, 104u8, 159u8, 118u8, 235u8, 209u8, 253u8, 38u8, 99u8, 122u8, 41u8, 77u8, 27u8, 184u8, 109u8, 61u8, 170u8, 126u8, 148u8, 139u8, 6u8, 128u8, 182u8, 0u8, 228u8, 255u8, 22u8, 208u8, 75u8, 186u8, 12u8, 249u8, 239u8, 0u8, 175u8, 17u8, 108u8, 246u8, 205u8, 4u8, 226u8, 44u8, 232u8, 14u8, 192u8, 142u8, 36u8, 57u8, 240u8, 87u8, 205u8, 101u8, 181u8, 204u8, 225u8, 223u8, 223u8, 231u8, 2u8, 159u8, 137u8, 26u8, 194u8, 93u8, 35u8, 203u8, 78u8, 172u8, 85u8, 164u8, 13u8, 1u8, 92u8, 80u8, 135u8, 249u8, 49u8, 6u8, 69u8, 92u8, 127u8, 174u8, 188u8, 189u8, 29u8, 37u8, 162u8, 97u8, 40u8, 127u8, 229u8, 235u8, 2u8, 26u8, 92u8, 14u8, 217u8, 33u8, 53u8, 253u8, 214u8, 193u8, 42u8, 67u8, 200u8, 0u8, 153u8, 82u8, 240u8, 76u8, 100u8, 224u8, 250u8, 176u8, 220u8, 34u8, 91u8, 40u8, 171u8, 219u8, 141u8, 177u8, 52u8, 212u8, 64u8, 135u8, 54u8, 40u8, 31u8, 57u8, 61u8, 172u8, 24u8, 175u8, 111u8, 26u8, 16u8, 66u8, 4u8, 4u8, 243u8, 69u8, 43u8, 225u8, 156u8, 214u8, 217u8, 216u8, 23u8, 76u8, 17u8, 147u8, 194u8, 219u8, 152u8, 27u8, 222u8, 234u8, 74u8, 155u8, 207u8, 38u8, 181u8, 52u8, 104u8, 238u8, 228u8, 116u8, 254u8, 111u8, 204u8, 21u8, 51u8, 36u8, 255u8, 176u8, 4u8, 141u8, 221u8, 127u8, 133u8, 43u8, 229u8, 247u8, 116u8, 243u8, 88u8, 176u8, 173u8, 6u8, 136u8, 169u8, 147u8, 238u8, 17u8, 53u8, 131u8, 252u8, 209u8, 171u8, 30u8, 169u8, 62u8, 122u8, 11u8, 7u8, 245u8, 213u8, 161u8, 115u8, 240u8, 13u8, 206u8, 117u8, 211u8, 15u8, 152u8, 98u8, 92u8, 237u8, 25u8, 170u8, 227u8, 153u8, 31u8, 254u8, 222u8, 50u8, 196u8, 74u8, 55u8, 162u8, 126u8, 82u8, 109u8, 123u8, 233u8, 231u8, 135u8, 81u8, 254u8, 209u8, 61u8, 3u8, 37u8, 90u8, 155u8, 181u8, 19u8, 183u8, 227u8, 154u8, 202u8, 180u8, 33u8, 27u8, 62u8, 255u8, 145u8, 246u8, 153u8, 26u8, 200u8, 177u8, 142u8, 87u8, 255u8, 24u8, 145u8, 140u8, 206u8, 201u8, 17u8, 3u8, 75u8, 83u8, 97u8, 159u8, 255u8, 61u8, 71u8, 195u8, 206u8, 72u8, 75u8, 122u8, 168u8, 82u8, 228u8, 139u8, 119u8, 241u8, 146u8, 145u8, 38u8, 35u8, 54u8, 23u8, 215u8, 184u8, 59u8, 228u8, 48u8, 69u8, 168u8, 143u8, 166u8, 143u8, 76u8, 26u8, 71u8, 250u8, 119u8, 134u8, 107u8, 226u8, 90u8, 237u8, 71u8, 178u8, 91u8, 2u8, 71u8, 95u8, 213u8, 225u8, 106u8, 203u8, 186u8, 64u8, 9u8, 69u8, 74u8, 10u8, 205u8, 63u8, 116u8, 137u8, 87u8, 55u8, 35u8, 109u8, 59u8, 62u8, 127u8, 151u8, 208u8, 239u8, 255u8, 18u8, 205u8, 168u8, 16u8, 106u8, 234u8, 76u8, 137u8, 63u8, 160u8, 171u8, 119u8, 138u8, 49u8, 89u8, 161u8, 42u8, 24u8, 235u8, 145u8, 78u8, 30u8, 51u8, 44u8, 0u8, 0u8];
+}
+
+// 23 by 17: the simple loop filter.
+function lossy_simple(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 248u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 32u8, 236u8, 0u8, 0u8, 0u8, 18u8, 7u8, 0u8, 157u8, 1u8, 42u8, 23u8, 0u8, 17u8, 0u8, 62u8, 209u8, 62u8, 180u8, 90u8, 40u8, 34u8, 40u8, 40u8, 20u8, 5u8, 0u8, 26u8, 9u8, 108u8, 0u8, 157u8, 50u8, 132u8, 112u8, 55u8, 181u8, 240u8, 230u8, 62u8, 93u8, 74u8, 237u8, 149u8, 113u8, 204u8, 192u8, 106u8, 234u8, 99u8, 210u8, 147u8, 67u8, 209u8, 141u8, 4u8, 133u8, 247u8, 126u8, 251u8, 113u8, 25u8, 164u8, 158u8, 78u8, 250u8, 124u8, 145u8, 4u8, 96u8, 0u8, 254u8, 209u8, 216u8, 78u8, 151u8, 44u8, 228u8, 253u8, 149u8, 203u8, 127u8, 225u8, 70u8, 49u8, 201u8, 83u8, 107u8, 82u8, 186u8, 141u8, 4u8, 230u8, 149u8, 37u8, 162u8, 82u8, 235u8, 240u8, 74u8, 185u8, 197u8, 52u8, 4u8, 238u8, 75u8, 77u8, 134u8, 200u8, 185u8, 253u8, 12u8, 13u8, 115u8, 255u8, 225u8, 229u8, 109u8, 118u8, 198u8, 149u8, 54u8, 253u8, 106u8, 85u8, 164u8, 112u8, 91u8, 126u8, 147u8, 226u8, 145u8, 133u8, 104u8, 25u8, 191u8, 46u8, 5u8, 109u8, 129u8, 60u8, 220u8, 90u8, 88u8, 115u8, 65u8, 63u8, 56u8, 233u8, 24u8, 174u8, 119u8, 179u8, 121u8, 96u8, 157u8, 216u8, 245u8, 79u8, 65u8, 8u8, 75u8, 125u8, 234u8, 254u8, 102u8, 109u8, 169u8, 3u8, 145u8, 101u8, 92u8, 83u8, 56u8, 231u8, 63u8, 196u8, 148u8, 253u8, 209u8, 121u8, 31u8, 226u8, 154u8, 54u8, 125u8, 83u8, 241u8, 248u8, 63u8, 196u8, 255u8, 217u8, 171u8, 146u8, 205u8, 167u8, 189u8, 248u8, 72u8, 120u8, 110u8, 251u8, 166u8, 29u8, 165u8, 83u8, 137u8, 82u8, 55u8, 63u8, 207u8, 100u8, 118u8, 238u8, 159u8, 127u8, 116u8, 167u8, 69u8, 48u8, 238u8, 143u8, 249u8, 30u8, 131u8, 24u8, 155u8, 77u8, 235u8, 114u8, 86u8, 207u8, 248u8, 155u8, 77u8, 235u8, 16u8, 0u8, 0u8, 0u8];
+}
+
+// 18 by 72: four token partitions, from the encoder of libwebp.
+function lossy_parts(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 106u8, 2u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 32u8, 94u8, 2u8, 0u8, 0u8, 208u8, 14u8, 0u8, 157u8, 1u8, 42u8, 18u8, 0u8, 72u8, 0u8, 62u8, 157u8, 64u8, 153u8, 74u8, 165u8, 163u8, 162u8, 33u8, 172u8, 216u8, 9u8, 88u8, 176u8, 147u8, 137u8, 108u8, 0u8, 157u8, 50u8, 179u8, 246u8, 199u8, 161u8, 249u8, 142u8, 211u8, 159u8, 186u8, 109u8, 104u8, 148u8, 126u8, 170u8, 177u8, 205u8, 234u8, 3u8, 110u8, 151u8, 137u8, 159u8, 232u8, 7u8, 96u8, 15u8, 32u8, 14u8, 6u8, 111u8, 44u8, 175u8, 102u8, 231u8, 218u8, 142u8, 165u8, 110u8, 153u8, 95u8, 87u8, 238u8, 4u8, 131u8, 217u8, 228u8, 176u8, 165u8, 231u8, 130u8, 58u8, 234u8, 172u8, 33u8, 49u8, 97u8, 61u8, 15u8, 190u8, 175u8, 61u8, 108u8, 140u8, 32u8, 233u8, 248u8, 127u8, 40u8, 255u8, 97u8, 94u8, 71u8, 174u8, 99u8, 240u8, 215u8, 173u8, 73u8, 248u8, 156u8, 41u8, 212u8, 202u8, 18u8, 47u8, 184u8, 121u8, 179u8, 214u8, 177u8, 25u8, 28u8, 134u8, 228u8, 34u8, 211u8, 0u8, 0u8, 152u8, 0u8, 0u8, 108u8, 0u8, 0u8, 112u8, 0u8, 0u8, 254u8, 239u8, 160u8, 114u8, 102u8, 132u8, 166u8, 71u8, 12u8, 14u8, 11u8, 120u8, 131u8, 167u8, 70u8, 209u8, 119u8, 109u8, 231u8, 48u8, 247u8, 105u8, 188u8, 58u8, 108u8, 203u8, 33u8, 5u8, 209u8, 130u8, 24u8, 150u8, 229u8, 42u8, 117u8, 89u8, 189u8, 205u8, 206u8, 252u8, 151u8, 255u8, 14u8, 107u8, 245u8, 30u8, 110u8, 240u8, 202u8, 223u8, 255u8, 74u8, 183u8, 183u8, 168u8, 224u8, 85u8, 123u8, 121u8, 62u8, 150u8, 133u8, 116u8, 117u8, 234u8, 217u8, 255u8, 72u8, 22u8, 142u8, 102u8, 100u8, 249u8, 33u8, 228u8, 220u8, 51u8, 139u8, 82u8, 14u8, 47u8, 182u8, 206u8, 91u8, 152u8, 251u8, 206u8, 134u8, 138u8, 195u8, 114u8, 155u8, 188u8, 94u8, 60u8, 124u8, 51u8, 143u8, 133u8, 242u8, 180u8, 178u8, 98u8, 20u8, 189u8, 165u8, 52u8, 111u8, 31u8, 221u8, 46u8, 228u8, 227u8, 24u8, 221u8, 88u8, 192u8, 20u8, 47u8, 255u8, 50u8, 217u8, 42u8, 135u8, 229u8, 123u8, 213u8, 202u8, 169u8, 12u8, 189u8, 127u8, 43u8, 253u8, 88u8, 176u8, 127u8, 220u8, 86u8, 90u8, 216u8, 29u8, 164u8, 192u8, 254u8, 19u8, 79u8, 194u8, 123u8, 66u8, 0u8, 0u8, 63u8, 190u8, 105u8, 205u8, 135u8, 150u8, 28u8, 199u8, 146u8, 166u8, 216u8, 195u8, 201u8, 145u8, 102u8, 98u8, 108u8, 149u8, 151u8, 212u8, 124u8, 50u8, 22u8, 204u8, 228u8, 119u8, 147u8, 135u8, 83u8, 132u8, 101u8, 81u8, 165u8, 182u8, 66u8, 0u8, 13u8, 145u8, 92u8, 122u8, 63u8, 25u8, 35u8, 205u8, 248u8, 0u8, 123u8, 52u8, 136u8, 30u8, 190u8, 238u8, 253u8, 44u8, 234u8, 89u8, 40u8, 151u8, 253u8, 15u8, 76u8, 111u8, 206u8, 44u8, 223u8, 194u8, 232u8, 172u8, 211u8, 99u8, 242u8, 167u8, 71u8, 245u8, 132u8, 199u8, 60u8, 207u8, 168u8, 41u8, 185u8, 43u8, 253u8, 215u8, 184u8, 169u8, 142u8, 151u8, 84u8, 18u8, 169u8, 237u8, 79u8, 218u8, 208u8, 62u8, 233u8, 161u8, 121u8, 171u8, 54u8, 188u8, 250u8, 245u8, 190u8, 160u8, 192u8, 0u8, 212u8, 164u8, 175u8, 18u8, 107u8, 84u8, 192u8, 156u8, 143u8, 237u8, 71u8, 49u8, 236u8, 244u8, 197u8, 157u8, 118u8, 220u8, 13u8, 111u8, 126u8, 68u8, 1u8, 16u8, 158u8, 39u8, 191u8, 110u8, 204u8, 44u8, 114u8, 126u8, 120u8, 240u8, 183u8, 173u8, 226u8, 129u8, 102u8, 154u8, 8u8, 223u8, 217u8, 217u8, 250u8, 230u8, 127u8, 246u8, 197u8, 103u8, 81u8, 174u8, 255u8, 126u8, 34u8, 154u8, 135u8, 1u8, 62u8, 230u8, 129u8, 120u8, 17u8, 251u8, 184u8, 194u8, 108u8, 186u8, 223u8, 147u8, 242u8, 123u8, 208u8, 134u8, 66u8, 167u8, 3u8, 183u8, 146u8, 13u8, 244u8, 4u8, 123u8, 5u8, 133u8, 161u8, 65u8, 36u8, 185u8, 153u8, 153u8, 176u8, 235u8, 139u8, 83u8, 120u8, 8u8, 222u8, 45u8, 178u8, 159u8, 237u8, 140u8, 239u8, 254u8, 205u8, 54u8, 143u8, 253u8, 128u8, 0u8, 0u8, 81u8, 125u8, 134u8, 200u8, 13u8, 228u8, 184u8, 179u8, 248u8, 254u8, 110u8, 61u8, 92u8, 224u8, 180u8, 133u8, 59u8, 29u8, 98u8, 242u8, 96u8, 43u8, 78u8, 28u8, 194u8, 122u8, 239u8, 135u8, 118u8, 24u8, 128u8, 120u8, 78u8, 75u8, 255u8, 214u8, 241u8, 50u8, 228u8, 139u8, 139u8, 115u8, 11u8, 94u8, 15u8, 71u8, 213u8, 90u8, 26u8, 88u8, 93u8, 245u8, 134u8, 144u8, 51u8, 216u8, 166u8, 38u8, 145u8, 169u8, 224u8, 196u8, 202u8, 15u8, 151u8, 72u8, 0u8, 51u8, 131u8, 10u8, 230u8, 54u8, 151u8, 66u8, 201u8, 74u8, 128u8, 3u8, 140u8, 8u8, 182u8, 187u8, 162u8, 214u8, 93u8, 0u8, 15u8, 97u8, 240u8, 220u8, 192u8, 152u8, 134u8, 96u8, 75u8, 8u8, 0u8];
+}
+
+// 48 by 40: 16x16 macroblocks and the normal loop filter with a sharpness of 6.
+function lossy_smooth(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 136u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 32u8, 124u8, 0u8, 0u8, 0u8, 240u8, 4u8, 0u8, 157u8, 1u8, 42u8, 48u8, 0u8, 40u8, 0u8, 63u8, 1u8, 112u8, 176u8, 82u8, 169u8, 58u8, 35u8, 164u8, 170u8, 181u8, 90u8, 171u8, 76u8, 32u8, 9u8, 102u8, 0u8, 181u8, 27u8, 156u8, 194u8, 192u8, 123u8, 129u8, 7u8, 154u8, 37u8, 160u8, 82u8, 188u8, 91u8, 160u8, 60u8, 179u8, 255u8, 245u8, 192u8, 0u8, 254u8, 226u8, 29u8, 120u8, 194u8, 215u8, 84u8, 131u8, 155u8, 191u8, 183u8, 215u8, 15u8, 245u8, 37u8, 191u8, 155u8, 28u8, 228u8, 167u8, 31u8, 190u8, 56u8, 191u8, 244u8, 13u8, 167u8, 30u8, 12u8, 213u8, 145u8, 79u8, 184u8, 209u8, 48u8, 145u8, 155u8, 154u8, 239u8, 35u8, 235u8, 170u8, 57u8, 170u8, 139u8, 173u8, 145u8, 241u8, 110u8, 89u8, 211u8, 137u8, 225u8, 156u8, 134u8, 131u8, 78u8, 80u8, 217u8, 227u8, 212u8, 74u8, 144u8, 4u8, 125u8, 128u8, 193u8, 4u8, 71u8, 115u8, 149u8, 7u8, 17u8, 180u8, 0u8];
+}
+
+// 220 by 3: the skip flag of each macroblock.
+function lossy_skip(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 180u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 32u8, 168u8, 0u8, 0u8, 0u8, 240u8, 7u8, 0u8, 157u8, 1u8, 42u8, 220u8, 0u8, 3u8, 0u8, 63u8, 161u8, 196u8, 211u8, 96u8, 165u8, 35u8, 162u8, 33u8, 45u8, 189u8, 94u8, 248u8, 168u8, 52u8, 9u8, 100u8, 0u8, 205u8, 123u8, 212u8, 130u8, 240u8, 142u8, 134u8, 101u8, 83u8, 252u8, 84u8, 232u8, 211u8, 97u8, 148u8, 46u8, 112u8, 30u8, 206u8, 252u8, 251u8, 96u8, 213u8, 101u8, 60u8, 174u8, 215u8, 66u8, 139u8, 124u8, 136u8, 219u8, 253u8, 198u8, 197u8, 24u8, 128u8, 103u8, 238u8, 43u8, 12u8, 73u8, 99u8, 128u8, 0u8, 254u8, 12u8, 28u8, 253u8, 234u8, 123u8, 125u8, 93u8, 246u8, 125u8, 213u8, 130u8, 216u8, 4u8, 171u8, 155u8, 31u8, 133u8, 14u8, 26u8, 83u8, 174u8, 37u8, 241u8, 150u8, 160u8, 107u8, 103u8, 223u8, 227u8, 200u8, 6u8, 65u8, 203u8, 222u8, 129u8, 115u8, 192u8, 23u8, 106u8, 208u8, 49u8, 234u8, 20u8, 14u8, 115u8, 213u8, 31u8, 28u8, 199u8, 88u8, 123u8, 212u8, 29u8, 197u8, 89u8, 191u8, 7u8, 185u8, 215u8, 128u8, 37u8, 96u8, 4u8, 199u8, 88u8, 34u8, 101u8, 233u8, 73u8, 35u8, 164u8, 224u8, 4u8, 154u8, 57u8, 3u8, 15u8, 169u8, 184u8, 36u8, 103u8, 14u8, 231u8, 226u8, 170u8, 219u8, 176u8, 230u8, 182u8, 110u8, 176u8, 176u8, 0u8, 0u8];
+}
+
+// 20 by 9: one color, with no loop filter.
+function lossy_flat(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 54u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 32u8, 42u8, 0u8, 0u8, 0u8, 52u8, 2u8, 0u8, 157u8, 1u8, 42u8, 20u8, 0u8, 9u8, 0u8, 63u8, 57u8, 134u8, 185u8, 83u8, 131u8, 0u8, 128u8, 0u8, 2u8, 112u8, 148u8, 0u8, 0u8, 246u8, 64u8, 0u8, 254u8, 223u8, 126u8, 63u8, 252u8, 146u8, 245u8, 39u8, 229u8, 97u8, 32u8, 217u8, 204u8, 0u8, 0u8];
+}
+
+// 19 by 13: alpha as a lossless image stream with a filter.
+function alpha_lossless(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 34u8, 1u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 16u8, 0u8, 0u8, 0u8, 18u8, 0u8, 0u8, 12u8, 0u8, 0u8, 65u8, 76u8, 80u8, 72u8, 23u8, 0u8, 0u8, 0u8, 1u8, 153u8, 140u8, 232u8, 127u8, 128u8, 72u8, 219u8, 102u8, 124u8, 104u8, 254u8, 13u8, 159u8, 157u8, 70u8, 76u8, 192u8, 4u8, 48u8, 67u8, 93u8, 4u8, 0u8, 86u8, 80u8, 56u8, 32u8, 228u8, 0u8, 0u8, 0u8, 176u8, 5u8, 0u8, 157u8, 1u8, 42u8, 19u8, 0u8, 13u8, 0u8, 62u8, 145u8, 56u8, 151u8, 71u8, 165u8, 163u8, 34u8, 33u8, 48u8, 8u8, 0u8, 176u8, 18u8, 9u8, 108u8, 0u8, 157u8, 50u8, 132u8, 119u8, 34u8, 192u8, 171u8, 1u8, 130u8, 229u8, 253u8, 154u8, 165u8, 3u8, 201u8, 0u8, 207u8, 231u8, 26u8, 9u8, 134u8, 176u8, 244u8, 107u8, 223u8, 236u8, 128u8, 0u8, 254u8, 237u8, 9u8, 117u8, 71u8, 43u8, 243u8, 190u8, 143u8, 196u8, 199u8, 4u8, 38u8, 58u8, 182u8, 66u8, 240u8, 146u8, 199u8, 135u8, 241u8, 120u8, 206u8, 251u8, 209u8, 255u8, 76u8, 84u8, 7u8, 129u8, 98u8, 248u8, 178u8, 73u8, 191u8, 178u8, 27u8, 249u8, 23u8, 158u8, 119u8, 58u8, 39u8, 210u8, 228u8, 252u8, 133u8, 216u8, 162u8, 87u8, 216u8, 244u8, 155u8, 179u8, 189u8, 79u8, 54u8, 122u8, 232u8, 238u8, 121u8, 116u8, 61u8, 36u8, 209u8, 180u8, 246u8, 185u8, 43u8, 45u8, 35u8, 111u8, 207u8, 254u8, 92u8, 137u8, 224u8, 102u8, 182u8, 137u8, 253u8, 1u8, 21u8, 251u8, 30u8, 3u8, 143u8, 74u8, 240u8, 207u8, 189u8, 85u8, 142u8, 35u8, 48u8, 66u8, 30u8, 88u8, 140u8, 173u8, 58u8, 113u8, 226u8, 5u8, 141u8, 103u8, 78u8, 202u8, 234u8, 35u8, 176u8, 98u8, 160u8, 15u8, 201u8, 122u8, 43u8, 215u8, 188u8, 147u8, 26u8, 28u8, 24u8, 20u8, 31u8, 151u8, 222u8, 20u8, 216u8, 94u8, 155u8, 252u8, 165u8, 82u8, 220u8, 24u8, 172u8, 50u8, 203u8, 101u8, 228u8, 247u8, 168u8, 127u8, 157u8, 113u8, 177u8, 187u8, 227u8, 239u8, 213u8, 180u8, 64u8, 16u8, 189u8, 68u8, 90u8, 21u8, 80u8, 58u8, 127u8, 50u8, 205u8, 172u8, 245u8, 118u8, 215u8, 70u8, 230u8, 156u8, 80u8, 0u8, 0u8];
+}
+
+// The VP8 data of an image of 11 by 7, and its alpha values.
+function alpha_image(): u8[] {
+  return [240u8, 1u8, 0u8, 157u8, 1u8, 42u8, 11u8, 0u8, 7u8, 0u8, 2u8, 128u8, 66u8, 37u8, 176u8, 2u8, 116u8, 186u8, 0u8, 2u8, 180u8, 129u8, 30u8, 152u8, 0u8, 254u8, 234u8, 76u8, 100u8, 170u8, 40u8, 54u8, 114u8, 77u8, 167u8, 240u8, 168u8, 15u8, 152u8, 222u8, 64u8, 63u8, 38u8, 219u8, 193u8, 215u8, 234u8, 118u8, 255u8, 137u8, 181u8, 243u8, 238u8, 125u8, 255u8, 206u8, 99u8, 70u8, 255u8, 249u8, 158u8, 251u8, 146u8, 174u8, 97u8, 166u8, 62u8, 12u8, 187u8, 117u8, 120u8, 0u8, 0u8, 0u8];
+}
+
+function alpha_plane(): u8[] {
+  return [0u8, 23u8, 46u8, 69u8, 92u8, 115u8, 138u8, 161u8, 184u8, 207u8, 230u8, 31u8, 55u8, 79u8, 103u8, 127u8, 151u8, 175u8, 192u8, 216u8, 240u8, 8u8, 62u8, 87u8, 112u8, 137u8, 155u8, 180u8, 205u8, 223u8, 248u8, 17u8, 42u8, 93u8, 119u8, 145u8, 164u8, 190u8, 209u8, 235u8, 254u8, 24u8, 50u8, 69u8, 124u8, 151u8, 171u8, 198u8, 218u8, 245u8, 9u8, 29u8, 56u8, 76u8, 103u8, 155u8, 183u8, 204u8, 225u8, 253u8, 18u8, 39u8, 60u8, 88u8, 109u8, 130u8, 186u8, 215u8, 237u8, 3u8, 25u8, 47u8, 69u8, 91u8, 120u8, 142u8, 164u8];
+}
+
+// Three lossy frames, two of them with an ALPH chunk, that Pillow wrote.
+function lossy_animation(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 228u8, 1u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 18u8, 0u8, 0u8, 0u8, 18u8, 0u8, 0u8, 9u8, 0u8, 0u8, 65u8, 78u8, 73u8, 77u8, 6u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 1u8, 0u8, 65u8, 78u8, 77u8, 70u8, 206u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 18u8, 0u8, 0u8, 9u8, 0u8, 0u8, 211u8, 0u8, 0u8, 3u8, 65u8, 76u8, 80u8, 72u8, 37u8, 0u8, 0u8, 0u8, 1u8, 23u8, 32u8, 16u8, 72u8, 97u8, 230u8, 31u8, 17u8, 225u8, 96u8, 166u8, 141u8, 20u8, 102u8, 118u8, 16u8, 241u8, 126u8, 206u8, 15u8, 122u8, 222u8, 39u8, 121u8, 11u8, 17u8, 253u8, 15u8, 128u8, 9u8, 222u8, 88u8, 103u8, 171u8, 191u8, 0u8, 0u8, 86u8, 80u8, 56u8, 32u8, 136u8, 0u8, 0u8, 0u8, 240u8, 3u8, 0u8, 157u8, 1u8, 42u8, 19u8, 0u8, 10u8, 0u8, 62u8, 201u8, 82u8, 162u8, 75u8, 39u8, 164u8, 163u8, 33u8, 176u8, 8u8, 0u8, 240u8, 25u8, 9u8, 108u8, 44u8, 192u8, 190u8, 64u8, 3u8, 177u8, 18u8, 173u8, 149u8, 182u8, 7u8, 154u8, 184u8, 0u8, 0u8, 254u8, 230u8, 179u8, 213u8, 236u8, 133u8, 191u8, 35u8, 202u8, 120u8, 52u8, 218u8, 75u8, 143u8, 25u8, 238u8, 59u8, 211u8, 170u8, 184u8, 131u8, 150u8, 162u8, 247u8, 12u8, 125u8, 255u8, 230u8, 9u8, 248u8, 78u8, 208u8, 60u8, 94u8, 112u8, 188u8, 29u8, 238u8, 127u8, 252u8, 185u8, 63u8, 246u8, 123u8, 255u8, 191u8, 255u8, 216u8, 207u8, 45u8, 240u8, 151u8, 177u8, 183u8, 39u8, 231u8, 244u8, 246u8, 82u8, 245u8, 70u8, 239u8, 47u8, 84u8, 110u8, 243u8, 143u8, 188u8, 242u8, 167u8, 38u8, 24u8, 175u8, 109u8, 163u8, 65u8, 75u8, 234u8, 154u8, 206u8, 31u8, 107u8, 226u8, 81u8, 228u8, 40u8, 201u8, 122u8, 63u8, 251u8, 199u8, 213u8, 0u8, 0u8, 0u8, 65u8, 78u8, 77u8, 70u8, 74u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 248u8, 0u8, 0u8, 0u8, 65u8, 76u8, 80u8, 72u8, 2u8, 0u8, 0u8, 0u8, 0u8, 0u8, 86u8, 80u8, 56u8, 32u8, 40u8, 0u8, 0u8, 0u8, 52u8, 1u8, 0u8, 157u8, 1u8, 42u8, 1u8, 0u8, 1u8, 0u8, 0u8, 0u8, 74u8, 37u8, 160u8, 0u8, 3u8, 112u8, 0u8, 254u8, 239u8, 21u8, 7u8, 254u8, 29u8, 220u8, 221u8, 122u8, 214u8, 255u8, 255u8, 139u8, 67u8, 251u8, 121u8, 255u8, 6u8, 182u8, 148u8, 0u8, 65u8, 78u8, 77u8, 70u8, 144u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 18u8, 0u8, 0u8, 9u8, 0u8, 0u8, 160u8, 1u8, 0u8, 0u8, 86u8, 80u8, 56u8, 32u8, 120u8, 0u8, 0u8, 0u8, 148u8, 3u8, 0u8, 157u8, 1u8, 42u8, 19u8, 0u8, 10u8, 0u8, 62u8, 201u8, 86u8, 163u8, 75u8, 131u8, 0u8, 128u8, 0u8, 1u8, 144u8, 150u8, 198u8, 88u8, 34u8, 5u8, 64u8, 81u8, 142u8, 6u8, 240u8, 212u8, 0u8, 3u8, 174u8, 221u8, 0u8, 0u8, 254u8, 230u8, 180u8, 221u8, 142u8, 68u8, 55u8, 255u8, 78u8, 223u8, 255u8, 162u8, 103u8, 25u8, 40u8, 86u8, 47u8, 132u8, 0u8, 8u8, 247u8, 66u8, 0u8, 152u8, 131u8, 119u8, 237u8, 125u8, 253u8, 38u8, 82u8, 235u8, 103u8, 251u8, 222u8, 190u8, 216u8, 42u8, 178u8, 221u8, 7u8, 203u8, 56u8, 145u8, 1u8, 252u8, 83u8, 179u8, 121u8, 47u8, 47u8, 34u8, 237u8, 128u8, 186u8, 4u8, 73u8, 58u8, 145u8, 0u8, 76u8, 177u8, 225u8, 207u8, 116u8, 27u8, 7u8, 22u8, 69u8, 255u8, 19u8, 111u8, 202u8, 15u8, 254u8, 38u8, 227u8, 100u8, 227u8, 39u8, 224u8, 0u8];
+}
+
+function riff(chunks: [u8[]]): u8[] {
+  let body: u8[] = [87u8, 69u8, 66u8, 80u8];
+  for c in chunks {
+    body = body.concat(c);
+  }
+  return [82u8, 73u8, 70u8, 70u8].concat(le32(body.len())).concat(body);
+}
+
+function le32(v: i32): u8[] {
+  return [v as u8, (v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8];
+}
+
+function chunk(tag: string, data: [u8]): u8[] {
+  let out = tag.bytes().concat(le32(data.len())).concat(data);
+  return if (data.len() % 2 == 1) { out.append(0u8) } else { out };
+}
+
+// The alpha values of `alpha_plane` with the prediction of the filter `f`
+// taken away, as an encoder writes them.
+function alpha_filtered(f: i32): u8[] {
+  let a = alpha_plane();
+  let w = 11;
+  let out: u8[] = [];
+  for i in 0..a.len() {
+    let x = i % w;
+    let y = i / w;
+    let left = if (x > 0) { a[i - 1] as i32 } else { 0 };
+    let up = if (y > 0) { a[i - w] as i32 } else { 0 };
+    let pred = if (f == 0) {
+      0
+    } else if (y == 0) {
+      left
+    } else if (x == 0) {
+      up
+    } else if (f == 1) {
+      left
+    } else if (f == 2) {
+      up
+    } else {
+      (left + up - a[i - w - 1] as i32).clamp(0, 255)
+    };
+    out = out.append((a[i] as i32 - pred & 255) as u8);
+  }
+  return out;
+}
+
+// A file of 11 by 7 with a VP8X chunk, an ALPH chunk of raw values with the
+// filter `f`, and a VP8 chunk.
+function with_alpha(f: i32): u8[] {
+  let vp8x: u8[] = [16u8, 0u8, 0u8, 0u8, 10u8, 0u8, 0u8, 6u8, 0u8, 0u8];
+  return riff([chunk("VP8X", vp8x), chunk("ALPH", [(f << 2) as u8].concat(alpha_filtered(f))), chunk("VP8 ", alpha_image())]);
+}
+
+// An animation whose first frame has an ALPH chunk before a VP8L chunk,
+// which the demuxer of libwebp refuses.
+function alpha_before_lossless(): u8[] {
+  let a = animation_4x4();
+  let size = word_at(a, 48);
+  let frame = slice(a, 52, 68).concat(chunk("ALPH", [0u8, 0u8])).concat(slice(a, 68, 52 + size));
+  return riff([slice(a, 12, 44), chunk("ANMF", frame), slice(a, 52 + size + size % 2, a.len())]);
+}
+
+function test_decode_lossy(): test.TestOutcome {
+  let got = [decoded(lossy()), decoded(lossy_normal()), decoded(lossy_simple()), decoded(lossy_parts()), decoded(lossy_smooth()), decoded(lossy_skip()), decoded(lossy_flat())];
+  return test.assert_eq(got.join(" | "), "3x2 2084022314 | 37x29 2893206058 | 23x17 3435794309 | 18x72 2258119739 | 48x40 1520973617 | 220x3 620729378 | 20x9 24066254");
+}
+
+function test_decode_lossy_pixels(): test.TestOutcome {
+  let img = match (webp.decode(lossy())) {
+    Ok(i) => i,
+    Err(e) => {
+      return test.fail(e.message());
+    },
+  };
+  let want: u8[] = [192u8, 19u8, 0u8, 255u8, 197u8, 27u8, 0u8, 255u8, 196u8, 34u8, 0u8, 255u8, 207u8, 34u8, 8u8, 255u8, 213u8, 42u8, 13u8, 255u8, 212u8, 50u8, 12u8, 255u8];
+  return test.assert_eq((img.pixels == want).to_string(), "true");
+}
+
+function test_decode_lossy_alpha(): test.TestOutcome {
+  let got = [decoded(lossy_alpha()), decoded(with_alpha(0)), decoded(with_alpha(1)), decoded(with_alpha(2)), decoded(with_alpha(3)), decoded(alpha_lossless())];
+  return test.assert_eq(got.join(" | "), "3x2 2463566941 | 11x7 11913073 | 11x7 11913073 | 11x7 11913073 | 11x7 11913073 | 19x13 3126748487");
+}
+
+function test_decode_lossy_errors(): test.TestOutcome {
+  let n = lossy_normal();
+  // The VP8 chunk keeps 700 of its 1084 bytes, so the tokens end early.
+  let short = prefix(n, 720).with(4, 200u8).with(5, 2u8).with(16, 188u8).with(17, 2u8);
+  let inter = n.with(20, n[20] | 1u8);
+  let hidden = n.with(20, n[20] & 239u8);
+  let start = n.with(23, 156u8);
+  let a = with_alpha(0);
+  let reserved = a.with(38, 64u8);
+  let method = a.with(38, 2u8);
+  let canvas = a.with(24, 11u8);
+  let raw_short = riff([chunk("VP8X", slice(a, 20, 30)), chunk("ALPH", [0u8].concat(slice(alpha_plane(), 0, 75))), chunk("VP8 ", alpha_image())]);
+  let got = [decoded(prefix(n, 600)), decoded(short), decoded(inter), decoded(hidden), decoded(start), decoded(reserved), decoded(method), decoded(canvas), decoded(raw_short)];
+  return test.assert_eq(got.join(" | "), "webp: the data ends early | webp: the data ends early | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the data ends early");
+}
+
+function test_decode_lossy_animation(): test.TestOutcome {
+  let made = webp.animate(3, 2, [lossy(), lossy_alpha(), lossless()], [100, 250, 70000]).unwrap_or([]);
+  let got = [animated(lossy_animation()), animated(made)];
+  return test.assert_eq(got.join(" | "), "19x10 loops 1, 211ms 3270000978, 248ms 2722273656, 416ms 3914658160 | 3x2 loops 0, 100ms 2084022314, 250ms 2463566941, 70000ms 3643371239");
 }
 
 function main(): i32 {
@@ -276,5 +430,10 @@ function main(): i32 {
   r = r.it("blend a frame as libwebp does", test_decode_animation_blend);
   r = r.it("decode the animations that animate writes", test_decode_animation_round_trip);
   r = r.it("animation decode errors", test_decode_animation_errors);
+  r = r.it("decode lossy files", test_decode_lossy);
+  r = r.it("decode the pixels of a lossy file of Pillow", test_decode_lossy_pixels);
+  r = r.it("decode lossy files with alpha", test_decode_lossy_alpha);
+  r = r.it("lossy decode errors", test_decode_lossy_errors);
+  r = r.it("decode animations with lossy frames", test_decode_lossy_animation);
   return r.finish();
 }
