@@ -843,10 +843,26 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
   if (child_grown_in(rd, bi, v, 0) && child_spent_between(rd, bi, v, 0)) {
     return false;
   }
-  if (child_kept_across(rd, bi, v) || twin_kept_across(rd, bi, v)) {
+  if (child_kept_across(rd, bi, v) || twin_kept_across(rd, bi, v) || updated_elsewhere(rd, bi, v)) {
     return false;
   }
   return rd.strict.len() == 0 || !read_above_for(rd, rd.strict, bi, v, v);
+}
+
+// updated_elsewhere says another block rebuilds the record that v first
+// reads. That block can take the read only when no block reads its slot
+// again. An array keeps its re-reads: each `with` stores back into the
+// array that its own block reads.
+function updated_elsewhere(rd: Reads, bi: i32, v: i32): boolean {
+  let x = rd.first[v];
+  if let typeinfo.TypeStruct(_) = rd.types[x] {
+    for u in rd.updated[x] {
+      if (u != bi) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // child_kept_across says a read off the first read of v is live into bi and
