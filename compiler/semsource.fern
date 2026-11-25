@@ -9783,7 +9783,8 @@ function version_loops(all: Produced[], one: boolean): Produced[] {
 
 // A private function that only direct calls reach knows what every caller
 // gives its parameters, and its checks use that. Each function knows the
-// length of an array field that each record of the program fills alike.
+// length of an array field that each record of the program fills alike, and
+// the length of the array that a call gives back.
 function caller_ranges(all: Produced[], names: string[], mod: parser.Module): Produced[] {
   let funcs: ssasem.Func[] = [];
   let direct: boolean[] = [];
@@ -9796,15 +9797,14 @@ function caller_ranges(all: Produced[], names: string[], mod: parser.Module): Pr
     bodies = bodies.append(p.ok && !p.template && !p.bodyless);
     host = host.append(i < mod.funcs.len() && (parser.decl_named_outside(mod, mod.funcs[i]) || mod.funcs[i].import_iface != ""));
   }
-  let ix = util.name_index(names);
-  let fields = ssabounds.field_lens(funcs, ix, bodies, host);
-  let facts = ssabounds.caller_facts(funcs, ix, direct, fields);
+  let known = ssabounds.known_facts(funcs, util.name_index(names), bodies, host);
+  let facts = ssabounds.caller_facts(funcs, direct, known);
   let sw = optbisect.switches();
   let out: Produced[] = [];
   for i in 0..all.len() {
     let p = all[i];
-    let f = if (direct[i]) { facts[i] } else { ssabounds.ParamFacts { ...ssabounds.no_facts(), fields: fields } };
-    if (bodies[i] && (direct[i] && f.known() || ssabounds.reads_field(p.func, fields)) && optbisect.allowed_by(sw, "caller-range", p.func.graph.name)) {
+    let f = if (direct[i]) { facts[i] } else { ssabounds.ParamFacts { ...ssabounds.no_facts(), known: known } };
+    if (bodies[i] && (direct[i] && f.known() || ssabounds.uses_known(p.func, known)) && optbisect.allowed_by(sw, "caller-range", p.func.graph.name)) {
       let proven = ssabounds.proven_indices_with(p.func, f);
       p = Produced { ...p, func: ssabounds.sign_tested_reads_with(proven, f).func, analysis: None };
     }
