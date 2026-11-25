@@ -353,7 +353,7 @@ pub function raw_tree(body: u8[], width: i32): RawTree {
     let space = i;
     let mode = 0;
     while (space < body.len() && body[space] >= b'0' && body[space] <= b'7') {
-      mode = (mode << 3) | (body[space] - b'0') as i32;
+      mode = mode << 3 | (body[space] - b'0') as i32;
       space += 1;
     }
     if (space == i || space >= body.len() || body[space] != b' ') {
