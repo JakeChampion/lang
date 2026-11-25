@@ -134,7 +134,13 @@ lowered function it:
    it. The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
-   `&&` or an `||` that the function returns is then a tail call;
+   `&&` or an `||` that the function returns is then a tail call. Last,
+   a chain of byte appends in one block, where only the next append reads
+   each result, becomes appends of up to four bytes (`ssa.fuse_byte_pushes`).
+   A fused append checks the room one time, stores the bytes with one move
+   and adds their count to the length. When the bytes are the low bytes of
+   one value in order, it stores that value. The slow path is one call to
+   `__fern_arr_pushn_owned_u8`, which appends the bytes one at a time;
 5. allocates registers with `ssa.regalloc_linear` over two pools: the
    caller-saved registers (x0 and x9 to x15 on arm64; rax, rsi, rdi and r8
    to r10 on x86-64) and, for a value live across a call, the callee-saved

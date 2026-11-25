@@ -12,7 +12,14 @@ func rccertifyCasesSource() string {
 	return `import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.SInst {
-    return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(str) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: str };
+    return ssa.SInst { ir_kind: binary_kind(kind, str), kind_tag: kind, result: result, args: args, imm: imm, str: str };
+}
+function binary_kind(kind: i32, str: string): i32 {
+    if (kind != 9) { return 0; }
+    if (str == "eq") { return ir.K_EQ; }
+    if (str == "ne") { return ir.K_NE; }
+    if (str == "add") { return ir.K_ADD; }
+    return 0;
 }
 function call(result: i32, name: string, args: i32[]): ssa.SInst { return inst(11, result, args, 0, name); }
 function param(i: i32): ssa.SInst { return inst(6, i, [], i, ""); }
@@ -96,6 +103,19 @@ function pick(name: string): Case {
     let value: i32 = rccertify.value_mode();
     let borrow: i32 = rccertify.borrow_mode();
     let counted: i32 = rccertify.counted_mode();
+    if (name == "children-slot-read-twice-released-once" || name == "children-slot-released-twice" || name == "children-slot-read-again-after-a-store") {
+        // #17136: an inlined finalizer reads a field of a children-only
+        // drop's box, and the drop reads the field again to release it.
+        let insts: ssa.SInst[] = [param(0), counted_load(1, 0, 8)];
+        if (name == "children-slot-released-twice") {
+            insts = insts.append(call(4, "__fern_rc_dec", [1]));
+        }
+        if (name == "children-slot-read-again-after-a-store") {
+            insts = insts.append(call(4, "__fern_rc_dec", [1])).append(fresh_box(5)).append(store(0, 8, 5));
+        }
+        insts = insts.append(counted_load(2, 0, 8)).append(call(3, "__fern_rc_dec", [2])).append(const_int(6, 0));
+        return Case { f: one_block(1, 7, insts, ret(6)), modes: [rccertify.children_mode()], returns_unit: false };
+    }
     if (name == "balanced") {
         return Case { f: one_block(0, 3, [fresh_box(0), call(1, "__fern_rc_dec", [0]), const_int(2, 0)], ret(2)), modes: [], returns_unit: false };
     }
@@ -908,6 +928,9 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"scalar-lanes-leaked-primary", []string{"leaked at return of v0"}, 0},
 		{"scalar-lanes-call-owned-primary", nil, 0},
 		{"balanced", nil, 0},
+		{"children-slot-read-twice-released-once", nil, 0},
+		{"children-slot-released-twice", []string{"spent without a unit of v1"}, 0},
+		{"children-slot-read-again-after-a-store", nil, 0},
 		{"leak", []string{"leaked at return of v0"}, 0},
 		{"sparse-leak", []string{"leaked at return of v256"}, 0},
 		{"sparse-unused-terminator-field", nil, 0},
