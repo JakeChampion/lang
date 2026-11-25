@@ -1365,8 +1365,9 @@ function labeled_jump_at(st: ast.Stmt, own acc: boolean): boolean {
 }
 
 // `closers` has, for each open bracket of `toks`, the index of the token
-// that closes it, or -1.
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], constnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[], strict_semi: boolean, closers: i32[] }
+// that closes it, or -1. `value_close` is the index of the close of the
+// innermost value branch, or -1.
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], constnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[], strict_semi: boolean, closers: i32[], value_close: i32 }
 
 function scan_struct_names(toks: lexer.Token[]): string[] {
   let out: string[] = [];
@@ -1506,7 +1507,7 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
+  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers, value_close: p.value_close };
 }
 
 function (p: Par) expected_type(): Par {
@@ -1671,16 +1672,16 @@ function (p: Par) end_of(e: ast.Expr): Par {
 }
 
 function (p: Par) with_no_struct(v: boolean): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
+  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers, value_close: p.value_close };
 }
 
 function (p: Par) with_map_kind(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers, value_close: p.value_close };
 }
 
 pub const MAX_NEST_DEPTH: i32 = 5000;
 
-pub const BLOCK_VALUE_REQUIRED_MESSAGE: string = "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value";
+pub const BLOCK_VALUE_REQUIRED_MESSAGE: string = "block-expression has no trailing value; a value is required here — end the block with an expression that has no `;` after it";
 
 // The kind of the statement that ends a value branch with no trailing
 // expression, when its statements do not end in a jump. The checker decides
@@ -1697,7 +1698,7 @@ pub function is_missing_tail(st: ast.Stmt): boolean {
 const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers, value_close: p.value_close };
 }
 
 function (p: Par) too_deep(): boolean {
@@ -1713,7 +1714,7 @@ function (p: Par) bail(): Par {
   if (last < p.pos) {
     last = p.pos;
   }
-  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers };
+  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, constnames: p.constnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi, closers: p.closers, value_close: p.value_close };
 }
 
 function (p: Par) peek_punct(): string {
@@ -2765,7 +2766,7 @@ function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i3
   if let Some(le) = stream_lex_error(toks) {
     return (e_unknown_at(lex_fault(le), le.line, le.col), p, true);
   }
-  let sub = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: p.constnames, verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks) };
+  let sub = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: p.constnames, verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks), value_close: -1 };
   let (r_expr, r_p) = parse_expr(sub);
   let outer = Par { ...p, type_errs: r_p.type_errs, todos: r_p.todos };
   if (!r_p.at_end()) {
@@ -4147,7 +4148,21 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
   if (p.peek_punct() != "{") {
     return (leading, have_tail, tail, false, p);
   }
-  p = p.advance();
+  let (items, items_tail, items_value, q) = parse_branch_items(Par { ...p.advance(), value_close: p.closers[p.pos] });
+  q = Par { ...q, value_close: p.value_close };
+  if (q.peek_punct() == "}") {
+    q = q.advance();
+  }
+  return (items, items_tail, items_value, true, q);
+}
+
+// The items of a value branch up to its close: the statements, and the
+// trailing expression if there is one. A let-else that runs to the close
+// gives the trailing expression.
+function parse_branch_items(p: Par): (ast.Stmt[], boolean, ast.Expr, Par) {
+  let leading: ast.Stmt[] = [];
+  let have_tail = false;
+  let tail = e_unknown("empty branch");
   while (p.peek_punct() != "}" && !p.at_end()) {
     if (p.peek_keyword() == "match") {
       let (valueless, stmt, next) = valueless_branch_tail(p);
@@ -4164,6 +4179,11 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
       if (sr_p.pos == p.pos) {
         p = p.advance();
         continue;
+      }
+      if (p.peek_keyword() == "let" && sr_p.pos == p.value_close) {
+        if let ast.StmtReturn(r) = sr_stmt {
+          return (leading, true, r.value, sr_p);
+        }
       }
       p = sr_p;
       leading = leading.append(sr_stmt);
@@ -4191,10 +4211,28 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
     have_tail = true;
     break;
   }
-  if (p.peek_punct() == "}") {
-    p = p.advance();
+  return (leading, have_tail, tail, p);
+}
+
+// The index of the close bracket that ends the construct `p` is in, or -1.
+function enclosing_close(p: Par): i32 {
+  let i = p.pos;
+  while (i < p.toks.len()) {
+    let t = p.punct_at(i);
+    if (t == "}" || t == ")" || t == "]") {
+      return i;
+    }
+    i = past_brackets(p, i);
   }
-  return (leading, have_tail, tail, true, p);
+  return -1;
+}
+
+// The index after the token at i, or after the brackets that open at i.
+function past_brackets(p: Par, i: i32): i32 {
+  if (p.closers[i] >= 0) {
+    return p.closers[i] + 1;
+  }
+  return i + 1;
 }
 
 function item_is_stmt(p: Par): (boolean, Par) {
@@ -4288,32 +4326,27 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
 function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
   let open_line = p.peek_line();
   let open_col = p.peek_col();
-  let rt = "i32";
   let (bi_leading, bi_have_tail, bi_tail, bi_ok, bi_p) = parse_block_items(p);
   if (!bi_ok) {
     let ebody: ast.Stmt[] = [];
     ebody = ebody.append(s_unknown(p, missing_fault("{ in branch body")));
-    return (ebody, rt, false, p);
+    return (ebody, "i32", false, p);
   }
-  let leading = bi_leading;
-  let have_tail = bi_have_tail;
-  let tail = bi_tail;
-  p = bi_p;
+  let (body, body_rt, dead) = finish_branch_body(bi_leading, bi_have_tail, bi_tail, open_line, open_col);
+  return (body, body_rt, dead, bi_p);
+}
+
+// The statements of a value branch, with its value as the last statement,
+// the value type, and whether the value is the dead tail of a jump.
+function finish_branch_body(leading: ast.Stmt[], have_tail: boolean, tail: ast.Expr, line: i32, col: i32): (ast.Stmt[], string, boolean) {
   if (have_tail) {
-    rt = if_expr_rt(tail);
+    return (leading.append(s_return(tail)), if_expr_rt(tail), false);
   }
-  if (!have_tail) {
-    if (!branch_stmts_diverge(leading)) {
-      leading = leading.append(s_unknown_at(ast.fault_mark(MISSING_TAIL), open_line, open_col));
-      return (leading, rt, false, p);
-    }
-    let dead = branch_dead_tail(leading);
-    rt = if_expr_rt(dead);
-    leading = leading.append(s_return(dead));
-    return (leading, rt, true, p);
+  if (!branch_stmts_diverge(leading)) {
+    return (leading.append(s_unknown_at(ast.fault_mark(MISSING_TAIL), line, col)), "i32", false);
   }
-  leading = leading.append(s_return(tail));
-  return (leading, rt, false, p);
+  let dead = branch_dead_tail(leading);
+  return (leading.append(s_return(dead)), if_expr_rt(dead), true);
 }
 
 function value_chain_expr(chain: IfChain, origin: string, line: i32, col: i32): ast.Expr {
@@ -4830,16 +4863,36 @@ function parse_paren_head(p: Par): (ast.Expr, Par) {
   return (e, ep);
 }
 
-function parse_let_else_tail(p: Par): (ast.Stmt[], ast.Stmt[], Par) {
+// The else branch and the rest of the block of a let-else. When the block is
+// a value branch, the rest ends in the value, and `value_local` names the
+// local that both arms give the value to.
+struct LetElseTail { else_body: ast.Stmt[], rest: ast.Stmt[], rt: string, value_local: string, par: Par }
+
+function parse_let_else_tail(p: Par, line: i32, col: i32): LetElseTail {
+  let value = p.value_close >= 0 && enclosing_close(p) == p.value_close;
   let else_body: ast.Stmt[] = [];
+  let else_rt = "i32";
   let written = p.peek_keyword() == "else";
   p = p.expect("else");
   if (written || p.peek_punct() == "{") {
-    let (eb, ep) = parse_block(p);
-    else_body = eb;
-    p = ep;
+    if (value) {
+      let (vb, vrt, vp) = parse_branch_body(p);
+      else_body = vb;
+      else_rt = vrt;
+      p = vp;
+    } else {
+      let (eb, ep) = parse_block(p);
+      else_body = eb;
+      p = ep;
+    }
   }
   p = p.expect_semi();
+  if (value) {
+    let (leading, have_tail, tail, rp) = parse_branch_items(p);
+    let (rest, rest_rt, _) = finish_branch_body(leading, have_tail, tail, line, col);
+    let local = "__il" + dl_itoa(line) + "_" + dl_itoa(col) + "_r";
+    return LetElseTail { else_body: value_arm_body(else_body, local), rest: value_arm_body(rest, local), rt: wider_rt(rest_rt, else_rt), value_local: local, par: rp };
+  }
   let rest: ast.Stmt[] = [];
   while (p.peek_punct() != "}" && !p.at_end()) {
     let (rs, rp) = parse_stmt(p);
@@ -4850,7 +4903,16 @@ function parse_let_else_tail(p: Par): (ast.Stmt[], ast.Stmt[], Par) {
     p = rp;
     rest = rest.append(rs);
   }
-  return (else_body, rest, p);
+  return LetElseTail { else_body: else_body, rest: rest, rt: "", value_local: "", par: p };
+}
+
+// A let-else statement, or in a value branch the value it gives.
+function let_else_stmt(stmt: ast.Stmt, tail: LetElseTail, line: i32, col: i32): (ast.Stmt, Par) {
+  if (tail.value_local.len() == 0) {
+    return (stmt, tail.par);
+  }
+  let chain = IfChain { par: tail.par, stmt: stmt, rt: tail.rt, needs_default_return: false, value_local: tail.value_local, scrut_bind: [] };
+  return (s_return_at(value_chain_expr(chain, ORIGIN_IF_EXPR, line, col), line, col), tail.par);
 }
 
 function parse_block(p: Par): (ast.Stmt[], Par) {
@@ -6190,8 +6252,10 @@ function parse_let_pattern(p: Par, start: Par, qualified_record: boolean, vline:
     let binding = qualified_struct_binding(lsp_pat, lsp_init, vline, vcol);
     return (binding, lsp_ip.end_of(lsp_init));
   }
-  let (lsp_else, lsp_rest, lsp_restp) = parse_let_else_tail(lsp_ip);
-  p = lsp_restp;
+  let lsp_tail = parse_let_else_tail(lsp_ip, vline, vcol);
+  let lsp_else = lsp_tail.else_body;
+  let lsp_rest = lsp_tail.rest;
+  p = lsp_tail.par;
   let lsp_arms: ast.MatchArm[] = [];
   let lsp_written: ast.MatchArm[] = [];
   for lsp_i in 0..lsp_pats.len() {
@@ -6203,14 +6267,14 @@ function parse_let_pattern(p: Par, start: Par, qualified_record: boolean, vline:
   lsp_arms = lsp_arms.append(lsp_wild);
   lsp_written = lsp_written.append(lsp_wild);
   if (arms_take_flag_chain(lsp_arms)) {
-    return (with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else", false), p);
+    return let_else_stmt(with_sugar_origin(build_nested_arm_match(lsp_init, lsp_arms, lsp_written, vline, vcol), "let_else", false), lsp_tail, vline, vcol);
   }
   lsp_arms = desugar_nested_arms(lsp_arms, 0, "");
   let lsp_sugar: ast.MatchArm[] = [];
   if (arms_have_written_form(lsp_written)) {
     lsp_sugar = lsp_written;
   }
-  return (s_match_origin_sugared(lsp_init, lsp_arms, lsp_sugar, vline, vcol, "let_else"), p);
+  return let_else_stmt(s_match_origin_sugared(lsp_init, lsp_arms, lsp_sugar, vline, vcol, "let_else"), lsp_tail, vline, vcol);
 }
 
 function parse_let_value(p: Par, name: string, vline: i32, vcol: i32): (ast.Stmt, Par) {
@@ -6281,14 +6345,16 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
     let (lel_lits, lel_his, lel_hrs, lel_incs, lel_p) = parse_lit_alts(lel_atp);
     let (lel_init, lel_ip) = parse_expr(lel_p.expect("=").with_no_struct(false));
     lel_ip = lel_ip.with_no_struct(p.no_struct);
-    let (lel_else, lel_rest, lel_restp) = parse_let_else_tail(lel_ip);
-    p = lel_restp;
+    let lel_tail = parse_let_else_tail(lel_ip, vline, vcol);
+    let lel_else = lel_tail.else_body;
+    let lel_rest = lel_tail.rest;
+    p = lel_tail.par;
     let lel_arms: ast.LitArm[] = [];
     for lel_i in 0..lel_lits.len() {
       lel_arms = lel_arms.append(ast.LitArm { is_wild: false, lit: lel_lits[lel_i], guard: e_bool(true), has_guard: false, body: lel_rest, line: vline, col: vcol, range_hi: lel_his[lel_i], has_range: lel_hrs[lel_i], range_inclusive: lel_incs[lel_i], alt_cont: lel_i > 0, at_binding: lel_at });
     }
     lel_arms = lel_arms.append(ast.LitArm { is_wild: true, lit: e_bool(true), guard: e_bool(true), has_guard: false, body: lel_else, line: vline, col: vcol, range_hi: e_bool(true), has_range: false, range_inclusive: false, alt_cont: false, at_binding: "" });
-    return (with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else", false), p);
+    return let_else_stmt(with_sugar_origin(build_literal_match(lel_init, lel_arms, vline, vcol), "let_else", false), lel_tail, vline, vcol);
   }
   let name = p.peek_ident();
   if (name.len() == 0) {
@@ -6411,9 +6477,9 @@ function parse_let_tuple_else(start: Par, vline: i32, vcol: i32): (ast.Stmt, Par
     return (s_unknown(p, parse_fault("expected a tuple pattern")), p);
   }
   let (scrut, sp) = parse_expr(p.expect("=").with_no_struct(false));
-  let (else_body, rest, rp) = parse_let_else_tail(sp.with_no_struct(start.no_struct));
-  let arms = tuple_alternative_arms(alts, rest, else_body, vline, vcol);
-  return (with_sugar_origin(build_tuple_match(scrut, arms, vline, vcol), "let_else", false), rp);
+  let tail = parse_let_else_tail(sp.with_no_struct(start.no_struct), vline, vcol);
+  let arms = tuple_alternative_arms(alts, tail.rest, tail.else_body, vline, vcol);
+  return let_else_stmt(with_sugar_origin(build_tuple_match(scrut, arms, vline, vcol), "let_else", false), tail, vline, vcol);
 }
 
 function parse_pattern_if(p: Par, value_form: boolean): IfChain {
@@ -6909,7 +6975,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
   if let Some(le) = stream_lex_error(toks) {
     return [s_unknown_at(lex_fault(le), le.line, le.col)];
   }
-  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks) };
+  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks), value_close: -1 };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -18031,7 +18097,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   if let Some(le) = stream_lex_error(toks) {
     return lex_error_module(le);
   }
-  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks) };
+  let p = Par { toks: toks, pos: 0, no_struct: false, map_kind: -1, structnames: scan_struct_names(toks), constnames: scan_const_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, closers: closers(toks), value_close: -1 };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];

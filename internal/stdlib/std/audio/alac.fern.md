@@ -126,17 +126,19 @@ function element(input: [u8], info: config.Info, paired: boolean, fields: Elemen
   let shift = fields.shift;
   let Work { first, second } = work;
   if (fields.raw) {
+    let width = info.format.bits_per_sample;
+    let channels = if (paired) { 2 } else { 1 };
+    let end = bits.skip(input, at, count as i64 * (channels as i64) * (width as i64))?;
+    let unused = (64 - width) as i64;
     for i in 0..count {
-      let (next, sample) = bits.signed(input, at, info.format.bits_per_sample)?;
-      at = next;
-      first = first.with(i, sample);
+      first = first.with(i, (bits.window(input, at) as i64 >> unused) as i32);
+      at += width as i64;
       if (paired) {
-        let (next_pair, other) = bits.signed(input, at, info.format.bits_per_sample)?;
-        at = next_pair;
-        second = second.with(i, other);
+        second = second.with(i, (bits.window(input, at) as i64 >> unused) as i32);
+        at += width as i64;
       }
     }
-    return Ok((at, Work { first: first, second: second }));
+    return Ok((end, Work { first: first, second: second }));
   }
   let depth = info.format.bits_per_sample - shift + (if (paired) { 1 } else { 0 });
   let (p4, mid_shift) = bits.read(input, at, 8)?;

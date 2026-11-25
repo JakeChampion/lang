@@ -26,6 +26,7 @@ function main(): i32 {
   r = r.it("struct literals", check_struct_literals);
   r = r.it("type aliases", check_type_aliases);
   r = r.it("match statements", check_match_statements);
+  r = r.it("let-else in a value branch", check_let_else_value_tail);
   r = r.it("var annotations", check_var_annotations);
   r = r.it("receiver methods", check_receiver_methods);
   r = r.it("imports", check_imports);
@@ -925,6 +926,60 @@ function check_match_statements(): test.TestOutcome {
     }
   }
 
+  return test.pass();
+}
+
+// The rest of a value branch after a let-else keeps its tail as the value: the
+// branch ends in a value `if let` whose success arm gives the tail.
+function check_let_else_value_tail(): test.TestOutcome {
+  let prog = parser.parse_program(lexer.tokenize("let r = { let Some(s) = t else { return 0; }; s + 1 }; return r;"));
+  let ast.StmtVar(v) = prog[0] else {
+    return test.fail("prog[0] is not a let");
+  };
+  let ast.ExprCall(block) = v.init else {
+    return test.fail("the initializer is not a value block");
+  };
+  let ast.ExprLambda(bl) = block.callee else {
+    return test.fail("the value block has no body");
+  };
+  if (bl.origin != parser.ORIGIN_BLOCK || bl.body.len() != 1) {
+    return test.fail("the value block does not end in one value");
+  }
+  let ast.StmtReturn(tail) = bl.body[0] else {
+    return test.fail("the value block has no tail");
+  };
+  let ast.ExprCall(value) = tail.value else {
+    return test.fail("the tail is not a value if-let");
+  };
+  let ast.ExprLambda(vl) = value.callee else {
+    return test.fail("the value if-let has no body");
+  };
+  if (vl.origin != parser.ORIGIN_IF_EXPR || vl.body.len() != 3) {
+    return test.fail("the tail is not a value if-let with a value local");
+  }
+  let ast.StmtMatch(m) = vl.body[1] else {
+    return test.fail("the value if-let holds no match");
+  };
+  if (m.origin != "let_else" || m.arms.len() != 2) {
+    return test.fail("the match is not a let-else with two arms");
+  }
+  let rest = m.arms[0].body;
+  let ast.StmtAssign(set) = rest[rest.len() - 1] else {
+    return test.fail("the success arm does not give the tail");
+  };
+  let ast.ExprBinary(sum) = set.value else {
+    return test.fail("the success arm gives a value that is not the tail");
+  };
+  if (sum.op != "+") {
+    return test.fail("the success arm gives a value that is not s + 1");
+  }
+  let stmt = parser.parse_program(lexer.tokenize("let Some(s) = t else { return 0; }; f(s);"));
+  let ast.StmtMatch(sm) = stmt[0] else {
+    return test.fail("a let-else statement is not a match");
+  };
+  if (sm.origin != "let_else" || sm.arms[0].body.len() != 1) {
+    return test.fail("a let-else statement does not keep its rest as statements");
+  }
   return test.pass();
 }
 

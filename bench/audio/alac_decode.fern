@@ -1,0 +1,134 @@
+import "std/array";
+import "std/audio/alac";
+import "std/audio/pcm";
+import "std/bench";
+import "std/io";
+import "std/i32";
+
+struct Packets { cookie: u8[], frames: i64, packets: u8[][] }
+
+function le32(data: [u8], at: i32): i32 {
+  return data[at] as i32 | data[at + 1] as i32 << 8 | data[at + 2] as i32 << 16 | data[at + 3] as i32 << 24;
+}
+
+// The packet file of scripts/audio-reference/alac_bench.cpp: a configuration, a frame count and length-prefixed packets.
+function load(data: u8[]): Option[Packets] {
+  if (data.len() < 8 || data[0] != 70u8 || data[1] != 65u8 || data[2] != 76u8 || data[3] != 66u8) {
+    return None;
+  }
+  let size = le32(data, 4);
+  let cookie = array.slice(data, 8, 8 + size);
+  let at = 8 + size;
+  let frames = le32(data, at) as i64;
+  let count = le32(data, at + 4);
+  at += 8;
+  let packets: u8[][] = [];
+  for _ in 0..count {
+    let bytes = le32(data, at);
+    packets = packets.append(array.slice(data, at + 4, at + 4 + bytes));
+    at += 4 + bytes;
+  }
+  if (at != data.len()) {
+    return None;
+  }
+  return Some(Packets { cookie: cookie, frames: frames, packets: packets });
+}
+
+function hash(samples: [i32], count: i32, value: u32): u32 {
+  for i in 0..count {
+    value = (value ^ samples[i] as u32) * 16777619u32;
+  }
+  return value;
+}
+
+struct Pass { decoder: alac.Decoder, output: i32[], frames: i64, observed: i32, checksum: u32 }
+
+function pass(own state: Pass, input: Packets, hashed: boolean): Result[Pass, pcm.AudioError] {
+  let Pass { decoder, output, frames, observed, checksum } = state;
+  let limits = pcm.default_limits();
+  for packet in input.packets {
+    let (next, frame) = decoder.decode_packet_into(packet, output, limits)?;
+    decoder = next;
+    output = frame.samples;
+    frames += frame.frames as i64;
+    observed ^= output[0];
+    if (hashed) {
+      checksum = hash(output, frame.frames * frame.format.channels, checksum);
+    }
+  }
+  return Ok(Pass { decoder: decoder, output: output, frames: frames, observed: observed, checksum: checksum });
+}
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for part in line.split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let argv = args();
+  if (argv.len() != 3) {
+    return 1;
+  }
+  let rounds = i32.parse_i32_radix(argv[2], 10).unwrap_or(0);
+  if (rounds < 1 || rounds > 100000) {
+    return 1;
+  }
+  let Ok(data) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let Some(input) = load(data) else {
+    return 2;
+  };
+  let Ok(decoder) = alac.create(input.cookie, pcm.default_limits()) else {
+    return 3;
+  };
+  let info = decoder.information();
+  let channels = info.format.channels;
+  let state = Pass { decoder: decoder, output: pcm.zeros(info.frame_length * channels), frames: 0i64, observed: 0, checksum: 2166136261u32 };
+  for _ in 0..4 {
+    let Ok(next) = pass(state, input, false) else {
+      return 4;
+    };
+    state = next;
+  }
+  state = Pass { ...state, frames: 0i64 };
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  for _ in 0..rounds {
+    let Ok(next) = pass(state, input, false) else {
+      return 4;
+    };
+    state = next;
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocated = bench.allocs_after(allocs);
+  let bytes = bench.fresh_bytes_after(fresh);
+  if (state.frames != input.frames * (rounds as i64)) {
+    return 5;
+  }
+  let samples = state.frames * (channels as i64);
+  let Ok(last) = pass(state, input, true) else {
+    return 4;
+  };
+  print("samples=" + samples.to_string());
+  print("checksum=" + last.checksum.to_string());
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocated.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("peak_rss_kb=" + peak_rss().to_string());
+  print("observed=" + last.observed.to_string());
+  return 0;
+}

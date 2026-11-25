@@ -94,6 +94,20 @@ pub function index_params(ix: NameIndex, name: string): i32 {
   return ix.params[r];
 }
 
+function elem_width_kind(kt: i32): boolean {
+  return kt == ir.K_ARR_MAKE || kt == ir.K_ARR_GET || kt == ir.K_ARR_SET || kt == ir.K_ARR_SLICE
+    || kt == ir.K_ARR_RESERVE || kt == ir.K_ALLOC_U8;
+}
+
+// The element widths that the backends read. Each other width is read as a word.
+// An alloc_u8 also gives 0 for the default and 1 for a boolean, both words.
+pub function elem_width_ok(kt: i32, w: i32): boolean {
+  if (w == 8 || w == 16 || w == 32 || w == 64 || w == ir.width_ptr()) {
+    return true;
+  }
+  return kt == ir.K_ALLOC_U8 && (w == 0 || w == 1);
+}
+
 pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: NameIndex): Problem[] {
   let out: Problem[] = [];
 
@@ -119,6 +133,14 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
   for i in 0..ops.len() {
     let op = ops[i];
     let kt = op.kind_tag;
+
+    if (elem_width_kind(kt) && !elem_width_ok(kt, op.width)) {
+      out = out.append(Problem {
+        fn_name: fn_name, op: i, kind: ir.kind_name(kt),
+        msg: "element width " + util.i32_to_string(op.width)
+          + " is not 8, 16, 32, 64 or the pointer width",
+      });
+    }
 
     if (kt == k_load || kt == k_store || kt == k_tee) {
       if (op.i32_imm < 0 || op.i32_imm >= n_locals) {
