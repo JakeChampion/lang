@@ -54,6 +54,10 @@ func laneTableProgram(main string) string {
 
 const laneTableValidMain = `
 function main(): i32 {
+  let copy: u8[] = [];
+  for b in TABLE {
+    copy = copy.append(b);
+  }
   for i in 0..256 {
     let seed = (i as u32 << 24u32) | ((255 - i) as u32);
     let at = 16 * ((seed & 15u32) as i32);
@@ -63,7 +67,7 @@ function main(): i32 {
       | (TABLE[at + 6] as u32 << 16u32) | (TABLE[at + 7] as u32 << 24u32);
     if (masked32(seed) != low || masked64(seed) != (low as u64 | (high as u64 << 32u64))) { return 1; }
     if (scalar(seed) != 128 + ((seed & 31u32) as i32) || topbyte(seed) != i) { return 2; }
-    if (checked(at) != low || unknown(TABLE, seed) != low) { return 3; }
+    if (checked(at) != low || unknown(copy, seed) != low) { return 3; }
   }
   if (partial(0u32) != checked(1) || wrapped(0u32) != checked(16)) { return 4; }
   if (shifted(0u32) != checked(0) || narrowed(0u32) != checked(0)) { return 5; }

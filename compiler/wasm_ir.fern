@@ -7475,6 +7475,7 @@ pub function str_trim_helper(): string {
   o += "      (br_if $db (i32.eqz (i32.or (i32.eq (local.get $ch) (i32.const 32)) (i32.le_u (i32.sub (local.get $ch) (i32.const 9)) (i32.const 4)))))\n";
   o += "      (local.set $end (i32.sub (local.get $end) (i32.const 1)))\n";
   o += "      (br $cb)))\n";
+  o += "    (if (i32.and (i32.eqz (local.get $start)) (i32.eq (local.get $end) (local.get $l))) (then (return (call $__fern_rc_inc (local.get $s)))))\n";
   o += "    (local.set $nl (i32.sub (local.get $end) (local.get $start)))\n";
   o += "    (local.set $p " + str_alloc_wat("(local.get $nl)") + ")\n";
   o += "    " + str_set_len_wat("(local.get $p)", "(local.get $nl)") + "\n";

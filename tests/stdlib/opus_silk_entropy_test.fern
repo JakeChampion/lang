@@ -155,11 +155,168 @@ function invalid_reconstruction(): test.TestOutcome {
   return test.assert_true(state_error && gain_error && lpc_error && pitch_error);
 }
 
+function same_indices(a: entropy.Indices, b: entropy.Indices): boolean {
+  return a.signal == b.signal && a.high_offset == b.high_offset && equal(a.gains, b.gains)
+    && a.lsf_first == b.lsf_first && equal(a.lsf, b.lsf) && a.interpolation == b.interpolation
+    && a.lag == b.lag && a.contour == b.contour && a.periodicity == b.periodicity
+    && equal(a.ltp, b.ltp) && a.ltp_scale == b.ltp_scale && a.seed == b.seed && equal(a.pulses, b.pulses);
+}
+
+function libopus_indices(): Result[(boolean, entropy.Indices), pcm.AudioError] {
+  let decoder = range.decoder(opus_silk_frame_vectors.LIBOPUS_PACKET);
+  let (a, active) = decoder.bit_logp(1);
+  let (b, _) = a.bit_logp(1);
+  let (_, indices) = entropy.decode_indices(b, entropy.history(), 16, 20, active, true, false)?;
+  return Ok((active, indices));
+}
+
+// Encodes one frame after the two flag bits of a SILK-only packet.
+function encode_frame(indices: entropy.Indices, size: i32): Result[range.Encoder, pcm.AudioError] {
+  let e = range.encoder(size).bit_logp(indices.signal != 1, 1).bit_logp(false, 1);
+  return entropy.encode(e, indices, entropy.history(), 16, 20, true, false);
+}
+
+function decode_frame(packet: [u8]): Result[entropy.Indices, pcm.AudioError] {
+  let decoder = range.decoder(packet);
+  let (a, active) = decoder.bit_logp(1);
+  let (b, _) = a.bit_logp(1);
+  let (_, indices) = entropy.decode_indices(b, entropy.history(), 16, 20, active, true, false)?;
+  return Ok(indices);
+}
+
+function libopus_encoding(): test.TestOutcome {
+  let (active, indices) = match (libopus_indices()) {
+    Ok(values) => values,
+    Err(_) => { return test.fail("libopus indices rejected"); },
+  };
+  if (!active) {
+    return test.fail("libopus frame is not active");
+  }
+  let e = match (encode_frame(indices, opus_silk_frame_vectors.LIBOPUS_PACKET.len())) {
+    Ok(value) => value,
+    Err(_) => { return test.fail("libopus indices not encoded"); },
+  };
+  if (e.rng != opus_silk_frame_vectors.LIBOPUS_RANGE) {
+    return test.fail("final range " + e.rng.to_string() + " expected " + opus_silk_frame_vectors.LIBOPUS_RANGE.to_string());
+  }
+  let again = match (decode_frame(e.done().bytes())) {
+    Ok(value) => value,
+    Err(_) => { return test.fail("encoded frame rejected"); },
+  };
+  return test.assert_true(same_indices(indices, again));
+}
+
+function encoded_reference_frames(): test.TestOutcome {
+  let rows = opus_silk_frame_vectors.FRAMES;
+  let at = 0;
+  let previous_rate = 0;
+  let history = entropy.history();
+  let frame = 0;
+  while (at < rows.len()) {
+    let rate = rows[at];
+    let duration = rows[at + 1];
+    if (previous_rate != rate) {
+      history = entropy.history();
+      previous_rate = rate;
+    }
+    let active = rows[at + 2] == 1;
+    let independent = rows[at + 3] == 1;
+    let skip = rows[at + 4] == 1;
+    let size = rows[at + 6];
+    let packet: u8[] = [];
+    for i in 0..size {
+      packet = packet.append(rows[at + 7 + i] as u8);
+    }
+    at += size + 7;
+    for _ in 0..9 {
+      at += rows[at] + 1;
+    }
+    let (_, indices) = match (entropy.decode_indices(range.decoder(packet), history, rate, duration, active, independent, skip)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("reference indices rejected"); },
+    };
+    let e = match (entropy.encode(range.encoder(size), indices, history, rate, duration, independent, skip)) {
+      Ok(value) => value,
+      Err(_) => { return test.fail("frame " + frame.to_string() + " not encoded"); },
+    };
+    let (_, again) = match (entropy.decode_indices(range.decoder(e.done().bytes()), history, rate, duration, indices.signal != 1, independent, skip)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("frame " + frame.to_string() + " encoding rejected"); },
+    };
+    if (!same_indices(indices, again)) {
+      return test.fail("frame " + frame.to_string() + " indices differ after encoding");
+    }
+    let (next, _) = match (entropy.dequantize(indices, history, rate, duration, independent)) {
+      Ok(values) => values,
+      Err(_) => { return test.fail("reference dequantization rejected"); },
+    };
+    history = next;
+    frame += 1;
+  }
+  return test.assert_true(frame > 0);
+}
+
+// A magnitude of 4608 needs ten shifts, the most that a pulse count can
+// code. The last shift reads the row that cannot code a further escape.
+function ten_shifts(): test.TestOutcome {
+  let (_, indices) = match (libopus_indices()) {
+    Ok(values) => values,
+    Err(_) => { return test.fail("libopus indices rejected"); },
+  };
+  let large = entropy.Indices { ...indices, pulses: indices.pulses.with(0, 4608).with(17, -4609) };
+  let e = match (encode_frame(large, 400)) {
+    Ok(value) => value,
+    Err(_) => { return test.fail("ten shifts not encoded"); },
+  };
+  let again = match (decode_frame(e.done().bytes())) {
+    Ok(value) => value,
+    Err(_) => { return test.fail("ten shifts rejected"); },
+  };
+  let too_large = entropy.Indices { ...indices, pulses: indices.pulses.with(0, 9216) };
+  let refused = match (encode_frame(too_large, 400)) { Err(pcm.Header) => true, _ => false };
+  return test.assert_true(same_indices(large, again) && refused);
+}
+
+function invalid_indices(): test.TestOutcome {
+  let (_, indices) = match (libopus_indices()) {
+    Ok(values) => values,
+    Err(_) => { return test.fail("libopus indices rejected"); },
+  };
+  let bad = [
+    entropy.Indices { ...indices, signal: 4 },
+    entropy.Indices { ...indices, gains: indices.gains.with(0, 64) },
+    entropy.Indices { ...indices, gains: indices.gains.with(1, 41) },
+    entropy.Indices { ...indices, lsf: indices.lsf.with(0, 11) },
+    entropy.Indices { ...indices, lsf: [] },
+    entropy.Indices { ...indices, interpolation: 5 },
+    entropy.Indices { ...indices, seed: 4 },
+    entropy.Indices { ...indices, pulses: [] },
+    entropy.Indices { ...indices, signal: 2, lag: 100 },
+  ];
+  for x in bad {
+    let encoded = match (encode_frame(x, 400)) { Err(pcm.Header) => true, _ => false };
+    let dequantized = match (entropy.dequantize(x, entropy.history(), 16, 20, true)) { Err(pcm.Header) => true, _ => false };
+    if (!encoded || !dequantized) {
+      return test.fail("invalid indices accepted");
+    }
+  }
+  let voiced = entropy.Indices { ...indices, signal: 3, lag: 100, contour: 0, periodicity: 0, ltp: [0, 0, 0, 0], ltp_scale: 1 };
+  let unscaled = match (entropy.encode(range.encoder(400), voiced, entropy.history(), 16, 20, true, true)) { Err(pcm.Header) => true, _ => false };
+  let scaled = match (entropy.encode(range.encoder(400), voiced, entropy.history(), 16, 20, true, false)) { Ok(_) => true, _ => false };
+  let far = entropy.Indices { ...voiced, lag: 16 * 18 };
+  let far_refused = match (entropy.encode(range.encoder(400), far, entropy.history(), 16, 20, true, false)) { Err(pcm.Header) => true, _ => false };
+  return test.assert_true(unscaled && scaled && far_refused);
+}
+
 function main(): i32 {
   let runner = test.new("SILK entropy reference frames");
   runner = runner.it("pinned libopus frame parameters", libopus_frame);
   runner = runner.it("all internal rates, durations, and predictor history", reference_frames);
   runner = runner.it("short entropy remains bounded and invalid parameters fail", invalid_frames);
   runner = runner.it("invalid reconstruction buffers, gains, filters, and pitch", invalid_reconstruction);
+  runner = runner.it("encoded libopus indices reach the libopus final range", libopus_encoding);
+  runner = runner.it("encoded reference indices decode to the same indices", encoded_reference_frames);
+  runner = runner.it("ten pulse shifts code and eleven fail", ten_shifts);
+  runner = runner.it("invalid indices fail to encode and to dequantize", invalid_indices);
   return runner.finish();
 }
