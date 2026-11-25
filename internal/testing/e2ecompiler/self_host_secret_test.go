@@ -349,6 +349,91 @@ function main(): i32 {
 }
 `
 
+// A record of a `@secret` struct also zeroes the bytes of a string that it
+// holds alone. The string is built at run time, so its 48 bytes follow its
+// box in one block. The bytes it is built from are zeroed, so only the
+// string can show them. "literal" puts a string literal in the field, which is
+// read-only and must keep its bytes. "shared" returns the string from the
+// key, so that string must keep its bytes. The control is the same record
+// without the attribute.
+const secretStringSrc = `@secret
+struct Key { text: string, label: string, n: i32 }
+
+struct Plain { text: string, label: string, n: i32 }
+
+@noinline
+function text(n: i32): string {
+  let b: u8[] = __alloc_u8(n);
+  for i in 0..n {
+    b = b.with(i, 65 as u8);
+  }
+  let s = unsafe { string_from_bytes_unchecked(b) };
+  for i in 0..n {
+    b = b.with(i, 0 as u8);
+  }
+  return s;
+}
+
+@noinline
+function key(n: i32): i32 {
+  let k = Key { text: text(n), label: "AAAA", n: 1 };
+  return k.text.len() + k.label.len();
+}
+
+@noinline
+function plain(n: i32): i32 {
+  let k = Plain { text: text(n), label: "AAAA", n: 1 };
+  return k.text.len() + k.label.len();
+}
+
+@noinline
+function shared(n: i32): string {
+  let s = text(n);
+  let k = Key { text: s, label: "AAAA", n: 1 };
+  let m = k.n;
+  return s;
+}
+
+@noinline
+function literal(): i32 {
+  let k = Key { text: "AAAAAAAA", label: "AAAA", n: 1 };
+  return k.text.len() + k.label.len();
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 2..24 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let n: i32 = 46 + args().len();
+  if (mode == "secret") {
+    let m = key(n);
+  } else if (mode == "shared") {
+    let s = shared(n);
+    print((s.len() == 48 && s == text(48)).to_string());
+  } else if (mode == "literal") {
+    let m = literal();
+    print(("AAAAAAAA".len() + m).to_string());
+  } else {
+    let m = plain(n);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 // secretRun compiles src for target and gives a function that runs the
 // program in one mode and splits its output into fields.
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
@@ -458,6 +543,26 @@ func TestSelfHostSecretRecordWipesItsEnums(t *testing.T) {
 			}
 			if got := run("shared"); len(got) != 2 || got[0] != "true" {
 				t.Fatalf("shared printed %q; the enum value that the caller still holds must keep its fields", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsStrings(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretStringSrc)
+			if got := secretCount(t, "plain", run("plain")); got < 48 {
+				t.Fatalf("plain read %d secret bytes back, want at least 48; the raw allocations no longer observe the released string", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its string back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 2 || got[0] != "true" {
+				t.Fatalf("shared printed %q; the string that the caller still holds must keep its bytes", got)
+			}
+			if got := run("literal"); len(got) != 2 || got[0] != "20" {
+				t.Fatalf("literal printed %q; a string literal in a @secret record must keep its bytes", got)
 			}
 		})
 	}

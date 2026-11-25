@@ -9,6 +9,10 @@ The array then goes back to the allocator with zeros in its elements.
 The drop also zeroes each scalar field of the record: an integer, a float, a boolean or a `char`.
 The box of the record then goes back to the allocator with zeros in those fields.
 
+The drop also zeroes the bytes of a string that the record holds alone, when the bytes are in the block of the string.
+A string that the program builds at run time has its bytes in its own block.
+A string literal is read-only, and it keeps its bytes.
+
 The drop does the same for a nested record and for a tuple that the record holds alone.
 It zeroes the scalars of that record or tuple, and the numeric arrays that the record or tuple holds alone.
 The rule applies again to a record or a tuple inside it.
@@ -21,7 +25,7 @@ This holds in each build, not only under `-harden`.
 
 A numeric array has elements of 1, 2, 4 or 8 bytes: `u8[]`, `u16[]`, `i32[]`, `u64[]`, `f64[]` and the other integer and float element types.
 
-An array that another value still holds keeps its elements.
+An array or a string that another value still holds keeps its elements.
 The drop wipes an array only when the record holds the last reference to it.
 A nested record, tuple or enum value that another value still holds keeps its fields and its arrays.
 A struct update `Key { ...k, id: 2 }` shares the arrays of `k`, so they are wiped when the last record that holds them goes away.
@@ -53,7 +57,8 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 
 ## Limits
 
-- The drop does not wipe a string. It does not wipe an array or a scalar inside an array of records.
+- The drop does not wipe a string whose bytes are in another block, such as a mapped file.
+- The drop does not wipe an array, a string or a scalar inside an array of records.
 - The drop does not wipe a value of a `type A | B` union.
 - The drop does not wipe a nested record or enum that has a `core/mem.Drop` finalizer, because the finalizer reads the fields after the wipe.
   Give a record of that kind the attribute `@secret`, and its own drop then wipes it after the finalizer.
@@ -65,3 +70,4 @@ The semantic index is [spec/semantics.md](../spec/semantics.md).
 `TestSelfHostSecretRecordWipesItsArrays` reads the released blocks back through raw allocations on x86-64 and arm64.
 Its control is the same record without the attribute, which must read the secret bytes back.
 `TestSelfHostSecretRecordWipesItsScalars` does the same for the scalar fields, `TestSelfHostSecretRecordWipesItsNestedBoxes` for a nested record and a tuple, and `TestSelfHostSecretRecordWipesItsEnums` for an enum value.
+`TestSelfHostSecretRecordWipesItsStrings` does the same for a string.
