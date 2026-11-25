@@ -281,14 +281,9 @@ pub function config(): Config {
   return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, on_metrics_listen: None, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32, loopback: false };
 }
 
-pub function (c: Config) with_tls(cfg: server.Config): Config {
-  return Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) };
-}
-
-// Check the prepared TLS configuration before installing it.
-pub function (c: Config) try_with_tls(cfg: server.Config): Result[Config, tls.TlsError] {
+pub function (c: Config) with_tls(cfg: server.Config): Result[Config, tls.TlsError] {
   cfg.validate_ticket_key()?;
-  return Ok(c.with_tls(cfg));
+  return Ok(Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) });
 }
 
 pub function (c: Config) with_loopback(): Config {

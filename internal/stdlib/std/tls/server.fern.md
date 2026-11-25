@@ -24,7 +24,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct Config>>
 
-<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>
+<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]>>
 
 <<5 pub struct Session>>
 
@@ -104,21 +104,22 @@ import "std/utf8";
 pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots] }
 ```
 
-### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Config`
+### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]`
 
 ```fern
-<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>=
-// Supply at least 32 bytes from a cryptographic random source for session tickets.
-// A shorter secret is accepted at startup only with without_tickets().
-pub function config(id: identity.Identity, ticket_key: [u8]): Config {
-  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: ticket_key_of(ticket_key), client_roots: None };
+<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]>>=
+// Construct a configuration that never issues or accepts session tickets.
+pub function config_without_tickets(id: identity.Identity): Config {
+  return Config { identity: id, alpn: [], tickets: false, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: [], client_roots: None };
 }
 
-// Construct a ticket-enabled configuration and report an invalid secret immediately.
-pub function try_config(id: identity.Identity, secret: [u8]): Result[Config, tls.TlsError] {
-  let c = config(id, secret);
-  c.validate_ticket_key()?;
-  return Ok(c);
+// Supply at least 32 bytes from a cryptographic random source for session tickets.
+pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError] {
+  let key = ticket_key_of(ticket_key);
+  if (key.len() != 32) {
+    return Err(tls.InvalidTicketKey);
+  }
+  return Ok(Config { ...config_without_tickets(id), tickets: true, ticket_key: key });
 }
 
 pub function (c: Config) validate_ticket_key(): Result[void, tls.TlsError] {

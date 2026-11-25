@@ -38,8 +38,8 @@ function main(): i32 {
     };
     match (identity.from_pem(cert, key)) {
         Ok(id) => {
-            let Ok(tickets) = server.try_config(id, rand.bytes(32)) else { return 2; };
-            let Ok(cfg) = serve.config().try_with_tls(tickets) else { return 2; };
+            let Ok(tickets) = server.config(id, rand.bytes(32)) else { return 2; };
+            let Ok(cfg) = serve.config().with_tls(tickets) else { return 2; };
             return serve.exit_code(serve.supervise(8443, cfg, handle));
         },
         Err(e) => {
@@ -61,13 +61,12 @@ are not accepted. The handshake counts against `recv_deadline`, so a
 client that never completes one is closed when it passes.
 
 `server.config(id, key)` turns on session tickets sealed under `key`
-with a two-hour lifetime. Starting a ticket-enabled server requires at least
-32 bytes of secret key material. Use `server.try_config` to report an invalid secret
-when building the configuration. All server startup paths check the key before
+with a two-hour lifetime. The constructor returns `Err(tls.InvalidTicketKey)` for secrets
+shorter than 32 bytes. All server startup paths check the key before
 opening or adopting a listener. A key from `rand.bytes(32)` serves one
 process; behind a load balancer, give every instance the same key so a
 client can resume on any of them, or turn tickets off with
-`without_tickets()`.
+`server.config_without_tickets(id)`.
 
 ### Mutual TLS
 
@@ -76,7 +75,8 @@ them against:
 
 ```fern
 let roots: verify.Roots = verify.roots_from_file("clients-ca.pem")?;
-let tls: server.Config = server.config(id, rand.bytes(32)).with_client_roots(roots);
+let tickets = server.config(id, rand.bytes(32))?;
+let tls = tickets.with_client_roots(roots);
 ```
 
 On the client side, `std/tls/client`'s `with_identity(id)` presents a

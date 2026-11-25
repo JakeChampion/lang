@@ -158,7 +158,9 @@ function main(): i32 {
   let Ok(id) = identity.from_pem(cert, key) else {
     return 4;
   };
-  return serve.exit_code(serve.run(0, @CONFIG@.with_tls(server.config(id, rand.bytes(32))).with_h3(), handle));
+  let Ok(tickets) = server.config(id, rand.bytes(32)) else { return 2; };
+  let Ok(secure) = @CONFIG@.with_tls(tickets) else { return 2; };
+  return serve.exit_code(serve.run(0, secure.with_h3(), handle));
 }
 `
 
