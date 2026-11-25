@@ -34,6 +34,8 @@ function main(): i32 {
 
 ```fern
 <<*>>=
+// Chunked XChaCha20-Poly1305 streams and envelopes for wrapped data keys.
+
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
 import "std/binary";

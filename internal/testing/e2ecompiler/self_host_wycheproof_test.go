@@ -14,22 +14,23 @@ import (
 func TestSelfHostWycheproofNative(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	_, qemu := arm64Tooling(t)
-	for _, suite := range []string{
-		"ecdh_p256",
-		"ecdsa_p256",
-		"ecdsa_p256_sha512",
-		"ecdsa_p384_sha384",
-		"hkdf_sha256",
-		"hmac_sha256",
-		"mlkem768",
-		"mlkem768_encaps",
-		"mlkem768_keygen",
-		"rsa_oaep",
-		"rsa_pkcs1v15",
-		"rsa_pss",
-		"xchacha20poly1305",
+	for _, filename := range []string{
+		"wycheproof_ecdh_p256_test.fern",
+		"wycheproof_ecdsa_p256_test.fern",
+		"wycheproof_ecdsa_p256_sha512_test.fern",
+		"wycheproof_ecdsa_p384_sha384_test.fern",
+		"wycheproof_hkdf_sha256_test.fern",
+		"wycheproof_hmac_sha256_test.fern",
+		"wycheproof_mlkem768_test.fern",
+		"wycheproof_mlkem768_encaps_test.fern",
+		"wycheproof_mlkem768_keygen_test.fern",
+		"wycheproof_rsa_oaep_test.fern",
+		"wycheproof_rsa_pkcs1v15_test.fern",
+		"wycheproof_rsa_pss_test.fern",
+		"wycheproof_xchacha20poly1305_test.fern",
 	} {
-		src := langSrcAbs(t, "tests/stdlib/wycheproof_"+suite+"_test.fern")
+		src := langSrcAbs(t, "tests/stdlib/"+filename)
+		suite := strings.TrimSuffix(strings.TrimPrefix(filename, "wycheproof_"), "_test.fern")
 		for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 			t.Run(suite+"/"+target, func(t *testing.T) {
 				bin := filepath.Join(t.TempDir(), "suite")
