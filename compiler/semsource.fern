@@ -9323,9 +9323,8 @@ function quiet_cycles(rows: ownership.Escapes[], ix: ownership.Index, all: Produ
 
 function quiet_slots(f: ssasem.Func): boolean[] {
   let out: boolean[] = [];
-  let holds = reference(f.result);
   for t in f.params {
-    out = out.append(reference(t) && (!holds || !ssasem.can_hold(f, f.result, t)));
+    out = out.append(reference(t));
   }
   return out;
 }
