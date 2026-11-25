@@ -37,6 +37,8 @@ func TestOwnReplacementAcceptsOwnedValues(t *testing.T) {
 		{"fresh-literal", `function f(own value: Holder): i32 { value = Holder { value: Handle { fd: 2 }, n: 0 }; return consume(value); }`},
 		{"fresh-call", `function f(own value: Holder): i32 { let n = value.n; value = fresh(); return consume(value) + n; }`},
 		{"spread-self", `function f(own value: Holder): i32 { value = Holder { ...value, n: value.n + 1 }; return consume(value); }`},
+		{"let-else-binder-self-update", "struct Prog { h: Holder, n: i32 }\nfunction (own h: Holder) step(r: Handle): Result[Prog, string] { return Ok(Prog { h: h, n: r.fd }); }\nfunction f(own value: Holder, r: Handle): i32 { let Ok(p) = value.step(r) else { return 0; }; value = p.h; return consume(value); }"},
+		{"match-binder-self-update", "function (own h: Holder) step(r: Handle): Result[(Holder, i32), string] { return Ok((h, r.fd)); }\nfunction f(own value: Holder, r: Handle): i32 { match (value.step(r)) { Ok((next, n)) => { value = next; return consume(value) + n; }, Err(_) => { return 0; } } return 0; }"},
 		{"self-update", `function f(own value: Holder): i32 { value = bump(value); return consume(value); }`},
 		{"other-own-parameter", `function f(own value: Holder, own other: Holder): i32 { let n = consume(value); value = other; return consume(value) + n; }`},
 		{"local-last-use", `function f(own value: Holder): i32 { let n = consume(value); let next = fresh(); value = next; return consume(value) + n; }`},

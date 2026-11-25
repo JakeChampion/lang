@@ -27892,13 +27892,34 @@ function ow_borrowed_replacement(a: ast.StmtAssign, ctx: OwnCtx): boolean {
   if (!ow_is_owned(ctx, a.target) || util.has_str(ctx.borrowed, a.target)) {
     return false;
   }
-  if (ow_self_update(a.target, a.value, ctx.borrowed)) {
+  if (ow_self_update(a.target, a.value, ctx.borrowed) || ow_bound_from_self_update(a.target, a.value, ctx)) {
     return false;
   }
   if (ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(a.target)), ctx.decls)) {
     return false;
   }
   return !ow_is_owned_expr(a.value, ctx) && ow_result_loan(a.value, ctx);
+}
+
+// The root of value is a name that a let, a destructure or a match pattern
+// binds from a self-update of target: `let Ok(p) = s.step(r); s = p.s;`.
+function ow_bound_from_self_update(target: string, value: ast.Expr, ctx: OwnCtx): boolean {
+  let root = ow_access_root(value);
+  if (root.len() == 0 || root == target) {
+    return false;
+  }
+  let facts = lu_empty_facts();
+  for st in ctx.result_body {
+    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  }
+  for group in [facts.vars, facts.unpacked, facts.matched] {
+    for v in group {
+      if (v.name == root && ow_self_update(target, v.init, ctx.borrowed)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // value is a call with target as its receiver or as an argument, or a
