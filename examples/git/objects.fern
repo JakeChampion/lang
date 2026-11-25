@@ -329,47 +329,65 @@ function mode_at(body: u8[], from: i32, to: i32): string {
   return unsafe { string_from_bytes_unchecked(array.slice(body, from, to)) };
 }
 
-// The entries of the body of a tree whose names have `width` bytes.
-// The entries of a tree as the places of their parts in the content
-// `body`: entry `k` has its mode from `at[k]` to `name[k] - 1`, its name
-// from `name[k]` to `hash[k] - 1`, and its name of `width` bytes at
-// `hash[k]`. A tree that is not sound has no entries.
-pub struct RawTree { body: u8[], at: i32[], name: i32[], hash: i32[], width: i32 }
+// The tree walker compares the canonical modes of entries (git's canon_mode).
+// The raw object reader keeps the stored spelling for cat-file and fsck.
+function walk_mode(mode: i32): i32 {
+  return match (mode & 0o170000) {
+    0o100000 => if ((mode & 0o100) != 0) { 0o100755 } else { 0o100644 },
+    0o120000 => 0o120000,
+    0o40000 => 0o40000,
+    _ => 0o160000,
+  };
+}
+
+// Entry k has its canonical mode, its name at name[k] and its object ID
+// of width bytes at hash[k]. A tree that is not sound has no entries.
+pub struct RawTree { body: u8[], modes: i32[], name: i32[], hash: i32[], width: i32 }
 
 pub function raw_tree(body: u8[], width: i32): RawTree {
-  let at: i32[] = [];
+  let modes: i32[] = [];
   let names: i32[] = [];
   let hashes: i32[] = [];
   let i = 0;
   while (i < body.len()) {
-    let space = __memchr_bytes(body, 32, i);
-    if (space < 0) {
-      return RawTree { body: body, at: [], name: [], hash: [], width: width };
+    let space = i;
+    let mode = 0;
+    while (space < body.len() && body[space] >= b'0' && body[space] <= b'7') {
+      mode = (mode << 3) | (body[space] - b'0') as i32;
+      space += 1;
+    }
+    if (space == i || space >= body.len() || body[space] != b' ') {
+      return RawTree { body: body, modes: [], name: [], hash: [], width: width };
     }
     let end = __memchr_bytes(body, 0, space + 1);
-    if (space == i || end < 0 || end + 1 + width > body.len()) {
-      return RawTree { body: body, at: [], name: [], hash: [], width: width };
+    if (end < 0 || end + 1 + width > body.len()) {
+      return RawTree { body: body, modes: [], name: [], hash: [], width: width };
     }
-    at = at.append(i);
+    modes = modes.append(walk_mode(mode));
     names = names.append(space + 1);
     hashes = hashes.append(end + 1);
     i = end + 1 + width;
   }
-  return RawTree { body: body, at: at, name: names, hash: hashes, width: width };
+  return RawTree { body: body, modes: modes, name: names, hash: hashes, width: width };
 }
 
 pub function (t: RawTree) count(): i32 {
-  return t.at.len();
+  return t.modes.len();
 }
 
 // True if the entry `k` is a tree: its mode is `40000`.
 pub function (t: RawTree) is_tree(k: i32): boolean {
-  let a = t.at[k];
-  return t.name[k] - a == 6 && t.body[a] == b'4' && t.body[a + 1] == b'0' && t.body[a + 2] == b'0' && t.body[a + 3] == b'0' && t.body[a + 4] == b'0';
+  return t.modes[k] == 0o40000;
 }
 
 pub function (t: RawTree) mode(k: i32): string {
-  return mode_at(t.body, t.at[k], t.name[k] - 1);
+  return match (t.modes[k]) {
+    0o100644 => "100644",
+    0o100755 => "100755",
+    0o120000 => "120000",
+    0o40000 => "40000",
+    _ => "160000",
+  };
 }
 
 pub function (t: RawTree) entry_name(k: i32): u8[] {
@@ -391,18 +409,7 @@ pub function same_entry(a: RawTree, i: i32, b: RawTree, j: i32): boolean {
       return false;
     }
   }
-  let ma = a.at[i];
-  let mb = b.at[j];
-  let len = a.name[i] - ma;
-  if (b.name[j] - mb != len) {
-    return false;
-  }
-  for k in 0..len {
-    if (a.body[ma + k] != b.body[mb + k]) {
-      return false;
-    }
-  }
-  return true;
+  return a.modes[i] == b.modes[j];
 }
 
 pub function tree_entries(body: u8[], width: i32): Result[TreeEntry[], string] {
