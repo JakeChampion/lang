@@ -62,6 +62,8 @@ function main(): i32 {
 <<*>>=
 // Secret bytes in pages that the kernel keeps out of swap and core dumps.
 
+import "core/cmp";
+import "core/error";
 import "core/mem";
 
 // The largest size that one call to `new` maps.
@@ -77,6 +79,31 @@ pub enum SecretError {
   // The kernel refused the mapping or the dump mark, with this errno.
   Refused(i32),
 }
+
+pub function (e: SecretError) to_string(): string {
+  return e.message();
+}
+
+pub function (e: SecretError) message(): string {
+  match (e) {
+    Size => {
+      return "secret: the size is below 1 or above MAX_BYTES";
+    },
+    Range => {
+      return "secret: the range is outside the pages";
+    },
+    Unsupported => {
+      return "secret: the target has no kernel that maps pages";
+    },
+    Refused(errno) => {
+      return "secret: the kernel refused the pages, errno " + errno.to_string();
+    }
+  }
+}
+
+impl error.Error for SecretError {}
+
+impl cmp.Display for SecretError {}
 
 struct Block { addr: i64, size: i64 }
 
