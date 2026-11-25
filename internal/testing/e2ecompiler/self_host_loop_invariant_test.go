@@ -7,15 +7,18 @@ import (
 )
 
 // ssa.hoisted_invariants moves a pure computation of values that do not
-// change in a loop to the block before the loop, with the constants that it
-// reads. A division by 0 or by a value that is not a constant, a load, and a
-// loop with a second way in stay where they are. Two equal computations from
-// different blocks of the loop become one value in front of it.
+// change in a loop to the block before the loop. It reads a copy of each
+// constant of the loop, and the constant stays in the loop. A computation of
+// constants only, a division by 0 or by a value that is not a constant, a
+// load, and a loop with a second way in stay where they are. Two equal
+// computations from different blocks of the loop become one value in front
+// of it.
 func TestSelfHostLoopInvariantHoist(t *testing.T) {
-	const src = `import "./ssa";
+	const src = `import "./ir";
+import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(op) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 function graph(side_entry: boolean): ssa.SFunc {
@@ -30,6 +33,7 @@ function graph(side_entry: boolean): ssa.SFunc {
     inst(ssa.LD_AT, 10, [0], 0, ""),
     inst(ssa.UNARY, 11, [4], 0, "int_extend"),
     inst(ssa.BINARY, 12, [11, 1], 64, "mul"),
+    inst(ssa.BINARY, 13, [3, 6], 32, "add"),
     inst(ssa.BINARY, 7, [5, 8], 32, "add")
   ];
   let blocks = [
@@ -38,7 +42,7 @@ function graph(side_entry: boolean): ssa.SFunc {
     ssa.SBlock { id: 2, preds: if (side_entry) { [1, 0] } else { [1] }, insts: body, term: ssa.t_br(1) },
     ssa.SBlock { id: 3, preds: [1], insts: [], term: ssa.t_ret(2) }
   ];
-  return ssa.SFunc { name: "invariant", nparams: 2, nvals: 13, blocks: blocks, entry: 0, takes_env: false };
+  return ssa.SFunc { name: "invariant", nparams: 2, nvals: 14, blocks: blocks, entry: 0, takes_env: false };
 }
 
 function twin(): ssa.SFunc {
@@ -70,25 +74,29 @@ function same(a: i32[], b: i32[]): boolean {
 
 function main(): i32 {
   let f = ssa.hoisted_invariants(graph(false)).f;
-  if (!same(results(f.blocks[0].insts), [0, 1, 3, 4, 11, 12])) {
+  if (!same(results(f.blocks[0].insts), [0, 1, 14, 4, 11, 12])) {
     return 1;
   }
-  if (!same(results(f.blocks[2].insts), [5, 6, 8, 9, 10, 7])) {
+  if (!same(results(f.blocks[2].insts), [3, 5, 6, 8, 9, 10, 13, 7])) {
     return 2;
   }
-  if (f.nvals != 13 || f.blocks[0].term.kind_tag != ssa.TERM_BR) {
+  if (f.nvals != 15 || f.blocks[0].term.kind_tag != ssa.TERM_BR) {
     return 3;
   }
+  let copy = f.blocks[0].insts[2];
+  if (copy.kind_tag != ssa.CONST_INT || copy.imm != 8 || !same(f.blocks[0].insts[3].args, [0, 14])) {
+    return 7;
+  }
   let side = ssa.hoisted_invariants(graph(true)).f;
-  if (side.blocks[0].insts.len() != 2 || side.blocks[2].insts.len() != 10) {
+  if (side.blocks[0].insts.len() != 2 || side.blocks[2].insts.len() != 11) {
     return 4;
   }
   let t = ssa.hoisted_invariants(twin());
-  if (!same(results(t.f.blocks[0].insts), [0, 1, 3, 4])) {
+  if (!same(results(t.f.blocks[0].insts), [0, 1, 10, 4])) {
     return 5;
   }
   let st = t.f.blocks[3].insts[0];
-  if (st.args[0] != 4 || t.f.blocks[3].insts[1].args[1] != 4 || t.repl.len() != 10 || t.repl[6] != 4) {
+  if (st.args[0] != 4 || t.f.blocks[3].insts[1].args[1] != 4 || t.repl.len() != 11 || t.repl[6] != 4) {
     return 6;
   }
   return 0;

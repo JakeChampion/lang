@@ -25,6 +25,13 @@ The drop also does the same for each element of an array of boxes that the recor
 Examples are a `u8[][]`, a `string[]` and an array of records.
 An element that another value still holds keeps its contents.
 
+The drop also does the same for a value of a `type A | B` union that the record holds alone.
+A member with a `core/mem.Drop` finalizer or with the attribute `@secret` keeps its fields for its own drop.
+The drop of a union value runs the finalizer of its member type, and it wipes a `@secret` member.
+
+The drop also wipes a field with a `core/mem.Drop` finalizer that the record holds alone.
+The finalizer runs first and reads the fields as they are. Then the drop wipes the fields and releases them.
+
 This holds in each build, not only under `-harden`.
 
 A numeric array has elements of 1, 2, 4 or 8 bytes: `u8[]`, `u16[]`, `i32[]`, `u64[]`, `f64[]` and the other integer and float element types.
@@ -62,8 +69,8 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 ## Limits
 
 - The drop does not wipe a string whose bytes are in another block, such as a mapped file.
-- The drop does not wipe a value of a `type A | B` union.
-- The drop does not wipe a nested record or enum that has a `core/mem.Drop` finalizer, because the finalizer reads the fields after the wipe.
+- The drop wipes a record or an enum with a `core/mem.Drop` finalizer only when it is a field of the record.
+  Such a value inside a nested record, a tuple or an array keeps its fields.
   Give a record of that kind the attribute `@secret`, and its own drop then wipes it after the finalizer.
 - A copy of the elements into another array, such as a slice that a program copies out, is not wiped.
 - The wasm allocator does not give a released block to a raw allocation of the same size.
@@ -74,3 +81,4 @@ The semantic index is [spec/semantics.md](../spec/semantics.md).
 Its control is the same record without the attribute, which must read the secret bytes back.
 `TestSelfHostSecretRecordWipesItsScalars` does the same for the scalar fields, `TestSelfHostSecretRecordWipesItsNestedBoxes` for a nested record and a tuple, and `TestSelfHostSecretRecordWipesItsEnums` for an enum value.
 `TestSelfHostSecretRecordWipesItsStrings` does the same for a string, and `TestSelfHostSecretRecordWipesItsArraysOfBoxes` for the elements of a `u8[][]` and of an array of records.
+`TestSelfHostSecretRecordWipesItsUnions` does the same for a union value, and `TestSelfHostSecretRecordWipesItsFinalizedFields` for a field with a finalizer.
