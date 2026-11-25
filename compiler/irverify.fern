@@ -150,29 +150,61 @@ function mem_width_refusal(kt: i32, w: i32): string {
   return "";
 }
 
-// The lane widths that the backends read. Each backend refuses an op on
-// integer lanes that are not 8, 16 or 32 bits, and a change of shape that
-// does not start from the lanes it names. They read a float lane op of 32
-// bits as f32 lanes and each other width as f64 lanes. The bitwise ops, the
-// whole-register loads and stores, a vget, a vset and a vpermute take lanes
-// of each type.
-function lane_width_refusal(kt: i32, w: i32): string {
-  if (ir.is_lane_int_kind(kt)) {
-    return if (w == 8 || w == 16 || w == 32) { "" } else { "8, 16 or 32" };
+// The widths of a lane op that the backends read. A float lane op reads 32
+// as f32x4 and each other width as f64x2. An unpacked group access scales its
+// index by the width on x86-64 and wasm, and by 4 or 8 on arm64, so it also
+// has only 32 and 64. A bitwise op and a group access of packed bytes read
+// no width. The integer lane ops have 8, 16 and 32.
+function lane_widths(kt: i32, packed: boolean): i32[] {
+  if (kt == ir.K_VPACK) {
+    return [32];
   }
-  if (kt == ir.K_VISWIZZLE) {
-    return if (w == 8) { "" } else { "8" };
+  if (kt == ir.K_VLOAD_F32) {
+    return [64];
+  }
+  if (kt >= ir.K_VAND && kt <= ir.K_VSELECT || (kt == ir.K_VGET || kt == ir.K_VSET) && packed) {
+    return [8, 16, 32, 64];
+  }
+  if (ir.is_lane_int_kind(kt)) {
+    return [8, 16, 32];
+  }
+  if (kt >= ir.K_VIWIDENLOS && kt <= ir.K_VIWIDENHIU) {
+    return [8, 16];
   }
   if (kt == ir.K_VINARROWS || kt == ir.K_VINARROWU) {
-    return if (w == 16 || w == 32) { "" } else { "16 or 32" };
+    return [16, 32];
   }
-  if (ir.is_lane_shape_kind(kt)) {
-    return if (w == 8 || w == 16) { "" } else { "8 or 16" };
+  if (kt == ir.K_VISWIZZLE) {
+    return [8];
   }
-  if (kt >= ir.K_VAND && kt <= ir.K_VSET || kt == ir.K_VPERMUTE) {
-    return if (w == 8 || w == 16 || w == 32 || w == 64) { "" } else { "8, 16, 32 or 64" };
+  return [32, 64];
+}
+
+function lane_width_refusal(kt: i32, w: i32, packed: boolean): string {
+  let ws = lane_widths(kt, packed);
+  let text = "";
+  for i in 0..ws.len() {
+    if (ws[i] == w) {
+      return "";
+    }
+    let sep = if (i == 0) { "" } else if (i == ws.len() - 1) { " or " } else { ", " };
+    text = text + sep + util.i32_to_string(ws[i]);
   }
-  return if (w == 32 || w == 64) { "" } else { "32 or 64" };
+  return text;
+}
+
+// A lane op that names a lane must name one of the 128 / width lanes. A
+// permute mode of 4 to 7 moves 32-bit lanes.
+function lane_index_refusal(kt: i32, w: i32, imm: i32): string {
+  if (kt == ir.K_VPERMUTE) {
+    let top = if (w == 32) { 8 } else { 4 };
+    return if (imm >= 0 && imm < top) { "" } else { "permute mode " + util.i32_to_string(imm) + " is not 0 to " + util.i32_to_string(top - 1) };
+  }
+  let names = kt == ir.K_VEXTRACT || kt == ir.K_VREPLACE || kt == ir.K_VEXTRACT_BITS || kt == ir.K_VIEXTRACTS || kt == ir.K_VIEXTRACTU || kt == ir.K_VIREPLACE;
+  if (!names || w <= 0 || imm >= 0 && imm < 128 / w) {
+    return "";
+  }
+  return "lane " + util.i32_to_string(imm) + " is outside the " + util.i32_to_string(128 / w) + " lanes of width " + util.i32_to_string(w);
 }
 
 // The backends read an integer arithmetic or compare op as 64 bits, as the
@@ -238,6 +270,16 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
         fn_name: fn_name, op: i, kind: ir.kind_name(kt),
         msg: "width " + util.i32_to_string(op.width) + " is not " + widths,
       });
+    }
+    if (ir.is_lane_kind(kt)) {
+      let lw = lane_width_refusal(kt, op.width, op.unsigned);
+      let li = if (lw == "") { lane_index_refusal(kt, op.width, op.i32_imm) } else { "" };
+      if (lw != "" || li != "") {
+        out = out.append(Problem {
+          fn_name: fn_name, op: i, kind: ir.kind_name(kt),
+          msg: if (lw != "") { "lane width " + util.i32_to_string(op.width) + " is not " + lw } else { li },
+        });
+      }
     }
 
     if (kt == k_load || kt == k_store || kt == k_tee) {
