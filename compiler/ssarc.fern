@@ -1519,31 +1519,75 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
 }
 
 // Zeroes the secret storage of the child in `slot` when no other value holds
-// the child: the elements of a numeric array, and the scalars and the
-// children of a record, a tuple or an enum. A record or an enum with a
-// finalizer keeps its fields, because the finalizer reads them later. The loads here borrow, so
+// the child: the elements of a numeric array, the bytes of a string, the
+// elements of an array of boxes, and the scalars and the children of a
+// record, a tuple or an enum. A record or an enum with a finalizer keeps its
+// fields, because the finalizer reads them later. The loads here borrow, so
 // they are not marked counted.
 function wipe_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  if (!wipes(t, f)) {
+    return r;
+  }
   let shift = ssasem.elem_shift(t);
   if (shift >= 0) {
     return wipe_sole(r, slot, shift);
   }
-  let plain = ssasem.box_shape(t) && ssasem.finalizer_of(f, t) == "";
-  let record = plain && typeinfo.is_record(t) && !ssasem.secret_record(t, f);
-  let variant = plain && wiped_enum(t, f);
-  if (!record && !variant && !typeinfo.is_tuple(t)) {
-    return r;
+  if (ssasem.is_string(t)) {
+    return wipe_sole_string(r, slot);
   }
   r = emit(r, ir.op_load_local(slot));
   r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_if(0));
-  if (record) {
+  if let typeinfo.TypeArray(a) = t {
+    r = wipe_elements(r, slot, a.elem, scratch, f);
+  } else if (typeinfo.is_record(t)) {
     r = wipe_record_fields(r, slot, ssasem.record_fields(t, f), scratch, f);
-  } else if (variant) {
-    r = wipe_variant_fields(r, slot, t, scratch, f);
-  } else {
+  } else if (typeinfo.is_tuple(t)) {
     r = wipe_tuple_fields(r, slot, typeinfo.tuple_elements(t), scratch, f);
+  } else {
+    r = wipe_variant_fields(r, slot, t, scratch, f);
   }
+  return emit(r, ir.op_end());
+}
+
+// Whether a value of `t` has storage that `wipe_child` zeroes. A nested
+// `@secret` record is left to its own drop.
+function wipes(t: typeinfo.Type, f: ssasem.Func): boolean {
+  if (ssasem.elem_shift(t) >= 0 || ssasem.is_string(t) || typeinfo.is_tuple(t)) {
+    return true;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return !a.view && ssasem.counted(f, a.elem) && wipes(a.elem, f);
+  }
+  let plain = ssasem.box_shape(t) && ssasem.finalizer_of(f, t) == "";
+  return plain && (typeinfo.is_record(t) && !ssasem.secret_record(t, f) || wiped_enum(t, f));
+}
+
+// Wipes each element of the array of boxes in `slot`.
+function wipe_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  let index = scratch;
+  let child = index + 1;
+  r = reserve(r, child + 1);
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_block(0));
+  r = emit(r, ir.op_loop(0));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_bin("ge_s", 0, false));
+  r = emit(r, ir.op_brif(1));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_arr_get_nc(ir.width_ptr()));
+  r = emit(r, ir.op_store_local(child));
+  r = wipe_child(r, child, elem, child + 1, f);
+  r = emit(r, ir.op_load_local(index));
+  r = emit(r, ir.op_const_i32(1));
+  r = emit(r, ir.op_bin("add", 0, false));
+  r = emit(r, ir.op_store_local(index));
+  r = emit(r, ir.op_br(0));
+  r = emit(r, ir.op_end());
   return emit(r, ir.op_end());
 }
 
@@ -1651,6 +1695,34 @@ function wipe_sole(own r: irtables.LowerState, slot: i32, shift: i32): irtables.
   r = emit(r, ir.op_bin("shl", 0, false));
   r = emit(r, ir.op_memset());
   r = emit(r, ir.op_drop());
+  return emit(r, ir.op_end());
+}
+
+// Zeroes the bytes of the string in `slot` when no other value holds it and
+// its bytes follow its two-word box in the same block. A literal is never
+// unique, and the bytes of a view or a mapped file are in another block, so
+// they keep their bytes.
+function wipe_sole_string(own r: irtables.LowerState, slot: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_str_data());
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_ptr_width());
+  r = emit(r, ir.op_const_i32(2));
+  r = emit(r, ir.op_bin("mul", 0, false));
+  r = emit(r, ir.op_raw_addr());
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_str_data());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_str_len());
+  r = emit(r, ir.op_memset());
+  r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_end());
   return emit(r, ir.op_end());
 }
 

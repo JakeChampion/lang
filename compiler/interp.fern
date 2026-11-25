@@ -1103,15 +1103,17 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 // `iterator_decls` keeps every declaration spelled `__iterator` in source order.
 // `receivers` holds the runtime_receiver_name of each declaration, `cells`
 // its body_needs_cells, and `cleanups` the actions for a try exit.
+// `receiver_refs` holds the parsed receiver type of each declaration.
 // `receiver_args` holds the receiver argument names to check for const bindings.
 // `plain` is true for a function with no receiver whose name no builtin takes.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, qualifiers: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, qualifiers: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], receiver_refs: parser.TypeRef[], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
   let iterator_decls: i32[] = [];
   let receivers: string[] = [];
   let receiver_args: string[][] = [];
+  let receiver_refs: parser.TypeRef[] = [];
   let cleanups: ast.Stmt[][] = [];
   let cells: boolean[] = [];
   let plain: boolean[] = [];
@@ -1131,12 +1133,14 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
     }
     names = names.append(name);
     receivers = receivers.append(receiver);
-    receiver_args = receiver_args.append(receiver_arg_names(fd));
+    let receiver_ref = parser.parse_type_ref(fd.receiver_type);
+    receiver_args = receiver_args.append(receiver_arg_names(fd, receiver_ref));
+    receiver_refs = receiver_refs.append(receiver_ref);
     cells = cells.append(body_needs_cells(fd.body));
     cleanups = cleanups.append(deferlower.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), qualifiers: qualifiers, iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), qualifiers: qualifiers, iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, receiver_refs: receiver_refs, cells: cells, cleanups: cleanups, plain: plain };
 }
 
 // The part of a function name before its first dot, or "" for a name with no
@@ -1250,6 +1254,9 @@ function (e: Env) static_type_of(x: ast.Expr): string {
       }
       return struct_field_type(e.type_decls, ot, fa.field);
     },
+    ast.ExprStructLit(st) => {
+      return st.written;
+    },
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(id) => {
@@ -1283,7 +1290,7 @@ function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   while (at >= 0) {
     let fd = funcs.decls[at];
     if (fd.name == name) {
-      if let Some(rt) = matched_method_result(fd, recv_ty) {
+      if let Some(rt) = matched_method_result(fd, funcs.receiver_refs[at], recv_ty) {
         if (seen && rt != found) {
           return "";
         }
@@ -1298,13 +1305,12 @@ function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
 
 // Match the static receiver and substitute its arguments into the result
 // using the same parsed types. An empty result can itself be a match.
-function matched_method_result(fd: parser.FuncDecl, recv_ty: string): Option[string] {
-  if (parser.plain_type_spelling(fd.receiver_type)) {
-    return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
-  }
-  let d = parser.parse_type_ref(fd.receiver_type);
+function matched_method_result(fd: parser.FuncDecl, d: parser.TypeRef, recv_ty: string): Option[string] {
   if (d.args.len() == 0) {
     return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
+  }
+  if (d.base.len() > 0 && !generic_spelling_of(recv_ty, d.base)) {
+    return None;
   }
   let r = parser.parse_type_ref(recv_ty);
   if (d.base != r.base || d.args.len() != r.args.len()) {
@@ -1317,6 +1323,13 @@ function matched_method_result(fd: parser.FuncDecl, recv_ty: string): Option[str
     cts = cts.append(parser.render_type_ref(r.args[i]));
   }
   return Some(parser.subst_ty(fd.ret_type, vars, cts));
+}
+
+// Reports a spelling that starts `base[`, the only shape whose parsed base is
+// `base` with type arguments.
+function generic_spelling_of(spelling: string, base: string): boolean {
+  let n = base.len();
+  return spelling.len() > n && spelling[n] == b'[' && spelling.starts_with(base);
 }
 
 function (e: Env) binds_name(name: string): boolean {
@@ -1351,14 +1364,20 @@ function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
 }
 
 function (e: Env) lookup(name: string): Value {
+  return deref_cell(e.slot_named(name));
+}
+
+// The slot of `name`, a cell included. It hands no part of `e` to a callee,
+// so the walk borrows each scope.
+function (e: Env) slot_named(name: string): Value {
   let i = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
-      return deref_cell(e.values[i]);
+      return e.values[i];
     }
     i -= 1;
   }
-  return match (e.outer) { Some(parent) => parent.lookup(name), None => v_err("undefined identifier: " + name) };
+  return match (e.outer) { Some(parent) => parent.slot_named(name), None => v_err("undefined identifier: " + name) };
 }
 
 function deref_cell(v: Value): Value {
@@ -6869,10 +6888,10 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
 }
 
 // A receiver method can bind its simple type arguments to constants at a call.
-function receiver_arg_names(fd: parser.FuncDecl): string[] {
+function receiver_arg_names(fd: parser.FuncDecl, receiver: parser.TypeRef): string[] {
   let names: string[] = [];
   if (fd.receiver_name.len() > 0) {
-    for a in parser.parse_type_ref(fd.receiver_type).args {
+    for a in receiver.args {
       if (a.args.len() == 0) {
         names = names.append(a.base);
       }
@@ -7347,12 +7366,28 @@ function method_target(funcs: Funcs, name: string, recv: Value, recv_type: strin
   return fallback;
 }
 
+// A method of the static union type wins over a method of the member that the
+// value holds, as in compiled code. -1 when the static type has no such method.
+function static_union_method(funcs: Funcs, name: string, recv: Value, recv_static: string, aliases: parser.TypeAlias[]): i32 {
+  if (recv_static.len() == 0) {
+    return -1;
+  }
+  let owner = runtime_receiver_name(recv_static);
+  if (owner == dispatch_type_name(recv) || !variant_of_enum(recv, owner, aliases)) {
+    return -1;
+  }
+  return receiver_method_index(funcs, name, owner);
+}
+
 function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
-  let at = method_target(funcs, name, recv, recv_type, aliases);
+  let at = static_union_method(funcs, name, recv, recv_static, aliases);
+  if (at < 0) {
+    at = method_target(funcs, name, recv, recv_type, aliases);
+  }
   if (at >= 0) {
     let fd = funcs.decls[at];
     if (args.len() != fd.params.len()) {

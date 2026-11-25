@@ -620,6 +620,39 @@ function int_width_checks(): i32 {
   if (count_problems(bits_ops(ir.op_popcount(ir.width_ptr())), 1, 1) != 1 || count_problems(bits_ops(ir.op_bswap(0)), 1, 1) != 1) {
     return 242;
   }
+  return conv_width_checks();
+}
+
+function conv_width_checks(): i32 {
+  let p = ir.width_ptr();
+  let good: ir.Op[] = [
+    ir.op_int_extend(false), ir.op_int_extend(true), ir.op_int_extend_ptr(), ir.op_int_wrap(false), ir.op_int_wrap_ptr(),
+    ir.op_int_to_f64(32, false), ir.op_int_to_f64(64, true), ir.op_ptr_to_f64(), ir.op_f64_to_i32(), ir.op_f64_to_u32(),
+    ir.op_f64_to_i64(), ir.op_f64_to_u64(), ir.op_f64_to_ptr(), ir.op_int_cast("u8"), ir.op_u32_wrap(),
+  ];
+  for o in good {
+    if (count_problems(bits_ops(o), 1, 1) != 0) {
+      return 243;
+    }
+  }
+  if (!util.contains(first_msg(bits_ops(ir.Op { ...ir.op_int_extend(false), width: 32 }), 1, 1), "op 1 (int_extend): width 32 is not 64 or the pointer width")) {
+    return 244;
+  }
+  if (!util.contains(first_msg(bits_ops(ir.Op { ...ir.op_int_wrap(false), width: 64 }), 1, 1), "op 1 (int_wrap): width 64 is not 0 or the pointer width")) {
+    return 245;
+  }
+  if (!util.contains(first_msg(bits_ops(ir.op_int_to_f64(16, false)), 1, 1), "op 1 (i32_to_f64): width 16 is not 0, 32, 64 or the pointer width")) {
+    return 246;
+  }
+  if (count_problems(bits_ops(ir.Op { ...ir.op_f64_to_i64(), width: 32 }), 1, 1) != 1) {
+    return 247;
+  }
+  if (!util.contains(first_msg(bits_ops(ir.Op { ...ir.op_f64_to_i32(), width: p }), 1, 1), "op 1 (f64_to_i32): width -1 is not 0")) {
+    return 248;
+  }
+  if (count_problems(bits_ops(ir.Op { ...ir.op_int_cast("u16"), width: 16 }), 1, 1) != 1 || count_problems(bits_ops(ir.Op { ...ir.op_u32_wrap(), width: 32 }), 1, 1) != 1) {
+    return 249;
+  }
   return 0;
 }
 

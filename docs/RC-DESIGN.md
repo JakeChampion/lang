@@ -196,8 +196,10 @@ that the frame does not own cannot. A caller that keeps such a value pays a
 retain, and the callee then finds each box shared and copies. It is a greatest fixpoint over the
 module's produced graphs: every parameter starts consumed and is demoted when
 a round finds no escaping use, so a recursive traversal that rebuilds keeps
-its parameter counted and a quiet cycle (functions returning no reference)
-does not. A declared `own` stays counted whatever the analysis says, since
+its parameter counted and a quiet cycle does not. Each reference parameter of
+a cycle is a quiet slot (`semsource.quiet_slots`), also when the result type
+can hold it. A call of the cycle is then no reason to count the slot. Only an
+escape outside the cycle counts it. A declared `own` stays counted whatever the analysis says, since
 the checker's affine discipline (E050) and call sites rely on it. A row holds the
 mode each parameter ends with (`mode_bits`), not the raw escape, so a caller
 handing a field to a parameter its callee can never count keeps its own
