@@ -625,3 +625,7 @@ grpc/special_status_message	1
 grpc/custom_metadata	1
 grpc/unimplemented_method	1
 grpc/unimplemented_service	1
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	42997520
+x86_64/checker.cliff_count	538340
