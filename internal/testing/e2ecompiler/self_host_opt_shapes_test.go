@@ -65,13 +65,14 @@ function main(): i32 { return count_a("banana") - 1; }
 function main(): i32 { return sum_to(10i64) as i32; }
 `,
 		forbid: map[string][]string{"x86-64-linux": {`\bjmp\b`}, "arm64-linux": {`\bb \.L`}}},
-	{name: "literal_compare_no_release", fn: "sym", exit: 5, src: `
+	// Short literals compare inline. Keep a longer one to exercise the runtime call too.
+	{name: "literal_compare_no_release", fn: "sym", exit: 6, src: `
 @noinline function sym(k: string): i32 {
     if (k == "add") { return 1; }
-    if (k == "sub") { return 2; }
+    if (k == "subtract_from") { return 2; }
     return 3;
 }
-function main(): i32 { return sym("sub") + sym("x"); }
+function main(): i32 { return sym("add") + sym("subtract_from") + sym("x"); }
 `,
 		want:   map[string][]string{"x86-64-linux": {`__fern_str_eq`}, "arm64-linux": {`__fern_str_eq`}},
 		forbid: map[string][]string{"x86-64-linux": {`__fern_str_free`}, "arm64-linux": {`__fern_str_free`}}},
