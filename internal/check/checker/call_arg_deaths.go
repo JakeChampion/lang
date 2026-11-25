@@ -1668,6 +1668,7 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 	aliasOf := map[string]*ast.Ident{}
 	litOf := map[string]*ast.StructLit{}
 	assigns := map[string][]ast.Expr{}
+	sets := map[string][]ast.Expr{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
@@ -1688,6 +1689,10 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 		case *ast.Assign:
 			if t, ok := x.Target.(*ast.Ident); ok {
 				assigns[t.Name] = append(assigns[t.Name], x.Value)
+			}
+		case *ast.Call:
+			if cell, payload := cellSet(x); cell != "" {
+				sets[cell] = append(sets[cell], payload)
 			}
 		}
 		return true
@@ -1722,10 +1727,16 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 	for changed := true; changed; {
 		changed = false
 		for name := range in {
+			// A payload set into a cell is in the cell, so it must be owned as well.
+			keep := !slices.ContainsFunc(sets[name], func(v ast.Expr) bool { return !valueOwned(name, v) })
 			if admitted(name) {
+				if !keep {
+					delete(in, name)
+					changed = true
+				}
 				continue
 			}
-			keep := aliasOf[name] != nil && owned(aliasOf[name].Name) || aliasOf[name] == nil && litOf[name] != nil
+			keep = keep && (aliasOf[name] != nil && owned(aliasOf[name].Name) || aliasOf[name] == nil && litOf[name] != nil)
 			if sl := litOf[name]; sl != nil {
 				keep = keep && litFieldsOwned(info, sl, fieldOwned)
 			}

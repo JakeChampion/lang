@@ -22097,7 +22097,7 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 // nested field of a primitive type or of an array of one: an array can reach
 // a borrowed parameter as a view, so such a read is not always a copy.
 // scalar_sels holds the reads of a field of a scalar type, which are copies.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: i64[], scalar_sels: i64[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: i64[], scalar_sels: i64[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[], sets: LuVar[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -22171,6 +22171,12 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
         matched = lu_pattern_values(arm.pattern, m.scrutinee, matched);
       }
       return LuFacts { ...f, matched: matched, rebinds: lu_rebind_match(m, f.rebinds) };
+    },
+    ast.StmtExpr(x) => {
+      if let Some(set) = ow_cell_set(x.value) {
+        return LuFacts { ...f, sets: f.sets.append(LuVar { name: set.cell, init: set.payload }) };
+      }
+      return f;
     },
     _ => {
       return f;
@@ -23663,13 +23669,19 @@ function lu_admitted(fx: LuFn, name: string): boolean {
 }
 
 function lu_move_admitted(fx: LuFn, name: string, seen: string[]): boolean {
-  if (lu_base_admitted(fx, name)) {
-    return true;
-  }
   if (util.has_str(seen, name)) {
     return true;
   }
   let inner = seen.append(name);
+  // A payload set into a cell is in the cell, so it must be owned as well.
+  for set in fx.facts.sets {
+    if (set.name == name && !lu_value_owned(fx, name, set.init, inner)) {
+      return false;
+    }
+  }
+  if (lu_base_admitted(fx, name)) {
+    return true;
+  }
   if (!lu_alias_admitted(fx, name, inner)) {
     return false;
   }
@@ -24217,7 +24229,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [], sets: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
@@ -29584,6 +29596,22 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
         name = a.target;
         init = a.value;
       }
+      // A cell that stores a borrowed payload lends it to each holder of the cell.
+      if let ast.StmtExpr(x) = st {
+        if let Some(set) = ow_cell_set(x.value) {
+          name = set.cell;
+          init = set.payload;
+        }
+      }
+      if let ast.StmtVar(v) = st {
+        if let ast.ExprIdent(src) = v.init {
+          if (util.has_str(locals, v.name) && !util.has_str(locals, src.name) && ow_is_cell(v.init)) {
+            locals = locals.append(src.name);
+            changed = true;
+            continue;
+          }
+        }
+      }
       // Scalar elements are copies. Other elements retain the iterable borrow.
       if let ast.StmtFor(f) = st {
         if (f.destr.binds.len() == 0 && !for_iter_is_range(f.iter) && !ow_value_element_iter(f.iter, values)) {
@@ -29601,6 +29629,27 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
     }
   }
   return locals;
+}
+
+struct OwCellSet { cell: string, payload: ast.Expr }
+
+// The cell name and the payload of a statement `cell.set(payload)`.
+function ow_cell_set(e: ast.Expr): Option[OwCellSet] {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if let ast.ExprIdent(recv) = fa.obj {
+        if (fa.field == "set" && c.args.len() == 1 && ow_is_cell(fa.obj)) {
+          return Some(OwCellSet { cell: recv.name, payload: c.args[0] });
+        }
+      }
+    }
+  }
+  return None;
+}
+
+function ow_is_cell(e: ast.Expr): boolean {
+  let tag = ast.receiver_tag(e);
+  return tag == "Cell" || tag.starts_with("Cell[");
 }
 
 function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, lenders: BorrowContext): boolean {
