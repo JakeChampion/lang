@@ -35378,7 +35378,9 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
+      if (nargs.len() > 0) {
+        nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
+      }
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct = check_expr(e, s);
