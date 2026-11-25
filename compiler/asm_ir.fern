@@ -13178,7 +13178,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
   if (o.kind_tag == ir.K_PTR_WIDTH) {
     s = s.write("    pushq $8\n");
   } else if (ir.is_sha_hw_op(o.kind_tag)) {
-    s = s.write("    pushq $1\n");
+    let on = s.sha_ext || o.kind_tag == ir.K_SHA1X8_HW;
+    s = s.write(if (on) { "    pushq $1\n" } else { "    pushq $0\n" });
   } else if (o.kind_tag == ir.K_MEMCPY) {
     s = s.write(ir_memcpy_asm()).need("memcpy");
   } else if (o.kind_tag == ir.K_MEMSET) {
