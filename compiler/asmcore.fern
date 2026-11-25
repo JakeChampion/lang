@@ -6191,7 +6191,7 @@ pub function reset_stack_bytes(): i64 {
 }
 
 pub function ssa_funary_known(what: string): boolean {
-  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits"];
+  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f32_round", "f64_bits", "f64_from_bits"];
   for x in un {
     if (x == what) {
       return true;

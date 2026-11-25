@@ -4887,6 +4887,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    f32.demote_f64\n    i32.reinterpret_f32\n");
   } else if (o.kind_tag == ir.K_F32_FROM_BITS) {
     parts = parts.append("    f32.reinterpret_i32\n    f64.promote_f32\n");
+  } else if (o.kind_tag == ir.K_F32_ROUND) {
+    parts = parts.append("    f32.demote_f64\n    f64.promote_f32\n");
   } else if (o.kind_tag == ir.K_FROUND) {
     parts = emit_wasm_fround(f64tmp, parts);
   } else if (o.kind_tag == ir.K_WRITE_BYTES) {

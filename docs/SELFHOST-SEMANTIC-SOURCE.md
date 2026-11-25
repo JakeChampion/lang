@@ -239,7 +239,7 @@ Unsupported constructs refuse the whole function with a reason.
   bears one — so a literal on either side takes it.
 
 - The f32, riding the f64's slot at single precision: every value of the type
-  is an f64 the `f32_bits` / `f32_from_bits` round-trip has already rounded,
+  is an f64 that the IR op `f32_round` has already rounded,
   so the width is a rounding applied wherever a value of the type is made —
   a literal, a conversion into it, an operator's result at it — rather than
   a slot of its own, and its operators are the f64's with the rounding after

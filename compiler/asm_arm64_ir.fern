@@ -3089,6 +3089,12 @@ function ssa_funary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
     s = s.write("    " + ssa_fmath_op(what) + " " + d + ", " + ssa_fsrc(reg_of, v, "d0") + "\n");
     return ssa_fput(reg_of, ins.result, d, s);
   }
+  if (what == "f32_round") {
+    s = ssa_fread(reg_of, v, "d0", s);
+    let d = ssa_fdst(reg_of, ins.result);
+    s = s.write("    fcvt s0, " + ssa_fsrc(reg_of, v, "d0") + "\n    fcvt " + d + ", s0\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
   if (what == "i32_to_f64:64" || what == "i32_to_f64:32") {
     s = ssa_read(reg_of, v, "x4", s);
     let src = ssa_src(reg_of, v, "x4");
@@ -3119,7 +3125,7 @@ function ssa_funary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcor
 }
 
 function ssa_funary_direct(what: string): boolean {
-  return ssa_fmath_op(what) != "" || what == "i32_to_f64:64" || what == "i32_to_f64:32" || what == "f64_to_i32" || what == "f64_to_i64";
+  return ssa_fmath_op(what) != "" || what == "f32_round" || what == "i32_to_f64:64" || what == "i32_to_f64:32" || what == "f64_to_i32" || what == "f64_to_i64";
 }
 
 function ssa_load_abi_args(reg_of: i32[], args: i32[], count: i32, s: asmcore.EmitState): asmcore.EmitState {

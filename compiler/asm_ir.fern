@@ -9646,6 +9646,7 @@ function ssa_fmath_op(what: string): string {
     "ffloor" => "roundsd $1,",
     "fceil" => "roundsd $2,",
     "ftrunc" => "roundsd $3,",
+    "f32_round" => "cvtsd2ss",
     _ => "",
   };
 }
@@ -9658,6 +9659,9 @@ function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
     s = s.write("    xorpd " + d + ", " + d + "\n");
   }
   s = s.write("    " + ssa_fmath_op(ins.str) + " " + a + ", " + d + "\n");
+  if (ins.str == "f32_round") {
+    s = s.write("    cvtss2sd " + d + ", " + d + "\n");
+  }
   return ssa_fput(reg_of, ins.result, d, s);
 }
 

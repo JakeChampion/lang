@@ -4045,8 +4045,7 @@ function float_scalar(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst
 }
 
 function round_f32(own r: irtables.LowerState): irtables.LowerState {
-  r = emit(r, ir.op_f32_bits());
-  return emit(r, ir.op_f32_from_bits());
+  return emit(r, ir.op_f32_round());
 }
 
 function into_float(own r: irtables.LowerState, from: typeinfo.Type, to: typeinfo.Type): irtables.LowerState {
