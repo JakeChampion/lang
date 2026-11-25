@@ -4473,6 +4473,9 @@ function (s: Scope) unknown_method_advice(ns: string, method: string, recv: type
   if let typeinfo.TypeUnion(u) = recv {
     surface = u.name;
   }
+  if (s.lookup_assoc_sig(surface, method).is_some()) {
+    return assoc_on_value_message(surface, method);
+  }
   if (s.methods_in_namespace(surface).len() > 0 || stdlib_methods.methods_on(surface).len() > 0) {
     return s.unknown_method_message(surface, method, label, recv);
   }
@@ -14563,6 +14566,11 @@ function assoc_base_name(obj: ast.Expr): string {
   return "";
 }
 
+function assoc_on_value_message(tyname: string, field: string): string {
+  let t = util.demangle(tyname);
+  return t + "." + field + " is an associated function, not a method: its first parameter is not `self`, so call it as " + t + "." + field + "(...)";
+}
+
 function assoc_const_read_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprFieldAccess): util.Diag[] {
   if (mfa.const_read == h.is_const) {
     return [];
@@ -15416,7 +15424,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
                 out = util.append_diags(out, callable_arg_diags(c, bms, s));
               } else if let Some(fsig) = s.lookup_struct(sn.name) {
                 let fldi = util.index_of_str(fsig.field_names, mfa.field);
-                if (fldi < 0) {
+                if (fldi < 0 && s.lookup_assoc_sig(sn.name, mfa.field).is_some()) {
+                  out = out.append(dg_at("E043", assoc_on_value_message(sn.name, mfa.field), mfa.line, mfa.col));
+                } else if (fldi < 0) {
                   out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
                 } else {
                   let fldt = field_access_result_type(mfa, sn, s);
