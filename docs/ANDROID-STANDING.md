@@ -266,3 +266,17 @@ The order puts first what stops a release, then what most apps need.
 8. **Developer tools.** A debugger workflow with lldb, and then a reload
    of the view and update code with the model kept. `-apk-run` already
    builds the ABI of the device only.
+
+## Device runs of the Keystore procedure
+
+`tests/android/keystore/README.md` is the procedure. It runs
+`std/android/keystore` and the sealed identity of Walkie on a phone with a
+TEE and, where the phone has one, StrongBox. Add one row for each run. Put
+the log lines of each step under the table, with the date of the run as
+their heading.
+
+| Date | Phone | Android and patch level | Commit | StrongBox | Steps that pass | Steps not run |
+|---|---|---|---|---|---|---|
+
+No run is recorded yet. Until one is, the TEE and StrongBox paths of the
+Keystore module and of Walkie have run on an emulator only.

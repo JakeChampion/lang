@@ -608,8 +608,12 @@ no unit, and a retain or a
 release of it does nothing, because every retain and release skips an
 immortal box. At a join the counts are met per value. A count met with free
 is that count on some paths and free on the others: a spend of the free part
-does nothing, and a unit still held on the counted part is a leak. A null
-constant and a borrow are not free. Any other disagreement is unproved rather
+does nothing, and a unit still held on the counted part is a leak. A
+uniqueness test skips an immortal box, so a literal is never unique. On the
+edge where `__fern_rc_is_unique` is true, a count met with free is that count
+(`unique_on_edge`). This applies only where the other edge releases the box,
+and a token of the box reads such a released box as 0. Thus both arms of the
+token hold a plain count. A null constant and a borrow are not free. Any other disagreement is unproved rather
 than a finding. A call that returns its operand or a fresh box
 (`__fern_arr_concat`, `rcsigs.effect_kept_or_same`) leaves the operand its
 unit and gives the result a fresh one. On the edge where a test finds the two
@@ -620,7 +624,10 @@ of that box. A store of null can clear the slot that the box was read from.
 Then the unit of the slot goes to the value that is the box on that path. A twin holds no unit if it is the
 box of the parameter, and one unit if it is a new box. A test of the twin
 against the parameter decides the side on each edge, and a join meets the
-two sides apart. A test of any value with a plain count against a parameter
+two sides apart. An edge where the test selects a side that the twin does
+not have carries no path. The walk does not hand on such an edge, and a
+block that only such edges reach does not run in that round
+(`twin_dead_on_edge`, `reached`). A test of any value with a plain count against a parameter
 also gives a twin with one side: the box of the parameter on the equal edge,
 and another box on the other edge. A retain or a release of a twin with one
 side changes the count of that side. A parameter is its own box, so as a phi

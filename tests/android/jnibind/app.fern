@@ -5,11 +5,16 @@
 // got, and finishes.
 import "std/android";
 import "std/android/launch";
+import "std/android/attestation";
 import "std/android/keystore";
+import "std/clock";
 import "std/crypto";
+import "std/hex";
 import "std/jni";
 import "std/log";
 import "std/option";
+import "std/tls/verify";
+import "std/tls/x509";
 import "./bindings";
 
 struct App { done: boolean }
@@ -57,7 +62,8 @@ function check(e: usize, act: bindings.Activity): Result[i32, jni.JavaError] {
   thrown_part(e)?;
   marks_part(e)?;
   keystore_part(e)?;
-  return Ok(7);
+  signing_part(e)?;
+  return Ok(8);
 }
 
 // Methods of an object with a string and a boolean result, and a
@@ -214,4 +220,36 @@ function keystore_part(e: usize): Result[void, jni.JavaError] {
   let refused = match (keystore.open(e, alias, changed)) { Ok(_) => false, Err(_) => true };
   log.warn("jnibind: keystore roundtrip " + crypto.consteq(plain, data).to_string() + " fresh iv " + distinct.to_string() + " refused " + refused.to_string());
   return Ok(());
+}
+
+// Make an attested signing key, check its chain to its own root, and verify a signature with the leaf key.
+function signing_part(e: usize): Result[void, jni.JavaError] {
+  let alias = "fern.jnibind.signing";
+  let challenge: u8[] = [9u8, 8u8, 7u8, 6u8];
+  keystore.delete_key(e, alias)?;
+  let made = keystore.make_signing_key(e, alias, challenge, keystore.key_options())?;
+  let again = keystore.make_signing_key(e, alias, challenge, keystore.key_options()).is_ok();
+  let read = keystore.signing_key(e, alias)?;
+  let same = crypto.consteq(made.public_key, read.public_key) && made.chain.len() == read.chain.len();
+  let root = x509.parse(made.chain[made.chain.len() - 1]).map_err(failed)?;
+  let pin = hex.encode(crypto.sha256_new().update(root.spki).finish());
+  let now = clock.now();
+  let proof = attestation.verify_with(made.chain, [pin], challenge, now).map_err(attestation_failed)?;
+  let wrong = attestation.verify_with(made.chain, [pin], [1u8], now).is_ok();
+  let message: u8[] = [1u8, 2u8, 3u8];
+  let sig = keystore.sign(e, alias, message)?;
+  let good = verify.signature_ok(proof.key, x509.EcdsaSha256, message, sig).unwrap_or(false);
+  let forged = verify.signature_ok(proof.key, x509.EcdsaSha256, [1u8, 2u8, 4u8], sig).unwrap_or(true);
+  keystore.delete_key(e, alias)?;
+  let gone = keystore.signing_key(e, alias).is_err();
+  log.warn("jnibind: signing chain " + made.chain.len().to_string() + " level " + attestation.level_name(proof.level) + " same " + same.to_string() + " again " + again.to_string() + " wrong " + wrong.to_string() + " good " + good.to_string() + " forged " + forged.to_string() + " gone " + gone.to_string());
+  return Ok(());
+}
+
+function failed(err: x509.X509Error): jni.JavaError {
+  return jni.JavaError { text: "attestation root: " + err.message() };
+}
+
+function attestation_failed(err: attestation.AttestationError): jni.JavaError {
+  return jni.JavaError { text: "attestation: " + err.message() };
 }

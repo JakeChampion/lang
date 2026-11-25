@@ -236,8 +236,8 @@ function check_structs_and_aliases(): test.TestOutcome {
   if (rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != "U") {
     return test.fail("rt8g.aliases.len() != 1 || rt8g.aliases[0].type_params.len() != 2 || rt8g.aliases[0].type_params[1] != \"U\"");
   }
-  if (rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0] != "T" || rt8g.aliases[0].variant_args[1] != "" || rt8g.aliases[0].variant_args[2] != "Leaf[U]") {
-    return test.fail("rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0] != \"T\" || rt8g.aliases[0].variant_args[1] != \"\" || rt8g.aliases[0].variant_args[2] != \"Leaf[U]\"");
+  if (rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0].join(", ") != "T" || rt8g.aliases[0].variant_args[1].join(", ") != "" || rt8g.aliases[0].variant_args[2].join(", ") != "Leaf[U]") {
+    return test.fail("rt8g.aliases[0].variant_args.len() != 3 || rt8g.aliases[0].variant_args[0].join(\", \") != \"T\" || rt8g.aliases[0].variant_args[1].join(\", \") != \"\" || rt8g.aliases[0].variant_args[2].join(\", \") != \"Leaf[U]\"");
   }
 
   return test.pass();

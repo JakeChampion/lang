@@ -3559,6 +3559,13 @@ func (c *checker) methodDeclConflict(typeName, name, trait string) (int, methodC
 	return declOK, methodCand{}
 }
 
+// errAssocOnValue refuses `v.f()` where f is an associated function of v's
+// type: only a first parameter named `self` makes an impl function a method.
+func (c *checker) errAssocOnValue(pos ast.Position, typeName, name string) {
+	t := demangle(typeName)
+	c.errfCode(pos, "E043", "%s.%s is an associated function, not a method: its first parameter is not `self`, so call it as %s.%s(...)", t, name, t, name)
+}
+
 func (c *checker) errAmbiguousMethod(pos ast.Position, typeName, name string, cands []methodCand) {
 	c.errfCode(pos, "E074", "%s", ambiguousMethodMessage(typeName, name, cands))
 }
@@ -12645,7 +12652,7 @@ func (c *checker) checkBlockExprAt(n *ast.BlockExpr, parent *scope, want ast.Typ
 		if c.stmtsDiverge(n.Stmts) {
 			return ast.NeverType{}
 		}
-		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
+		c.errfCode(n.P, "E061", "block-expression has no trailing value; a value is required here — end the block with an expression that has no `;` after it")
 		return nil
 	}
 	if want != nil {
@@ -14697,7 +14704,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
 	}
 	for i, arm := range n.Arms {
-		if sawIrrefutable && !(n.Origin == ast.OriginIfLet && i == len(n.Arms)-1 && arm.IsWildcard) {
+		if sawIrrefutable && !(n.Origin != "" && i == len(n.Arms)-1 && arm.IsWildcard) {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -14797,7 +14804,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		}
 	}
 	for i, arm := range n.Arms {
-		if sawIrrefutable && !(n.Origin == ast.OriginIfLet && i == len(n.Arms)-1 && arm.IsWildcard) {
+		if sawIrrefutable && !(n.Origin != "" && i == len(n.Arms)-1 && arm.IsWildcard) {
 			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
 		}
 		if arm.IsWildcard {
@@ -14896,7 +14903,18 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 	return result
 }
 
+// A value let-else is checked as the match it is, and then as a let-else.
 func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.Type {
+	t := c.checkMatchExprArms(n, s, want)
+	if n.Origin == ast.OriginLetElse && len(n.Arms) >= 2 {
+		if els := n.Arms[len(n.Arms)-1].Body; !c.ownedExprDiverges(els) {
+			c.errfCode(n.P, "E022", "let-else: else branch must diverge (return / break / continue / exit)")
+		}
+	}
+	return t
+}
+
+func (c *checker) checkMatchExprArms(n *ast.MatchExpr, s *scope, want ast.Type) ast.Type {
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
 		for _, arm := range n.Arms {
@@ -16599,6 +16617,13 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					prefer = []string{c.current.TraitDefault}
 				}
 				if mangled, ownerTrait, tied, ok := c.resolveMethodFrom(typeName, fa.Field, prefer); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+					if strings.HasPrefix(mangled, "__assoc_") {
+						c.errAssocOnValue(fa.P, typeName, fa.Field)
+						for _, arg := range n.Args {
+							c.checkExpr(arg, s)
+						}
+						return nil
+					}
 					if len(tied) > 0 {
 						c.errAmbiguousMethod(fa.FieldPos, typeName, fa.Field, tied)
 					}

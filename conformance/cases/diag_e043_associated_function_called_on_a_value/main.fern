@@ -1,0 +1,18 @@
+// An impl function is a method only when its first parameter is named
+// `self`. Any other first parameter, even one of type `Self`, makes it an
+// associated function, so a call on a value is refused.
+trait Area { function area(s: Self): i32; }
+trait Zero { function zero(): Self; }
+
+struct Sq { n: i32 }
+impl Area for Sq { function area(s: Self): i32 { return s.n * s.n; } }
+
+enum Turn { Up, Down }
+impl Zero for Turn { function zero(): Turn { return Turn.Up; } }
+
+function main(): i32 {
+    let q = Sq { n: 3 };
+    let d = Turn.zero();
+    let e = d.zero();
+    return q.area() + Sq.area(q);
+}

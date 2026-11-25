@@ -4473,6 +4473,9 @@ function (s: Scope) unknown_method_advice(ns: string, method: string, recv: type
   if let typeinfo.TypeUnion(u) = recv {
     surface = u.name;
   }
+  if (s.lookup_assoc_sig(surface, method).is_some()) {
+    return assoc_on_value_message(surface, method);
+  }
   if (s.methods_in_namespace(surface).len() > 0 || stdlib_methods.methods_on(surface).len() > 0) {
     return s.unknown_method_message(surface, method, label, recv);
   }
@@ -5218,6 +5221,10 @@ function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Ty
 }
 
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  return bounded_type(call_result_type(c, s));
+}
+
+function call_result_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (c.args.len() == 0) {
     match (c.callee) {
       ast.ExprLambda(lm) => {
@@ -6434,7 +6441,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return check_unary_expr(u, s);
     },
     ast.ExprCall(c) => {
-      return bounded_type(check_call_expr(c, s));
+      return check_call_expr(c, s);
     },
     ast.ExprTuple(t) => {
       let elems: typeinfo.Type[] = [];
@@ -14559,6 +14566,11 @@ function assoc_base_name(obj: ast.Expr): string {
   return "";
 }
 
+function assoc_on_value_message(tyname: string, field: string): string {
+  let t = util.demangle(tyname);
+  return t + "." + field + " is an associated function, not a method: its first parameter is not `self`, so call it as " + t + "." + field + "(...)";
+}
+
 function assoc_const_read_diags(h: AssocHit, c: ast.ExprCall, mfa: ast.ExprFieldAccess): util.Diag[] {
   if (mfa.const_read == h.is_const) {
     return [];
@@ -14660,7 +14672,7 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   match (e) {
     ast.ExprCall(c) => {
-      out = call_diags_call(c, s, out, t_unknown("no destination"));
+      out = call_diags_call(c, s, check_call_expr(c, s), t_unknown("no destination"));
     },
     ast.ExprBinary(b) => {
       out = call_diags_binary(b, s, out);
@@ -15101,8 +15113,9 @@ function array_builtin_arity(method: string, view: boolean): i32 {
   return -1;
 }
 
-function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: typeinfo.Type): util.Diag[] {
-  let (large, found) = too_large_diags(bounded_type(check_call_expr(c, s)), c.args, c.line, c.col, s, out);
+function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest: typeinfo.Type): util.Diag[] {
+  let out: util.Diag[] = [];
+  let (large, found) = too_large_diags(result, c.args, c.line, c.col, s, out);
   if (found) {
     return large;
   }
@@ -15411,7 +15424,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
                 out = util.append_diags(out, callable_arg_diags(c, bms, s));
               } else if let Some(fsig) = s.lookup_struct(sn.name) {
                 let fldi = util.index_of_str(fsig.field_names, mfa.field);
-                if (fldi < 0) {
+                if (fldi < 0 && s.lookup_assoc_sig(sn.name, mfa.field).is_some()) {
+                  out = out.append(dg_at("E043", assoc_on_value_message(sn.name, mfa.field), mfa.line, mfa.col));
+                } else if (fldi < 0) {
                   out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
                 } else {
                   let fldt = field_access_result_type(mfa, sn, s);
@@ -15584,6 +15599,10 @@ function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type
   }
   if let ast.ExprUnary(u) = e {
     return unary_diags_typed(u, s);
+  }
+  if let ast.ExprCall(c) = e {
+    let result = check_call_expr(c, s);
+    return (call_diags_call(c, s, result, t_unknown("no destination")), result);
   }
   return (call_diags(e, s), check_expr(e, s));
 }
@@ -17123,7 +17142,7 @@ function receiver_dest(mfa: ast.ExprFieldAccess, receiver: typeinfo.Type, dest: 
 
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprCall(c) = e {
-    return call_diags_call(c, s, [], dest);
+    return call_diags_call(c, s, check_call_expr(c, s), dest);
   }
   if let ast.ExprIdent(id) = e {
     if let typeinfo.TypeFunc(df) = dest {
@@ -28769,7 +28788,7 @@ function ow_value_data(tn: string, dx: OwnDecls, seen: string[]): boolean {
       for i in 0..alias.variants.len() {
         let member = alias.variants[i];
         if (i < alias.variant_args.len() && alias.variant_args[i].len() > 0) {
-          member = member + "[" + alias.variant_args[i] + "]";
+          member = member + "[" + alias.variant_args[i].join(", ") + "]";
         }
         pending = pending.append(parser.subst_ty(member, alias.type_params, args));
       }
@@ -28944,7 +28963,7 @@ function ow_alias_holds_no_handle(al: parser.TypeAlias, dx: OwnDecls, seen: stri
   for i in 0..al.variants.len() {
     let member = al.variants[i];
     if (i < al.variant_args.len() && al.variant_args[i].len() > 0) {
-      member = member + "[" + al.variant_args[i] + "]";
+      member = member + "[" + al.variant_args[i].join(", ") + "]";
     }
     if (!ow_no_handle_in(member, dx, al.type_params, seen)) {
       return false;
@@ -35784,6 +35803,9 @@ function names_whole_type(t: typeinfo.Type, s: Scope): boolean {
     typeinfo.TypeStruct(sd) => {
       return all_names_whole(sd.args, s);
     },
+    typeinfo.TypeUnbound(_) => {
+      return false;
+    },
     _ => {
       return true;
     }
@@ -36775,7 +36797,12 @@ function pretype_at_expr(x: ast.Expr, s: Scope): (ast.Expr, Scope, boolean) {
       match (c.callee) {
         ast.ExprLambda(lm) => {
           let body = struct_record_value_body(lm, s);
-          let inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: pretype_stmts(body, lambda_body_scope(lm, s)) } };
+          let bs = lambda_body_scope(lm, s);
+          let whole = check_expr(x, s);
+          if (names_whole_type(whole, s)) {
+            bs = bs.with_block_ret(whole);
+          }
+          let inner: ast.Expr = ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: pretype_stmts(body, bs) } };
           return (vb_retype(inner, s), s, true);
         },
         _ => {

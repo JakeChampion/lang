@@ -2557,7 +2557,14 @@ func (p *parser) parseBlockStmtsMode(block *ast.Block, tailValue, discardTail, s
 			return
 		}
 		if p.match(lexer.Keyword, "let") {
-			s, err := p.parseLet(true)
+			rest := letRestStmts
+			if tailValue && !discardTail {
+				rest = letRestLambda
+				if statementBranches {
+					rest = letRestLambdaVoidBranches
+				}
+			}
+			s, err := p.parseLet(rest)
 			if err != nil {
 				p.errors = append(p.errors, err)
 				p.syncToStmt()
@@ -2703,7 +2710,7 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 		case "defer", "errdefer":
 			return p.parseDefer()
 		case "let":
-			return p.parseLet(false)
+			return p.parseLet(letRestNone)
 		case "match":
 			return p.parseMatch()
 		case "function":
@@ -3046,14 +3053,31 @@ func (p *parser) parseIfLetExpr(pos ast.Position) (ast.Expr, error) {
 }
 
 func (p *parser) parseBranchBody() (ast.Expr, error) {
-	if err := p.enter(); err != nil {
-		return nil, err
-	}
-	defer p.leave()
 	open, err := p.expect(lexer.Punct, "{")
 	if err != nil {
 		return nil, err
 	}
+	stmts, tail, err := p.parseBranchItems()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+		return nil, err
+	}
+	if len(stmts) == 0 && tail != nil && !isLetElseValue(tail) {
+		return tail, nil
+	}
+	return &ast.BlockExpr{P: open.Pos, Stmts: stmts, Tail: tail}, nil
+}
+
+// parseBranchItems reads the items of a value branch up to its close: the
+// statements, and the trailing expression if there is one. A let-else gives
+// the trailing expression.
+func (p *parser) parseBranchItems() ([]ast.Stmt, ast.Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, nil, err
+	}
+	defer p.leave()
 	var stmts []ast.Stmt
 	var tail ast.Expr
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
@@ -3063,10 +3087,23 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 				continue
 			}
 		}
+		if p.match(lexer.Keyword, "let") {
+			s, err := p.parseLet(letRestValue)
+			if err != nil {
+				return nil, nil, err
+			}
+			if m, ok := letElseValueStmt(s); ok {
+				return stmts, m, nil
+			}
+			if s != nil {
+				stmts = append(stmts, s)
+			}
+			continue
+		}
 		if p.branchStmtStart() && !p.nestedBlockTail() {
 			s, err := p.parseStmt()
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if s != nil {
 				stmts = append(stmts, s)
@@ -3076,7 +3113,7 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 		mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
 		e, err := p.parseExpr()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if _, ok := p.accept(lexer.Punct, ";"); ok {
 			stmts = append(stmts, &ast.ExprStmt{P: e.Pos(), Expr: e})
@@ -3087,7 +3124,7 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 			p.typeRefs, p.todoSites, p.errors = p.typeRefs[:nRefs], p.todoSites[:nTodo], p.errors[:nErr]
 			s, serr := p.parseStmt()
 			if serr != nil {
-				return nil, serr
+				return nil, nil, serr
 			}
 			if s != nil {
 				stmts = append(stmts, s)
@@ -3097,13 +3134,7 @@ func (p *parser) parseBranchBody() (ast.Expr, error) {
 		tail = e
 		break
 	}
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
-		return nil, err
-	}
-	if len(stmts) == 0 && tail != nil {
-		return tail, nil
-	}
-	return &ast.BlockExpr{P: open.Pos, Stmts: stmts, Tail: tail}, nil
+	return stmts, tail, nil
 }
 
 // unsafeBlockAt reports `unsafe {` at the cursor.
@@ -4544,7 +4575,20 @@ func (p *parser) parseUse(parent *ast.Block) error {
 	return nil
 }
 
-func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
+// letRest says what a let-else takes as the success path: nothing, the
+// statements to the end of the block, those statements and the value of a
+// value branch, or the rest of a lambda body that can end in a tail.
+type letRest int
+
+const (
+	letRestNone letRest = iota
+	letRestStmts
+	letRestValue
+	letRestLambda
+	letRestLambdaVoidBranches
+)
+
+func (p *parser) parseLet(rest letRest) (ast.Stmt, error) {
 	kw := p.advance()
 	patternHead := p.atPatternHead()
 	if p.atLetBindingHead() && !patternHead {
@@ -4589,6 +4633,9 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	if _, err := p.expect(lexer.Keyword, "else"); err != nil {
 		return nil, err
 	}
+	if rest == letRestValue {
+		return p.letElseValue(kw.Pos, pats, src)
+	}
 	elseBlk, err := p.parseBlock()
 	if err != nil {
 		return nil, err
@@ -4597,11 +4644,59 @@ func (p *parser) parseLet(captureRest bool) (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	rest := &ast.Block{P: semi.Pos}
-	if captureRest {
-		p.parseBlockStmts(rest, false)
+	success := &ast.Block{P: semi.Pos}
+	switch rest {
+	case letRestStmts:
+		p.parseBlockStmts(success, false)
+	case letRestLambda, letRestLambdaVoidBranches:
+		p.parseBlockStmtsMode(success, true, false, rest == letRestLambdaVoidBranches)
 	}
-	return p.buildPatternBindingMatch(kw.Pos, pats, src, rest, elseBlk, ast.OriginLetElse), nil
+	return p.buildPatternBindingMatch(kw.Pos, pats, src, success, elseBlk, ast.OriginLetElse), nil
+}
+
+// letElseValue reads the else branch and the rest of a value branch after a
+// let-else. The rest ends in the value of the branch, so the let-else is a
+// value match, the same as `if let`. The statement holds that match.
+func (p *parser) letElseValue(pos ast.Position, pats []matchPattern, src ast.Expr) (ast.Stmt, error) {
+	elseOpen := p.peek().Pos
+	els, err := p.parseBranchBody()
+	if err != nil {
+		return nil, err
+	}
+	semi, err := p.expect(lexer.Punct, ";")
+	if err != nil {
+		return nil, err
+	}
+	stmts, tail, err := p.parseBranchItems()
+	if err != nil {
+		return nil, err
+	}
+	then := &ast.BlockExpr{P: pos, Stmts: stmts, Tail: tail}
+	raw := make([]exprRawArm, len(pats))
+	for i, pat := range pats {
+		var body ast.Expr = then
+		if i > 0 {
+			body = ast.CloneExpr(then)
+		}
+		raw[i] = exprRawArm{pat: pat, body: body, altCont: i > 0}
+	}
+	arms := append(flatExprArms(raw), &ast.MatchExprArm{P: pos, IsWildcard: true, Body: els})
+	m := &ast.MatchExpr{P: pos, Tag: src, Arms: arms, Origin: ast.OriginLetElse, ThenOpen: semi.Pos, ElseOpen: elseOpen}
+	return &ast.ExprStmt{P: pos, Expr: m}, nil
+}
+
+// letElseValueStmt is the value match of a let-else that letElseValue read.
+func letElseValueStmt(s ast.Stmt) (ast.Expr, bool) {
+	x, ok := s.(*ast.ExprStmt)
+	if !ok || !isLetElseValue(x.Expr) {
+		return nil, false
+	}
+	return x.Expr, true
+}
+
+func isLetElseValue(e ast.Expr) bool {
+	m, ok := e.(*ast.MatchExpr)
+	return ok && m.Origin == ast.OriginLetElse
 }
 
 func (p *parser) atLetBindingHead() bool {

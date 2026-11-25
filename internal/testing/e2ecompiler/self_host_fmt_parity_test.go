@@ -50,6 +50,51 @@ pub function (p: Pool) log(): usize {
   return p.base;
 }
 `},
+	{"let-else-value-branch", `enum Shape { Circle(i32), Square(i32), Dot }
+
+function two(a: Option[i32], b: Option[i32]): i32 {
+  let r = {
+    // first
+    let Some(x) = a else {
+      return -1;
+    };
+
+    let Some(y) = b else {
+      return -2;
+    };
+    let z = x + y;
+    z * 2
+  };
+  return r;
+}
+
+function arm(x: Shape): Result[i32, string] {
+  return match (x) {
+    Shape.Dot => Err("dot"),
+    _ => {
+      let Shape.Circle(c) | Shape.Square(c) = x else {
+        return Err("none");
+      };
+      Ok(c * 2)
+    },
+  };
+}
+
+function one(t: (i32, i32)): i32 {
+  let s = { let (1, b) = t else { return 0; }; b + 1 };
+  return s;
+}
+`},
+	{"let-else-lambda-body", `function one(t: Option[i32]): i32 {
+  let f = (): i32 => {
+    let Some(s) = t else {
+      return 0;
+    };
+    s + 2
+  };
+  return f();
+}
+`},
 	{"match-header-and-arm-comments", `enum E { A, B(i32), C }
 
 function f(e: E, s: string, t: (i32, i32)): i32 {

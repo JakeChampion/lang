@@ -198,6 +198,78 @@ func TestSelfHostRereadKeepsTheChildRead(t *testing.T) {
 	runRereadProgram(t, "reread_child_kept.fern", rereadChildKeptProg)
 }
 
+// rereadTwinKeptProg reads s.list in the entry block, and the record update
+// reads it again as cur.list. A spliced helper then puts a join between them.
+// The early sink must not read s.list[i].id again in the branch: cur.list is
+// live there, so a third read of the slot keeps the plan from taking the
+// array, and the last update copies the list and boxes the element (#14440).
+func TestSelfHostRereadKeepsTheTwinRead(t *testing.T) {
+	runRereadProgram(t, "reread_twin_kept.fern", rereadTwinKeptProg)
+}
+
+const rereadTwinKeptProg = `import "std/array";
+
+struct Params { bidi: i64, uni: i64 }
+struct St { id: i64, closed: boolean, buf: u8[] }
+struct Ss { list: St[], closed: i64[], limits: i64[], dirty: boolean[], local: Params, retired: i32 }
+
+function initial(s: Ss, t: i32): i64 {
+  if ((t & 2) == 0) {
+    return s.local.bidi;
+  }
+  return s.local.uni;
+}
+
+function (st: St) close_it(): St {
+  return St { ...st, closed: true };
+}
+
+@noinline
+function retire(s: Ss, i: i32): Ss {
+  let st = s.list[i];
+  if (st.closed) {
+    return s;
+  }
+  let cur = Ss { ...s, retired: s.retired + 1 };
+  if ((st.id & 1) == 1) {
+    let t = (st.id & 3) as i32;
+    let init = initial(cur, t);
+    let target = cur.closed[t] + 1 + init;
+    cur = Ss { ...cur, closed: cur.closed.with(t, cur.closed[t] + 1) };
+    if (target - cur.limits[t] >= init / 8) {
+      cur = Ss { ...cur, limits: cur.limits.with(t, target), dirty: cur.dirty.with(t, true) };
+    }
+  }
+  cur = Ss { ...cur, list: cur.list.with(i, cur.list[i].close_it()) };
+  return cur;
+}
+
+function main(): i32 {
+  let list: St[] = [];
+  for k in 0..4 {
+    list = list.append(St { id: k as i64, closed: false, buf: [] });
+  }
+  let s = Ss { list: list, closed: [0, 0, 0, 0], limits: [0, 0, 0, 0], dirty: [false, false, false, false], local: Params { bidi: 100, uni: 3 }, retired: 0 };
+  let before = __heap_alloc_count();
+  for round in 0..1000 {
+    let i = round % 4;
+    s = Ss { ...s, list: s.list.with(i, St { ...s.list[i], closed: false }) };
+    s = retire(s, i);
+  }
+  let n = __heap_alloc_count() - before;
+  if (s.retired != 1000 || s.closed[1] != 250 || s.closed[3] != 250 || s.closed[0] != 0 || !s.dirty[3] || s.limits[3] != 253) {
+    return 1;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  if (n > 100 as i64) {
+    return 2;
+  }
+  return 0;
+}
+`
+
 func runRereadProgram(t *testing.T, name, prog string) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
