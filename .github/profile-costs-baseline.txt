@@ -53,11 +53,11 @@ profile/arm64-linux/enum_match.safe.emit	1273
 profile/arm64-linux/http_hello.diagnostic.bytes	138088
 profile/arm64-linux/http_hello.diagnostic.emit	18471
 profile/arm64-linux/http_hello.hardened.bytes	79784
-profile/arm64-linux/http_hello.hardened.emit	18922
+profile/arm64-linux/http_hello.hardened.emit	17976
 profile/arm64-linux/http_hello.minimal.bytes	67048
 profile/arm64-linux/http_hello.minimal.emit	14679
 profile/arm64-linux/http_hello.safe.bytes	75080
-profile/arm64-linux/http_hello.safe.emit	17671
+profile/arm64-linux/http_hello.safe.emit	16806
 profile/arm64-linux/int_loop.diagnostic.bytes	5608
 profile/arm64-linux/int_loop.diagnostic.emit	574
 profile/arm64-linux/int_loop.hardened.bytes	2824
@@ -70,10 +70,10 @@ profile/arm64-linux/map_string.diagnostic.bytes	146320
 profile/arm64-linux/map_string.diagnostic.emit	11902
 profile/arm64-linux/map_string.hardened.bytes	51448
 profile/arm64-linux/map_string.hardened.emit	11761
-profile/arm64-linux/map_string.minimal.bytes	42792
-profile/arm64-linux/map_string.minimal.emit	9643
+profile/arm64-linux/map_string.minimal.bytes	42232
+profile/arm64-linux/map_string.minimal.emit	9500
 profile/arm64-linux/map_string.safe.bytes	43464
-profile/arm64-linux/map_string.safe.emit	9841
+profile/arm64-linux/map_string.safe.emit	9708
 profile/arm64-linux/startup.diagnostic.bytes	5144
 profile/arm64-linux/startup.diagnostic.emit	555
 profile/arm64-linux/startup.hardened.bytes	2744
@@ -126,10 +126,10 @@ profile/x86-64-linux/deflate_decode.hardened.emit	14035
 profile/x86-64-linux/deflate_decode.hardened.ir	26892529
 profile/x86-64-linux/deflate_decode.minimal.bytes	49168
 profile/x86-64-linux/deflate_decode.minimal.emit	11857
-profile/x86-64-linux/deflate_decode.minimal.ir	29343601
+profile/x86-64-linux/deflate_decode.minimal.ir	29945009
 profile/x86-64-linux/deflate_decode.safe.bytes	56192
 profile/x86-64-linux/deflate_decode.safe.emit	13652
-profile/x86-64-linux/deflate_decode.safe.ir	26430409
+profile/x86-64-linux/deflate_decode.safe.ir	26701238
 profile/x86-64-linux/enum_match.diagnostic.bytes	11920
 profile/x86-64-linux/enum_match.diagnostic.emit	1496
 profile/x86-64-linux/enum_match.diagnostic.ir	29250233
@@ -167,16 +167,16 @@ profile/x86-64-linux/int_loop.safe.bytes	2176
 profile/x86-64-linux/int_loop.safe.emit	298
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	140312
-profile/x86-64-linux/map_string.diagnostic.emit	11659
+profile/x86-64-linux/map_string.diagnostic.emit	11453
 profile/x86-64-linux/map_string.diagnostic.ir	57485402	2
-profile/x86-64-linux/map_string.hardened.bytes	43984
-profile/x86-64-linux/map_string.hardened.emit	10301
+profile/x86-64-linux/map_string.hardened.bytes	43392
+profile/x86-64-linux/map_string.hardened.emit	10179
 profile/x86-64-linux/map_string.hardened.ir	49537517	2
 profile/x86-64-linux/map_string.minimal.bytes	37584
-profile/x86-64-linux/map_string.minimal.emit	9389
+profile/x86-64-linux/map_string.minimal.emit	9266
 profile/x86-64-linux/map_string.minimal.ir	50973594	2
 profile/x86-64-linux/map_string.safe.bytes	38592
-profile/x86-64-linux/map_string.safe.emit	9647
+profile/x86-64-linux/map_string.safe.emit	9520
 profile/x86-64-linux/map_string.safe.ir	47895339	2
 profile/x86-64-linux/startup.diagnostic.bytes	5424
 profile/x86-64-linux/startup.diagnostic.emit	527

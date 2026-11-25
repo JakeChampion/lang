@@ -1892,7 +1892,9 @@ const KEPT_WHOLE: i32[] = [0x931, 0x9DC, 0x9DD, 0xB94];
 // the script tags of its GSUB and GPOS tables, whether the rules of the old
 // specification apply, whether a context with glyphs around its input is
 // left out when the shaper asks which lookups apply, the glyph of the
-// virama, and whether the font has the features rphf and pref.
+// virama, whether the font has the features rphf and pref, and the
+// position of each consonant glyph that a prepared plan knows. That table
+// is indexed by glyph, and 0 in it is a glyph that the plan does not know.
 struct Plan {
   config: Config,
   gsub: string,
@@ -1907,6 +1909,7 @@ struct Plan {
   pstf_lookups: truetype.PreparedLookup[],
   pref_lookups: truetype.PreparedLookup[],
   rphf_lookups: truetype.PreparedLookup[],
+  consonants: i32[],
 }
 
 // A glyph of a run, with its fields of the run. `key` holds the place of
@@ -1945,7 +1948,7 @@ function indic_plan(f: truetype.Font, c: Config): Option[Plan] {
     virama: f.glyph(c.virama), rphf: f.has_feature(gsub, "rphf"), pref: f.has_feature(gsub, "pref"),
     blwf_lookups: f.prepared_substitutions(gsub, "blwf"), vatu_lookups: f.prepared_substitutions(gsub, "vatu"),
     pstf_lookups: f.prepared_substitutions(gsub, "pstf"), pref_lookups: f.prepared_substitutions(gsub, "pref"),
-    rphf_lookups: f.prepared_substitutions(gsub, "rphf"),
+    rphf_lookups: f.prepared_substitutions(gsub, "rphf"), consonants: [],
   });
 }
 
@@ -1994,7 +1997,8 @@ pub function prepare_indic(f: truetype.Font, script: string): Option[IndicPlan] 
 function make_indic_plan(font: truetype.Font, script: string, prepared: boolean): Option[IndicPlan] {
   let c = indic_config(script)?;
   let f = if (prepared) { font.with_glyph_classes() } else { font };
-  let p = indic_plan(f, c)?;
+  let p0 = indic_plan(f, c)?;
+  let p = if (prepared) { Plan { ...p0, consonants: consonant_table(f, p0) } } else { p0 };
   let basic: Stage[] = [];
   for ft in basic_features() {
     basic = basic.append(stage_lookups(f, p.gsub, [ft], false, prepared));
@@ -2218,6 +2222,11 @@ function with_consonant_positions(p: Plan, gs0: Glyph[]): Glyph[] {
     if (pos_of(gs[i]) != POS_BASE_C) {
       continue;
     }
+    let id = gs[i].id;
+    if (id >= 0 && id < p.consonants.len() && p.consonants[id] != 0) {
+      gs = gs.with(i, with_pos(gs[i], p.consonants[id]));
+      continue;
+    }
     let k = 0;
     while (k < known.len() && known[k] != gs[i].id) {
       k += 1;
@@ -2229,6 +2238,32 @@ function with_consonant_positions(p: Plan, gs0: Glyph[]): Glyph[] {
     gs = gs.with(i, with_pos(gs[i], found[k]));
   }
   return gs;
+}
+
+// The position of the glyph of each base consonant of the block of the
+// script of `p`, by glyph, as `consonant_position` gives it.
+function consonant_table(f: truetype.Font, p: Plan): i32[] {
+  if (p.virama == 0) {
+    return [];
+  }
+  let block = p.config.virama & ~127;
+  let ids: i32[] = [];
+  for c in block..block + 128 {
+    let g = f.glyph(c);
+    if (g > 0 && (indic.properties(c) >> POS_SHIFT & 15) == POS_BASE_C) {
+      ids = ids.append(g);
+    }
+  }
+  let table: i32[] = [];
+  for g in ids {
+    while (table.len() <= g) {
+      table = table.append(0);
+    }
+  }
+  for g in ids {
+    table = table.with(g, consonant_position(p, g));
+  }
+  return table;
 }
 
 function consonant_position(p: Plan, g: i32): i32 {

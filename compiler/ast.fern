@@ -13,8 +13,8 @@ pub struct ExprString { value: string, line: i32, col: i32 }
 pub struct ExprBool { value: boolean, line: i32, col: i32 }
 
 // lit is the literal class of the node. `binary` and `unary` calculate it, so
-// each node comes from one of them.
-pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string, lit: i32 }
+// each node comes from one of them. code is `binary_code(op)`.
+pub struct ExprBinary { op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string, lit: i32, code: i32 }
 
 // A cast has the op CAST or CHECKED_CAST, and `cast` holds its target type.
 pub struct ExprUnary { op: string, operand: Expr, line: i32, col: i32, ty: string, lit: i32, cast: string }
@@ -89,7 +89,95 @@ const LIT_FLOAT: i32 = 8;
 const LIT_OPERAND: i32 = 16;
 
 pub function binary(op: string, left: Expr, right: Expr, line: i32, col: i32, ty: string): ExprBinary {
-  return ExprBinary { op: op, left: left, right: right, line: line, col: col, ty: ty, lit: binary_class(op, lit_class(left) & lit_class(right)) };
+  return ExprBinary { op: op, left: left, right: right, line: line, col: col, ty: ty, lit: binary_class(op, lit_class(left) & lit_class(right)), code: binary_code(op) };
+}
+
+// The codes of the binary operators. Each group is a range, so a test for a
+// group is two compares. An op that is not an operator has the code 0.
+pub const OP_ADD: i32 = 1;
+
+pub const OP_SUB: i32 = 2;
+
+pub const OP_MUL: i32 = 3;
+
+pub const OP_DIV: i32 = 4;
+
+pub const OP_REM: i32 = 5;
+
+pub const OP_AND: i32 = 6;
+
+pub const OP_OR: i32 = 7;
+
+pub const OP_XOR: i32 = 8;
+
+pub const OP_SHL: i32 = 9;
+
+pub const OP_SHR: i32 = 10;
+
+pub const OP_LT: i32 = 11;
+
+pub const OP_LE: i32 = 12;
+
+pub const OP_GT: i32 = 13;
+
+pub const OP_GE: i32 = 14;
+
+pub const OP_EQ: i32 = 15;
+
+pub const OP_NE: i32 = 16;
+
+pub const OP_LAND: i32 = 17;
+
+pub const OP_LOR: i32 = 18;
+
+pub const OP_SAT_ADD: i32 = 19;
+
+pub const OP_SAT_SUB: i32 = 20;
+
+pub const OP_SAT_MUL: i32 = 21;
+
+pub const OP_SAT_SHL: i32 = 22;
+
+pub const OP_CHECKED_ADD: i32 = 23;
+
+pub const OP_CHECKED_SUB: i32 = 24;
+
+pub const OP_CHECKED_MUL: i32 = 25;
+
+pub const OP_CHECKED_DIV: i32 = 26;
+
+pub const OP_CHECKED_REM: i32 = 27;
+
+pub const OP_CHECKED_SHL: i32 = 28;
+
+pub const OP_CHECKED_SHR: i32 = 29;
+
+const BINARY_OPS: string[] = ["", "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "<", "<=", ">", ">=", "==", "!=", "&&", "||", "+|", "-|", "*|", "<<|", "+?", "-?", "*?", "/?", "%?", "<<?", ">>?"];
+
+pub function binary_code(op: string): i32 {
+  for i in 1..BINARY_OPS.len() {
+    if (BINARY_OPS[i] == op) {
+      return i;
+    }
+  }
+  return 0;
+}
+
+// The spelling of the operator with the code `code`.
+pub function binary_text(code: i32): string {
+  return BINARY_OPS[code];
+}
+
+pub function is_order_code(code: i32): boolean {
+  return code >= OP_LT && code <= OP_GE;
+}
+
+pub function is_saturating_code(code: i32): boolean {
+  return code >= OP_SAT_ADD && code <= OP_SAT_SHL;
+}
+
+pub function is_checked_code(code: i32): boolean {
+  return code >= OP_CHECKED_ADD;
 }
 
 pub const CAST: string = "as";
