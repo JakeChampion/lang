@@ -10441,6 +10441,27 @@ function const_value(defs: SInst[], v: i32): i64 {
   return 0i64 - 1i64;
 }
 
+// The width that a lifted op such as `clz:64` or `i32_to_f64:32` gives after
+// its name: 32, 64, or 0 for another width or none.
+pub function op_width(ins: SInst): i32 {
+  if (ins.str.ends_with(":64")) {
+    return 64;
+  }
+  if (ins.str.ends_with(":32")) {
+    return 32;
+  }
+  return 0;
+}
+
+// The target type of an `int_cast` op, `u8` for `int_cast:u8`, or "" for
+// another op.
+pub function cast_target(ins: SInst): string {
+  if (ins.ir_kind != ir.K_INT_CAST || !ins.str.starts_with("int_cast:")) {
+    return "";
+  }
+  return slice_unchecked(ins.str, 9, ins.str.len()).to_owned();
+}
+
 pub function rotr_width(what: string): i32 {
   if (what.starts_with("rotr:64:")) {
     return 64;

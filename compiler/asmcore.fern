@@ -6190,14 +6190,13 @@ pub function reset_stack_bytes(): i64 {
   return 1048576i64;
 }
 
-pub function ssa_funary_known(what: string): boolean {
-  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits"];
-  for x in un {
-    if (x == what) {
-      return true;
-    }
+pub function ssa_funary_known(ins: ssa.SInst): boolean {
+  let k = ins.ir_kind;
+  if (k == ir.K_I32_TO_F64) {
+    return ssa.op_width(ins) != 0;
   }
-  return what == "i32_to_f64:32" || what == "i32_to_f64:64";
+  let un: i32[] = [ir.K_FSQRT, ir.K_FFLOOR, ir.K_FCEIL, ir.K_FTRUNC, ir.K_FABS, ir.K_FROUND, ir.K_FNEG, ir.K_F64_TO_I32, ir.K_F64_TO_I64, ir.K_F32_BITS, ir.K_F32_FROM_BITS, ir.K_F64_BITS, ir.K_F64_FROM_BITS];
+  return util.index_of_i32(un, k) >= 0;
 }
 
 pub function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begin: i32, tailed: boolean, s: EmitState): EmitState {
@@ -6316,8 +6315,8 @@ pub function ssa_prepared_loc(rows: sourcepos.SourcePos[], id: i32, s: EmitState
   return ssa_line_loc(ssa.SInst { ir_kind: 0, kind_tag: ssa.LINE, result: -1, args: [], imm: pos.line, str: pos.col }, s);
 }
 
-pub function ssa_sext32(what: string, unsigned: boolean): boolean {
-  return what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned;
+pub function ssa_sext32(ins: ssa.SInst): boolean {
+  return ssa.cast_target(ins) == "i32" || (ins.ir_kind == ir.K_INT_EXTEND || ins.ir_kind == ir.K_INT_WRAP) && ins.imm != 1;
 }
 
 pub function ssa_shift_tag(tag: i32): boolean {
@@ -6423,7 +6422,7 @@ function lone_wrap(uses: i32[], imm: ssa.Imms, ins: ssa.SInst): boolean {
   if (ins.kind_tag != ssa.UNARY || ins.args.len() != 1 || ins.imm != 0 || uses[ins.result] != 1) {
     return false;
   }
-  return (ins.str == "int_cast:i32" || ins.str == "int_wrap") && !imm.is_imm[ins.args[0]];
+  return (ssa.cast_target(ins) == "i32" || ins.ir_kind == ir.K_INT_WRAP) && !imm.is_imm[ins.args[0]];
 }
 
 function signed_order(tag: i32): boolean {
