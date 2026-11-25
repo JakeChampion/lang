@@ -816,6 +816,14 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 				}
 			}
 			return true
+		case *ast.Assign:
+			// An own parameter takes the value that replaces it.
+			if id, ok := x.Target.(*ast.Ident); ok && x.Value != nil && ownParam[id.Name] && declCount[id.Name] == 0 {
+				for _, part := range argParts(&ast.Call{Args: []ast.Expr{x.Value}}) {
+					moveSite(x, part)
+				}
+			}
+			return true
 		default:
 			return true
 		}
@@ -1100,7 +1108,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathDead(info, bf, c, q, fa.Field, order, fieldOf, updates) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field)-len(replacedPathRoots(c, q.Name, fa.Field)) != 1 || !fieldPathDead(info, bf, c, q, fa.Field, order, fieldOf, updates) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -1369,8 +1377,9 @@ func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, fi
 	}
 	inner := frames[len(frames)-1]
 	later := false
+	replaced := replacedPathRoots(holder, q.Name, field)
 	ast.Walk(inner.stmts[inner.idx], func(m ast.Node) bool {
-		if id, ok := m.(*ast.Ident); ok && order.Idx[id] > order.Idx[q] && readsPath(id) {
+		if id, ok := m.(*ast.Ident); ok && order.Idx[id] > order.Idx[q] && !replaced[id] && readsPath(id) {
 			later = true
 		}
 		return !later
@@ -1379,6 +1388,28 @@ func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, fi
 		return !later
 	}
 	return !later && !liveFromReads(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name), reads)
+}
+
+// replacedPathRoots gives the roots of the reads in n that a literal with base
+// q.field replaces: `S { ...q.field, f: g(q.field.f) }` takes q.field.f once,
+// through its base.
+func replacedPathRoots(n ast.Node, q, field string) map[*ast.Ident]bool {
+	out := map[*ast.Ident]bool{}
+	for read, sl := range replacedReads(n) {
+		base, ok := sl.Base.(*ast.FieldAccess)
+		if !ok || base.Field != field {
+			continue
+		}
+		if id, ok := base.Target.(*ast.Ident); !ok || id.Name != q {
+			continue
+		}
+		if mid, ok := read.Target.(*ast.FieldAccess); ok {
+			if id, ok := mid.Target.(*ast.Ident); ok {
+				out[id] = true
+			}
+		}
+	}
+	return out
 }
 
 // UpdateBases maps the base of each update literal `S { ...q, f: v }` to the

@@ -11297,6 +11297,22 @@ func SupersededFieldMoves(sl *ast.StructLit, target string, consumed func(field 
 	return out
 }
 
+// An owned binding keeps ownership after an assignment, so the new value
+// must be owned too, unless it can hold no handle. A value that reads the
+// binding itself is a self-update, which the call rules check.
+func (c *checker) borrowedReplacement(asn *ast.Assign, id *ast.Ident, owned, borrowedParam map[string]bool, ownedTypes map[string]ast.Type, isOwnedExpr func(ast.Expr) bool) bool {
+	if asn.Op != "" || asn.Value == nil || !owned[id.Name] || borrowedParam[id.Name] {
+		return false
+	}
+	if StmtReferencesName(asn.Value, id.Name) {
+		return false
+	}
+	if t := ownedTypes[id.Name]; t == nil || c.holdsNoHandle(t) {
+		return false
+	}
+	return !isOwnedExpr(asn.Value)
+}
+
 func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	if fn.Body == nil {
 		return
@@ -11308,7 +11324,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 	owned := map[string]bool{}
 	borrowedParam := map[string]bool{}
+	ownedTypes := map[string]ast.Type{}
 	for _, p := range fn.Params {
+		ownedTypes[p.Name] = p.Type
 		if p.Own && !definitelyScalar(p.Type) {
 			owned[p.Name] = true
 		} else {
@@ -11886,6 +11904,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			if scrutOwned {
 				owned[bname] = true
+				ownedTypes[bname] = types[i]
 			} else {
 				borrowedParam[bname] = true
 			}
@@ -12330,6 +12349,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 							selfMoveArgs[arg] = true
 						}
 					}
+				}
+				if id, ok := asn.Target.(*ast.Ident); ok && c.borrowedReplacement(asn, id, owned, borrowedParam, ownedTypes, isOwnedExpr) {
+					c.errfCode(asn.Value.Pos(), "E051", "assignment to owned binding %q must take an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", id.Name)
 				}
 				if id, ok := asn.Target.(*ast.Ident); ok {
 					retake(id.Name, moved)

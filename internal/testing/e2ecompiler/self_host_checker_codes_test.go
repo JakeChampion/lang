@@ -214,6 +214,62 @@ func tupleProjection(body string) string {
 	return tupleProjectionPrelude + body + "\nfunction main(): i32 { return 0; }\n"
 }
 
+const ownReplacementPrelude = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Holder { value: Handle, n: i32 }
+function consume(own h: Holder): i32 { return h.value.close(); }
+function fresh(): Holder { return Holder { value: Handle { fd: 1 }, n: 0 }; }
+function same(h: Holder): Holder { return h; }
+function bump(own h: Holder): Holder { return Holder { ...h, n: h.n + 1 }; }
+struct Step { h: Holder, err: string }
+function step(own h: Holder): Step { return Step { h: bump(h), err: "" }; }
+enum Box { Full(Handle), Empty }
+`
+
+func ownReplacement(body string) string {
+	return ownReplacementPrelude + body + "\nfunction main(): i32 { return 0; }\n"
+}
+
+// An own parameter that an assignment replaces must take an owned value.
+var ownReplacementCases = []struct {
+	name string
+	src  string
+	want []string
+}{
+	{"own-replacement-borrowed-field", ownReplacement(`function f(own value: Holder, borrowed: Handle): i32 { value = Holder { value: borrowed, n: 0 }; return consume(value); }`), []string{"E051"}},
+	{"own-replacement-borrowed-read-only", ownReplacement(`function f(own value: Holder, borrowed: Handle): i32 { value = Holder { value: borrowed, n: 0 }; return value.n; }`), []string{"E051"}},
+	{"own-replacement-borrowed-alias", ownReplacement(`function f(own value: Holder, other: Holder): i32 { value = other; return consume(value); }`), []string{"E051"}},
+	{"own-replacement-borrowed-helper", ownReplacement(`function f(own value: Holder, other: Holder): i32 { value = same(other); return consume(value); }`), []string{"E051"}},
+	{"own-replacement-borrowed-match-binder", ownReplacement(`function f(own b: Box, other: Handle): i32 { match (b) { Full(h) => { h = other; return h.fd; }, Empty => { return 0; } } return 0; }`), []string{"E051"}},
+	{"own-replacement-fresh-literal", ownReplacement(`function f(own value: Holder): i32 { value = Holder { value: Handle { fd: 2 }, n: 0 }; return consume(value); }`), nil},
+	{"own-replacement-fresh-call", ownReplacement(`function f(own value: Holder): i32 { let n = value.n; value = fresh(); return consume(value) + n; }`), nil},
+	{"own-replacement-self-update", ownReplacement(`function f(own value: Holder): i32 { value = bump(value); return consume(value); }`), nil},
+	{"own-replacement-other-own-parameter", ownReplacement(`function f(own value: Holder, own other: Holder): i32 { let n = consume(value); value = other; return consume(value) + n; }`), nil},
+	{"own-replacement-local-last-use", ownReplacement(`function f(own value: Holder): i32 { let n = consume(value); let next = fresh(); value = next; return consume(value) + n; }`), nil},
+	{"own-replacement-owned-sibling-field", ownReplacement(`function f(own value: Holder): i32 { let s = step(value); value = s.h; if (s.err.len() > 0) { return 1; } return consume(value); }`), nil},
+	{"own-replacement-handle-free", ownReplacement(`struct P { xs: i32[] }
+function g(own p: P, q: P): i32 { p = q; return p.xs.len(); }`), nil},
+	{"spread-field-path-replaced-read-argument", ownReplacement(`struct Hs { hs: Handle[], xs: i32[], n: i32 }
+struct Rd { c: Hs, ok: boolean }
+function rd(own c: Hs): Rd { let ok = c.n > 0; return Rd { c: c, ok: ok }; }
+function eat(own c: Hs): i32 { return c.n; }
+function g(own c: Hs): i32 { let r = rd(c); return eat(Hs { ...r.c, xs: r.c.xs.with(0, 1) }); }`), nil},
+	{"spread-field-path-replaced-read-result", ownReplacement(`struct Hs { hs: Handle[], xs: i32[], n: i32 }
+struct Rd { c: Hs, ok: boolean }
+function rd(own c: Hs): Rd { let ok = c.n > 0; return Rd { c: c, ok: ok }; }
+function g(own c: Hs): own Hs { let r = rd(c); return Hs { ...r.c, xs: r.c.xs.with(0, 1) }; }`), nil},
+	{"spread-field-path-replaced-read-assignment", ownReplacement(`struct Hs { hs: Handle[], xs: i32[], n: i32 }
+struct Rd { c: Hs, ok: boolean }
+function rd(own c: Hs): Rd { let ok = c.n > 0; return Rd { c: c, ok: ok }; }
+function eat(own c: Hs): i32 { return c.n; }
+function g(own c: Hs): i32 { let r = rd(c); c = Hs { ...r.c, xs: r.c.xs.with(0, 1) }; if (r.ok) { return 1; } return eat(c); }`), nil},
+	{"spread-field-path-read-again", ownReplacement(`struct Hs { hs: Handle[], xs: i32[], n: i32 }
+struct Rd { c: Hs, ok: boolean }
+function rd(own c: Hs): Rd { let ok = c.n > 0; return Rd { c: c, ok: ok }; }
+function eat(own c: Hs): i32 { return c.n; }
+function g(own c: Hs): i32 { let r = rd(c); let n = eat(Hs { ...r.c, xs: r.c.xs.with(0, 1) }); return n + r.c.n; }`), []string{"E051"}},
+}
+
 var tupleProjectionCases = []struct {
 	name string
 	src  string
@@ -3078,6 +3134,7 @@ function main(): i32 { return 0; }
 		}
 	}
 	cases = append(cases, tupleProjectionCases...)
+	cases = append(cases, ownReplacementCases...)
 	cases = append(cases, exitResolutionCases...)
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -3879,6 +3936,9 @@ function main(): i32 { return 0; }`},
 		{"e065-string-of-field-of-local", strFieldPrelude + "function text_of(t: T): string { return t.text; }\nfunction f(k: i32): str { let t = mk(); return slice_unchecked(text_of(t), 0, k); }\nfunction main(): i32 { return 0; }\n"},
 	}
 	for _, tc := range tupleProjectionCases {
+		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
+	}
+	for _, tc := range ownReplacementCases {
 		progs = append(progs, struct{ name, src string }{tc.name, tc.src})
 	}
 	for _, tc := range exitResolutionCases {
