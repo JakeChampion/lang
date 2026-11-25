@@ -11237,6 +11237,29 @@ function ssa_fusable_cmp(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(ir.kind_id(ins.str)) || ssa.float_cmp(ins.str));
 }
 
+// An add and an immediate adjustment truncated to u32 fit in one LEA.
+// The immediate has no register home, so no move intervenes.
+function ssa_index_lea(blk: ssa.SBlock, ii: i32, end: i32, fr: SsaFrame, reg_of: i32[]): string {
+  let sum = blk.insts[ii];
+  if (sum.kind_tag != ssa.BINARY || sum.str != "add" || ii + 3 >= end) {
+    return "";
+  }
+  let k = blk.insts[ii + 1];
+  let op = blk.insts[ii + 2];
+  if (k.kind_tag != ssa.CONST_INT || !fr.imm.is_imm[k.result] || !ssa.low_word_pair(blk, ii + 2, fr.uses)) {
+    return "";
+  }
+  if (op.str != "sub" && op.str != "add" || op.args[0] != sum.result || op.args[1] != k.result || fr.uses[sum.result] != 1) {
+    return "";
+  }
+  let dst = blk.insts[ii + 3].result;
+  if (!ssa_in_x(reg_of, dst) || !ssa_in_x(reg_of, sum.args[0]) || !ssa_in_x(reg_of, sum.args[1])) {
+    return "";
+  }
+  let disp = if (op.str == "sub") { 0 - k.imm } else { k.imm };
+  return "    leal " + util.i32_to_string(disp) + "(" + ssa_reg(reg_of[sum.args[0]]) + "," + ssa_reg(reg_of[sum.args[1]]) + "), " + ssa_r32(ssa_reg(reg_of[dst])) + "\n";
+}
+
 function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let ins = blk.insts[ii];
   if (ins.kind_tag == ssa.SELECT) {
@@ -12456,6 +12479,13 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     while (ii < blk.insts.len() - fu.n) {
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins = blk.insts[ii];
+      let index_lea = if (s.symbols) { "" } else { ssa_index_lea(blk, ii, blk.insts.len() - fu.n, fr, reg_of) };
+      if (index_lea != "") {
+        s = asmcore.ssa_prepared_loc(prepared.source.values, ins.result, s);
+        s = asmcore.ssa_x0_forget(s.write(index_lea));
+        ii += 4;
+        continue;
+      }
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
         s = asmcore.ssa_prepared_loc(prepared.source.values, ins.result, s);
         s = ssa_emit_tail_call(ins, reg_of, fr, sourcepos.at(prepared.source.terms, blk.id), s);
