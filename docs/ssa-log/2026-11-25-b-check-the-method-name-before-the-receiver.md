@@ -9,5 +9,6 @@ Two stage-2 compilers built the same sources from `cb7918ea9e` for x86-64 Linux.
 | Source | Instructions before | Instructions after | Instructions saved |
 | --- | ---: | ---: | ---: |
 | `conformance/cases/generic_array_method_chain/main.fern` | 872,917,101 | 872,047,972 | 869,129 |
+| `compiler/checker.fern` | 49,148,654,715 | 49,136,939,881 | 11,714,834 |
 
 Both compilers produced the same executable for the method chain. The stage-2 compiler with the change also reproduced itself byte for byte.
