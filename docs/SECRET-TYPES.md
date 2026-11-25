@@ -38,7 +38,7 @@ These records of `std/crypto` have the attribute:
 |---|---|
 | `aes` | `Cipher` |
 | `aes_gcm` | `Key` |
-| `des` | `Cipher` |
+| `legacy/des` | `Cipher` |
 | `ecdsa` | `PrivateKey` |
 | `ed25519` | `PrivateKey` |
 | `chacha20poly1305` | `Key` |
