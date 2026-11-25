@@ -1,0 +1,268 @@
+import "std/test";
+import "std/noise";
+
+function key(b: i32): u8[] {
+  return __alloc_u8(32).with(0, b as u8);
+}
+
+function public(b: i32): u8[] {
+  return match (noise.public_key(key(b))) {
+    Ok(p) => p,
+    Err(_) => [],
+  };
+}
+
+function config(pattern: noise.Pattern, s: u8[], rs: u8[], psk: noise.PskMode): noise.Config {
+  return noise.Config { pattern: pattern, cipher: noise.ChaChaPoly, prologue: "prologue".bytes(), static_key: s, remote_static: rs, psk: psk };
+}
+
+function refusal[T](r: Result[T, noise.NoiseError]): string {
+  return match (r) {
+    Ok(_) => "accepted",
+    Err(e) => e.message(),
+  };
+}
+
+function nn_initiator(): noise.Handshake {
+  match (noise.initiator(config(noise.NN, [], [], noise.NoPsk))) {
+    Ok(h) => {
+      return h;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(97);
+    }
+  }
+  return nn_initiator();
+}
+
+function nn_responder(): noise.Handshake {
+  match (noise.responder(config(noise.NN, [], [], noise.NoPsk))) {
+    Ok(h) => {
+      return h;
+    },
+    Err(e) => {
+      eprint(e.message());
+      exit(96);
+    }
+  }
+  return nn_responder();
+}
+
+// The keys that each pattern needs before the handshake, on each side.
+function test_config_refusals(): test.TestOutcome {
+  let got = [
+    refusal(noise.initiator(config(noise.NK, [], [], noise.NoPsk))),
+    refusal(noise.responder(config(noise.NK, [], [], noise.NoPsk))),
+    refusal(noise.initiator(config(noise.NN, key(1), [], noise.NoPsk))),
+    refusal(noise.responder(config(noise.XX, key(1), public(2), noise.NoPsk))),
+    refusal(noise.initiator(config(noise.IK, __alloc_u8(31), public(2), noise.NoPsk))),
+    refusal(noise.initiator(config(noise.NN, [], [], noise.Psk(3, key(9))))),
+    refusal(noise.initiator(config(noise.NN, [], [], noise.Psk(0, __alloc_u8(16))))),
+    refusal(noise.initiator_derand(config(noise.NN, [], [], noise.NoPsk), key(3)[0:8])),
+    refusal(noise.initiator(config(noise.KK, key(1), public(2), noise.Psk(2, key(9))))),
+    refusal(noise.public_key([])),
+  ];
+  return test.assert_eq_array(got, [
+    "noise: the pattern needs the remote static key before the handshake",
+    "noise: the pattern needs the static key before the handshake",
+    "noise: the pattern does not use the static key before the handshake",
+    "noise: the pattern does not use the remote static key before the handshake",
+    "noise: the static key is 31 bytes, want 32",
+    "noise: the PSK position is 3, want 0, 1 or 2",
+    "noise: the PSK is 16 bytes, want 32",
+    "noise: the ephemeral key is 8 bytes, want 32",
+    "accepted",
+    "noise: the static key is 0 bytes, want 32",
+  ]);
+}
+
+// The XX handshake with random ephemeral keys, then traffic both ways. Each
+// side learns the static key of the other.
+function test_xx_round_trip(): test.TestOutcome {
+  let Ok(i) = noise.initiator(config(noise.XX, key(1), [], noise.NoPsk)) else {
+    return test.fail("initiator");
+  };
+  let Ok(r) = noise.responder(config(noise.XX, key(2), [], noise.NoPsk)) else {
+    return test.fail("responder");
+  };
+  let Ok((m1, i)) = i.write_message([]) else {
+    return test.fail("write 1");
+  };
+  let Ok((_, r)) = r.read_message(m1) else {
+    return test.fail("read 1");
+  };
+  let Ok((m2, r)) = r.write_message("two".as_bytes()) else {
+    return test.fail("write 2");
+  };
+  let Ok((p2, i)) = i.read_message(m2) else {
+    return test.fail("read 2");
+  };
+  let Ok((m3, i)) = i.write_message("three".as_bytes()) else {
+    return test.fail("write 3");
+  };
+  let Ok((p3, r)) = r.read_message(m3) else {
+    return test.fail("read 3");
+  };
+  if (p2 != "two".bytes() || p3 != "three".bytes()) {
+    return test.fail("payloads");
+  }
+  if (i.remote_static() != public(2) || r.remote_static() != public(1)) {
+    return test.fail("remote static keys");
+  }
+  if (i.handshake_hash() != r.handshake_hash()) {
+    return test.fail("handshake hashes");
+  }
+  let Ok(ti) = i.split() else {
+    return test.fail("split i");
+  };
+  let Ok(tr) = r.split() else {
+    return test.fail("split r");
+  };
+  let Ok((a, ti)) = ti.send("a".as_bytes()) else {
+    return test.fail("send a");
+  };
+  let Ok((b, tr)) = tr.send("b".as_bytes()) else {
+    return test.fail("send b");
+  };
+  let Ok((pa, _)) = tr.receive(a) else {
+    return test.fail("receive a");
+  };
+  let Ok((pb, _)) = ti.receive(b) else {
+    return test.fail("receive b");
+  };
+  return test.assert_eq_array([pa.len(), pb.len(), pa[0] as i32, pb[0] as i32], [1, 1, 97, 98]);
+}
+
+// A side that writes out of turn, a handshake past its last message, and a
+// split before the last message.
+function test_turns(): test.TestOutcome {
+  let got: string[] = [];
+  got = got.append(refusal(nn_responder().write_message([])));
+  got = got.append(refusal(nn_initiator().read_message(__alloc_u8(32))));
+  got = got.append(refusal(nn_initiator().split()));
+  let Ok((m1, i)) = nn_initiator().write_message([]) else {
+    return test.fail("write 1");
+  };
+  let Ok((_, r)) = nn_responder().read_message(m1) else {
+    return test.fail("read 1");
+  };
+  let Ok((m2, r)) = r.write_message([]) else {
+    return test.fail("write 2");
+  };
+  let Ok((_, i)) = i.read_message(m2) else {
+    return test.fail("read 2");
+  };
+  got = got.append(refusal(i.write_message([])));
+  got = got.append(refusal(r.read_message(m2)));
+  return test.assert_eq_array(got, [
+    "noise: the other side writes the next message",
+    "noise: the other side writes the next message",
+    "noise: the handshake has more messages",
+    "noise: the handshake has no more messages",
+    "noise: the handshake has no more messages",
+  ]);
+}
+
+// A message that is too short for its tokens, a message longer than 65535
+// bytes, a payload that would make one, and a changed byte.
+function test_message_refusals(): test.TestOutcome {
+  let got: string[] = [];
+  got = got.append(refusal(nn_responder().read_message(__alloc_u8(31))));
+  got = got.append(refusal(nn_responder().read_message(__alloc_u8(65536))));
+  got = got.append(refusal(nn_initiator().write_message(__alloc_u8(65535 - 31))));
+  got = got.append(refusal(nn_initiator().write_message(__alloc_u8(65535 - 32))));
+  let Ok((m1, i)) = nn_initiator().write_message([]) else {
+    return test.fail("write 1");
+  };
+  let Ok((_, r)) = nn_responder().read_message(m1) else {
+    return test.fail("read 1");
+  };
+  let Ok((m2, _)) = r.write_message("x".as_bytes()) else {
+    return test.fail("write 2");
+  };
+  got = got.append(refusal(i.read_message(m2[0:40])));
+  let Ok((n1, j)) = nn_initiator().write_message([]) else {
+    return test.fail("write 1");
+  };
+  let Ok((_, q)) = nn_responder().read_message(n1) else {
+    return test.fail("read 1");
+  };
+  let Ok((n2, _)) = q.write_message("x".as_bytes()) else {
+    return test.fail("write 2");
+  };
+  got = got.append(refusal(j.read_message(n2.with(40, n2[40] ^ 1u8))));
+  return test.assert_eq_array(got, [
+    "noise: the message is 31 bytes, too short for its tokens",
+    "noise: the message is 65536 bytes, want at most 65535",
+    "noise: the message is 65536 bytes, want at most 65535",
+    "accepted",
+    "noise: the message is 40 bytes, too short for its tokens",
+    "noise: the message does not authenticate",
+  ]);
+}
+
+// A PSK that differs between the two sides makes the first message fail.
+function test_psk_mismatch(): test.TestOutcome {
+  let Ok(i) = noise.initiator(config(noise.NN, [], [], noise.Psk(0, key(5)))) else {
+    return test.fail("initiator");
+  };
+  let Ok(r) = noise.responder(config(noise.NN, [], [], noise.Psk(0, key(6)))) else {
+    return test.fail("responder");
+  };
+  let Ok((m1, _)) = i.write_message([]) else {
+    return test.fail("write 1");
+  };
+  return test.assert_eq(refusal(r.read_message(m1)), "noise: the message does not authenticate");
+}
+
+// A transport message longer than 65535 bytes, in each direction.
+function test_transport_lengths(): test.TestOutcome {
+  let Ok((m1, i)) = nn_initiator().write_message([]) else {
+    return test.fail("write 1");
+  };
+  let Ok((_, r)) = nn_responder().read_message(m1) else {
+    return test.fail("read 1");
+  };
+  let Ok((m2, r)) = r.write_message([]) else {
+    return test.fail("write 2");
+  };
+  let Ok((_, i)) = i.read_message(m2) else {
+    return test.fail("read 2");
+  };
+  let Ok(ti) = i.split() else {
+    return test.fail("split i");
+  };
+  let Ok(tr) = r.split() else {
+    return test.fail("split r");
+  };
+  let got = [refusal(ti.send(__alloc_u8(65520))), refusal(tr.receive(__alloc_u8(65536)))];
+  let Ok(ti) = nn_pair_split() else {
+    return test.fail("pair");
+  };
+  got = got.append(refusal(ti.send(__alloc_u8(65519))));
+  return test.assert_eq_array(got, [
+    "noise: the message is 65536 bytes, want at most 65535",
+    "noise: the message is 65536 bytes, want at most 65535",
+    "accepted",
+  ]);
+}
+
+function nn_pair_split(): Result[noise.Transport, noise.NoiseError] {
+  let (m1, i1) = nn_initiator().write_message([])?;
+  let (_, r) = nn_responder().read_message(m1)?;
+  let (m2, _) = r.write_message([])?;
+  let (_, i2) = i1.read_message(m2)?;
+  return i2.split();
+}
+
+function main(): i32 {
+  let r = test.new("std/noise");
+  r = r.it("the keys that each pattern needs", test_config_refusals);
+  r = r.it("an XX handshake and transport with random ephemeral keys", test_xx_round_trip);
+  r = r.it("turns, the end of the handshake and an early split", test_turns);
+  r = r.it("short, long and changed handshake messages", test_message_refusals);
+  r = r.it("a PSK that differs between the sides", test_psk_mismatch);
+  r = r.it("transport message lengths", test_transport_lengths);
+  return r.finish();
+}

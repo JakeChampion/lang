@@ -32,7 +32,7 @@ The attribute has no other effect on how the program runs. The two interpreters 
 
 ## Key types of the standard library
 
-These records of `std/crypto` have the attribute:
+These records of the standard library have the attribute:
 
 | Module | Records |
 |---|---|
@@ -44,6 +44,7 @@ These records of `std/crypto` have the attribute:
 | `chacha20poly1305` | `Key` |
 | `hpke` | `Context`, `HybridKey`, `HybridP256Key`, `P256Key`, `Encapsulation` |
 | `mlkem768` | `KeyPair`, `Encapsulation` |
+| `noise` | `Config`, `Handshake`, `Transport` |
 | `rsa` | `PrivateKey` |
 
 A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.PrivateKey` and `ed25519.PrivateKey` have both.
