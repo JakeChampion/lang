@@ -112,11 +112,11 @@ func TestSelfHostServeAllocsPerRequestTLS(t *testing.T) {
 	e2eharness.CheckServeAllocsTLS(t, addr, ServeAllocsTLSCeiling, e2eharness.ServeAllocsRounds, pool)
 }
 
-// 50 since 2026-11-10, at 49.69: h3q's event list keeps its buffer
-// between requests.
-const ServeAllocsH3Ceiling = 50
+// 47 since 2026-11-25, at 46.53: h3 keeps the pseudo-header fields it saw
+// as bits, not as an array.
+const ServeAllocsH3Ceiling = 47
 
-const ServeAllocsH3MuxCeiling = 29
+const ServeAllocsH3MuxCeiling = 27
 
 const ServeAllocsH3MuxConcurrency = 64
 
