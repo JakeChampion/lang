@@ -149,6 +149,53 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	{"xchacha20poly1305", `import "std/crypto/chacha20poly1305";
+
+function main(): i32 {
+  let key = __alloc_u8(32).with(0, 7u8);
+  let nonce = __alloc_u8(24).with(23, 11u8);
+  let plaintext = __alloc_u8(96).with(95, 42u8);
+  __ct_secret(key);
+  __ct_secret(plaintext);
+  let Ok(k) = chacha20poly1305.key(key) else { return 1; };
+  let Ok(sealed) = k.seal_xchacha(nonce, plaintext, []) else { return 2; };
+  __ct_public(sealed);
+  let Ok(opened) = k.open_xchacha(nonce, sealed, []) else { return 3; };
+  __ct_public(opened);
+  __ct_public(plaintext);
+  if (opened != plaintext) { return 4; }
+  return 0;
+}
+`, false},
+	{"sha256", `import "std/crypto";
+import "std/hex";
+
+function main(): i32 {
+  let key = __alloc_u8(80).with(0, 7u8);
+  __ct_secret(key);
+  let digest = crypto.sha256(key);
+  let mac = crypto.hmac_sha256(key, "message".as_bytes());
+  __ct_public(digest);
+  __ct_public(mac);
+  if (hex.encode(digest) != "f31defd74101cccb54b57097ec775d8a1c7ebea77bbf9130185676d58cd2fa42") { return 1; }
+  if (hex.encode(mac) != "4a760412d56cead8e8b58b35341c76ffefbf6207d923e47a954c8bc4d9901e3d") { return 2; }
+  return 0;
+}
+`, false},
+	{"argon2id", `import "std/crypto/argon2id";
+import "std/hex";
+import "std/string";
+
+function main(): i32 {
+  let password = "password".bytes();
+  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 37, lanes: 2, passes: 2, tag_len: 80, limit_kib: 36 };
+  __ct_secret(password);
+  let Ok(tag) = argon2id.key(password, "somesalt".as_bytes(), p) else { return 1; };
+  __ct_public(tag);
+  if (hex.encode(tag) != "b092558be7d44e96b8f2bae751d5d7bb3b50d63ca8803a703e60df7f4a1285ea50bf0fcf903fff50b907e14720be00d6dc2553c24f39c6557198ec46ca7812c2bda34f6248ea0d75a3f44a0606c8a75a") { return 2; }
+  return 0;
+}
+`, false},
 	{"aes_gcm", `import "std/crypto/aes_gcm";
 
 function filled(n: i32, seed: i32): u8[] {

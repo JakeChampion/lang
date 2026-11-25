@@ -978,7 +978,10 @@ and `std/crypto/chacha20poly1305`'s and `std/crypto/aes_gcm`'s seal and
 open over a secret key and plaintext must be clean, where `open`
 declassifies only its tag verdict. The AES-GCM case runs AES-128 and AES-256,
 so it covers the AES-NI and `pclmulqdq` kernels; memcheck tracks definedness
-through both.
+through both. The gate also seals and opens with a 24-byte XChaCha nonce,
+hashes a secret key with SHA-256, and uses it for HMAC-SHA256. The Argon2id
+probe uses two lanes and two passes. In its data-dependent phase only the
+final reference block index is made public.
 `TestSelfHostCtGateArm64` is the same on an arm64 host.
 `TestSelfHostCtMarksArm64` (under qemu), `TestSelfHostCtMarksWasm` and
 `TestSelfHostInterpCtMarks` (both interpreters) run the same probes where the

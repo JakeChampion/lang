@@ -219,11 +219,12 @@ function reference(j: u64, pass: i32, slice: i32, lane: i32, index: i32, segment
     other = lane;
   }
   let span = if (pass == 0) { slice * segment } else { 3 * segment };
-  if (other == lane) {
-    span += index - 1;
-  } else if (index == 0) {
-    span -= 1;
-  }
+  // Only the final block number is public. Compute the lane adjustment
+  // without branching on the password-dependent lane.
+  let diff = other ^ lane;
+  let same = ((diff | (0 - diff)) as u32 >> 31u32) as i32 - 1;
+  let across = if (index == 0) { -1 } else { 0 };
+  span += ((index - 1) & same) | (across & ~same);
   let low = j & 0xffffffffu64;
   let relative = span - 1 - (span as u64 * (low * low >> 32u64) >> 32u64) as i32;
   let start = if (pass == 0) { 0 } else { (slice + 1) % 4 * segment };
@@ -243,6 +244,7 @@ function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i
     m = m.with(input, pass as i64).with(input + 1, lane as i64).with(input + 2, slice as i64).with(input + 3, blocks as i64).with(input + 4, p.passes as i64).with(input + 5, 2i64).with(input + 6, 0i64);
   }
   let first = if (pass == 0 && slice == 0) { 2 } else { 0 };
+  let public_index = __alloc_u8(4);
   for i in first..segment {
     let pos = slice * segment + i;
     let prev = lane * width + (pos + width - 1) % width;
@@ -256,6 +258,14 @@ function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i
       j = m[addr + i % 128] as u64;
     }
     let ref_block = reference(j, pass, slice, lane, i, segment, p.lanes);
+    if (!independent) {
+      // RFC 9106 section 3.4.1 takes this address from the previous block.
+      for byte in 0..4 {
+        public_index = public_index.with(byte, (ref_block >> (8 * byte)) as u8);
+      }
+      __ct_public(public_index);
+      ref_block = binary.read_u32_le(public_index, 0).unwrap_or(0u32) as i32;
+    }
     m = compress(m, prev * 128, ref_block * 128, (lane * width + pos) * 128, tmp, pass != 0);
   }
   return m;
