@@ -1,0 +1,75 @@
+import "std/test";
+import "std/crypto/memory";
+
+// The VmLck figure of /proc/self/status, or "" when there is none.
+function locked(): string {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return "";
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmLck:")) {
+      return line.remove_prefix("VmLck:").trim();
+    }
+  }
+  return "";
+}
+
+function test_lock_owned_pages(): test.TestOutcome {
+  let key = __alloc_u8(4096);
+  return match (memory.lock_pages(key)) {
+    Ok(_) => {
+      let figure = locked();
+      if (figure == "") {
+        return test.pass();
+      }
+      return test.assert_true(figure != "0 kB");
+    },
+    Err(memory.Unsupported) => test.pass(),
+    Err(e) => test.fail(e.message()),
+  };
+}
+
+function test_lock_view(): test.TestOutcome {
+  let key = __alloc_u8(64);
+  return match (memory.lock_pages(key[8:40])) {
+    Ok(_) => test.pass(),
+    Err(memory.Unsupported) => test.pass(),
+    Err(e) => test.fail(e.message()),
+  };
+}
+
+function test_lock_empty(): test.TestOutcome {
+  let empty: u8[] = [];
+  let Ok(_) = memory.lock_pages(empty) else {
+    return test.fail("an empty array was refused");
+  };
+  let Ok(_) = memory.lock_pages([]) else {
+    return test.fail("an empty literal was refused");
+  };
+  return test.pass();
+}
+
+function test_no_core_dumps(): test.TestOutcome {
+  return match (memory.no_core_dumps()) {
+    Ok(_) => test.pass(),
+    Err(e) => test.fail(e.message()),
+  };
+}
+
+function test_messages(): test.TestOutcome {
+  let refused = memory.Refused(12).message();
+  if (!refused.contains("errno 12")) {
+    return test.fail("unexpected message: " + refused);
+  }
+  return test.assert_contains(memory.Unsupported.message(), "cannot lock pages");
+}
+
+function main(): i32 {
+  let r = test.new("crypto_memory");
+  r = r.it("lock owned pages", test_lock_owned_pages);
+  r = r.it("lock a view", test_lock_view);
+  r = r.it("lock empty", test_lock_empty);
+  r = r.it("no core dumps", test_no_core_dumps);
+  r = r.it("error messages", test_messages);
+  return r.finish();
+}

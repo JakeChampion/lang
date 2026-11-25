@@ -200,7 +200,7 @@ pub function ungated(): string[] {
     "priority", "set_priority",
     "geteuid", "getegid", "getuid", "getgid", "getgroups",
     "__account_entry", "__alloc_len",
-    "rlimit_nofile", "disable_core_dumps",
+    "rlimit_nofile", "disable_core_dumps", "__mlock_bytes",
     "__ct_secret", "__ct_public",
     "__bytes_owned", "__bytes_range", "__bytes_into",
     "__aes_expand_key", "__aes_ctr32", "__aes_dec_blocks", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw", "__sha256_hw_blocks", "__sha256_hw_digest_block", "__sha1_hw", "__sha1_hw_blocks", "__sha1x8_hw", "__sha1x8_hw_blocks", "__sha256x8_hw", "__sha256x8_hw_blocks", "__chacha20_xor_into", "__poly1305_blocks",

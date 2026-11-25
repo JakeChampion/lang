@@ -803,6 +803,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"map_verbs", langSrcAbs(t, "tests/stdlib/map_verbs_test.fern"), ""},
 		{"u32_arith", langSrcAbs(t, "tests/stdlib/u32_arith_test.fern"), ""},
 		{"crypto", langSrcAbs(t, "tests/stdlib/crypto_test.fern"), ""},
+		{"crypto_memory", langSrcAbs(t, "tests/stdlib/crypto_memory_test.fern"), ""},
 		{"digest_md5", langSrcAbs(t, "tests/stdlib/digest_md5_test.fern"), ""},
 		{"digest_sha1", langSrcAbs(t, "tests/stdlib/digest_sha1_test.fern"), ""},
 		{"digest_sha224", langSrcAbs(t, "tests/stdlib/digest_sha224_test.fern"), ""},

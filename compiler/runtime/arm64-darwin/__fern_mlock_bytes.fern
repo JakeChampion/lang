@@ -1,0 +1,19 @@
+function __fern_mlock_bytes(bytes: usize): i64 {
+  let n = 0;
+  let p: usize = 0;
+  if ((bytes as i32 & 2) != 0) {
+    let base = bytes - 2;
+    n = __load_i32(base + 8);
+    p = __raw_load_ptr(base, 0);
+  } else {
+    n = __load_i32(bytes);
+    p = bytes + 8;
+  }
+  if (n <= 0) {
+    return 0 as i64;
+  }
+  // Darwin wants a page-aligned start. A page of Apple silicon is 16 KiB.
+  let start = p as i64 & (0 - 16384) as i64;
+  let end = p as i64 + n as i64 + 16383 as i64 & (0 - 16384) as i64;
+  return __syscall3(203, start, end - start, 0);
+}

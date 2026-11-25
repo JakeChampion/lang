@@ -1814,6 +1814,7 @@ pub function (s: EmitState) need_array_helper(name: string): EmitState {
     "__fern_arr_str_join" => s.need("arr_str_join"),
     "__fern_arr_concat" => s.need("arr_concat"),
     "__fern_bytes_owned" => s.need("bytes_owned"),
+    "__fern_mlock_bytes" => s.need("mlock_bytes"),
     "__fern_bytes_range" => s.need("bytes_range"),
     "__fern_bytes_into" => s.need("bytes_into"),
     _ => s,

@@ -76,7 +76,11 @@ Its erase path must read none.
 `erase` covers one array.
 It does not erase a copy that the program made before the call.
 It does not erase a register or a spill slot that held a word of the secret, or a kernel buffer that carried it.
-A process that must not leave a secret in a core dump calls `disable_core_dumps`.
+
+A process that must not leave a secret in a core dump calls `disable_core_dumps`, or `no_core_dumps` of `std/crypto/memory`.
+`lock_pages` of that module keeps the pages of one array in RAM with `mlock`, so the kernel does not write the secret to swap.
+Android swaps to zram, so this applies to a key on a phone too.
+The pages stay locked until the process exits, and `RLIMIT_MEMLOCK` limits the locked bytes.
 
 ### Private keys
 

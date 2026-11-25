@@ -178,6 +178,7 @@ var Ungated = map[string]bool{
 	"getgroups":                true,
 	"rlimit_nofile":            true,
 	"disable_core_dumps":       true,
+	"__mlock_bytes":            true,
 	"target_os":                true,
 	"target_arch":              true,
 	"args":                     true,

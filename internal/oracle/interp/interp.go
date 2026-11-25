@@ -805,6 +805,13 @@ func New() *Interp {
 	ctMark := &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Void{}, nil }}
 	i.Builtins["__ct_secret"] = ctMark
 	i.Builtins["__ct_public"] = ctMark
+	// The interpreter holds no native pages to lock: ENOSYS.
+	i.Builtins["__mlock_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if _, err := byteViews("__mlock_bytes", args, 1); err != nil {
+			return nil, err
+		}
+		return Number(-38), nil
+	}}
 	i.Builtins["__bytes_owned"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		v, err := byteViews("__bytes_owned", args, 1)
 		if err != nil {

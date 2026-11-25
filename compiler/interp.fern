@@ -9622,6 +9622,10 @@ function builtin_group_scan_set_bytes(heap: interpheap.Heap, name: string, args:
   if (name == "__ct_secret" || name == "__ct_public") {
     return v_void();
   }
+  if (name == "__mlock_bytes") {
+    // The interpreter holds no native pages to lock: ENOSYS.
+    return v_int64(0i64 - 38i64);
+  }
   if (name == "__bytes_owned") {
     return builtin_bytes_owned(heap, args);
   }
@@ -11078,7 +11082,7 @@ const BUILTIN_GROUP_STRING_FROM_BYTES_UNCHECKED_NAMES: string[] = ["string_from_
 
 const BUILTIN_GROUP_COUNT_BYTE_BYTES_NAMES: string[] = ["__count_byte_bytes", "__count_below_u64", "__memchr_bytes", "__rmemchr_bytes", "__sum_bytes_array", "__bsd_sum_bytes", "__crc32_cksum_array", "__crc32_ieee_array"];
 
-const BUILTIN_GROUP_SCAN_SET_BYTES_NAMES: string[] = ["__scan_set_bytes", "__count_runs_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__outer_mul_f64", "__inner_mul_add_f64", "__ct_secret", "__ct_public", "__bytes_owned"];
+const BUILTIN_GROUP_SCAN_SET_BYTES_NAMES: string[] = ["__scan_set_bytes", "__count_runs_bytes", "__mismatch_bytes", "__mismatch_bytes_str", "__outer_mul_f64", "__inner_mul_add_f64", "__ct_secret", "__ct_public", "__mlock_bytes", "__bytes_owned"];
 
 const BUILTIN_GROUP_SCALE_F64_NAMES: string[] = ["__scale_f64", "__scan_set", "__scan_masks", "__scan_masks_bytes", "__bsd_sum", "__str_hash", "__count_runs", "__memchr", "__count_byte", "__sum_bytes"];
 

@@ -6924,6 +6924,7 @@ function value_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered
     "__account_entry" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_account_entry", 2)) },
     "__ct_secret" => Lowered { found: true, r: emit(r, ir.op_ct_mark(0)) },
     "__ct_public" => Lowered { found: true, r: emit(r, ir.op_ct_mark(1)) },
+    "__mlock_bytes" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_mlock_bytes", 1)) },
     "__bytes_owned" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_owned", 1)) },
     "__bytes_range" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_range", 3)) },
     "__bytes_into" => Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_bytes_into", 5)) },

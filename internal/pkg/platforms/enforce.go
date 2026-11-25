@@ -29,6 +29,7 @@ var gatedBuiltins = map[string]string{
 
 	"rlimit_nofile":      "rlimit",
 	"disable_core_dumps": "rlimit",
+	"__mlock_bytes":      "rlimit",
 
 	"priority":     "sched",
 	"set_priority": "sched",

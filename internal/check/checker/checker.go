@@ -1020,6 +1020,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	u8View := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
 	u8Arr := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	c.info.FuncSigs["__mlock_bytes"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: ast.NumberType{Width: 64, Signed: true}}
 	c.info.FuncSigs["__bytes_owned"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	rangeBound := ast.NumberType{Width: 32, Signed: true}
 	c.info.FuncSigs["__bytes_range"] = &ast.FuncType{Params: []ast.Type{u8View, rangeBound, rangeBound}, Result: u8Arr}

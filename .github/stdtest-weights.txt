@@ -99,6 +99,7 @@ compress 37
 constmap 45
 cpio 29
 crypto 12
+crypto_memory 1
 csv 3
 deflate 76
 derive 4

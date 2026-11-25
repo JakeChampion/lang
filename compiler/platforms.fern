@@ -205,6 +205,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "set_process_group", capability: "proc" },
     Gate { builtin: "rlimit_nofile", capability: "rlimit" },
     Gate { builtin: "disable_core_dumps", capability: "rlimit" },
+    Gate { builtin: "__mlock_bytes", capability: "rlimit" },
     Gate { builtin: "priority", capability: "sched" },
     Gate { builtin: "set_priority", capability: "sched" },
     Gate { builtin: "statfs", capability: "fsinfo" },
