@@ -392,13 +392,22 @@ pub function capture_imm(base: i32, count: i32): i32 {
 }
 
 // The parts a parameter can travel as: the fields of a record of one to four
-// scalar fields that no finalizer owns, or for an Option of such a record or
-// of a scalar, whether it is Some followed by the payload's parts. Empty when
-// the parameter stays whole.
+// fields that no finalizer owns, each a scalar or a reference that is not a
+// view, or for an Option of a record of scalars or of a scalar, whether it is
+// Some followed by the payload's parts. Empty when the parameter stays whole.
 pub function param_parts(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] {
+  if (option_payload(f, ty).len() == 1) {
+    return laid_parts(f, ty);
+  }
+  return record_parts(f, ty, true);
+}
+
+// The parts a field can be laid out as in the box of its record: as
+// param_parts, but each field of a record is a scalar.
+pub function laid_parts(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] {
   let payload = option_payload(f, ty);
   if (payload.len() == 1) {
-    let parts = record_parts(f, payload[0]);
+    let parts = record_parts(f, payload[0], false);
     if (ssasem.is_scalar(payload[0])) {
       parts = payload;
     }
@@ -408,7 +417,7 @@ pub function param_parts(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] {
     let out: typeinfo.Type[] = [typeinfo.TypeBool { tag: 0 }];
     return util.append_all(out, parts);
   }
-  return record_parts(f, ty);
+  return record_parts(f, ty, false);
 }
 
 // The Some payload's type of an Option that no finalizer owns, or nothing.
@@ -429,17 +438,39 @@ pub function option_payload(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] 
   return [];
 }
 
-function record_parts(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] {
+function record_parts(f: ssasem.Func, ty: typeinfo.Type, counted: boolean): typeinfo.Type[] {
   let parts = parts_of(f, ty);
   if (parts.tuple || parts.types.len() == 0 || parts.types.len() > 4 || ssasem.has_finalizer(f, ty)) {
     return [];
   }
   for t in parts.types {
-    if (!ssasem.is_scalar(t)) {
+    if (!ssasem.is_scalar(t) && !(counted && travels_counted(f, t))) {
       return [];
     }
   }
   return parts.types;
+}
+
+function travels_counted(f: ssasem.Func, t: typeinfo.Type): boolean {
+  return ssasem.reference(t) && !typeinfo.is_cell(t) && !ssasem.holds_view(f, t);
+}
+
+// The spelling of a part's parameter: a reference part keeps the `own` of
+// the record.
+function part_spelling(t: typeinfo.Type, whole: string): string {
+  if (ssasem.is_scalar(t)) {
+    return "";
+  }
+  return whole;
+}
+
+// The mode of a part of a parameter of mode `whole`: a reference part keeps
+// the ownership of the record.
+pub function part_mode(t: typeinfo.Type, whole: i32): i32 {
+  if (ssasem.is_scalar(t)) {
+    return ssasem.value_mode();
+  }
+  return whole;
 }
 
 // The callee taking parameter `p` as its fields: each field read of `p` is a
@@ -464,12 +495,13 @@ pub function split_param(f: ssasem.Func, p: i32, types: typeinfo.Type[]): ssasem
         insts = insts.append(read_of_parts(ins, moved(map, ins.result), consecutive(p, types.len()), payload));
         continue;
       }
-      insts = insts.append(moved_inst(ins, map, p, extra));
       if (ins.kind_tag == ssa.PARAM && ins.result == p) {
-        for k in 1..types.len() {
-          insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: p + k, args: [], imm: ins.imm + k, str: "" });
+        for k in 0..types.len() {
+          insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: p + k, args: [], imm: ins.imm + k, str: part_spelling(types[k], ins.str) });
         }
+        continue;
       }
+      insts = insts.append(moved_inst(ins, map, p, extra));
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: moved_term(b.term, map) });
   }
@@ -633,7 +665,7 @@ pub function split_operands(f0: ssasem.Func, ins: ssa.SInst, c: ssasem.Contract,
     args = words.args;
     for t in types {
       params = params.append(t);
-      modes = modes.append(ssasem.value_mode());
+      modes = modes.append(part_mode(t, mode));
     }
   }
   return Operands { f: f, insts: insts, args: args, params: params, modes: modes };
@@ -673,7 +705,7 @@ function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst
     w = emitted(w, typeinfo.TypeBool { tag: 0 }, ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_BOOL, result: 0, args: [], imm: 0, str: "" });
     let parts: typeinfo.Type[] = [payload];
     if (!ssasem.is_scalar(payload)) {
-      parts = record_parts(w.b.f, payload);
+      parts = record_parts(w.b.f, payload, false);
     }
     for t in parts {
       w = emitted(w, t, ssa.SInst { ir_kind: 0, kind_tag: ssasem.zero(), result: 0, args: [], imm: 0, str: "" });
