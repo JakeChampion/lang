@@ -100,7 +100,9 @@ function test_would_substitute(): test.TestOutcome {
   };
   let (ra, ka, virama) = (f.glyph(0x930), f.glyph(0x915), f.glyph(0x94D));
   let got = [f.has_script("dev2", false), f.has_script("dev2", true), f.has_script("mlm2", false), f.has_feature("dev2", "rphf"), f.has_feature("dev2", "pref"), f.would_substitute("dev2", "rphf", [ra, virama], true), f.would_substitute("dev2", "rphf", [ka, virama], true), f.would_substitute("dev2", "rphf", [ra], true), f.would_substitute("dev2", "blwf", [virama, ra], true)];
-  return test.assert_eq(got.map((b: boolean): string => if (b) { "1" } else { "0" }).join(""), "110101001");
+  let rphf = f.prepared_substitutions("dev2", "rphf");
+  let prepared = [truetype.would_substitute_lookups(rphf, [ra, virama], true), truetype.would_substitute_lookups(rphf, [ka, virama], true), truetype.would_substitute_lookups(rphf, [], true), truetype.would_substitute_lookups([], [ra, virama], true)];
+  return test.assert_eq(got.concat(prepared).map((b: boolean): string => if (b) { "1" } else { "0" }).join(""), "1101010011000");
 }
 
 // Each type and format of GSUB lookup, the flags that skip marks and
