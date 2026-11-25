@@ -1375,7 +1375,7 @@ func TestSelfHostSSAStrEqComparesLengthsInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "streq.fern")
-	prog := `function same(a: string, b: string): i32 {
+	prog := `@noinline function same(a: string, b: string): i32 {
     if (a == b) { return 1; }
     return 0;
 }
@@ -1414,21 +1414,21 @@ function main(): i32 {
 		if err != nil {
 			t.Fatal(err)
 		}
-		fn := functionListing(string(asm), "__fn_main")
+		fn := functionListing(string(asm), "__fn_same")
 		if fn == "" {
-			t.Fatalf("%s: no __fn_main in the listing:\n%s", tg.target, asm)
+			t.Fatalf("%s: no __fn_same in the listing:\n%s", tg.target, asm)
 		}
-		if n := len(shape.lengths.FindAllString(fn, -1)); n != 6 {
-			t.Errorf("%s: main compares %d pairs of length words inline, want 6:\n%s", tg.target, n, fn)
+		if n := len(shape.lengths.FindAllString(fn, -1)); n != 1 {
+			t.Errorf("%s: same compares %d pairs of length words inline, want 1:\n%s", tg.target, n, fn)
 		}
-		if n := strings.Count(fn, shape.entry); n != 6 {
-			t.Errorf("%s: main calls the helper's register entry %d times, want 6:\n%s", tg.target, n, fn)
+		if n := strings.Count(fn, shape.entry); n != 1 {
+			t.Errorf("%s: same calls the helper's register entry %d times, want 1:\n%s", tg.target, n, fn)
 		}
 		if strings.Contains(fn, shape.abi) {
-			t.Errorf("%s: main still makes the stack-ABI call:\n%s", tg.target, fn)
+			t.Errorf("%s: same still makes the stack-ABI call:\n%s", tg.target, fn)
 		}
 		if shape.route != "" && strings.Contains(fn, shape.route) {
-			t.Errorf("%s: main passes an operand through a scratch on the way to the helper:\n%s", tg.target, fn)
+			t.Errorf("%s: same passes an operand through a scratch on the way to the helper:\n%s", tg.target, fn)
 		}
 		helper := functionListing(string(asm), "__fn___fern_str_eq")
 		if end := strings.Index(helper, ".size __fn___fern_str_eq"); end >= 0 {
@@ -1505,36 +1505,50 @@ function main(): i32 {
 	}
 }
 
-func TestSelfHostSSAStrEqTestsLiteralFirstByteInline(t *testing.T) {
+func TestSelfHostSSAStrEqTestsShortLiteralsInline(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "streqlit.fern")
-	prog := `function code(s: string, t: string): i32 {
+	prog := `@noinline function code(s: string, t: string): i32 {
     if (s == "add") { return 1; }
-    if (s == "and") { return 2; }
-    if (s == "sub") { return 3; }
+    if (s == "\n\t") { return 2; }
+    if (s == "é") { return 3; }
     if ("xor" == s) { return 4; }
     if (s == "") { return 5; }
     if (s == t) { return 6; }
+    if (s == "abcdefgh") { return 7; }
+    if (s == "abcdefghi") { return 8; }
     return 0;
 }
 function main(): i32 {
-    let r: i32 = code("add", "q") + code("and", "q") * 2 + code("sub", "q") * 4 + code("xor", "q") * 8 + code("", "q") * 16;
-    r = r + code("sum", "sum") + code("adz", "q") * 64 + code("sum", "q") * 64;
-    return r;
+    let hits = ["add", "\n\t", "é", "xor", "", "abcdefgh", "abcdefghi"];
+    let misses = ["adz", "\n ", "è", "xo", "abcdefgX", "abcdefghX", "zbcdefghi"];
+    let r = 0;
+    for s in hits {
+        r = r * 10 + code(s, "q");
+    }
+    for s in misses {
+        r = r + code(s, "q") * 100000000;
+    }
+    if (r != 1234578) { return 1; }
+    return code("sum", "sum") * 10 + code("sum", "q");
 }
 `
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	shapes := map[string]struct {
-		sites func(fn string) []byteSite
+		sites func(fn string) []string
 		entry string
 	}{
-		"x86-64-linux": {x86ByteSites, "call __fn___fern_str_eq.r\n"},
-		"arm64-linux":  {arm64ByteSites, "bl __fn___fern_str_eq.r\n"},
+		"x86-64-linux": {x86LiteralSites, "call __fn___fern_str_eq.r\n"},
+		"arm64-linux":  {arm64LiteralSites, "bl __fn___fern_str_eq.r\n"},
 	}
-	const wantSites = "115:first 120:second 97:first 97:first"
+	// Each literal of up to 8 bytes is a length immediate and each of its
+	// bytes. The 9-byte literal tests its length and first byte, then calls.
+	wantSites := []string{"0:", "2:10,9", "2:195,169", "3:97,100,100", "3:120,111,114", "8:97,98,99,100,101,102,103,104", "9:97"}
+	sort.Strings(wantSites)
+	want := strings.Join(wantSites, " ")
 	for _, tg := range h.targets {
 		shape, ok := shapes[tg.target]
 		if !ok {
@@ -1550,96 +1564,103 @@ function main(): i32 {
 		if fn == "" {
 			t.Fatalf("%s: no __fn_code in the listing:\n%s", tg.target, asm)
 		}
-		var got []string
-		for _, site := range shape.sites(fn) {
-			got = append(got, site.String())
-		}
+		got := shape.sites(fn)
 		sort.Strings(got)
-		if g := strings.Join(got, " "); g != wantSites {
-			t.Errorf("%s: code's byte compares are %q, want %q (the byte read must be the non-literal operand's):\n%s", tg.target, g, wantSites, fn)
+		if g := strings.Join(got, " "); g != want {
+			t.Errorf("%s: code's inline literal compares are %q, want %q:\n%s", tg.target, g, want, fn)
 		}
-		if n := strings.Count(fn, shape.entry); n != 6 {
-			t.Errorf("%s: code calls the helper's register entry %d times, want 6:\n%s", tg.target, n, fn)
+		if n := strings.Count(fn, shape.entry); n != 2 {
+			t.Errorf("%s: code calls the helper's register entry %d times, want 2 (s == t and the 9-byte literal):\n%s", tg.target, n, fn)
 		}
 		bin := filepath.Join(dir, "streqlit-"+tg.target)
 		h.compileWith(t, tg, src, bin, "-backend", "ssa")
-		if _, code := h.runProduced(t, tg, bin); code != 1+2*2+3*4+4*8+5*16+6 {
-			t.Errorf("%s: exit = %d, want %d: each literal matched, the equal non-literals matched, the near misses rejected", tg.target, code, 1+2*2+3*4+4*8+5*16+6)
+		if _, code := h.runProduced(t, tg, bin); code != 60 {
+			t.Errorf("%s: exit = %d, want 60: each literal matched, the near misses rejected, the equal non-literals matched", tg.target, code)
 		}
 	}
 }
 
-type byteSite struct {
-	lit     string
-	operand string
+// literalSite renders a length immediate and the bytes compared after it.
+func literalSite(n string, bytes []string) string {
+	return n + ":" + strings.Join(bytes, ",")
 }
 
-func (b byteSite) String() string { return b.lit + ":" + b.operand }
-
-func whichOperand(loaded, first, second string) string {
-	switch loaded {
-	case first:
-		return "first"
-	case second:
-		return "second"
-	}
-	return "neither(" + loaded + ")"
-}
-
-func x86ByteSites(fn string) []byteSite {
+// x86LiteralSites finds `cmpq $N, 8(R)` and the `cmpb $B, K(%rdx)` run that
+// reads the buffer of R. A run that reads any other register is not counted.
+func x86LiteralSites(fn string) []string {
 	lines := listingLines(fn)
 	var (
-		lenA = regexp.MustCompile(`^movq 8\((\S+)\), %rdx$`)
-		lenB = regexp.MustCompile(`^cmpq 8\((\S+)\), %rdx$`)
-		load = regexp.MustCompile(`^movq \((\S+)\), %rdx$`)
-		cmpb = regexp.MustCompile(`^cmpb \$(\d+), \(%rdx\)$`)
+		length = regexp.MustCompile(`^cmpq \$(\d+), 8\((%\w+)\)$`)
+		load   = regexp.MustCompile(`^movq \((%\w+)\), %rdx$`)
+		cmpb   = regexp.MustCompile(`^cmpb \$(\d+), (\d*)\(%rdx\)$`)
 	)
-	var out []byteSite
-	for i, l := range lines {
-		m := cmpb.FindStringSubmatch(l)
-		if m == nil {
+	var out []string
+	for i := 0; i+1 < len(lines); i++ {
+		m := length.FindStringSubmatch(lines[i])
+		if m == nil || !strings.HasPrefix(lines[i+1], "jne .Lssa_code_streqn") {
 			continue
 		}
-		if i < 4 {
-			out = append(out, byteSite{m[1], "no-preamble"})
-			continue
+		var bytes []string
+		j := i + 2
+		if j < len(lines) {
+			if r := load.FindStringSubmatch(lines[j]); r != nil && r[1] == m[2] {
+				for j++; j+1 < len(lines); j += 2 {
+					b := cmpb.FindStringSubmatch(lines[j])
+					if b == nil || b[2] != offsetText(len(bytes), "") {
+						break
+					}
+					bytes = append(bytes, b[1])
+				}
+			}
 		}
-		a, b, r := lenA.FindStringSubmatch(lines[i-4]), lenB.FindStringSubmatch(lines[i-3]), load.FindStringSubmatch(lines[i-1])
-		if a == nil || b == nil || r == nil {
-			out = append(out, byteSite{m[1], "no-preamble"})
-			continue
-		}
-		out = append(out, byteSite{m[1], whichOperand(r[1], a[1], b[1])})
+		out = append(out, literalSite(m[1], bytes))
 	}
 	return out
 }
 
-func arm64ByteSites(fn string) []byteSite {
+// arm64LiteralSites is x86LiteralSites for `ldr x6, [R, #8]` and `cmp x6, #N`,
+// then `ldrb w7, [x6, #K]` and `cmp w7, #B` for each byte.
+func arm64LiteralSites(fn string) []string {
 	lines := listingLines(fn)
 	var (
-		lenA = regexp.MustCompile(`^ldr x6, \[(\S+), #8\]$`)
-		lenB = regexp.MustCompile(`^ldr x7, \[(\S+), #8\]$`)
-		load = regexp.MustCompile(`^ldr x6, \[(\S+)\]$`)
-		cmp  = regexp.MustCompile(`^cmp w6, #(\d+)$`)
+		lenLoad = regexp.MustCompile(`^ldr x6, \[(x\d+), #8\]$`)
+		length  = regexp.MustCompile(`^cmp x6, #(\d+)$`)
+		load    = regexp.MustCompile(`^ldr x6, \[(x\d+)\]$`)
+		ldrb    = regexp.MustCompile(`^ldrb w7, \[x6(, #\d+)?\]$`)
+		cmp     = regexp.MustCompile(`^cmp w7, #(\d+)$`)
 	)
-	var out []byteSite
-	for i, l := range lines {
-		m := cmp.FindStringSubmatch(l)
-		if m == nil || i < 1 || lines[i-1] != "ldrb w6, [x6]" {
+	var out []string
+	for i := 0; i+2 < len(lines); i++ {
+		r := lenLoad.FindStringSubmatch(lines[i])
+		m := length.FindStringSubmatch(lines[i+1])
+		if r == nil || m == nil || !strings.HasPrefix(lines[i+2], "b.ne .Lssa_code_streqn") {
 			continue
 		}
-		if i < 6 {
-			out = append(out, byteSite{m[1], "no-preamble"})
-			continue
+		var bytes []string
+		j := i + 3
+		if j < len(lines) {
+			if l := load.FindStringSubmatch(lines[j]); l != nil && l[1] == r[1] {
+				for j++; j+2 < len(lines); j += 3 {
+					b := ldrb.FindStringSubmatch(lines[j])
+					c := cmp.FindStringSubmatch(lines[j+1])
+					if b == nil || c == nil || b[1] != offsetText(len(bytes), ", #") {
+						break
+					}
+					bytes = append(bytes, c[1])
+				}
+			}
 		}
-		a, b, r := lenA.FindStringSubmatch(lines[i-6]), lenB.FindStringSubmatch(lines[i-5]), load.FindStringSubmatch(lines[i-2])
-		if a == nil || b == nil || r == nil {
-			out = append(out, byteSite{m[1], "no-preamble"})
-			continue
-		}
-		out = append(out, byteSite{m[1], whichOperand(r[1], a[1], b[1])})
+		out = append(out, literalSite(m[1], bytes))
 	}
 	return out
+}
+
+// offsetText is how a listing writes byte offset k: nothing for 0.
+func offsetText(k int, prefix string) string {
+	if k == 0 {
+		return ""
+	}
+	return prefix + strconv.Itoa(k)
 }
 
 func listingLines(fn string) []string {

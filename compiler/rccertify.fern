@@ -506,7 +506,7 @@ struct Roots { root: i32[], derived: boolean[] }
 struct Alias { of: i32, derived: boolean }
 
 function arith_alias(f: ssa.SFunc, defs: ssa.DefSites, ins: ssa.SInst): Alias {
-  if (ins.args.len() != 2 || ins.str != "add" && ins.str != "sub") {
+  if (ins.args.len() != 2 || ins.ir_kind != ir.K_ADD && ins.ir_kind != ir.K_SUB) {
     return Alias { of: -1, derived: false };
   }
   let a = def_of(f, defs, ins.args[1]);
@@ -514,7 +514,7 @@ function arith_alias(f: ssa.SFunc, defs: ssa.DefSites, ins: ssa.SInst): Alias {
     return Alias { of: 0, derived: cursor_step(a.imm) };
   }
   let b = def_of(f, defs, ins.args[0]);
-  if (ins.str == "add" && b.kind_tag == ssa.CONST_INT) {
+  if (ins.ir_kind == ir.K_ADD && b.kind_tag == ssa.CONST_INT) {
     return Alias { of: 1, derived: cursor_step(b.imm) };
   }
   return Alias { of: -1, derived: false };
@@ -769,7 +769,7 @@ struct Tested { word: i32, on_true: boolean }
 
 function tested(w: Walk, cond: i32): Tested {
   let ins = def_in(w, cond);
-  if (ins.kind_tag != ssa.BINARY || ins.args.len() != 2 || ins.str != "eq" && ins.str != "ne") {
+  if (ins.kind_tag != ssa.BINARY || ins.args.len() != 2 || ins.ir_kind != ir.K_EQ && ins.ir_kind != ir.K_NE) {
     return Tested { word: cond, on_true: true };
   }
   let word = -1;
@@ -778,7 +778,7 @@ function tested(w: Walk, cond: i32): Tested {
   } else if (zero_at(w, ins.args[0])) {
     word = ins.args[1];
   }
-  return Tested { word: word, on_true: ins.str == "ne" };
+  return Tested { word: word, on_true: ins.ir_kind == ir.K_NE };
 }
 
 function cond_of(w: Walk, regions: i32[][], cond: i32, with_tokens: boolean): Cond {
@@ -3293,10 +3293,10 @@ function tag_on_edge(w: Walk, bi: i32, sid: i32): Tag {
     return Tag { word: -1, c: 0, equal: false };
   }
   let ins = def_in(w, t.cond);
-  if (ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
+  if (ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.ir_kind == ir.K_EQ || ins.ir_kind == ir.K_NE)) {
     let tg = compared(w, ins);
     let equal = sid == t.t;
-    if (ins.str == "ne") {
+    if (ins.ir_kind == ir.K_NE) {
       equal = !equal;
     }
     return Tag { ...tg, equal: equal };
@@ -3364,11 +3364,11 @@ function same_box_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress
     return p;
   }
   let c = def_in(w, t.cond);
-  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.ir_kind != ir.K_EQ && c.ir_kind != ir.K_NE) {
     return p;
   }
   let equal = sid == t.t;
-  if (c.str == "ne") {
+  if (c.ir_kind == ir.K_NE) {
     equal = !equal;
   }
   if (equal) {
@@ -3936,11 +3936,11 @@ function twin_dead_on_edge(p: Progress, w: Walk, bi: i32, sid: i32): boolean {
     return false;
   }
   let c = def_in(w, t.cond);
-  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.ir_kind != ir.K_EQ && c.ir_kind != ir.K_NE) {
     return false;
   }
   let equal = sid == t.t;
-  if (c.str == "ne") {
+  if (c.ir_kind == ir.K_NE) {
     equal = !equal;
   }
   return no_side_of(p, w, c.args[0], c.args[1], equal) || no_side_of(p, w, c.args[1], c.args[0], equal);

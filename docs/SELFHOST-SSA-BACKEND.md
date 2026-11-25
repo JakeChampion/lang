@@ -133,7 +133,9 @@ lowered function it:
    is 0 matches in its folded form `x - c` or `x + c`. The constants that a
    carry reads go to the start of the block, so the subtract of a modulus
    is one chain too (#17029). On x86-64, `a * b` directly before
-   `__mulhi_u64(a, b)` is one `mulq` for both halves. The step
+   `__mulhi_u64(a, b)` is one `mulq` for both halves. The `mulq` reads
+   one factor from its register or its slot, and `%rcx` stays live across
+   it. The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
    `&&` or an `||` that the function returns is then a tail call;
