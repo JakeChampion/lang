@@ -22,7 +22,7 @@ func TestSelfHostRuntimeHelpersAreFernIR(t *testing.T) {
 		},
 		{
 			"str_eq",
-			`function main(): i32 { let xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
+			`function main(): i32 { let xs: string[] = args(); if (xs[0] == xs[1]) { return 1; } return 0; }`,
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
