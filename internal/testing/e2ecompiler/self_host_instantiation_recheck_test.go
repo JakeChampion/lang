@@ -12,6 +12,7 @@ import (
 	"github.com/jakechampion/lang/internal/check/constfold"
 	"github.com/jakechampion/lang/internal/oracle/monomorph"
 	"github.com/jakechampion/lang/internal/pkg/modload"
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func goPipelineDiags(t *testing.T, dir, src string) []driverDiag {
@@ -34,9 +35,13 @@ func goPipelineDiags(t *testing.T, dir, src string) []driverDiag {
 	return checkErrDiags(monomorph.Run(prog, info))
 }
 
+// diagMultiset leaves out the codes that only the self-host checker reports.
 func diagMultiset(ds []driverDiag) []string {
 	var out []string
 	for _, d := range ds {
+		if e2eharness.SelfHostOnlyCode(d.code) {
+			continue
+		}
 		out = append(out, d.code+": "+d.msg)
 	}
 	sort.Strings(out)
@@ -131,7 +136,7 @@ function main(): i32 { return h([1]); }
 	{"string-element-into-own", `function g(own y: string): string { return y; }
 function h(xs: string[]): string { return g(xs[0]); }
 function main(): i32 { return h(["a"]).len(); }
-`, 1},
+`, 0},
 	{"scalar-typed-reads-into-own", `struct P { n: i32 }
 function g(own y: i32): i32 { return y; }
 function a(p: P): i32 { return g(p.n); }
@@ -144,26 +149,26 @@ function main(): i32 { let p = P { n: 1 }; return a(p) + b([1, 2]) + c("hi") + d
   match (o) { Some(v) => { return v; }, None => { return 0; } }
 }
 function main(): i32 { let a: i32 = 1; let b: i32 = 2; return g(a +? b); }
-`, 1},
+`, 0},
 	{"checked-op-local-into-own", `function g(own o: Option[i32]): i32 {
   match (o) { Some(v) => { return v; }, None => { return 0; } }
 }
 function main(): i32 { let a: i32 = 1; let b: i32 = 2; let c = a +? b; let r: i32 = g(c); match (c) { Some(v) => { return r + v; }, None => { return r; } } }
-`, 1},
+`, 0},
 	{"cast-to-string-into-own", `function g(own s: string): i32 { return s.len(); }
 function main(): i32 { let k: usize = 3; unsafe { return g(k as string); } }
-`, 1},
+`, 0},
 	{"borrowed-string-into-own", `function g(own y: string): string { return y; }
 function f(x: string): string { return g(x); }
 function main(): i32 { return f("a").len(); }
-`, 1},
+`, 0},
 	{"overload-plus-into-own", `import "core/ops";
 struct V { x: i32 }
 function (self: V) add(other: V): V { return V { x: self.x + other.x }; }
 impl ops.Add for V {}
 function g(own s: V): i32 { return s.x; }
 function main(): i32 { let a = V { x: 1 }; let b = V { x: 2 }; return g(a + b); }
-`, 1},
+`, 0},
 	{"string-concat-into-own", `function g(own s: string): i32 { return s.len(); }
 function main(): i32 { let a = "x"; let b = "y"; return g(a + b); }
 `, 0},

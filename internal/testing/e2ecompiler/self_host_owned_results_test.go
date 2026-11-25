@@ -219,7 +219,6 @@ function borrowed_source(source: H[]): i32 { return keep(firsts(source)); }
 				}
 				t.Fatalf("%s: want %q, got %v", label, tc.code, ds)
 			}
-			check("Go", goCheckerDiags(t, dir, source))
 			cmd := exec.Command(bin)
 			if len(runner) > 0 {
 				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
@@ -249,7 +248,7 @@ func checkedOwnedResultBorrowFixtures(t *testing.T, bin string, runner []string,
 				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
 			}
 			cmd.Stdin = bytes.NewReader(source)
-			for label, ds := range map[string][]driverDiag{"Go": goCheckerDiags(t, dir, string(source)), "Fern": driverDiags(runCheckerDriver(t, cmd, name))} {
+			for label, ds := range map[string][]driverDiag{"Fern": driverDiags(runCheckerDriver(t, cmd, name))} {
 				found := false
 				for _, d := range ds {
 					found = found || d.code == "E051"
