@@ -819,10 +819,12 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--format=%s", "-n", "1", "module-merge")
 	// With no form of the diff, the port does not do the merge.
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-s", "--format=%s", "module-merge")
-	g.git("config", "merge.custom.driver", "true")
+	g.git("config", "merge.custom.name", "custom merge")
 	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("file.txt merge=custom\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
+	g.git("config", "merge.custom.driver", "true")
 	refuse("the merge driver 'custom' of the configuration", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
 	os.Remove(filepath.Join(dir, ".git", "info", "attributes"))
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
