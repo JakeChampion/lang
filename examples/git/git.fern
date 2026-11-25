@@ -3282,7 +3282,7 @@ function log_command(argv: string[]): i32 {
     o = LogOpts { ...o, patch: patch.Opts { ...o.patch, patch: true } };
   }
   if (o.merges == "remerge") {
-    o = LogOpts { ...o, remerge: [merge.configured(r.config, merge.defaults(), env("GIT_MERGE_VERBOSITY").unwrap_or(""))] };
+    o = LogOpts { ...o, remerge: [merge.configured(r.config, merge.Options { ...merge.defaults(), repo: Some(r) }, env("GIT_MERGE_VERBOSITY").unwrap_or(""))] };
   }
   if (o.patch.patch || o.patch.color || o.diff == "check" || o.lines.len() > 0 || o.merges == "remerge") {
     o = LogOpts { ...o, patch: patch.Opts { ...o.patch, attrs: [attr.load(r)], drivers: userdiff.from_config(r.config) } };

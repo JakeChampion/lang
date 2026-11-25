@@ -777,9 +777,8 @@ func TestSelfHostExampleGitRemergeOldModes(t *testing.T) {
 	}
 }
 
-// gitRemergeGaps runs the merges that the port does not have: the port
-// stops with a message that names the part, and prints no diff of the
-// merge.
+// Compare missing submodules with Git and check the diagnostics for the
+// parts of a merge that the port still cannot perform.
 func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	t.Helper()
 	dir := t.TempDir()
@@ -816,7 +815,12 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 			t.Errorf("git %q: got exit %d, stdout %q, stderr %q, want the refusal of %s", args, code, stdout, stderr, want)
 		}
 	}
-	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--format=%s", "-n", "1", "module-merge")
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "module-merge")
+	rightTree := g.git("rev-parse", "module-2^{tree}")
+	rightMerge := g.git("commit-tree", "-p", "module-1", "-p", "module-2", "-m", "take second parent", rightTree)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
+	g.git("init", "-q", "module")
+	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--format=%s", "-1", rightMerge)
 	// With no form of the diff, the port does not do the merge.
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-s", "--format=%s", "module-merge")
 	g.git("config", "merge.custom.name", "custom merge")

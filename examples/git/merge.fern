@@ -28,7 +28,7 @@ import "./walk";
 // and `drivers` records whether each named driver has a command.
 // With a `verbosity` of 5 or more, the messages of an inner merge are kept. `abbrev` is the least length of a short name.
 // `attrs` holds the attributes, or nothing.
-pub struct Options { style: i32, algo: linediff.Options, renames: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
+pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
 
 // The text of a gap: a part of a merge that the port does not have.
 function gap(what: string): string {
@@ -37,7 +37,7 @@ function gap(what: string): string {
 
 // The settings of git with no configuration.
 pub function defaults(): Options {
-  return Options { style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
+  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
 }
 
 // The settings of a merge from the configuration, or the message of git
@@ -762,6 +762,19 @@ function merge_3way(st_in: State, path: string, o: string, a: string, b: string,
   return (st, text.status, store.hold(st.store, "blob", text.bytes));
 }
 
+// Git can find the submodule in the worktree or in its module store.
+// A configured gitdir can live elsewhere. Leave that lookup to the
+// submodule history merge.
+function submodule_absent(repo: refs.Repo, path: string): boolean {
+  if (repo.top == "" || repo.config.flag("extensions.submodulepathconfig", false)) {
+    return false;
+  }
+  if (stat(repo.top + "/" + path + "/.git").is_ok()) {
+    return false;
+  }
+  return stat(repo.common + "/modules").is_err() && stat(repo.dir + "/modules").is_err();
+}
+
 // The merge of the versions `o`, `a` and `b` of one path
 // (`handle_content_merge` of git): true for a merge with no conflict, and
 // the version of the result.
@@ -786,6 +799,14 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
     return (st1, clean && status == CLEAN, Version { mode: mode, hash: hash });
   }
   if (kind == KIND_COMMIT) {
+    // Git first opens the checkout, then tries its stored module. When
+    // both are absent it records a conflict and keeps the first parent.
+    if let Some(repo) = st.o.repo {
+      if (submodule_absent(repo, path)) {
+        st = message(st, path, "Failed to merge submodule " + path + " (not checked out)");
+        return (st, false, if (st.depth > 0) { o } else { a });
+      }
+    }
     return (State { ...st, fatal: gap("the merge of a submodule (" + path + ")") }, false, a);
   }
   // Two links: an inner merge keeps the base, and the last merge keeps

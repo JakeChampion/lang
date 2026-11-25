@@ -340,7 +340,8 @@ With git 2.43, these settings, messages and merges are also different:
 ## What it does not have yet
 
 - Three parts of the merge of `--remerge-diff`. They are the merge of a
-  submodule that the two parents changed, and a merge driver of the
+  submodule that the two parents changed when its checkout or module
+  store is present, and a merge driver of the
   configuration (`merge.NAME.driver`). The third is
   `merge.renormalize`.
   For a merge that needs one of them, the port stops with a message
