@@ -10,6 +10,7 @@
 # largest part of a case after a change to the oracle.
 aac 46
 aac_boundary 71
+aac_crc 110
 aac_kernel 51
 aac_smoke 10
 aes 19
