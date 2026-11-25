@@ -5090,7 +5090,8 @@ function identity_operand(ins: SInst, defs: SInst[]): i32 {
 
 // x & -1 is x and x & 0 is 0. An identity that one of these folds exposes, such
 // as x + (y & 0), also folds. The pass runs after fuse_carries, because the
-// carry formulas of a chain with a constant limb hold these ANDs.
+// carry formulas of a chain with a constant limb hold these ANDs. The carry of
+// x + 0 + c is then the carry of x + c, so the chain continues through the add.
 pub function fold_and_identities(f: SFunc): SFunc {
   let defs = inst_defs(f);
   let flat = identity_repl(f.nvals);
@@ -5111,7 +5112,22 @@ pub function fold_and_identities(f: SFunc): SFunc {
   if (!changed) {
     return f;
   }
-  return prune_dead(rewrite_through(f, flat));
+  let g = prune_dead(rewrite_through(f, flat));
+  let t = rewrite_insts(g, inst_defs(g), carry_without_zero);
+  return if (t.changed) { gather_carries(prune_dead(t.f)) } else { g };
+}
+
+function carry_without_zero(defs: SInst[], c: SInst): SInst {
+  if (c.kind_tag != CARRY || c.args.len() != 3) {
+    return no_inst();
+  }
+  if (const_is(defs, c.args[1], 0i64)) {
+    return SInst { ...c, args: [c.args[0], c.args[2]] };
+  }
+  if (c.imm == 0 && const_is(defs, c.args[0], 0i64)) {
+    return SInst { ...c, args: [c.args[1], c.args[2]] };
+  }
+  return no_inst();
 }
 
 // The all-ones constant -1 has each of the 64 bits set, so the fold is correct at each width.
