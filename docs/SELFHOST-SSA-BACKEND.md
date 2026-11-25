@@ -118,7 +118,12 @@ lowered function it:
    gives each member a role, and the emitters keep the carry in the flags
    from one member to the next, so a multi-word add is one `add` and then
    `adc` for each word (`adds` and `adcs` on arm64). A carry gets a
-   register only when a reader outside the chain uses it (#15728). The step
+   register only when a reader outside the chain uses it (#15728). Two
+   constants of one value match as one operand, and a word whose constant
+   is 0 matches in its folded form `x - c` or `x + c`. The constants that a
+   carry reads go to the start of the block, so the subtract of a modulus
+   is one chain too (#17029). On x86-64, `a * b` directly before
+   `__mulhi_u64(a, b)` is one `mulq` for both halves. The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
    `&&` or an `||` that the function returns is then a tail call;
