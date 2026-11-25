@@ -147,13 +147,13 @@ profile/x86-64-linux/http_hello.diagnostic.emit	16646
 profile/x86-64-linux/http_hello.diagnostic.ir	50893942
 profile/x86-64-linux/http_hello.hardened.bytes	71936
 profile/x86-64-linux/http_hello.hardened.emit	16302
-profile/x86-64-linux/http_hello.hardened.ir	30044805
+profile/x86-64-linux/http_hello.hardened.ir	28543683
 profile/x86-64-linux/http_hello.minimal.bytes	59440
 profile/x86-64-linux/http_hello.minimal.emit	14011
-profile/x86-64-linux/http_hello.minimal.ir	23752364
+profile/x86-64-linux/http_hello.minimal.ir	23096352
 profile/x86-64-linux/http_hello.safe.bytes	67152
 profile/x86-64-linux/http_hello.safe.emit	15871
-profile/x86-64-linux/http_hello.safe.ir	21800364
+profile/x86-64-linux/http_hello.safe.ir	21160352
 profile/x86-64-linux/int_loop.diagnostic.bytes	5872
 profile/x86-64-linux/int_loop.diagnostic.emit	550
 profile/x86-64-linux/int_loop.diagnostic.ir	12000230
