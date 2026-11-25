@@ -54,6 +54,10 @@ finding. Both rows are re-banked in `.github/certify-baseline.txt`. The
 mutant census of `checker.fern` is the same with both certifiers: 5,392
 refuted, 227 weakened, 228 missed.
 
+The 2,899 programs under `conformance/`, `tests/`, `examples/` and
+`coreutils/` give 0 findings on x86-64 with both certifiers. Each program
+exits as it did before. Their unproved values go from 36,335 to 35,772.
+
 ## Next lead
 
 `ssaunits__carried_pairs` now has the most unproved values: 18. The first is
