@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const (
@@ -94,6 +96,7 @@ func TestDiagnosticsIndexIsAccurate(t *testing.T) {
 func codesByCase(t *testing.T) map[string][]string {
 	t.Helper()
 	bin := buildLangBinForInterp(t)
+	fern, stdlibRoot := e2eharness.SelfHostCLI(t), e2eharness.SelfHostStdlibRoot(t)
 
 	entries, err := os.ReadDir(conformanceCases)
 	if err != nil {
@@ -110,7 +113,7 @@ func codesByCase(t *testing.T) map[string][]string {
 		var cmd *exec.Cmd
 		switch {
 		case fileExists(filepath.Join(dir, "expected.error")):
-			cmd = exec.Command(bin, "-check", main)
+			cmd = exec.Command(fern, "-check", main, stdlibRoot)
 		case fileExists(filepath.Join(dir, "expected.lowering-error")):
 			cmd = exec.Command(bin, "-target", "x86-64-linux", "-o", filepath.Join(t.TempDir(), "prog"), main)
 		default:

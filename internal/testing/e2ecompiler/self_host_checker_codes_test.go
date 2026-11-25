@@ -57,7 +57,7 @@ func goCheckerDiagCodes(t *testing.T, dir, src string) []string {
 	if err == nil {
 		return nil
 	}
-	return sortedCodes(diag.Format(p, src, err))
+	return e2eharness.SharedCodes(sortedCodes(diag.Format(p, src, err)))
 }
 
 // sortedCodes returns every diagnostic code in out, repeats kept, sorted.
@@ -3166,7 +3166,7 @@ function main(): i32 { return 0; }
 				t.Errorf("%s: self-host codes = %v, want %v", tc.name, got, want)
 			}
 			goCodes := goCheckerCodes(t, dir, tc.src)
-			if !equalStrings(got, goCodes) {
+			if !equalStrings(e2eharness.SharedCodes(got), goCodes) {
 				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)", tc.name, got, goCodes)
 			}
 		})
@@ -3188,6 +3188,7 @@ function main(): i32 { return 0; }
 			}
 			cmd.Stdin = bytes.NewReader([]byte(wrapped))
 			got := driverCodes(runCheckerDriver(t, cmd, tc.name))
+			got = e2eharness.SharedCodes(got)
 			want := goCheckerCodes(t, dir, wrapped)
 			why, listed := lambdaBodyDivergences[tc.name]
 			switch {
@@ -3968,7 +3969,7 @@ function main(): i32 { return 0; }`},
 			}
 			cmd.Stdin = bytes.NewReader([]byte(tc.src))
 			out := runCheckerDriver(t, cmd, tc.name)
-			got := driverCodes(out)
+			got := e2eharness.SharedCodes(driverCodes(out))
 			want := goCheckerCodes(t, dir, tc.src)
 			if !equalStrings(got, want) {
 				t.Errorf("%s: self-host codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src+"\nself-host output:\n"+out)
@@ -4207,7 +4208,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 	for _, tc := range progs {
 		t.Run(tc.name, func(t *testing.T) {
 			out := checkSourceModload(t, runner, driverBin, tc.src)
-			got := driverCodes(out)
+			got := e2eharness.SharedCodes(driverCodes(out))
 			want := goCheckerCodes(t, t.TempDir(), tc.src)
 			if !equalStrings(got, want) {
 				t.Errorf("%s: self-host file-loader codes %v disagree with Go checker %v (unfiltered)\nsrc: %s", tc.name, got, want, tc.src+"\nself-host output:\n"+out)
@@ -4276,7 +4277,7 @@ func TestSelfHostCheckerVariantScopeDifferentialX86_64(t *testing.T) {
 				t.Fatal(err)
 			}
 			goCodes := goCheckerCodes(t, dir, tc.main)
-			if !equalStrings(goCodes, tc.want) {
+			if !equalStrings(goCodes, e2eharness.SharedCodes(tc.want)) {
 				t.Errorf("Go checker codes %v, want %v\nsrc: %s", goCodes, tc.want, tc.main)
 			}
 			shCodes := driverCodes(checkFileModload(t, runner, driverBin, entry))

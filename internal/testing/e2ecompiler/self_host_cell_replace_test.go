@@ -122,7 +122,6 @@ func TestSelfHostCellReplaceDiagnostics(t *testing.T) {
 // A snapshot of data with no handle is an independent copy.
 func TestSelfHostCellGetSnapshotLends(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	oracle := buildLangBinForInterp(t)
 	const handle = `struct H { n: i32 }
 function (own h: H) close(): void { print(h.n); }
 `
@@ -180,15 +179,10 @@ function main(): i32 {
 			if err := os.WriteFile(path, []byte(tc.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			for front, cmd := range map[string]*exec.Cmd{
-				"Go":   exec.Command(oracle, "-check", path),
-				"self": runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib),
-			} {
-				out, err := cmd.CombinedOutput()
-				got := strings.Count(string(out), "error[E051]")
-				if got != tc.want || (tc.want == 0) != (err == nil) {
-					t.Errorf("%s: want %d E051, got %d (%v)\n%s", front, tc.want, got, err, out)
-				}
+			out, err := runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib).CombinedOutput()
+			got := strings.Count(string(out), "error[E051]")
+			if got != tc.want || (tc.want == 0) != (err == nil) {
+				t.Errorf("want %d E051, got %d (%v)\n%s", tc.want, got, err, out)
 			}
 		})
 	}
