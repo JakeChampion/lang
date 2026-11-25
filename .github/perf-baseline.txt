@@ -64,7 +64,7 @@ x86_64/deflate_encode.text	7282
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
 x86_64/http_hello.text	15871
-x86_64/http_hello.ir	21800364
+x86_64/http_hello.ir	21160352
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8455
@@ -75,7 +75,7 @@ x86_64/map_string.text	9349
 x86_64/map_string.ir	45796489	2
 x86_64/ordmap_insert.text	5875
 x86_64/ordmap_insert.ir	66342314
-x86_64/pmap_insert.text	3699
+x86_64/pmap_insert.text	3632
 x86_64/pmap_insert.ir	48660607
 x86_64/pvec_with.text	3489
 x86_64/pvec_with.ir	43518324
@@ -103,9 +103,9 @@ x86_64/struct_drop.text	2808
 x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1270
 x86_64/tokenize.ir	30310112
-x86_64/utf8_ingest_unchecked.text	8445
+x86_64/utf8_ingest_unchecked.text	8223
 x86_64/utf8_ingest_unchecked.ir	1797263
-x86_64/utf8_ingest_validated.text	9118
+x86_64/utf8_ingest_validated.text	8885
 x86_64/utf8_ingest_validated.ir	3432463
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -143,7 +143,7 @@ aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
 aarch64/http_hello.text	16806
-aarch64/http_hello.ir	23828544
+aarch64/http_hello.ir	22972520
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8555
@@ -154,7 +154,7 @@ aarch64/map_string.text	9587
 aarch64/map_string.ir	46464947	2
 aarch64/ordmap_insert.text	6303
 aarch64/ordmap_insert.ir	82086738
-aarch64/pmap_insert.text	4034
+aarch64/pmap_insert.text	3986
 aarch64/pmap_insert.ir	54692820
 aarch64/pvec_with.text	3827
 aarch64/pvec_with.ir	46418540
@@ -182,9 +182,9 @@ aarch64/struct_drop.text	3075
 aarch64/struct_drop.ir	220180757
 aarch64/tokenize.text	1531
 aarch64/tokenize.ir	31880127
-aarch64/utf8_ingest_unchecked.text	8951
+aarch64/utf8_ingest_unchecked.text	8657
 aarch64/utf8_ingest_unchecked.ir	2244468
-aarch64/utf8_ingest_validated.text	9626
+aarch64/utf8_ingest_validated.text	9333
 aarch64/utf8_ingest_validated.ir	4332068
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	34837730
@@ -251,7 +251,7 @@ aarch64/enum_match.dr	1125004
 aarch64/gather_many.dr	10348475
 aarch64/hex_decode.dr	15885910
 aarch64/hex_encode.dr	3287599
-aarch64/http_hello.dr	4340095
+aarch64/http_hello.dr	4148093
 aarch64/int_loop.dr	3000003
 aarch64/map_int.dr	4523391
 aarch64/map_probe_chain.dr	38645307
@@ -297,7 +297,7 @@ x86_64/enum_match.dr	225002
 x86_64/gather_many.dr	10701857
 x86_64/hex_decode.dr	25270109
 x86_64/hex_encode.dr	6369332
-x86_64/http_hello.dr	5420040
+x86_64/http_hello.dr	5208038
 x86_64/int_loop.dr	2
 x86_64/map_int.dr	4609812
 x86_64/map_probe_chain.dr	44200346

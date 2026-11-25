@@ -2469,25 +2469,26 @@ function x86_sha256_blocks(): string {
     + "    movq %rdx, 16(%rsp)\n    movq $64, 24(%rsp)\n    movq %rsi, 32(%rsp)\n    movq %rdi, 40(%rsp)\n    movq %rdi, %rax\n"
     + ".Lsha_load:\n    movq 32(%rsp), %r8\n    movdqu (%r8), %xmm0\n    movdqu 16(%r8), %xmm1\n    movdqu %xmm0, 8(%rax)\n    movdqu %xmm1, 24(%rax)\n"
     + "    movdqu .Lsha_bswap(%rip), %xmm15\n    leaq .Lsha_k(%rip), %rbp\n";
-  o += ".Lsha_loop:\n    movq 24(%rsp), %rcx\n    cmpq $64, %rcx\n    jb .Lsha_ret\n    subq $64, %rcx\n    movq %rcx, 24(%rsp)\n    movq 16(%rsp), %rsi\n";
-  for j in 0..4 {
-    let x = "%xmm" + util.i32_to_string(4 + j);
-    o = o + "    movdqu " + util.i32_to_string(16 * j) + "(%rsi), " + x + "\n    pshufb %xmm15, " + x + "\n";
-  }
-  o += "    addq $64, %rsi\n    movq %rsi, 16(%rsp)\n    movq 40(%rsp), %rax\n";
-  let v: string[] = ["%r8d", "%r9d", "%r10d", "%r11d", "%r12d", "%r13d", "%r14d", "%r15d"];
-  let i = 0;
-  while (i < 8) {
-    o = o + "    movl " + util.i32_to_string(8 + 4 * i) + "(%rax), " + v[i] + "\n";
-    i += 1;
-  }
-  o = o + "    movl %r9d, %edi\n    xorl %r10d, %edi\n" + x86_sha256_rounds() + "    movq 40(%rsp), %rax\n";
-  for i in 0..8 {
-    o = o + "    addl " + v[i] + ", " + util.i32_to_string(8 + 4 * i) + "(%rax)\n";
-  }
-  return o + "    jmp .Lsha_loop\n.Lsha_ret:\n    movq 40(%rsp), %rax\n    addq $56, %rsp\n"
+  o += "    movdqu 8(%rax), %xmm1\n    movdqu 24(%rax), %xmm2\n" + x86_sha256_abef();
+  o += ".Lsha_loop:\n    movq 24(%rsp), %rcx\n    cmpq $64, %rcx\n    jb .Lsha_done\n    subq $64, %rcx\n    movq %rcx, 24(%rsp)\n    movq 16(%rsp), %rsi\n"
+    + "    movdqa %xmm1, %xmm8\n    movdqa %xmm2, %xmm9\n" + x86_sha256_rounds("%rbp")
+    + "    paddd %xmm8, %xmm1\n    paddd %xmm9, %xmm2\n    addq $64, %rsi\n    movq %rsi, 16(%rsp)\n    jmp .Lsha_loop\n";
+  return o + ".Lsha_done:\n" + x86_sha256_dcba()
+    + "    movq 40(%rsp), %rax\n    movdqu %xmm1, 8(%rax)\n    movdqu %xmm2, 24(%rax)\n"
+    + ".Lsha_ret:\n    movq 40(%rsp), %rax\n    addq $56, %rsp\n"
     + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbp\n    popq %rbx\n    ret\n"
     + "    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n" + x86_sha256_digest_block();
+}
+
+// The words a to h, in xmm1 and xmm2 in memory order, to ABEF in xmm1 and
+// CDGH in xmm2, the order that sha256rnds2 reads.
+function x86_sha256_abef(): string {
+  return "    movdqa %xmm1, %xmm7\n    punpcklqdq %xmm2, %xmm1\n    punpckhqdq %xmm7, %xmm2\n    pshufd $27, %xmm1, %xmm1\n    pshufd $177, %xmm2, %xmm2\n";
+}
+
+// ABEF and CDGH back to the words a to h in memory order.
+function x86_sha256_dcba(): string {
+  return "    pshufd $27, %xmm1, %xmm1\n    pshufd $177, %xmm2, %xmm2\n    movdqa %xmm1, %xmm7\n    pblendw $240, %xmm2, %xmm1\n    palignr $8, %xmm7, %xmm2\n";
 }
 
 // Compress the padded block before overwriting its first half with the digest.
@@ -2502,61 +2503,83 @@ function x86_sha256_digest_block(): string {
     + "    .size __fern_sha256_hw_digest_block, .-__fern_sha256_hw_digest_block\n";
 }
 
-function x86_sha256_rounds(): string {
-  let v: string[] = ["%r8d", "%r9d", "%r10d", "%r11d", "%r12d", "%r13d", "%r14d", "%r15d"];
-  let bc = "%edi";
-  let ab = "%esi";
+// The 64 rounds of the block at (%rsi) on the SHA extensions, four rounds a
+// step, with the round constants at (k). ABEF is in xmm1 and CDGH in xmm2.
+// The message words are in xmm3 to xmm6, and xmm0 is the operand that
+// sha256rnds2 reads.
+function x86_sha256_rounds(k: string): string {
+  let m: string[] = ["%xmm3", "%xmm4", "%xmm5", "%xmm6"];
   let o = "";
-  let n = 0;
   for g in 0..16 {
-    let x: string[] = [];
-    for j in 0..4 {
-      x = x.append("%xmm" + util.i32_to_string(4 + (g + j) % 4));
+    let m0 = m[g % 4];
+    let m1 = m[(g + 1) % 4];
+    let m3 = m[(g + 3) % 4];
+    if (g < 4) {
+      o = o + "    movdqu " + util.i32_to_string(16 * g) + "(%rsi), " + m0 + "\n    pshufb %xmm15, " + m0 + "\n";
     }
-    o = o + "    movdqu " + util.i32_to_string(16 * g) + "(%rbp), %xmm0\n    paddd " + x[0] + ", %xmm0\n    movdqu %xmm0, (%rsp)\n";
-    if (g < 12) {
-      o += x86_sha256_schedule(x);
+    o = o + "    movdqu " + util.i32_to_string(16 * g) + "(" + k + "), %xmm0\n    paddd " + m0 + ", %xmm0\n    sha256rnds2 %xmm1, %xmm2\n";
+    if (g >= 3 && g < 15) {
+      o = o + "    movdqa " + m0 + ", %xmm7\n    palignr $4, " + m3 + ", %xmm7\n    paddd %xmm7, " + m1 + "\n    sha256msg2 " + m0 + ", " + m1 + "\n";
     }
-    for r in 0..4 {
-      let a = v[(64 - n) % 8];
-      let b = v[(65 - n) % 8];
-      let c = v[(66 - n) % 8];
-      let d = v[(67 - n) % 8];
-      let e = v[(68 - n) % 8];
-      let f = v[(69 - n) % 8];
-      let gg = v[(70 - n) % 8];
-      let h = v[(71 - n) % 8];
-      o = o + "    addl " + util.i32_to_string(4 * r) + "(%rsp), " + h + "\n"
-        + "    rorxl $6, " + e + ", %eax\n    rorxl $11, " + e + ", %ebx\n    xorl %ebx, %eax\n    rorxl $25, " + e + ", %ebx\n    xorl %ebx, %eax\n"
-        + "    movl " + f + ", %ecx\n    xorl " + gg + ", %ecx\n    andl " + e + ", %ecx\n    xorl " + gg + ", %ecx\n"
-        + "    addl %eax, " + h + "\n    addl %ecx, " + h + "\n    addl " + h + ", " + d + "\n"
-        + "    rorxl $2, " + a + ", %eax\n    rorxl $13, " + a + ", %ebx\n    xorl %ebx, %eax\n    rorxl $22, " + a + ", %ebx\n    xorl %ebx, %eax\n"
-        + "    movl " + a + ", " + ab + "\n    xorl " + b + ", " + ab + "\n    andl " + ab + ", " + bc + "\n    xorl " + b + ", " + bc + "\n"
-        + "    addl %eax, " + h + "\n    addl " + bc + ", " + h + "\n";
-      let t = bc;
-      bc = ab;
-      ab = t;
-      n += 1;
+    o += "    punpckhqdq %xmm0, %xmm0\n    sha256rnds2 %xmm2, %xmm1\n";
+    if (g >= 1 && g < 13) {
+      o = o + "    sha256msg1 " + m0 + ", " + m3 + "\n";
     }
   }
   return o;
 }
 
-function x86_sha256_sigma(src: string, r1: i32, r2: i32, sh: i32): string {
-  return "    movdqa " + src + ", %xmm3\n    psrld $" + util.i32_to_string(r1) + ", %xmm3\n"
-    + "    movdqa " + src + ", %xmm0\n    pslld $" + util.i32_to_string(32 - r1) + ", %xmm0\n    pxor %xmm0, %xmm3\n"
-    + "    movdqa " + src + ", %xmm0\n    psrld $" + util.i32_to_string(r2) + ", %xmm0\n    pxor %xmm0, %xmm3\n"
-    + "    movdqa " + src + ", %xmm0\n    pslld $" + util.i32_to_string(32 - r2) + ", %xmm0\n    pxor %xmm0, %xmm3\n"
-    + "    movdqa " + src + ", %xmm0\n    psrld $" + util.i32_to_string(sh) + ", %xmm0\n    pxor %xmm0, %xmm3\n";
+// SHA-1 on the SHA extensions. The state view holds h0 to h4 as little-endian
+// words. ABCD is in xmm1 with A in the top lane, and E is in the top lane of
+// xmm2 or xmm7. The message words are in xmm3 to xmm6.
+function x86_sha1_blocks(): string {
+  let o: string = "    .section .rodata\n    .align 16\n.Lsha1_bswap:\n    .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n    .section .text\n"
+    + "    .globl __fern_sha1_hw_blocks\n    .type __fern_sha1_hw_blocks, @function\n__fern_sha1_hw_blocks:\n"
+    + "    pushq %rbx\n    pushq %rbp\n    subq $40, %rsp\n"
+    + x86_aes_view("%rsi", "%r8", "%r9", ".Lsha1_data") + "    movq %r8, 8(%rsp)\n    movq %r9, 16(%rsp)\n"
+    + x86_aes_view("%rdi", "%r8", "%r10", ".Lsha1_st") + "    movq %r8, 24(%rsp)\n"
+    + "    movl $20, %ebx\n    cmpq $20, %r10\n    jae .Lsha1_stok\n    xorl %ebx, %ebx\n.Lsha1_stok:\n"
+    + "    leaq 7(%rbx), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %rbx, (%rax)\n    movq %rax, 32(%rsp)\n    testq %rbx, %rbx\n    jz .Lsha1_ret\n"
+    + "    movq 24(%rsp), %r8\n    movdqu (%r8), %xmm1\n    pshufd $27, %xmm1, %xmm1\n    movl 16(%r8), %ecx\n    movd %ecx, %xmm2\n    pslldq $12, %xmm2\n"
+    + "    movdqu .Lsha1_bswap(%rip), %xmm14\n    movq 8(%rsp), %rsi\n    movq 16(%rsp), %rcx\n"
+    + ".Lsha1_loop:\n    cmpq $64, %rcx\n    jb .Lsha1_done\n    movdqa %xmm1, %xmm8\n    movdqa %xmm2, %xmm9\n" + x86_sha1_rounds()
+    + "    sha1nexte %xmm9, %xmm2\n    paddd %xmm8, %xmm1\n    addq $64, %rsi\n    subq $64, %rcx\n    jmp .Lsha1_loop\n";
+  return o + ".Lsha1_done:\n    movq 32(%rsp), %rax\n    pshufd $27, %xmm1, %xmm1\n    movdqu %xmm1, 8(%rax)\n    psrldq $12, %xmm2\n    movd %xmm2, %ecx\n    movl %ecx, 24(%rax)\n"
+    + ".Lsha1_ret:\n    movq 32(%rsp), %rax\n    addq $40, %rsp\n    popq %rbp\n    popq %rbx\n    ret\n"
+    + "    .size __fern_sha1_hw_blocks, .-__fern_sha1_hw_blocks\n";
 }
 
-function x86_sha256_schedule(x: string[]): string {
-  return "    movdqa " + x[3] + ", %xmm1\n    palignr $4, " + x[2] + ", %xmm1\n    paddd " + x[0] + ", %xmm1\n"
-    + "    movdqa " + x[1] + ", %xmm2\n    palignr $4, " + x[0] + ", %xmm2\n"
-    + x86_sha256_sigma("%xmm2", 7, 18, 3) + "    paddd %xmm3, %xmm1\n"
-    + x86_sha256_sigma(x[3], 17, 19, 10) + "    psrldq $8, %xmm3\n    paddd %xmm3, %xmm1\n"
-    + x86_sha256_sigma("%xmm1", 17, 19, 10) + "    pslldq $8, %xmm3\n    paddd %xmm3, %xmm1\n"
-    + "    movdqa %xmm1, " + x[0] + "\n";
+// The 80 rounds of one block, four rounds a step. Step g reads E from one of
+// xmm2 and xmm7 and keeps ABCD in the other for the next step.
+function x86_sha1_rounds(): string {
+  let m: string[] = ["%xmm3", "%xmm4", "%xmm5", "%xmm6"];
+  let e: string[] = ["%xmm2", "%xmm7"];
+  let o = "";
+  for g in 0..20 {
+    let w = m[g % 4];
+    let ein = e[g % 2];
+    let eout = e[(g + 1) % 2];
+    if (g < 4) {
+      o = o + "    movdqu " + util.i32_to_string(16 * g) + "(%rsi), " + w + "\n    pshufb %xmm14, " + w + "\n";
+    }
+    if (g == 0) {
+      o = o + "    paddd " + w + ", " + ein + "\n";
+    } else {
+      o = o + "    sha1nexte " + w + ", " + ein + "\n";
+    }
+    o = o + "    movdqa %xmm1, " + eout + "\n";
+    if (g >= 3 && g <= 18) {
+      o = o + "    sha1msg2 " + w + ", " + m[(g + 1) % 4] + "\n";
+    }
+    o = o + "    sha1rnds4 $" + util.i32_to_string(g / 5) + ", " + ein + ", %xmm1\n";
+    if (g >= 1 && g <= 16) {
+      o = o + "    sha1msg1 " + w + ", " + m[(g + 3) % 4] + "\n";
+    }
+    if (g >= 2 && g <= 17) {
+      o = o + "    pxor " + w + ", " + m[(g + 2) % 4] + "\n";
+    }
+  }
+  return o;
 }
 
 // The byte-swap mask and the round constants that the two SHA-256 kernels read.
@@ -2569,79 +2592,36 @@ function emit_rt_sha256_consts(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    .section .text\n");
 }
 
-// SHA-256 on eight messages at once, one per 32-bit lane of the ymm registers.
+// SHA-256 on eight messages, one lane after another on the SHA extensions.
 // The state is word-major: word w of lane k is at byte 4 * (8 * w + k). A
 // group of 512 bytes holds one block of each lane, lane k at byte 64 * k.
+// The words of the lane in work are at -128(%rbp).
 function x86_sha256x8_blocks(): string {
   let o: string = "    .globl __fern_sha256x8_hw_blocks\n    .type __fern_sha256x8_hw_blocks, @function\n__fern_sha256x8_hw_blocks:\n"
-    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $576, %rsp\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $128, %rsp\n"
     + x86_aes_view("%rsi", "%r8", "%r9", ".Ls2x8_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
     + x86_aes_view("%rdi", "%r8", "%r10", ".Ls2x8_st") + "    movq %r8, -8(%rbp)\n"
     + "    movl $256, %edi\n    cmpq $256, %r10\n    jae .Ls2x8_stok\n    xorl %edi, %edi\n.Ls2x8_stok:\n"
     + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz .Ls2x8_ret\n    movq -8(%rbp), %r8\n";
-  for j in 0..8 {
-    o = o + "    vmovdqu " + util.i32_to_string(32 * j) + "(%r8), %ymm0\n    vmovdqu %ymm0, " + util.i32_to_string(8 + 32 * j) + "(%rax)\n";
+  for j in 0..16 {
+    o = o + "    movdqu " + util.i32_to_string(16 * j) + "(%r8), %xmm0\n    movdqu %xmm0, " + util.i32_to_string(8 + 16 * j) + "(%rax)\n";
   }
-  o += "    leaq .Lsha_bswap(%rip), %r10\n    vbroadcasti128 (%r10), %ymm15\n    leaq .Lsha_k(%rip), %r10\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
-  o += ".Ls2x8_loop:\n    cmpq $512, %rdx\n    jb .Ls2x8_ret\n";
-  o = o + x86_x8_transpose(0) + x86_x8_transpose(1) + "    movq -48(%rbp), %rax\n";
-  for j in 0..8 {
-    o = o + "    vmovdqu " + util.i32_to_string(8 + 32 * j) + "(%rax), " + ymm(j) + "\n";
+  o += "    movdqu .Lsha_bswap(%rip), %xmm15\n    leaq .Lsha_k(%rip), %r10\n    xorl %r11d, %r11d\n"
+    + ".Ls2x8_lane:\n    cmpq $8, %r11\n    jae .Ls2x8_clear\n    movq -48(%rbp), %rax\n    leaq 8(%rax,%r11,4), %r9\n";
+  for w in 0..8 {
+    o = o + "    movl " + util.i32_to_string(32 * w) + "(%r9), %ecx\n    movl %ecx, " + util.i32_to_string(4 * w - 128) + "(%rbp)\n";
   }
-  o += x86_sha256x8_rounds();
-  for j in 0..8 {
-    let off = util.i32_to_string(8 + 32 * j);
-    o = o + "    vpaddd " + off + "(%rax), " + ymm(j) + ", " + ymm(j) + "\n    vmovdqu " + ymm(j) + ", " + off + "(%rax)\n";
+  o = o + "    movdqu -128(%rbp), %xmm1\n    movdqu -112(%rbp), %xmm2\n" + x86_sha256_abef()
+    + "    movq %r11, %rsi\n    shlq $6, %rsi\n    addq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n"
+    + ".Ls2x8_blk:\n    cmpq $512, %rdx\n    jb .Ls2x8_put\n    movdqa %xmm1, %xmm8\n    movdqa %xmm2, %xmm9\n" + x86_sha256_rounds("%r10")
+    + "    paddd %xmm8, %xmm1\n    paddd %xmm9, %xmm2\n    addq $512, %rsi\n    subq $512, %rdx\n    jmp .Ls2x8_blk\n"
+    + ".Ls2x8_put:\n" + x86_sha256_dcba() + "    movdqu %xmm1, -128(%rbp)\n    movdqu %xmm2, -112(%rbp)\n";
+  for w in 0..8 {
+    o = o + "    movl " + util.i32_to_string(4 * w - 128) + "(%rbp), %ecx\n    movl %ecx, " + util.i32_to_string(32 * w) + "(%r9)\n";
   }
-  return o + "    addq $512, %rsi\n    subq $512, %rdx\n    jmp .Ls2x8_loop\n"
-    + ".Ls2x8_ret:\n    vzeroupper\n" + x86_aes_epilogue() + "    .size __fern_sha256x8_hw_blocks, .-__fern_sha256x8_hw_blocks\n";
-}
-
-// x86_x8_sigma writes rotr(src, a) ^ rotr(src, b) ^ last(src, c) to dst. The
-// last term is a shift when `shift` is true, and a rotation when it is not.
-function x86_x8_sigma(src: string, a: i32, b: i32, c: i32, shift: boolean, dst: string, tmp: string): string {
-  let o = "    vpsrld $" + util.i32_to_string(a) + ", " + src + ", " + dst + "\n";
-  let terms: i32[][] = [[0, 32 - a], [1, b], [0, 32 - b], [1, c]];
-  if (!shift) {
-    terms = terms.append([0, 32 - c]);
-  }
-  let names: string[] = ["vpslld", "vpsrld"];
-  for t in terms {
-    o = o + "    " + names[t[0]] + " $" + util.i32_to_string(t[1]) + ", " + src + ", " + tmp + "\n    vpxor " + tmp + ", " + dst + ", " + dst + "\n";
-  }
-  return o;
-}
-
-// x86_sha256x8_rounds runs the 64 rounds on a..h in ymm0..ymm7, with the
-// round constants at (%r10). The names rotate each round, and after 64
-// rounds they are back in place.
-function x86_sha256x8_rounds(): string {
-  let r: i32[] = [0, 1, 2, 3, 4, 5, 6, 7];
-  let o = "";
-  for t in 0..64 {
-    let a = ymm(r[0]);
-    let b = ymm(r[1]);
-    let c = ymm(r[2]);
-    let e = ymm(r[4]);
-    let g = ymm(r[6]);
-    let h = ymm(r[7]);
-    let w = util.i32_to_string(32 * (t % 16)) + "(%rsp)";
-    if (t >= 16) {
-      o = o + "    vmovdqu " + util.i32_to_string(32 * ((t - 15) % 16)) + "(%rsp), %ymm9\n" + x86_x8_sigma("%ymm9", 7, 18, 3, true, "%ymm10", "%ymm11")
-        + "    vmovdqu " + util.i32_to_string(32 * ((t - 2) % 16)) + "(%rsp), %ymm9\n" + x86_x8_sigma("%ymm9", 17, 19, 10, true, "%ymm12", "%ymm11")
-        + "    vpaddd %ymm12, %ymm10, %ymm10\n    vpaddd " + util.i32_to_string(32 * ((t - 7) % 16)) + "(%rsp), %ymm10, %ymm10\n"
-        + "    vpaddd " + w + ", %ymm10, %ymm10\n    vmovdqu %ymm10, " + w + "\n";
-      w = "%ymm10";
-    }
-    o = o + "    vpbroadcastd " + util.i32_to_string(4 * t) + "(%r10), %ymm8\n    vpaddd %ymm8, " + h + ", " + h + "\n    vpaddd " + w + ", " + h + ", " + h + "\n"
-      + x86_x8_sigma(e, 6, 11, 25, false, "%ymm9", "%ymm11") + "    vpaddd %ymm9, " + h + ", " + h + "\n"
-      + "    vpxor " + g + ", " + ymm(r[5]) + ", %ymm9\n    vpand " + e + ", %ymm9, %ymm9\n    vpxor " + g + ", %ymm9, %ymm9\n    vpaddd %ymm9, " + h + ", " + h + "\n"
-      + "    vpaddd " + h + ", " + ymm(r[3]) + ", " + ymm(r[3]) + "\n"
-      + x86_x8_sigma(a, 2, 13, 22, false, "%ymm9", "%ymm11") + "    vpaddd %ymm9, " + h + ", " + h + "\n"
-      + "    vpor " + b + ", " + a + ", %ymm9\n    vpand " + c + ", %ymm9, %ymm9\n    vpand " + b + ", " + a + ", %ymm11\n    vpor %ymm11, %ymm9, %ymm9\n    vpaddd %ymm9, " + h + ", " + h + "\n";
-    r = [r[7], r[0], r[1], r[2], r[3], r[4], r[5], r[6]];
-  }
-  return o;
+  return o + "    incq %r11\n    jmp .Ls2x8_lane\n"
+    + ".Ls2x8_clear:\n    pxor %xmm0, %xmm0\n    movdqu %xmm0, -128(%rbp)\n    movdqu %xmm0, -112(%rbp)\n"
+    + ".Ls2x8_ret:\n" + x86_aes_epilogue() + "    .size __fern_sha256x8_hw_blocks, .-__fern_sha256x8_hw_blocks\n";
 }
 
 // SHA-1 on eight messages at once, one per 32-bit lane of the ymm registers.
@@ -2768,6 +2748,9 @@ function emit_rt_byte_kernels(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("sha256x8")) {
     s = s.write(x86_sha256x8_blocks());
+  }
+  if (s.has_need("sha1")) {
+    s = s.write(x86_sha1_blocks());
   }
   if (s.has_need("sha1x8")) {
     s = emit_rt_sha1x8(s);
@@ -7313,7 +7296,7 @@ function ssa_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   if (k == ssa.BINARY) {
     return ssa_binary_nospill_mask(ins, imm);
   }
-  if (k == ssa.UNARY && ssa_integer_unary(ins.str)) {
+  if (k == ssa.UNARY && ssa_integer_unary(ins)) {
     return 0;
   }
   return -1;
@@ -7342,10 +7325,12 @@ function ssa_binary_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   return -1;
 }
 
-function ssa_integer_unary(what: string): boolean {
-  return what == "!" || what == "int_extend" || what == "int_wrap"
-    || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16"
-    || what.starts_with("rotr:");
+function ssa_integer_unary(ins: ssa.SInst): boolean {
+  let k = ins.ir_kind;
+  let to = ssa.cast_target(ins);
+  return k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP
+    || to == "u32" || to == "i32" || to == "u16" || to == "i16"
+    || ins.str.starts_with("rotr:");
 }
 
 function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
@@ -8533,6 +8518,17 @@ function ssa_dst(reg_of: i32[], v: i32): string {
   return "%r11";
 }
 
+// The register that computes `v` from its first operand `a`. When `v` is
+// spilled and `a` dies at this instruction, the operation writes the register
+// of `a` in place and needs no copy to %r11. A result that the next
+// instruction reads stays in %r11, which the emitter reads without a reload.
+function ssa_spilled_dst(fr: SsaFrame, reg_of: i32[], a: i32, v: i32): string {
+  if (!ssa_in_x(reg_of, v) && reg_of[v] != -1 && !fr.read_next[v] && ssa_in_x(reg_of, a) && fr.local_last[a] && ssa_reg(reg_of[a]) != "%r11") {
+    return ssa_reg(reg_of[a]);
+  }
+  return ssa_dst(reg_of, v);
+}
+
 function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
   if (ssa_in_x(reg_of, v)) {
     return ssa_reg(reg_of[v]);
@@ -8606,6 +8602,9 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     let t = a;
     a = b;
     b = t;
+  }
+  if (!ssa_in_x(reg_of, v) && (ssa_alu_ext(tag) >= 0 || tag == ir.K_MUL)) {
+    dh = ssa_spilled_dst(fr, reg_of, a, v);
   }
   if (size == 64 && ssa_alu_ext(tag) >= 0 && reg_of[a] <= -2 && reg_of[v] == reg_of[a]) {
     return ssa_bin_in_slot(ssa_alu_ext(tag), b, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save), reg_of, fr, s);
@@ -8727,10 +8726,14 @@ function ssa_r8(r: string): string {
 
 function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.EmitState): asmcore.EmitState {
   if (!const_text_u32(text)) {
-    if (wide64) {
+    let c = util.lit_to_i64(text);
+    if (wide64 && (c > 0i64 || c < 0i64 - 2147483648i64)) {
       return s.write("    movabsq $" + text + ", " + d + "\n");
     }
-    return ssa_mov_ir(s, 64, util.lit_to_i64(text), text, d);
+    if (wide64) {
+      return ssa_mov_ir(s, 64, c, util.i64_to_string(c), d);
+    }
+    return ssa_mov_ir(s, 64, c, text, d);
   }
   let v = util.lit_to_i64(text);
   if (v == 0i64) {
@@ -8739,14 +8742,16 @@ function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.Emit
   return ssa_mov_ir(s, 32, v, text, d);
 }
 
-function ssa_unary_known(what: string): boolean {
-  if (what == "!" || what == "int_extend" || what == "int_wrap" || what == "u32_wrap" || ssa.is_unary_load(what)) {
+function ssa_unary_known(ins: ssa.SInst): boolean {
+  let k = ins.ir_kind;
+  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins.str)) {
     return true;
   }
-  if (what == "int_cast:u8" || what == "int_cast:u16" || what == "int_cast:i16" || what == "int_cast:u32" || what == "int_cast:i32") {
+  let to = ssa.cast_target(ins);
+  if (to == "u8" || to == "u16" || to == "i16" || to == "u32" || to == "i32") {
     return true;
   }
-  return ssa.rotr_count(what) >= 0 || asmcore.ssa_funary_known(what) || ssa_bits_asm(what, "%rax") != "";
+  return ssa.rotr_count(ins.str) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "%rax") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -8755,10 +8760,10 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
     return true;
   }
   if (k == ssa.UNARY) {
-    return ssa_unary_known(ins.str);
+    return ssa_unary_known(ins);
   }
   if (k == ssa.TERNARY) {
-    return ins.str == "ffma" || ins.str == "ffma32";
+    return ins.ir_kind == ir.K_FFMA || ins.ir_kind == ir.K_FFMA32;
   }
   if (k >= ssa.LD_AT && k <= ssa.DYN_DISPATCH) {
     return true;
@@ -8787,24 +8792,27 @@ function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: 
   return ssa_jump(fr, lp, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, to), next, s);
 }
 
-function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): string {
-  let f = ssa_fmath_asm(what, d);
+function ssa_unary_asm(ins: ssa.SInst, lb: string, d: string): string {
+  let f = ssa_fmath_asm(ins, d);
   if (f == "") {
-    f = ssa_fconv_asm(what, unsigned, lb, d);
+    f = ssa_fconv_asm(ins, lb, d);
   }
   if (f == "") {
-    f = ssa_bits_asm(what, d);
+    f = ssa_bits_asm(ins, d);
   }
   if (f != "") {
     return f;
   }
+  let what = ins.str;
   if (what == "load_i32") {
     return "    movslq (" + d + "), " + d + "\n";
   }
   if (what == "load_u16") {
     return "    movzwl (" + d + "), " + ssa_r32(d) + "\n";
   }
-  if (what == "!") {
+  let k = ins.ir_kind;
+  let to = ssa.cast_target(ins);
+  if (k == ir.K_NOT) {
     return "    testq " + d + ", " + d + "\n    setz " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
   }
   if (what.starts_with("rotr:")) {
@@ -8814,23 +8822,23 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
     }
     return "    rorl $" + n + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "u32_wrap" || what == "int_cast:u32") {
+  if (k == ir.K_U32_WRAP || to == "u32") {
     return "    movl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:u8") {
+  if (to == "u8") {
     return "    andq $255, " + d + "\n";
   }
-  if (what == "int_cast:u16") {
+  if (to == "u16") {
     return "    movzwl " + ssa_r16(d) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:i16") {
+  if (to == "i16") {
     return "    movswq " + ssa_r16(d) + ", " + d + "\n";
   }
-  if (what == "int_cast:i32") {
+  if (to == "i32") {
     return "    movslq " + ssa_r32(d) + ", " + d + "\n";
   }
-  if (what == "int_extend" || what == "int_wrap") {
-    if (unsigned) {
+  if (k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP) {
+    if (ins.imm == 1) {
       return "    movl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
     }
     return "    movslq " + ssa_r32(d) + ", " + d + "\n";
@@ -8838,7 +8846,8 @@ function ssa_unary_asm(what: string, unsigned: boolean, lb: string, d: string): 
   return "";
 }
 
-function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string): string {
+function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
+  let what = ins.str;
   if (what.starts_with("rotr:")) {
     let n = util.i32_to_string(ssa.rotr_count(what));
     if (ssa.rotr_width(what) == 64) {
@@ -8855,70 +8864,88 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   if (what == "load_u16") {
     return "    movzwl (" + src + "), " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:i32" || (what == "int_extend" || what == "int_wrap") && !unsigned) {
+  let k = ins.ir_kind;
+  let to = ssa.cast_target(ins);
+  if (asmcore.ssa_sext32(ins)) {
     return "    movslq " + ssa_r32(src) + ", " + d + "\n";
   }
-  if (what == "int_cast:u16") {
+  if (to == "u16") {
     return "    movzwl " + ssa_r16(src) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "int_cast:i16") {
+  if (to == "i16") {
     return "    movswq " + ssa_r16(src) + ", " + d + "\n";
   }
-  if (what == "u32_wrap" || what == "int_cast:u32" || what == "int_extend" || what == "int_wrap") {
+  if (k == ir.K_U32_WRAP || to == "u32" || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP) {
     return "    movl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "clz:64") {
-    return "    lzcntq " + src + ", " + d + "\n";
+  let mnem = ssa_bits_mnem(k);
+  if (mnem == "" || k == ir.K_BSWAP) {
+    return "";
   }
-  if (what == "clz:32") {
-    return "    lzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  let w = ssa.op_width(ins);
+  if (w == 64) {
+    return "    " + mnem + "q " + src + ", " + d + "\n";
   }
-  if (what == "ctz:64") {
-    return "    tzcntq " + src + ", " + d + "\n";
-  }
-  if (what == "ctz:32") {
-    return "    tzcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
-  }
-  if (what == "popcount:64") {
-    return "    popcntq " + src + ", " + d + "\n";
-  }
-  if (what == "popcount:32") {
-    return "    popcntl " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
+  if (w == 32) {
+    return "    " + mnem + "l " + ssa_r32(src) + ", " + ssa_r32(d) + "\n";
   }
   return "";
 }
 
-function ssa_bits_asm(what: string, d: string): string {
-  return match (what) {
-    "clz:64" => "    lzcntq " + d + ", " + d + "\n",
-    "clz:32" => "    lzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
-    "ctz:64" => "    tzcntq " + d + ", " + d + "\n",
-    "ctz:32" => "    tzcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
-    "popcount:64" => "    popcntq " + d + ", " + d + "\n",
-    "popcount:32" => "    popcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n",
-    "bswap:64" => "    bswapq " + d + "\n",
-    "bswap:32" => "    bswapl " + ssa_r32(d) + "\n    movslq " + ssa_r32(d) + ", " + d + "\n",
-    _ => "",
-  };
+// The x86-64 mnemonic, with no size suffix, of a count or byte-swap op.
+function ssa_bits_mnem(k: i32): string {
+  if (k == ir.K_CLZ) {
+    return "lzcnt";
+  }
+  if (k == ir.K_CTZ) {
+    return "tzcnt";
+  }
+  if (k == ir.K_POPCOUNT) {
+    return "popcnt";
+  }
+  if (k == ir.K_BSWAP) {
+    return "bswap";
+  }
+  return "";
 }
 
-function ssa_fmath_asm(what: string, d: string): string {
-  if (what == "fabs") {
+function ssa_bits_asm(ins: ssa.SInst, d: string): string {
+  let mnem = ssa_bits_mnem(ins.ir_kind);
+  let w = ssa.op_width(ins);
+  if (mnem == "" || w == 0) {
+    return "";
+  }
+  if (ins.ir_kind == ir.K_BSWAP) {
+    if (w == 64) {
+      return "    bswapq " + d + "\n";
+    }
+    return "    bswapl " + ssa_r32(d) + "\n    movslq " + ssa_r32(d) + ", " + d + "\n";
+  }
+  if (w == 64) {
+    return "    " + mnem + "q " + d + ", " + d + "\n";
+  }
+  return "    " + mnem + "l " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
+}
+
+function ssa_fmath_asm(ins: ssa.SInst, d: string): string {
+  if (ins.ir_kind == ir.K_FABS) {
     return "    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, " + d + "\n";
   }
-  if (what == "fneg") {
+  if (ins.ir_kind == ir.K_FNEG) {
     return "    movabsq $0x8000000000000000, %rcx\n    xorq %rcx, " + d + "\n";
   }
   return "";
 }
 
-function ssa_fconv_asm(what: string, unsigned: boolean, lb: string, d: string): string {
-  if (what == "fround") {
+function ssa_fconv_asm(ins: ssa.SInst, lb: string, d: string): string {
+  let k = ins.ir_kind;
+  let unsigned = ins.imm == 1;
+  if (k == ir.K_FROUND) {
     return ir_fround_rax(lb, d);
   }
-  if (what == "f64_to_i32" || what == "f64_to_i64") {
+  if (k == ir.K_F64_TO_I32 || k == ir.K_F64_TO_I64) {
     let w = 32;
-    if (what == "f64_to_i64") {
+    if (k == ir.K_F64_TO_I64) {
       w = 64;
     }
     if (unsigned) {
@@ -8926,16 +8953,13 @@ function ssa_fconv_asm(what: string, unsigned: boolean, lb: string, d: string): 
     }
     return ir_f2i_sat_rax(w, lb, d);
   }
-  if (what == "i32_to_f64:64") {
-    return ir_i2f_rax(64, unsigned, lb, d);
+  if (k == ir.K_I32_TO_F64 && ssa.op_width(ins) != 0) {
+    return ir_i2f_rax(ssa.op_width(ins), unsigned, lb, d);
   }
-  if (what == "i32_to_f64:32") {
-    return ir_i2f_rax(32, unsigned, lb, d);
-  }
-  if (what == "f32_bits") {
+  if (k == ir.K_F32_BITS) {
     return "    movq " + d + ", %xmm0\n    cvtsd2ss %xmm0, %xmm0\n    movd %xmm0, " + ssa_r32(d) + "\n    movsxd " + ssa_r32(d) + ", " + d + "\n";
   }
-  if (what == "f32_from_bits") {
+  if (k == ir.K_F32_FROM_BITS) {
     return "    movd " + ssa_r32(d) + ", %xmm0\n    cvtss2sd %xmm0, %xmm0\n    movq %xmm0, " + d + "\n";
   }
   return "";
@@ -8976,7 +9000,7 @@ function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.
     if (d != a) {
       s = ssa_mov_rr(s, d, a);
     }
-    s = s.write("    " + ssa_sse_arith(ins.str) + " " + b + ", " + d + "\n");
+    s = s.write("    " + ssa_sse_arith(ins.ir_kind) + " " + b + ", " + d + "\n");
     if (d == "%xmm0" && ssa_fhome(reg_of, ins.result) != "") {
       return ssa_mov_rr(s, ssa_fhome(reg_of, ins.result), d);
     }
@@ -9631,24 +9655,36 @@ function emit_lane_consts(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-function ssa_sse_arith(what: string): string {
-  return match (what) {
-    "fadd" => "addsd",
-    "fsub" => "subsd",
-    "fmul" => "mulsd",
-    _ => "divsd",
-  };
+function ssa_sse_arith(k: i32): string {
+  if (k == ir.K_FADD) {
+    return "addsd";
+  }
+  if (k == ir.K_FSUB) {
+    return "subsd";
+  }
+  if (k == ir.K_FMUL) {
+    return "mulsd";
+  }
+  return "divsd";
 }
 
-function ssa_fmath_op(what: string): string {
-  return match (what) {
-    "fsqrt" => "sqrtsd",
-    "ffloor" => "roundsd $1,",
-    "fceil" => "roundsd $2,",
-    "ftrunc" => "roundsd $3,",
-    "f32_round" => "cvtsd2ss",
-    _ => "",
-  };
+function ssa_fmath_op(k: i32): string {
+  if (k == ir.K_FSQRT) {
+    return "sqrtsd";
+  }
+  if (k == ir.K_FFLOOR) {
+    return "roundsd $1,";
+  }
+  if (k == ir.K_FCEIL) {
+    return "roundsd $2,";
+  }
+  if (k == ir.K_FTRUNC) {
+    return "roundsd $3,";
+  }
+  if (k == ir.K_F32_ROUND) {
+    return "cvtsd2ss";
+  }
+  return "";
 }
 
 function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -9658,8 +9694,8 @@ function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
   if (d != a) {
     s = s.write("    xorpd " + d + ", " + d + "\n");
   }
-  s = s.write("    " + ssa_fmath_op(ins.str) + " " + a + ", " + d + "\n");
-  if (ins.str == "f32_round") {
+  s = s.write("    " + ssa_fmath_op(ins.ir_kind) + " " + a + ", " + d + "\n");
+  if (ins.ir_kind == ir.K_F32_ROUND) {
     s = s.write("    cvtss2sd " + d + ", " + d + "\n");
   }
   return ssa_fput(reg_of, ins.result, d, s);
@@ -11130,7 +11166,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lits: ssa.Literals, lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], local_last: boolean[], read_next: boolean[], carry: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lits: ssa.Literals, lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
 // With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
 // load_bits is not 0 when the compare reads one operand from memory, with a
@@ -11170,7 +11206,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let cmp = last;
   let n = 1;
   let inverted = false;
-  if (last.kind_tag == ssa.UNARY && last.str == "!") {
+  if (last.kind_tag == ssa.UNARY && last.ir_kind == ir.K_NOT) {
     let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, test: false, load_bits: 0, load_at: 0, load_right: false, narrow: false };
     if (blk.insts.len() < 2) {
       return value_test;
@@ -11493,7 +11529,7 @@ function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: 
   if (carried) {
     op = if (ins.ir_kind == ir.K_SUB) { "sbbq" } else { "adcq" };
   }
-  let d = ssa_dst(reg_of, result);
+  let d = ssa_spilled_dst(fr, reg_of, ins.args[0], result);
   if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[result]) {
     d = "%r11";
   }
@@ -11524,7 +11560,7 @@ function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], fr: SsaFram
     other = ins.args[1];
   }
   let op: string = if (ins.ir_kind == ir.K_SUB) { "sbbq" } else { "adcq" };
-  let d = ssa_dst(reg_of, ins.result);
+  let d = ssa_spilled_dst(fr, reg_of, other, ins.result);
   s = ssa_load_value(fr, reg_of, other, d, s);
   s = s.write("    " + op + " $0, " + d + "\n");
   if (d == "%r11") {
@@ -11788,10 +11824,10 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == ssa.BINARY && (ssa.float_arith(ins.ir_kind) || ssa.float_cmp(ins.ir_kind))) {
     return ssa_fbin(ins, reg_of, s);
   }
-  if (k == ssa.UNARY && ssa_fmath_op(ins.str) != "") {
+  if (k == ssa.UNARY && ssa_fmath_op(ins.ir_kind) != "") {
     return ssa_fmath(ins, reg_of, s);
   }
-  if (k == ssa.TERNARY && ins.str == "ffma32") {
+  if (k == ssa.TERNARY && ins.ir_kind == ir.K_FFMA32) {
     return ssa_fma32(ins, reg_of, s);
   }
   if (k == ssa.TERNARY) {
@@ -11829,9 +11865,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     }
     let from = "";
     if (src != "") {
-      from = ssa_unary_from(ins.str, ins.imm == 1, src, d);
+      from = ssa_unary_from(ins, src, d);
     }
-    if (s.records() && asmcore.ssa_sext32(ins.str, ins.imm == 1) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
+    if (s.records() && asmcore.ssa_sext32(ins) && ssa_xreg(d) >= 0 && (src == "" || ssa_xreg(src) >= 0)) {
       if (src == "") {
         s = ssa_load(reg_of, ins.args[0], d, s);
         src = d;
@@ -11841,7 +11877,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
       s = s.write(from);
     } else {
       s = ssa_load(reg_of, ins.args[0], d, s);
-      s = s.write(ssa_unary_asm(ins.str, ins.imm == 1, lp + "u" + util.i32_to_string(ins.result), d));
+      s = s.write(ssa_unary_asm(ins, lp + "u" + util.i32_to_string(ins.result), d));
     }
   } else {
     ircore.ssa_inst_refuse(ssa.kind_name(k), ins.str, "x86-64");
@@ -12541,7 +12577,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
   let uses = ssa.use_counts(f);
-  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lits: ssa.literals(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
+  let carry = ssa.carry_roles(f, uses);
+  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: uses, local_last: ssa.dies_where_defined(f, uses, carry), read_next: ssa.read_by_next(f, imm), carry: carry, nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lits: ssa.literals(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
   let early_homes = ssa_early_homes(f, reg_of, s);
   let split = if (bare) { ssa_frame_split(f, fr, reg_of, early_homes) } else { ssa.FrameSplit { early: [], sites: [] } };
   // An early block returns with no frame to take down.
@@ -13140,14 +13177,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
 
   if (o.kind_tag == ir.K_PTR_WIDTH) {
     s = s.write("    pushq $8\n");
-  } else if (o.kind_tag == ir.K_SHA256_HW) {
+  } else if (ir.is_sha_hw_op(o.kind_tag)) {
     s = s.write("    pushq $1\n");
-  } else if (o.kind_tag == ir.K_SHA1_HW) {
-    s = s.write("    pushq $0\n");
-  } else if (o.kind_tag == ir.K_SHA1X8_HW || o.kind_tag == ir.K_SHA256X8_HW) {
-    s = s.write("    pushq $1\n");
-  } else if (o.kind_tag == ir.K_SHA1_HW_BLOCKS) {
-    s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n").need("heap");
   } else if (o.kind_tag == ir.K_MEMCPY) {
     s = s.write(ir_memcpy_asm()).need("memcpy");
   } else if (o.kind_tag == ir.K_MEMSET) {

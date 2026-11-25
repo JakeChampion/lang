@@ -53,25 +53,27 @@ of `sess.server` stopped a take of `server` out of `sess` on the main path.
 
 ## Measured
 
-Allocations a request, x86-64, main `c9a32177`:
+Allocations a request, x86-64:
 
-| Probe | main | `child_held_out` only | the change |
-|---|--:|--:|--:|
-| `TestSelfHostServeAllocsPerRequestTLS` | 11.00 | 10.00 | 7.00 |
-| `TestSelfHostServeAllocsPerRequestH3` | 46.69 | 46.69 | 46.69 |
-| `TestSelfHostServeAllocsPerRequestH3Mux` | 26.64 | 26.64 | 26.64 |
+| Probe | main `c9a32177` | main `852270eb` | `child_held_out` only | the change |
+|---|--:|--:|--:|--:|
+| `TestSelfHostServeAllocsPerRequestTLS` | 11.00 | 9.00 | 8.00 | 7.00 |
+| `TestSelfHostServeAllocsPerRequestH3` | 46.69 | 46.69 | 46.69 | 46.69 |
+| `TestSelfHostServeAllocsPerRequestH3Mux` | 26.64 | 26.64 | 26.64 | 26.64 |
 
-TLS was 8.00 before the multi-block splice. `ServeAllocsTLSCeiling` goes
-from 11 to 7.
+`852270eb` added `updated_elsewhere`, which refuses the re-read of `c.write`
+in the error arm of `record.__seal`. The columns after it are on that
+commit. TLS was 8.00 before the multi-block splice.
+`ServeAllocsTLSCeiling` goes from 9 to 7.
 
-In the TLS census (`TestSelfHostServeAllocsCensusTLS`), `record.__advanced`
+Against main `c9a32177`, in the TLS census (`TestSelfHostServeAllocsCensusTLS`), `record.__advanced`
 goes from 1.00 to 0. `serve.__serve_send_out` goes from 4.00 to 1.00. Its
 last box is the `handshake.Out` that `__out()` gives as a literal.
 
 `TestSelfHostSplicedChainTakesTheElement` holds the first rule. Over 1,000
 calls it makes 2,006 allocations on main and 1,007 with the change. 1,007 is
 also the count with the chain as a call. The TLS probe holds the second
-rule: without it, the probe reads 10.00.
+rule: without it, the probe reads 8.00.
 
 ## The traps
 

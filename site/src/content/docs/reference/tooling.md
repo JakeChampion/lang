@@ -33,7 +33,7 @@ any flag that has no value: `-cover=false`, `-g=true`.
 | `arm64-linux` | Static ELF. ARMv8.2-A with the crypto extensions. |
 | `arm64-android` | Static position-independent ELF for Android. |
 | `arm64-darwin` | Static, signed Mach-O for Apple Silicon (latest macOS). |
-| `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI (Haswell, 2013, with AVX2). |
+| `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI and the SHA extensions (Intel Ice Lake, AMD Zen). |
 | `x86-64-android` | Static position-independent ELF for Android emulators and x86-64 devices. |
 | `wasm32-wasi` | WASI Preview 2 component; run with `wasmtime run`. |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component; run with `wasmtime serve`. |

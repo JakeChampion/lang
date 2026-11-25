@@ -11,6 +11,7 @@ The box of the record then goes back to the allocator with zeros in those fields
 
 The drop also zeroes the bytes of a string that the record holds alone, when the bytes are in the block of the string.
 A string that the program builds at run time has its bytes in its own block.
+Examples are a file that `read_file` reads, a concatenation, a `repeat` and a string that an append grows.
 A string literal is read-only, and it keeps its bytes.
 
 The drop does the same for a nested record and for a tuple that the record holds alone.
@@ -68,7 +69,8 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 
 ## Limits
 
-- The drop does not wipe a string whose bytes are in another block, such as a mapped file.
+- The drop does not wipe a string from `map_file_unchecked`.
+  Its bytes are the pages of the file, mapped read-only, so the secret stays in the file.
 - The drop wipes one level of a recursive type, such as the first node of a list.
   A value of the same type inside that level is dropped as usual and keeps its fields.
   Give the record of each node the attribute `@secret`, and its own drop then wipes each node.
@@ -82,6 +84,8 @@ Its control is the same record without the attribute, which must read the secret
 `TestSelfHostSecretRecordWipesItsScalars` does the same for the scalar fields, `TestSelfHostSecretRecordWipesItsNestedBoxes` for a nested record and a tuple, and `TestSelfHostSecretRecordWipesItsEnums` for an enum value.
 `TestSelfHostSecretRecordWipesItsStrings` does the same for a string, and `TestSelfHostSecretRecordWipesItsArraysOfBoxes` for the elements of a `u8[][]` and of an array of records.
 `TestSelfHostSecretRecordWipesItsUnions` does the same for a union value, and `TestSelfHostSecretRecordWipesItsFinalizedFields` for a field with a finalizer.
+
+`TestSelfHostSecretRecordWipesItsBuiltStrings` does the same for the strings that the runtime builds, and for a mapped file that the drop must leave.
 
 `TestSelfHostSecretRecordWipesItsDeepFinalizedValues` does the same for a deeper value with a finalizer.
 Its record holds such a value in a nested record, a tuple, an array, an enum and a recursive enum.

@@ -62,7 +62,7 @@ selfhost/arm64-linux/map_int.emit	8555
 selfhost/arm64-linux/map_probe_chain.emit	8565
 selfhost/arm64-linux/map_string.emit	9587
 selfhost/arm64-linux/ordmap_insert.emit	6303
-selfhost/arm64-linux/pmap_insert.emit	4034
+selfhost/arm64-linux/pmap_insert.emit	3986
 selfhost/arm64-linux/pvec_with.emit	3827
 selfhost/arm64-linux/record_update.emit	1347
 selfhost/arm64-linux/sort_inplace.emit	1841
@@ -76,8 +76,8 @@ selfhost/arm64-linux/string_scan.emit	2660
 selfhost/arm64-linux/string_slice.emit	1291
 selfhost/arm64-linux/struct_drop.emit	3075
 selfhost/arm64-linux/tokenize.emit	1531
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	8951
-selfhost/arm64-linux/utf8_ingest_validated.emit	9626
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	8657
+selfhost/arm64-linux/utf8_ingest_validated.emit	9333
 selfhost/wasm32-wasi/array_append.emit	498
 selfhost/wasm32-wasi/array_index.emit	499
 selfhost/wasm32-wasi/array_scale_f64.emit	554
@@ -130,7 +130,7 @@ selfhost/x86-64-linux/map_int.emit	8455
 selfhost/x86-64-linux/map_probe_chain.emit	8459
 selfhost/x86-64-linux/map_string.emit	9349
 selfhost/x86-64-linux/ordmap_insert.emit	5875
-selfhost/x86-64-linux/pmap_insert.emit	3699
+selfhost/x86-64-linux/pmap_insert.emit	3632
 selfhost/x86-64-linux/pvec_with.emit	3489
 selfhost/x86-64-linux/record_update.emit	1109
 selfhost/x86-64-linux/sort_inplace.emit	1650
@@ -144,8 +144,8 @@ selfhost/x86-64-linux/string_scan.emit	2326
 selfhost/x86-64-linux/string_slice.emit	1043
 selfhost/x86-64-linux/struct_drop.emit	2808
 selfhost/x86-64-linux/tokenize.emit	1270
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8445
-selfhost/x86-64-linux/utf8_ingest_validated.emit	9118
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8223
+selfhost/x86-64-linux/utf8_ingest_validated.emit	8885
 selfhost/x86-64-linux/perceus_cfold.emit	2257
 selfhost/arm64-linux/perceus_cfold.emit	2561
 selfhost/wasm32-wasi/perceus_cfold.emit	2084

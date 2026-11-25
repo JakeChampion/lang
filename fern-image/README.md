@@ -73,7 +73,7 @@ The [AVIF feasibility decision](docs/decisions/0002-avif.md) defers pixel coding
 
 ## Build and test
 
-Use Linux x86-64 with the Fern CPU baseline: x86-64-v3 plus AES-NI.
+Use Linux x86-64 with the Fern CPU baseline: x86-64-v3 plus AES-NI and the SHA extensions.
 The scripts require Bash, make, curl, tar, gzip, sha256sum, and grep.
 Run these commands from this directory:
 
