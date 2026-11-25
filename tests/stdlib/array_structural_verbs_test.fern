@@ -112,6 +112,17 @@ function test_clone_empty_and_strings(): test.TestOutcome {
   return test.assert_eq(none.clone().len().to_string() + words[1] + copy[1], "0bc");
 }
 
+function test_bounded(): test.TestOutcome {
+  let xs = __alloc_u8(4096).with(0, 7u8);
+  let prefix = xs.truncate(1);
+  let small = array.bounded(prefix, 8).with(0, 9u8);
+  let empty = array.bounded(xs.truncate(0), 0);
+  let words = [13, 21, 34];
+  let original = words;
+  let kept = array.bounded(words, 64).with(1, 55);
+  return test.assert_eq(xs[0].to_string() + " " + small[0].to_string() + " " + empty.len().to_string() + " " + original[1].to_string() + " " + kept[1].to_string(), "7 9 0 21 55");
+}
+
 function test_concat(): test.TestOutcome {
   let a: i32[] = [1, 2];
   let b: i32[] = [3, 4, 5];
@@ -146,6 +157,7 @@ function main(): i32 {
   r = r.it("reverse", test_reverse);
   r = r.it("reverse empty", test_reverse_empty);
   r = r.it("reverse single", test_reverse_single);
+  r = r.it("bounded handoffs preserve prefixes and aliases", test_bounded);
   r = r.it("take", test_take);
   r = r.it("take zero", test_take_zero);
   r = r.it("take over length clamps", test_take_over_len);

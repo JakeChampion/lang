@@ -5129,6 +5129,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_arr_set(arrtmp, bctmp, eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == ir.K_ARR_LEN) {
     parts = parts.append("    i32.load\n");
+  } else if (o.kind_tag == ir.K_STORAGE_BYTES) {
+    parts = parts.append("    i32.const 4\n    i32.sub\n    i32.load\n    i32.const 16\n    i32.sub\n");
   } else if (o.kind_tag == ir.K_ARR_RC) {
     parts = parts.append("    i32.const 8\n    i32.sub\n    i32.load\n");
   } else if (o.kind_tag == ir.K_CONST_STR) {

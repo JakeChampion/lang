@@ -13014,6 +13014,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     }
     s = s.write("    pushq $0\n");
     s = s.need("heap");
+  } else if (o.kind_tag == ir.K_STORAGE_BYTES) {
+    s = s.write("    popq %rax\n    movq -16(%rax), %rax\n    shlq $3, %rax\n    pushq %rax\n");
   } else if (o.kind_tag == ir.K_ARR_RC) {
     s = s.write("    popq %rax\n    movslq -8(%rax), %rax\n    pushq %rax\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {

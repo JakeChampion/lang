@@ -3528,7 +3528,7 @@ function value_op(k: i32): boolean {
 function container_op(k: i32): boolean {
   return k == ssasem.array_new() || k == ssasem.bytes_new() || k == ssasem.array_reserve() || k == ssasem.array_zero() || k == ssasem.tuple_new()
     || k == ssasem.record_new() || k == ssasem.dyn_box() || k == ssasem.array_get() || k == ssasem.tuple_get()
-    || k == ssasem.record_get() || k == ssasem.length() || k == ssasem.append() || k == ssasem.with()
+    || k == ssasem.record_get() || k == ssasem.storage_bytes() || k == ssasem.length() || k == ssasem.append() || k == ssasem.with()
     || k == ssasem.slice() || k == ssasem.str_index() || k == ssasem.str_bytes() || k == ssasem.str_byte_view()
     || k == ssasem.arr_join() || k == ssasem.arr_slice() || k == ssasem.arr_concat() || k == ssasem.truncate()
     || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_hole_op(k);
@@ -4174,6 +4174,13 @@ function container(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, s
   }
   if (ins.kind_tag == ssasem.dyn_box()) {
     return emit(r, ir.op_dyn_box(dyn_box_shape(f, f.values[ins.args[0]], ins.str)));
+  }
+  return container_access(r, f, ins);
+}
+
+function container_access(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
+  if (ins.kind_tag == ssasem.storage_bytes()) {
+    return emit(r, ir.op_storage_bytes());
   }
   if (ins.kind_tag == ssasem.length()) {
     if (ssasem.is_text(f.values[ins.args[0]])) {

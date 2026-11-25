@@ -3781,14 +3781,28 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (lane_memory_call(name, c)) {
     return lane_memory(name, c, s);
   }
-  // Recognize the bootstrap-compatible body only in the real std/crypto module.
-  if (name == "crypto____pbkdf2_hw_block") {
-    for fd in s.funcs {
-      if (fd.name == name && fd.stdlib == "std/crypto") {
-        name = "__sha256_hw_digest_block";
-        break;
-      }
+  return declared_call(e, name, c, s, statement, expected);
+}
+
+function from_stdlib(name: string, module: string, s: State): boolean {
+  for fd in s.funcs {
+    if (fd.name == name) {
+      return fd.stdlib == module;
     }
+  }
+  return false;
+}
+
+function declared_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
+  if ((name == "array__storage_bytes" || util.has_mangled_head(name, "array__storage_bytes")) && from_stdlib(name, "std/array", s) && c.args.len() == 1) {
+    let xs = expr(c.args[0], s, checked(c.args[0], s));
+    if (!xs.s.ok) {
+      return xs;
+    }
+    return define(xs.s, ssasem.storage_bytes(), [xs.id], 0, "", typeinfo.t_i32());
+  }
+  if (name == "crypto____pbkdf2_hw_block" && from_stdlib(name, "std/crypto", s)) {
+    name = "__sha256_hw_digest_block";
   }
   let at = ssasem.find_contract(s.contracts, name);
   if (at < 0) {

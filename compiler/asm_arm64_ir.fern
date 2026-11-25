@@ -6065,6 +6065,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     }
     s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
+  } else if (o.kind_tag == ir.K_STORAGE_BYTES) {
+    s = s.write("    ldr x0, [sp], #16\n    ldur x0, [x0, #-16]\n    lsl x0, x0, #3\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_ARR_RC) {
     s = s.write("    ldr x0, [sp], #16\n    ldursw x0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {
