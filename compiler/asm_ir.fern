@@ -11443,9 +11443,24 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   return ssa_inst(ins, reg_of, lp, fr, r, s);
 }
 
-// The low half goes first, because the home of the high half can be `%rax`.
-// No value has its home in `%rdx`.
+// One `mulxq` writes each half into its home register. `%rax` and `%rdx`
+// are free at the product, so they hold a half that has no register.
+// The `mulq` form stays for halves that share a register or use `%r11`.
 function ssa_mul_wide(lo: ssa.SInst, hi: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let lo_dst = if (ssa_in_x(reg_of, lo.result)) { ssa_reg(reg_of[lo.result]) } else { "%rax" };
+  let hi_dst = if (hi.result >= 0 && ssa_in_x(reg_of, hi.result)) { ssa_reg(reg_of[hi.result]) } else { "%rdx" };
+  if (lo_dst != hi_dst && lo_dst != "%r11" && hi_dst != "%r11") {
+    s = ssa_load(reg_of, hi.args[0], "%rdx", s);
+    s = s.write("    mulxq " + ssa_operand(reg_of, hi.args[1], s) + ", " + lo_dst + ", " + hi_dst + "\n");
+    if (lo_dst == "%rax") {
+      s = ssa_store(reg_of, lo.result, "%rax", s);
+    }
+    if (hi_dst == "%rdx" && hi.result >= 0) {
+      s = ssa_store(reg_of, hi.result, "%rdx", s);
+    }
+    return s;
+  }
+  // The low half goes first, because the home of the high half can be `%rax`.
   s = ssa_widening_mul(hi, reg_of, s);
   s = ssa_store(reg_of, lo.result, "%rax", s);
   return ssa_store(reg_of, hi.result, "%rdx", s);
