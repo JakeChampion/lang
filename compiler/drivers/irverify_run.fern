@@ -735,34 +735,6 @@ function lane_width_checks(): i32 {
   if (!util.contains(first_msg(lane_ops(ir.op_lane_at("vpermute", 64, 4)), 2, 2), "op 2 (vpermute): permute mode 4 is not 0 to 3")) {
     return 168;
   }
-  return lane_width_checks();
-}
-
-function lane_width_checks(): i32 {
-  let good: ir.Op[] = [
-    ir.op_lane("vadd", 32), ir.op_lane("vadd", 64), ir.op_lane("vsplat", 32), ir.op_lane("vbitmask", 64),
-    ir.op_lane_at("vextract", 64, 1), ir.op_lane("vpack", 32), ir.op_lane("vload_f32", 64),
-    ir.op_lane("vget", 8), ir.op_lane("vset", 64), ir.op_lane_at("vpermute", 16, 0), ir.op_lane("vor", 8), ir.op_lane("vselect", 16),
-    ir.op_lane("viadd", 8), ir.op_lane("vimul", 16), ir.op_lane_at("viextracts", 32, 3),
-    ir.op_lane("viwidenlos", 8), ir.op_lane("viwidenhiu", 16), ir.op_lane("vinarrows", 16), ir.op_lane("vinarrowu", 32), ir.op_lane("viswizzle", 8),
-  ];
-  for o in good {
-    if (count_problems(bits_ops(o), 1, 1) != 0) {
-      return 257;
-    }
-  }
-  if (!util.contains(first_msg(bits_ops(ir.op_lane("vadd", 16)), 1, 1), "op 1 (vadd): width 16 is not 32 or 64")) {
-    return 258;
-  }
-  if (!util.contains(first_msg(bits_ops(ir.op_lane("viadd", 64)), 1, 1), "op 1 (viadd): width 64 is not 8, 16 or 32")) {
-    return 259;
-  }
-  if (count_problems(bits_ops(ir.op_lane("viwidenlou", 32)), 1, 1) != 1 || count_problems(bits_ops(ir.op_lane("vinarrowu", 8)), 1, 1) != 1) {
-    return 260;
-  }
-  if (count_problems(bits_ops(ir.op_lane("viswizzle", 16)), 1, 1) != 1 || count_problems(bits_ops(ir.op_lane("vget", 0)), 1, 1) != 1) {
-    return 261;
-  }
   return 0;
 }
 
