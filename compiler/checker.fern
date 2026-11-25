@@ -35264,6 +35264,22 @@ function settle_at(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
   return settle_struct_lit_wide(e, t, s);
 }
 
+// Only these argument expressions can change when settle_at sees the parameter type.
+function args_need_param_types(args: ast.Expr[]): boolean {
+  for arg in args {
+    if let ast.ExprArray(_) = arg {
+      return true;
+    }
+    if let ast.ExprStructLit(_) = arg {
+      return true;
+    }
+    if (int_literal_tree(arg)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function settle_args_at_params(args: ast.Expr[], params: typeinfo.Type[], s: Scope): ast.Expr[] {
   if (params.len() != args.len()) {
     return args;
@@ -35448,7 +35464,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      if (nargs.len() > 0) {
+      if (args_need_param_types(nargs)) {
         nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
       }
       nargs = display_rewrite(c, nargs, s);
