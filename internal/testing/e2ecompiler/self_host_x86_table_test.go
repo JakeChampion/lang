@@ -57,3 +57,20 @@ func TestSelfHostX86SSERegOnlyRefusesMemory(t *testing.T) {
 		}
 	}
 }
+
+func TestSelfHostX86RefusesUnknownVectorRegisters(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	bin := buildX86AsmBenchDriver(t, gcc)
+	for _, c := range []string{
+		"sha256rnds2 %xmm0, %xmm2, %xmm1",
+		"pshufb %xmm1, %xmm16",
+		"pshufb %xmm1x, %xmm0",
+		"aesenc %xmm, %xmm0",
+		"vpaddd %ymm1, %ymm2, %ymm17",
+	} {
+		out := runX86BenchDriver(t, bin, runner, ".text\n_start:\n    "+c+"\n", "-bytes")
+		if len(asmRefusals(out)) == 0 {
+			t.Errorf("%q: the self-host assembler accepts it\n%s", c, out)
+		}
+	}
+}

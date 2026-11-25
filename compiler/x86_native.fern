@@ -1914,45 +1914,29 @@ function x86_gas_is_xmm(tok: string): boolean {
 }
 
 function x86_gas_xmm(tok: string): i32 {
-  let s = tok;
-  if (s.len() > 0 && s[0] == b'%') {
-    s = slice_unchecked(s, 1, s.len()).to_owned();
-  }
-  if (s.len() < 4) {
-    return -1;
-  }
-  if (s[0] != b'x' || s[1] != b'm' || s[2] != b'm') {
-    return -1;
-  }
-  let v = 0;
-  for i in 3..s.len() {
-    let c = s[i] as i32;
-    if (c >= 48 && c <= 57) {
-      v = v * 10 + (c - 48);
-    }
-  }
-  return v;
+  return x86_gas_vec_index(tok, b'x');
 }
 
 function x86_gas_ymm(tok: string): i32 {
-  let s = tok;
-  if (s.len() > 0 && s[0] == b'%') {
-    s = slice_unchecked(s, 1, s.len()).to_owned();
-  }
-  if (s.len() < 4) {
-    return -1;
-  }
-  if (s[0] != b'y' || s[1] != b'm' || s[2] != b'm') {
+  return x86_gas_vec_index(tok, b'y');
+}
+
+// The index of the register %xmmN or %ymmN for the letter x or y, or -1 if
+// tok is not one of the 16 registers.
+function x86_gas_vec_index(tok: string, letter: u8): i32 {
+  let at = if (tok.len() > 0 && tok[0] == b'%') { 1 } else { 0 };
+  if (tok.len() < at + 4 || tok.len() > at + 5 || tok[at] != letter || tok[at + 1] != b'm' || tok[at + 2] != b'm') {
     return -1;
   }
   let v = 0;
-  for i in 3..s.len() {
-    let c = s[i] as i32;
-    if (c >= 48 && c <= 57) {
-      v = v * 10 + (c - 48);
+  for i in at + 3..tok.len() {
+    let c = tok[i] as i32;
+    if (c < 48 || c > 57) {
+      return -1;
     }
+    v = v * 10 + (c - 48);
   }
-  return v;
+  return if (v > 15) { -1 } else { v };
 }
 
 function x86_gas_vreg(tok: string): i32 {
@@ -2240,6 +2224,10 @@ function x86_gas_top_comma(s: string): i32 {
   }
   return -1;
 }
+
+// A row of the 0F 38 or 0F 3A table at NO_66 or above has no 66 prefix, as
+// the SHA extensions have none.
+const NO_66: i32 = 256;
 
 // BEGIN GENERATED NAMED VOCABULARY (cmd/x86tblgen) — do not edit by hand.
 function x86_gas_rep_pfx(mnem: string): Option[i32] {
@@ -2615,10 +2603,8 @@ function x86_gas_cvt2si(mnem: string): Option[i32] {
   }
 }
 
-// A row of the 0F 38 or 0F 3A table at NO_66 or above has no 66 prefix, as
-// the SHA extensions have none.
-const NO_66: i32 = 256;
-
+// fern-lint: allow cyclomatic-complexity
+// Each table row has one match arm.
 function x86_gas_imm3a_op(mnem: string): Option[i32] {
   match (mnem) {
     "roundss" => {
@@ -2652,7 +2638,7 @@ function x86_gas_imm3a_op(mnem: string): Option[i32] {
       return Some(14);
     },
     "sha1rnds4" => {
-      return Some(NO_66 + 204);
+      return Some(460);
     },
     _ => {
       return None;
@@ -2801,22 +2787,22 @@ function x86_gas_sse38_op(mnem: string): Option[i32] {
       return Some(219);
     },
     "sha1nexte" => {
-      return Some(NO_66 + 200);
+      return Some(456);
     },
     "sha1msg1" => {
-      return Some(NO_66 + 201);
+      return Some(457);
     },
     "sha1msg2" => {
-      return Some(NO_66 + 202);
+      return Some(458);
     },
     "sha256rnds2" => {
-      return Some(NO_66 + 203);
+      return Some(459);
     },
     "sha256msg1" => {
-      return Some(NO_66 + 204);
+      return Some(460);
     },
     "sha256msg2" => {
-      return Some(NO_66 + 205);
+      return Some(461);
     },
     _ => {
       return None;
