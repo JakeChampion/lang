@@ -1064,6 +1064,18 @@ function rc_count_checks(): i32 {
   if (!counts_kept(insert_ops(selfhost_reuse(1, 1), 4, lent))) {
     return 149;
   }
+  let copy: ir.Op[] = [ir.op_load_local(1), ir.op_store_local(7)];
+  if (!counts_changed(insert_ops(selfhost_reuse(1, 1), 4, concat_ops(copy, count_call(7, "__fern_rc_inc"))))) {
+    return 23;
+  }
+  let overwritten = concat_ops(copy, [ir.op_const_i32(0), ir.op_store_local(7)]);
+  if (!counts_kept(insert_ops(selfhost_reuse(1, 1), 4, concat_ops(overwritten, count_call(7, "__fern_rc_dec"))))) {
+    return 24;
+  }
+  let later = insert_ops(keep_reuse(1, 1, 1), 9, count_call(7, "__fern_rc_dec"));
+  if (!counts_changed(insert_ops(later, 3, copy))) {
+    return 25;
+  }
   return 0;
 }
 

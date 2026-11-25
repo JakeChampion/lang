@@ -421,9 +421,9 @@ function is_flow_kind(t: i32): boolean {
     || t == ir.K_BR || t == ir.K_BRIF || t == ir.K_RETURN;
 }
 
-// True when the call at i retains, releases or moves the local donor
-// through one of its arguments.
-function changes_count_of(ops: ir.Op[], i: i32, donor: i32, sigs: rcsigs.Table): boolean {
+// True when the call at i retains, releases or moves one of the locals in
+// held through one of its arguments.
+function changes_count_of(ops: ir.Op[], i: i32, held: i32[], sigs: rcsigs.Table): boolean {
   if (ops[i].kind_tag != ir.K_CALL_DIRECT) {
     return false;
   }
@@ -432,33 +432,76 @@ function changes_count_of(ops: ir.Op[], i: i32, donor: i32, sigs: rcsigs.Table):
     return false;
   }
   let counts = sig.effect == rcsigs.effect_retain() || sig.effect == rcsigs.effect_release() || sig.effect == rcsigs.effect_move();
-  if (counts && sig.arg >= 0 && sig.arg < ops[i].i32_imm && arg_local(ops, i, sig.arg) == donor) {
+  if (counts && sig.arg >= 0 && sig.arg < ops[i].i32_imm && util.index_of_i32(held, arg_local(ops, i, sig.arg)) >= 0) {
     return true;
   }
   for a in sig.also {
-    if (a >= 0 && a < ops[i].i32_imm && arg_local(ops, i, a) == donor) {
+    if (a >= 0 && a < ops[i].i32_imm && util.index_of_i32(held, arg_local(ops, i, a)) >= 0) {
       return true;
     }
   }
   return false;
 }
 
-function first_count_change(ops: ir.Op[], from: i32, to: i32, donor: i32, sigs: rcsigs.Table): i32 {
+// True when no scope that is open at i closes before to, so each path from
+// i reaches to.
+function stays_open(ops: ir.Op[], i: i32, to: i32): boolean {
+  let depth = 0;
+  for j in i + 1..to {
+    depth += scope_delta(ops[j]);
+    if (depth < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The locals that hold the donor's box: the donor, and each local that a
+// copy of one of them writes. A store of anything else ends a copy when
+// each path from the store reaches to.
+function held_after(ops: ir.Op[], i: i32, to: i32, own held: i32[]): i32[] {
+  let k = ops[i].kind_tag;
+  if (k != ir.K_STORE_LOCAL && k != ir.K_TEE_LOCAL) {
+    return held;
+  }
+  let dst = ops[i].i32_imm;
+  let copied = i >= 1 && ops[i - 1].kind_tag == ir.K_LOAD_LOCAL && util.index_of_i32(held, ops[i - 1].i32_imm) >= 0;
+  let at = util.index_of_i32(held, dst);
+  if (copied && at < 0) {
+    return held.append(dst);
+  }
+  if (!copied && at > 0 && stays_open(ops, i, to)) {
+    let out: i32[] = [];
+    for j in 0..held.len() {
+      if (j != at) {
+        out = out.append(held[j]);
+      }
+    }
+    return out;
+  }
+  return held;
+}
+
+struct CountScan { at: i32, held: i32[] }
+
+function first_count_change(ops: ir.Op[], from: i32, to: i32, own held: i32[], sigs: rcsigs.Table): CountScan {
   let i = from;
   while (i < to) {
-    if (changes_count_of(ops, i, donor, sigs)) {
-      return i;
+    if (changes_count_of(ops, i, held, sigs)) {
+      return CountScan { at: i, held: held };
     }
+    held = held_after(ops, i, to, held);
     i += 1;
   }
-  return -1;
+  return CountScan { at: -1, held: held };
 }
 
 function count_problems(fn_name: string, ops: ir.Op[], call: i32, s: Site, sigs: rcsigs.Table): irverify.Problem[] {
   let out: irverify.Problem[] = [];
-  let at = first_count_change(ops, s.unique_at + 1, s.else_at, s.gate, sigs);
+  let scan = first_count_change(ops, s.unique_at + 1, s.else_at, [s.gate], sigs);
+  let at = scan.at;
   if (at < 0) {
-    at = first_count_change(ops, s.end_at + 1, call, s.gate, sigs);
+    at = first_count_change(ops, s.end_at + 1, call, scan.held, sigs).at;
   }
   if (at >= 0) {
     out = out.append(irverify.Problem {
