@@ -5,7 +5,7 @@ import "../ir";
 import "../util";
 
 function inst(k: i32, v: i32, args: i32[], imm: i32, name: string): ssa.SInst {
-  return ssa.SInst { ir_kind: if (k == ssa.BINARY) { ir.kind_id(name) } else { 0 }, kind_tag: k, result: v, args: args, imm: imm, str: name };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(k, name), kind_tag: k, result: v, args: args, imm: imm, str: name };
 }
 
 function call(v: i32, a: i32, name: string): ssa.SInst {

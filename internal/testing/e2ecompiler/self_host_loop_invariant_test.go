@@ -16,11 +16,10 @@ import (
 // operand of the value is defined in front of it, also a constant copy that
 // merged.
 func TestSelfHostLoopInvariantHoist(t *testing.T) {
-	const src = `import "./ir";
-import "./ssa";
+	const src = `import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(op) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(kind, op), kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 function graph(side_entry: boolean): ssa.SFunc {

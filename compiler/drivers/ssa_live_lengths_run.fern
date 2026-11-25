@@ -1,11 +1,10 @@
-import "../ir";
 import "../ssa";
 import "../ssafixed";
 import "../ssalive";
 import "../util";
 
 function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
-  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(str) } else { 0 }, kind_tag: kind, result: v, args: args, imm: 0, str: str };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(kind, str), kind_tag: kind, result: v, args: args, imm: 0, str: str };
 }
 
 function jump(to: i32): ssa.STerm {

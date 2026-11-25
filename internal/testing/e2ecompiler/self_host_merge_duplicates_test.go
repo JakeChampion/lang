@@ -11,11 +11,10 @@ import (
 // into one in a block that dominates it. One in a sibling block and one that
 // reads a value with two definitions stay.
 func TestSelfHostMergeDuplicatesAcrossBlocks(t *testing.T) {
-	const src = `import "./ir";
-import "./ssa";
+	const src = `import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(op) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(kind, op), kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 // b0 computes v2 = v0 * v1, v3 = v0 == v1, v4 = v0 + v1 and v6 = v5 - v1,
