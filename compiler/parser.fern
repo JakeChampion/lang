@@ -29,7 +29,7 @@ pub function bare_field(name: string, type_name: string): StructFieldDecl {
 
 pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], const_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, secret: boolean, value_type: boolean, variant_field_names: string[], is_pub: boolean, is_package: boolean, opaque: boolean, module: string }
 
-pub struct TypeAlias { name: string, variants: string[], variant_args: string[], variant_lines: i32[], type_params: string[], const_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
+pub struct TypeAlias { name: string, variants: string[], variant_args: string[][], variant_lines: i32[], type_params: string[], const_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
 
 pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string, line: i32, col: i32, resolved: string }
 
@@ -8564,7 +8564,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   }
   p = p.advance();
   let variants: string[] = [];
-  let vargs: string[] = [];
+  let vargs: string[][] = [];
   let vlines: i32[] = [];
   while (true) {
     if (p.peek_ident().len() == 0) {
@@ -8579,7 +8579,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
       return union_decl_error(member, "a union member names a struct, not an array type", name, tparams, cparams, taline, tacol);
     }
     variants = variants.append(r.base);
-    vargs = vargs.append(type_ref_args_spelling(r));
+    vargs = vargs.append(type_ref_arg_spellings(r));
     if (p.peek_punct() == "|") {
       p = p.advance();
       continue;
@@ -8614,13 +8614,10 @@ function past_union_decl(p: Par): Par {
   return q;
 }
 
-function type_ref_args_spelling(r: TypeRef): string {
-  let out = "";
+function type_ref_arg_spellings(r: TypeRef): string[] {
+  let out: string[] = [];
   for a in r.args {
-    if (out.len() > 0) {
-      out += ", ";
-    }
-    out += me_ref_spelling(a);
+    out = out.append(me_ref_spelling(a));
   }
   return out;
 }
@@ -13090,10 +13087,10 @@ pub function union_alias_errors(mod: Module, al: TypeAlias): string[] {
 }
 
 function alias_member_arity(al: TypeAlias, i: i32): i32 {
-  if (i >= al.variant_args.len() || al.variant_args[i].len() == 0) {
+  if (i >= al.variant_args.len()) {
     return 0;
   }
-  return split_top_commas(al.variant_args[i]).len();
+  return al.variant_args[i].len();
 }
 
 pub function desugar_union_aliases(mod: Module): Module {
@@ -13112,7 +13109,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       let member = al.variants[vi];
       let payload = member;
       if (vi < al.variant_args.len() && al.variant_args[vi].len() > 0) {
-        payload = member + "[" + al.variant_args[vi] + "]";
+        payload = member + "[" + al.variant_args[vi].join(", ") + "]";
       }
       structs = structs.append(StructDecl { name: member, fields: [bare_field(VARIANT_PAYLOAD_PREFIX, payload)], type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
     }

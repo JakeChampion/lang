@@ -3595,7 +3595,7 @@ function print_type_alias(a: parser.TypeAlias): string {
     }
     out += a.variants[i];
     if (i < a.variant_args.len() && a.variant_args[i].len() > 0) {
-      out = out + "[" + a.variant_args[i] + "]";
+      out = out + "[" + a.variant_args[i].join(", ") + "]";
     }
   }
   return out + ";\n";

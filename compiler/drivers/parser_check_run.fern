@@ -822,11 +822,11 @@ function check_type_aliases(): test.TestOutcome {
   if (fmtGen.aliases[0].type_params.len() != 1 || fmtGen.aliases[0].type_params[0] != "T") {
     return test.fail("fmtGen.aliases[0].type_params.len() != 1 || fmtGen.aliases[0].type_params[0] != \"T\"");
   }
-  if (fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0] != "T" || fmtGen.aliases[0].variant_args[1] != "") {
-    return test.fail("fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0] != \"T\" || fmtGen.aliases[0].variant_args[1] != \"\"");
+  if (fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0].join(", ") != "T" || fmtGen.aliases[0].variant_args[1].join(", ") != "") {
+    return test.fail("fmtGen.aliases[0].variant_args.len() != 2 || fmtGen.aliases[0].variant_args[0].join(\", \") != \"T\" || fmtGen.aliases[0].variant_args[1].join(\", \") != \"\"");
   }
-  if (fmtGen.aliases[1].variant_args[0] != "i32") {
-    return test.fail("fmtGen.aliases[1].variant_args[0] != \"i32\"");
+  if (fmtGen.aliases[1].variant_args[0].join(", ") != "i32") {
+    return test.fail("fmtGen.aliases[1].variant_args[0].join(\", \") != \"i32\"");
   }
   let srcBad = "struct Leaf[T] { v: T } struct Lit { v: i32 } type Tree = Leaf | Lit; function main(): i32 { return 0; }";
   let modBad = parser.parse_module(lexer.tokenize(srcBad));
