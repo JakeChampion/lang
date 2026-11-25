@@ -11573,8 +11573,12 @@ function ssa_carry_reader(ins: ssa.SInst, carry: i32, reg_of: i32[], fr: SsaFram
   }
   let op: string = if (ins.ir_kind == ir.K_SUB) { "sbbq" } else { "adcq" };
   let d = ssa_spilled_dst(fr, reg_of, other, ins.result);
-  s = ssa_load_value(fr, reg_of, other, d, s);
-  s = s.write("    " + op + " $0, " + d + "\n");
+  if (ssa.carry_mask(fr.carry, ins, fr.imm.konst, fr.imm.value)) {
+    s = s.write("    sbbq " + d + ", " + d + "\n");
+  } else {
+    s = ssa_load_value(fr, reg_of, other, d, s);
+    s = s.write("    " + op + " $0, " + d + "\n");
+  }
   if (d == "%r11") {
     s = asmcore.ssa_x0_forget(s);
   }

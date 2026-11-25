@@ -651,3 +651,51 @@ func TestSelfHostSSAMaskIdentitiesFold(t *testing.T) {
 		t.Errorf("sub_mask adds the carry of its third limb outside the chain:\n%s", fn)
 	}
 }
+
+// The mask `0 - borrow` is one `sbbq` of a register from itself on x86-64,
+// and one `sbc` from `xzr` on arm64.
+func TestSelfHostSSABorrowMaskIsOneSbb(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_sub_mask")
+	if fn == "" {
+		t.Fatal("no __fn_sub_mask in the listing")
+	}
+	self := regexp.MustCompile(`(?m)^\s+sbbq (%r\w+), (%r\w+)$`)
+	found := false
+	for _, m := range self.FindAllStringSubmatch(fn, -1) {
+		if m[1] == m[2] {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("sub_mask makes its mask without one sbbq of a register from itself:\n%s", fn)
+	}
+	if n := strings.Count(fn, "setb"); n != 1 {
+		t.Errorf("sub_mask writes %d carries to a register, want 1 (the carry of its third limb):\n%s", n, fn)
+	}
+	armOut := filepath.Join(dir, "carries-arm64.s")
+	if report, err := exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", armOut, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	armAsm, err := os.ReadFile(armOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	armFn := functionListing(string(armAsm), "__fn_sub_mask")
+	if !regexp.MustCompile(`(?m)^\s+sbc x\d+, xzr, xzr$`).MatchString(armFn) {
+		t.Errorf("arm64: sub_mask makes its mask without one sbc from xzr:\n%s", armFn)
+	}
+}

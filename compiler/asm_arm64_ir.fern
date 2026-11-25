@@ -4691,8 +4691,11 @@ function ssa_carry_reader(ins: ssa.SInst, carry: i32, op: string, reg_of: i32[],
   if (other == carry) {
     other = ins.args[1];
   }
-  let h = ssa_src(reg_of, other, "x5");
-  s = ssa_load_value(fr, reg_of, other, h, s);
+  let h = "xzr";
+  if (!fr.imm.is_imm[other] || fr.imm.value[other] != 0i64) {
+    h = ssa_src(reg_of, other, "x5");
+    s = ssa_load_value(fr, reg_of, other, h, s);
+  }
   let d = ssa_dst(reg_of, ins.result);
   s = s.write("    " + op + " " + d + ", " + h + ", xzr\n");
   return ssa_store(reg_of, ins.result, d, s);
