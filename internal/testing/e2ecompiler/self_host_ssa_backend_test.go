@@ -1494,8 +1494,8 @@ function main(): i32 {
 		if n := strings.Count(fn, shape.unique); n != 2 {
 			t.Errorf("%s: hist reads an rc against 1 %d times, want 2 (one uniqueness test and its copy arm's release):\n%s", tg.target, n, fn)
 		}
-		if n := strings.Count(fn, shape.oob); n != 2 {
-			t.Errorf("%s: hist has %d bounds aborts, want 2 (the two element reads):\n%s", tg.target, n, fn)
+		if n := strings.Count(fn, shape.oob); n != 0 {
+			t.Errorf("%s: hist has %d bounds aborts, want 0 (counts keeps its 8 elements through each with, and each index is masked to 0..7):\n%s", tg.target, n, fn)
 		}
 		bin := filepath.Join(dir, "with_chain-"+tg.target)
 		h.compileWith(t, tg, src, bin, "-backend", "ssa")
