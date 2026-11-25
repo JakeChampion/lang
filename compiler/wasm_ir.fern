@@ -620,6 +620,20 @@ function memory_min_pages(heap_base: i32): i32 {
   return need;
 }
 
+// The limits of the linear memory. A -heap-limit sets its maximum in whole
+// 64 KiB pages, so memory.grow fails at the quota.
+function memory_limits(min_pages: i32, heap_limit: i64): string {
+  if (heap_limit <= 0i64) {
+    return util.i32_to_string(min_pages);
+  }
+  let max_pages = (heap_limit / 65536i64) as i32;
+  if (max_pages < min_pages) {
+    eprint("fern: -heap-limit " + util.i64_to_string(heap_limit) + " is below the " + util.i64_to_string(min_pages as i64 * 65536i64) + " bytes of memory that the module starts with");
+    exit(2);
+  }
+  return util.i32_to_string(min_pages) + " " + util.i32_to_string(max_pages);
+}
+
 pub function cagg_base_global(ns: string): string {
   return "$__cagg_base" + ns;
 }
@@ -10677,7 +10691,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (san) {
     parts = parts.append(wasm_abort.san_helpers([str_literal_data(strs.offs[abort_to]), str_literal_data(strs.offs[abort_to + 1]), str_literal_data(strs.offs[abort_to + 2]), str_literal_data(strs.offs[abort_to + 3])], mode));
   }
-  parts = parts.append("  (memory (export \"memory\") " + util.i32_to_string(memory_min_pages(heap_base)) + ")\n");
+  parts = parts.append("  (memory (export \"memory\") " + memory_limits(memory_min_pages(heap_base), sw.heap_limit) + ")\n");
   if (shadow > 0) {
     parts = parts.append("  (global $__fern_shadow_lo i32 (i32.const " + util.i32_to_string(shadow_lo) + "))\n");
     parts = parts.append("  (global $__fern_shadow_sp (mut i32) (i32.const " + util.i32_to_string(heap_base) + "))\n");

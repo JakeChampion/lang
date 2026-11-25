@@ -42,7 +42,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Under `-sanitize`, a raw write up to 16 bytes past a raw block is reported at the block's free | `TestSelfHostQuarantinePolicy` | x86, arm64 |
 | `crypto.erase` zeroes a secret before its block is reused | `TestSelfHostEraseZeroesStorage` | x86, arm64 |
 | HMAC, HKDF, PBKDF2, ChaCha20-Poly1305, X25519 and Ed25519 leave no copy of the key material they used in the arena, and an erased `aes_gcm.Key` or `ed25519.PrivateKey` leaves zeros | `TestSelfHostPrimitivesEraseKeyMaterial` | x86, arm64 |
-| `-heap-limit` bounds the arena, and a program past it exits 125 | `TestSelfHostHeapLimit` | x86, arm64 |
+| `-heap-limit` bounds the arena, and a program past it exits 125. On wasm it bounds the linear memory, and a program past it traps with the same cause | `TestSelfHostHeapLimit` | x86, arm64, wasm |
 
 ## Stack, control flow and the image
 
