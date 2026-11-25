@@ -7472,7 +7472,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
   f = ssasem.tail_recursion(ssasem.rebuilt_variants(ssasem.boxed_enum_dyns(f)), self_call_name(fd, name));
   if (s.range_proofs) {
-    f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
+    f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(2), ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
     f = ssabounds.nonneg_quotients(f);
   }
   f = ssaquotient.shared_quotients(f);
@@ -8412,6 +8412,9 @@ function intrinsic_contracts(): ssasem.Contract[] {
   for c in lane_contracts() {
     out = out.append(c);
   }
+  for c in word_load_contracts() {
+    out = out.append(c);
+  }
   return out;
 }
 
@@ -8482,6 +8485,7 @@ function word_load_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__load_u16", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__load_i32", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i32() },
     ssasem.Contract { name: "__load_i64", params: [typeinfo.t_usize()], modes: [v], result: typeinfo.t_i64() },
+    ssasem.Contract { name: ssabytes.word_name(2), params: [view, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: ssabytes.word_name(4), params: [view, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i32() },
     ssasem.Contract { name: ssabytes.word_name(8), params: [view, typeinfo.t_i32()], modes: [b, v], result: typeinfo.t_i64() },
     ssasem.Contract { name: ssabytes.swap_name(4), params: [typeinfo.t_i32()], modes: [v], result: typeinfo.t_i32() },

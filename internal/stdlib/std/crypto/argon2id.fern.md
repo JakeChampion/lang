@@ -4,6 +4,8 @@ This module implements Argon2id version 19 from RFC 9106. The default parameters
 
 `key` accepts a password, a salt and parameters. `derive` also accepts the optional secret and associated data. Store the public parameters and salt with the tag. Lanes run sequentially and produce the same tag as parallel execution.
 
+The constant-time gate runs Argon2id with a secret password. The first half of the first pass takes its references from a counter, which is public. The rest takes each reference from the data, as RFC 9106 specifies, so the reference is the one value that the module makes public. That is the side channel that Argon2id accepts by design.
+
 `memory_kib` is the requested matrix size. `limit_kib` bounds the matrix and four scratch blocks before allocation. It also bounds the output length. The caller supplies input storage, and BLAKE2b uses additional fixed-size buffers.
 
 ## Executable example
@@ -231,6 +233,21 @@ function reference(j: u64, pass: i32, slice: i32, lane: i32, index: i32, segment
   return other * width + (start + relative) % width;
 }
 
+// The word of the previous block that selects the reference of Argon2d.
+// RFC 9106 section 3.4 takes this address from the data by design, so the
+// word is public, as the ROMix index of scrypt is.
+function __public_word(j: u64, own seen: u8[]): (u64, u8[]) {
+  for b in 0..8 {
+    seen = seen.with(b, (j >> (8 * b) as u64 & 255u64) as u8);
+  }
+  __ct_public(seen);
+  let out = 0u64;
+  for b in 0..8 {
+    out |= seen[b] as u64 << (8 * b) as u64;
+  }
+  return (out, seen);
+}
+
 function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i32, p: Params): i64[] {
   let width = 4 * segment;
   let blocks = width * p.lanes;
@@ -243,6 +260,7 @@ function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i
     m = m.with(input, pass as i64).with(input + 1, lane as i64).with(input + 2, slice as i64).with(input + 3, blocks as i64).with(input + 4, p.passes as i64).with(input + 5, 2i64).with(input + 6, 0i64);
   }
   let first = if (pass == 0 && slice == 0) { 2 } else { 0 };
+  let seen = __alloc_u8(8);
   for i in first..segment {
     let pos = slice * segment + i;
     let prev = lane * width + (pos + width - 1) % width;
@@ -254,6 +272,10 @@ function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i
         m = compress(m, zero, addr, addr, tmp, false);
       }
       j = m[addr + i % 128] as u64;
+    } else {
+      let (word, held) = __public_word(j, seen);
+      j = word;
+      seen = held;
     }
     let ref_block = reference(j, pass, slice, lane, i, segment, p.lanes);
     m = compress(m, prev * 128, ref_block * 128, (lane * width + pos) * 128, tmp, pass != 0);

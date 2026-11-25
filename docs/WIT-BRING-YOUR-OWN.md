@@ -207,6 +207,27 @@ a `.wit` world and get a component scoped to exactly that world (validated by
 import side of bring-your-own-WIT is finished. A self-host backend bug found en
 route — the string-runtime helper-emission gap — was fixed too.
 
+### The world from the command line
+
+The `-wit FILE` flag of `fern` gives the world of a `-target wasm32-wasi`
+component. Without the flag, `fern` composes against the fern world that it
+embeds. Make FILE with `wasm-tools`, from the directory that holds the WIT
+package and its `deps/`:
+
+```
+wasm-tools component embed WITDIR -w WORLD --dummy -o world.wasm
+fern -target wasm32-wasi -wit world.wasm -o app.wasm app.fern
+```
+
+FILE is a core module with a `component-type` custom section, or the
+component that such a section holds. A WIT package that `wasm-tools component
+wit --wasm` encodes is not a world, so `fern` refuses it. The component imports
+only the interfaces of the world that the program uses. A core import that the
+world does not declare is a refusal that names the interface. The runtime of a
+Fern program needs `wasi:cli/stdout`, `wasi:cli/stderr` and `wasi:cli/exit`, so
+the world must import them. `TestSelfHostCLIWitWorld` runs such a component
+with a provider of the world's own interface.
+
 What remains is the **language surface** (P4–P6): letting Fern programs *call*
 arbitrary WIT imports and *implement* arbitrary world exports, rather than
 relying on the built-in capabilities (`write`, `read_file`, …).
