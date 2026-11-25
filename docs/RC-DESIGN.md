@@ -624,7 +624,10 @@ of that box. A store of null can clear the slot that the box was read from.
 Then the unit of the slot goes to the value that is the box on that path. A twin holds no unit if it is the
 box of the parameter, and one unit if it is a new box. A test of the twin
 against the parameter decides the side on each edge, and a join meets the
-two sides apart. A test of any value with a plain count against a parameter
+two sides apart. An edge where the test selects a side that the twin does
+not have carries no path. The walk does not hand on such an edge, and a
+block that only such edges reach does not run in that round
+(`twin_dead_on_edge`, `reached`). A test of any value with a plain count against a parameter
 also gives a twin with one side: the box of the parameter on the equal edge,
 and another box on the other edge. A retain or a release of a twin with one
 side changes the count of that side. A parameter is its own box, so as a phi
