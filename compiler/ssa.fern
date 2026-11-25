@@ -11033,7 +11033,7 @@ function shuffled_byte_store(defs: SInst[], insts: SInst[], stores: i32[], count
     // Every mask byte is an ASCII index or the zero-fill marker.
     text = string_from_bytes_unchecked(mask);
   }
-  return SInst { ...first, kind_tag: LANE_STORE, args: [first.args[0], vectors[0], other], str: "vstore:shuffle:" + text, imm: count };
+  return SInst { ...first, kind_tag: LANE_STORE, ir_kind: ir.K_VSTORE, args: [first.args[0], vectors[0], other], str: "vstore:shuffle:" + text, imm: count };
 }
 
 pub function combine_byte_stores(f: SFunc): SFunc {
