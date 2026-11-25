@@ -604,6 +604,8 @@ is the number of slots it leaves.
 | `wasm_name_lookup` | 576 | 2 | 1 |
 | `sha256x8_hw` | 577 | 0 | 1 |
 | `sha256x8_hw_blocks` | 578 | 2 | 1 |
+| `sha256_hw_digest_block` | 579 | 2 | 1 |
+| `storage_bytes` | 580 | 1 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.
