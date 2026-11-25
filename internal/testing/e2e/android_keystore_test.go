@@ -30,3 +30,30 @@ function main(): i32 {
 		t.Fatalf("input validation exited with status %d", got)
 	}
 }
+
+// Invalid signing-key inputs must return before any JNI call.
+func TestAndroidKeystoreSigningInputBounds(t *testing.T) {
+	const program = `import "std/android/keystore";
+import "std/jni";
+
+function refused(r: Result[keystore.SigningKey, jni.JavaError]): boolean {
+  return match (r) { Err(_) => true, Ok(_) => false };
+}
+
+function main(): i32 {
+  let e = 1 as usize;
+  let o = keystore.key_options();
+  if (!refused(keystore.make_signing_key(e, "k", [], o))) { return 1; }
+  if (!refused(keystore.make_signing_key(e, "k", __alloc_u8(129), o))) { return 2; }
+  if (!refused(keystore.make_signing_key(e, "", [1u8], o))) { return 3; }
+  if (!refused(keystore.make_signing_key(0 as usize, "k", [1u8], o))) { return 4; }
+  if (!refused(keystore.signing_key(e, ""))) { return 5; }
+  if (keystore.sign(e, "k", __alloc_u8(1048577)).is_ok()) { return 6; }
+  if (keystore.sign(e, "", [1u8]).is_ok()) { return 7; }
+  if (keystore.delete_key(e, "").is_ok()) { return 8; }
+  return 0;
+}`
+	if _, got := compileAndRunX86_64(t, program); got != 0 {
+		t.Fatalf("signing input validation exited with status %d", got)
+	}
+}
