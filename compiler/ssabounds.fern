@@ -1598,7 +1598,7 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
   let v = values.len();
   let word = v;
   if (ssasem.is_byte_view(t)) {
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr, first], imm: 0, str: view_words[w.bytes / 8] });
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [w.arr, first], imm: 0, str: view_words[word_slot(w.bytes)] });
   } else {
     let base = v;
     if (ssasem.is_text(t)) {
@@ -1625,10 +1625,19 @@ function load_word(own l: Load, t: typeinfo.Type, w: Word, first: i32, result: i
   if (w.big) {
     values = values.append(wide);
   }
+  if (w.big && w.bytes == 2) {
+    values = values.append(wide).append(wide);
+  }
   return Load { insts: insts, values: values };
 }
 
-function word_loader(bytes: i32): string {
+// The index of the loader of a word of `bytes` in the lists of
+// `word_loads`: 2, 4 and 8 bytes in turn.
+function word_slot(bytes: i32): i32 {
+  return if (bytes == 2) { 0 } else if (bytes == 4) { 1 } else { 2 };
+}
+
+pub function word_loader(bytes: i32): string {
   if (bytes == 2) {
     return "__load_u16";
   }
@@ -1648,6 +1657,8 @@ function text_data(own l: Load, t: typeinfo.Type, arr: i32, addr_t: typeinfo.Typ
   return Load { insts: insts, values: values.append(addr_t) };
 }
 
+// A big-endian word of two bytes moves to the high half of 32 bits, so
+// the swap of 32 bits gives it with zeros above.
 function in_order(own insts: ssa.SInst[], w: Word, swaps: string[], loaded: i32, result: i32): ssa.SInst[] {
   let v = loaded;
   if (w.big) {
@@ -1655,8 +1666,14 @@ function in_order(own insts: ssa.SInst[], w: Word, swaps: string[], loaded: i32,
     if (w.bytes == 8) {
       name = swaps[1];
     }
-    v = loaded + 1;
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [loaded], imm: 0, str: name });
+    let word = loaded;
+    if (w.bytes == 2) {
+      insts = insts.append(ssa.SInst { kind_tag: ssa.CONST_INT, result: loaded + 1, args: [], imm: 16, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssa.BINARY, result: loaded + 2, args: [loaded, loaded + 1], imm: 0, str: "<<" });
+      word = loaded + 2;
+    }
+    v = word + 1;
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [word], imm: 0, str: name });
   }
   return insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: result, args: [v], imm: 0, str: "" });
 }
@@ -1782,7 +1799,7 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word
     be = be && p.shift == (n - 1 - at) * 8;
     seen = seen.with(at, true);
   }
-  if (!le && !be || n == 2 && !two_byte_word(f, parts[0].arr, le)) {
+  if (!le && !be) {
     return None;
   }
   return Some(Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo, big: !le });
@@ -1792,11 +1809,6 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word
 function word_terms(t: typeinfo.Type, n: i32): boolean {
   let w = word_width(t);
   return n == w || w == 4 && n == 2;
-}
-
-// A two-byte word is a 16-bit load, which only an array or a string has, in little-endian order.
-function two_byte_word(f: ssasem.Func, arr: i32, le: boolean): boolean {
-  return le && !ssasem.is_byte_view(f.values[arr]);
 }
 
 // The bytes in a word an OR of byte reads can build, or 0.

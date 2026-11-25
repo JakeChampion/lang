@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// The two bytes of a little-endian word, from an array and from a string. A
-// read past the end still aborts.
+// The two bytes of a word in either order, from an array, a string and a
+// byte view. A read past the end still aborts.
 const word16Program = `@noinline
 function le16(data: u8[], cur: i32, best: i32): i32 {
   let at = cur + best - 1;
@@ -19,6 +19,26 @@ function le16(data: u8[], cur: i32, best: i32): i32 {
 @noinline
 function text16(s: string, at: i32): i32 {
   return s[at] as i32 | s[at + 1] as i32 << 8;
+}
+
+@noinline
+function be16(data: u8[], at: i32): i32 {
+  return data[at] as i32 << 8 | data[at + 1] as i32;
+}
+
+@noinline
+function be16s(s: string, at: i32): i32 {
+  return s[at] as i32 << 8 | s[at + 1] as i32;
+}
+
+@noinline
+function be16v(data: [u8], at: i32): i32 {
+  return data[at] as i32 << 8 | data[at + 1] as i32;
+}
+
+@noinline
+function le16v(data: [u8], at: i32): i32 {
+  return data[at] as i32 | data[at + 1] as i32 << 8;
 }
 
 @noinline
@@ -45,7 +65,12 @@ function main(): i32 {
   if (le32(d, 1) != 125894402u32) { return 3; }
   if (mix64(d, 1, 1) != 14415190115691331335u64) { return 4; }
   if (le16(d, -2147483647, -2147483647 - 1) != 513) { return 5; }
-  if (args().len() > 1) { return le16(d, 8, 1); }
+  if (be16(d, 1) != 767) { return 6; }
+  if (be16s("ab\u{ff}", 1) != 25283) { return 7; }
+  if (be16v(d, 2) != 65408) { return 8; }
+  if (le16v(d, 2) != 33023) { return 9; }
+  if (be16v("a\u{7f}b".as_bytes(), 1) != 32610) { return 10; }
+  if (args().len() > 1) { return le16(d, 8, 1) + be16v(d, 8); }
   return 0;
 }
 `
@@ -70,8 +95,8 @@ var addOfEight = map[string]*regexp.Regexp{
 	"arm64-linux":  regexp.MustCompile(`add x\d+, x\d+, #8\b`),
 }
 
-// A two-byte little-endian word of an array or a string is one zero-extending
-// load after one bounds check, not two byte reads, a shift and an or.
+// A two-byte word of an array, a string or a view is one zero-extending load
+// after one bounds check, not two byte reads, a shift and an or.
 func TestSelfHostWord16Load(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
@@ -87,7 +112,7 @@ func TestSelfHostWord16Load(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"le16", "text16"} {
+			for _, name := range []string{"le16", "text16", "be16", "be16s", "be16v", "le16v"} {
 				var body string
 				if target == "wasm32-wasi" {
 					bodies := wasmFuncBodies(string(text), "$"+name+" ")
@@ -130,5 +155,80 @@ func TestSelfHostWord16Load(t *testing.T) {
 				t.Errorf("%s: a read past the end exits %d, want the bounds abort 134\n%s", target, code, stderr)
 			}
 		})
+	}
+}
+
+// A helper that reads a word splices into each of its callers, from a string
+// as from a view. The view of an array field is then read from the array,
+// with no test of the kind of the view and no count of the record.
+const word16SpliceProgram = `struct Table { data: u8[], at: i32 }
+
+function word(b: [u8], at: i32): i32 {
+  return b[at] as i32 << 8 | b[at + 1] as i32;
+}
+
+function digits(t: string, i: i32): i32 {
+  return t[i] as i32 << 8 | t[i + 1] as i32;
+}
+
+@noinline
+function head(t: Table, i: i32): i32 {
+  return word(t.data, t.at + i) + word(t.data, t.at + i + 2) + word(t.data, t.at + i + 4);
+}
+
+@noinline
+function pairs(t: string): i32 {
+  return digits(t, 0) + digits(t, 2) + digits(t, 4);
+}
+
+function main(): i32 {
+  let t = Table { data: [0u8, 1u8, 2u8, 3u8, 4u8, 5u8, 6u8, 7u8], at: 1 };
+  if (head(t, 0) != 2316) { return 1; }
+  if (pairs("0123456") != 38553) { return 2; }
+  return 0;
+}
+`
+
+func TestSelfHostWord16Splice(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "word16splice.fern")
+	if err := os.WriteFile(src, []byte(word16SpliceProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	load := map[string]string{"x86-64-linux": "movzwl ", "arm64-linux": "ldrh w"}
+	viewTest := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`andq \$2, %r`),
+		"arm64-linux":  regexp.MustCompile(`and x\d+, x\d+, #2\b`),
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			text, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			asm := string(text)
+			for _, helper := range []string{"word", "digits"} {
+				if strings.Contains(asm, "\n__fn_"+helper+":") {
+					t.Errorf("%s: %s is not spliced into its callers", target, helper)
+				}
+			}
+			for _, name := range []string{"head", "pairs"} {
+				body := asmFuncBody(t, asm, "__fn_"+name+".r")
+				if n := strings.Count(body, load[target]); n != 3 {
+					t.Errorf("%s: %s has %d of %q, want three:\n%s", target, name, n, load[target], body)
+				}
+				if viewTest[target].MatchString(body) {
+					t.Errorf("%s: %s tests the kind of a view:\n%s", target, name, body)
+				}
+				if strings.Contains(body, "box_dec") || strings.Contains(body, "__sem_drop") {
+					t.Errorf("%s: %s counts its argument:\n%s", target, name, body)
+				}
+			}
+		})
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		if stderr, code := cli.exitOfFile(t, src, target, nil); code != 0 {
+			t.Errorf("%s: exit %d, want 0\n%s", target, code, stderr)
+		}
 	}
 }
