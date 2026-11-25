@@ -58,6 +58,10 @@ No function goes up, and no function has a finding. The mutant census of
 `checker.fern` is the same with both certifiers: 5,475 refuted, 237
 weakened, 219 missed.
 
+The 2,891 programs under `conformance/`, `tests/`, `examples/` and
+`coreutils/` give 0 findings on x86-64 with both certifiers. Each program
+exits as it did before. Their unproved values go from 36,448 to 36,442.
+
 ## Next lead
 
 `watbin__async_functype` now has the most unproved values: 24. Its loop phi
