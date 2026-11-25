@@ -131,43 +131,54 @@ func runSelfHostFixtureLegX86_64(t *testing.T, target, backend string, flags, en
 			if !ok {
 				return
 			}
-			r := runSelfHostBin(e2eharness.RunX86_64Bin(runner, binPath), f.stdin)
-			if strings.Contains(r.stderr, "fern-sanitizer:") {
-				failf("the sanitizer reported a finding:\n%s", r.stderr)
-				return
-			}
-			if (flags != nil || env != nil) && f.reclaimObservable {
-				exitOnly := *f
-				exitOnly.exact, exitOnly.contains = false, nil
-				f = &exitOnly
-			}
-			checkSelfHostNativeRun(t, f, r, failf)
+			checkSelfHostLegRun(t, f, runSelfHostBin(e2eharness.RunX86_64Bin(runner, binPath), f.stdin), flags != nil || env != nil, failf)
 		},
 	})
 }
 
+// checkSelfHostLegRun checks one run of a native leg. A leg that changes
+// the build (rebuilt) holds a reclaim-observable case to its exit code only.
+func checkSelfHostLegRun(t *testing.T, f *fixtureSpec, r selfHostRun, rebuilt bool, failf failFunc) {
+	if strings.Contains(r.stderr, "fern-sanitizer:") {
+		failf("the sanitizer reported a finding:\n%s", r.stderr)
+		return
+	}
+	if rebuilt && f.reclaimObservable {
+		exitOnly := *f
+		exitOnly.exact, exitOnly.contains = false, nil
+		f = &exitOnly
+	}
+	checkSelfHostNativeRun(t, f, r, failf)
+}
+
 func TestFernFixturesSelfHostArm64(t *testing.T) {
-	runSelfHostFixtureLegArm64(t, "arm64-linux", "arm64")
+	runSelfHostFixtureLegArm64(t, "arm64-linux", "arm64", nil)
+}
+
+// On arm64, -harden also signs each return address and puts a landing pad
+// on each indirect-call target.
+func TestFernFixturesSelfHostArm64Harden(t *testing.T) {
+	runSelfHostFixtureLegArm64(t, "arm64-linux", "arm64", []string{"-harden"})
 }
 
 // arm64-android is a static PIE over the Linux syscalls, so it runs where
 // an arm64-linux binary runs.
 func TestFernFixturesSelfHostArm64Android(t *testing.T) {
-	runSelfHostFixtureLegArm64(t, "arm64-android", "arm64_android")
+	runSelfHostFixtureLegArm64(t, "arm64-android", "arm64_android", nil)
 }
 
-func runSelfHostFixtureLegArm64(t *testing.T, target, backend string) {
+func runSelfHostFixtureLegArm64(t *testing.T, target, backend string, flags []string) {
 	requireSelfHostFixtureLeg(t)
 	qemu := e2eharness.Arm64Runner(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   backend,
 		knownFile: "selfhost-" + strings.ReplaceAll(backend, "_", "-") + "-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath, ok := compileSelfHostNative(t, fernBin, target, nil, nil, f, stdlibRoot, failf)
+			binPath, ok := compileSelfHostNative(t, fernBin, target, flags, nil, f, stdlibRoot, failf)
 			if !ok {
 				return
 			}
-			checkSelfHostNativeRun(t, f, runSelfHostBin(runArm64Bin(qemu, binPath), f.stdin), failf)
+			checkSelfHostLegRun(t, f, runSelfHostBin(runArm64Bin(qemu, binPath), f.stdin), flags != nil, failf)
 		},
 	})
 }

@@ -224,5 +224,31 @@ function main(): i32 {
 				"add_masked": {`setb`, `btq`, `and`},
 			},
 		},
+		{
+			name: "link-operand-after-carry",
+			src: `const ALL: u64 = 0xffffffffffffffffu64;
+@noinline function add_late_mask(a0: u64, a1: u64, a2: u64, b0: u64, b1: u64, m: u64): u64 {
+    let s0: u64 = a0 + b0;
+    let c0: u64 = (a0 & b0 | (a0 | b0) & (s0 ^ ALL)) >> 63u64;
+    let s1: u64 = a1 + b1 + c0;
+    let c1: u64 = (a1 & b1 | (a1 | b1) & (s1 ^ ALL)) >> 63u64;
+    let q: u64 = 0xffffffff00000001u64 & m;
+    let s2: u64 = a2 + q + c1;
+    return s0 ^ s1 ^ s2;
+}
+function main(): i32 {
+    let r: i32 = 0;
+    if (add_late_mask(ALL, ALL, 3u64, 1u64, 0u64, ALL) == 0xffffffff00000005u64) { r = r + 1; }
+    if (add_late_mask(2u64, 5u64, 3u64, 1u64, 1u64, 0u64) == 6u64) { r = r + 2; }
+    return r;
+}`,
+			want: 3,
+			has: map[string][]string{
+				"add_late_mask": {`\n    adcq %r[a-z0-9]+, %r[a-z0-9]+\n`},
+			},
+			lacks: map[string][]string{
+				"add_late_mask": {`setb`, `btq`, `leaq`},
+			},
+		},
 	})
 }
