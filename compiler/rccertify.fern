@@ -2104,21 +2104,38 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
 }
 
 // Whether the code between the load at (lb, li) and the store at (sb, si)
-// spends `root`. Then null in the slot is the `None` of a niche option that
-// overwrites the slot, and not a take of the load.
+// spends more units of `root` than it retains. Then null in the slot is the
+// `None` of a niche option that overwrites the slot, and not a take of the
+// load.
 function spent_before(w: Walk, lb: i32, li: i32, sb: i32, si: i32, root: i32): boolean {
-  let t = Touch { touched: __alloc_bool(w.f.nvals) };
+  let n = Spends { t: Touch { touched: __alloc_bool(w.f.nvals) }, net: 0 };
   let insts = w.f.blocks[lb].insts;
   let end = if (lb == sb) { si } else { insts.len() };
   for k in li + 1..end {
-    t = touch_inst(t, w, insts[k]);
+    n = count_spend(n, w, insts[k], root);
   }
   if (lb != sb) {
     for k in 0..si {
-      t = touch_inst(t, w, w.f.blocks[sb].insts[k]);
+      n = count_spend(n, w, w.f.blocks[sb].insts[k], root);
     }
   }
-  return t.touched[root];
+  return n.net < 0;
+}
+
+struct Spends { t: Touch, net: i32 }
+
+function count_spend(own n: Spends, w: Walk, ins: ssa.SInst, root: i32): Spends {
+  if (ins.kind_tag == ssa.CALL && ins.args.len() > 0 && ins.args[0] >= 0 && w.root[ins.args[0]] == root) {
+    let sg = w.sigs.lookup(ins.str);
+    if (sg.known && sg.effect == rcsigs.effect_retain()) {
+      return Spends { ...n, net: n.net + 1 };
+    }
+  }
+  let t = touch_inst(n.t, w, ins);
+  if (!t.touched[root]) {
+    return Spends { t: t, net: n.net };
+  }
+  return Spends { t: Touch { touched: t.touched.with(root, false) }, net: n.net - 1 };
 }
 
 function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {

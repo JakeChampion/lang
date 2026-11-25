@@ -253,6 +253,25 @@ function pick(name: string): Case {
         let b1: ssa.SBlock = block(1, [0], [call(4, "__fern_rc_dec", [1]), call(5, "__fern_rc_dec", [0]), const_int(6, 0)], ret(6));
         return Case { f: func(1, 7, [b0, b1]), modes: [counted], returns_unit: false };
     }
+    if (name == "take-after-a-retained-spend") {
+        // The first load is retained into a new box. The second is retained
+        // for a call that spends the retained unit, and then taken where the
+        // parent is unique. Each load keeps its own unit, so the null store
+        // is a take for the second load.
+        let b0: ssa.SBlock = block(0, [], [param(0), counted_load(1, 0, 8), call(2, "__fern_rc_inc", [1]), fresh_box(3), store(3, 8, 1)], br(1));
+        let b1: ssa.SBlock = block(1, [0], [counted_load(4, 0, 8), call(5, "__fern_rc_inc", [4]), call(6, "__fern_rc_dec", [4]), call(7, "__fern_rc_is_unique", [0])], brif(7, 2, 3));
+        let b2: ssa.SBlock = block(2, [1], [const_int(8, 0), store(0, 8, 8)], br(4));
+        let b3: ssa.SBlock = block(3, [1], [call(9, "__fern_rc_inc", [4])], br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [call(10, "__fern_rc_dec", [4]), call(11, "__fern_rc_dec", [0])], ret(3));
+        return Case { f: func(1, 12, [b0, b1, b2, b3, b4]), modes: [counted], returns_unit: true };
+    }
+    if (name == "null-overwrites-a-released-slot") {
+        // The load is released before the null store, so the null is a None
+        // that overwrites the slot and not a take.
+        let b0: ssa.SBlock = block(0, [], [param(0), counted_load(1, 0, 8), call(2, "__fern_rc_dec", [1]), const_int(3, 0), store(0, 8, 3)], br(1));
+        let b1: ssa.SBlock = block(1, [0], [call(4, "__fern_rc_dec", [0]), const_int(5, 0)], ret(5));
+        return Case { f: func(1, 6, [b0, b1]), modes: [counted], returns_unit: false };
+    }
     if (name == "resumed-frame-refused") {
         // A body that re-enters through the task stack is left alone, leak
         // and all: its tokens come back as popped words.
@@ -990,6 +1009,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"null-guarded-release", nil, 0},
 		{"take-from-a-dominating-load", nil, 0},
 		{"take-for-the-load-read-after", nil, 0},
+		{"take-after-a-retained-spend", nil, 0},
+		{"null-overwrites-a-released-slot", nil, 0},
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0},
 		{"retained-on-one-arm-released-on-another", nil, 0},
 		{"element-taken-through-a-second-constant", nil, 0},
