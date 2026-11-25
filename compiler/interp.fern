@@ -39,8 +39,9 @@ pub struct VFloat32 { v: f64 }
 // shares its box: a builtin that fills an array the caller owns, or sets its
 // length, writes there. Empty until that first write, and from then on
 // [length, each slot of the capacity] and read in place of `items`. A view
-// keeps its own length and reads its parent's store from `offset`.
-pub struct VArr { items: Value[], elem: string, view: boolean, store: interpheap.Root, offset: i32 }
+// keeps its own length and reads its parent's store from `offset`. A packed
+// array holds its elements in `bytes`, one byte each, and `items` is empty.
+pub struct VArr { items: Value[], bytes: u8[], packed: boolean, elem: string, view: boolean, store: interpheap.Root, offset: i32 }
 
 // A tuple, a map or a record that the program builds has a key that no other
 // value has. A shared value is then stored and copied one time. The key is
@@ -670,17 +671,25 @@ function v_arr(heap: interpheap.Heap, elements: Value[]): Value {
 
 function v_arr_of(heap: interpheap.Heap, elements: Value[], elem: string): Value {
   let unwritten: i64[] = [];
-  return VArr { items: elements, elem: elem, view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
+  return VArr { items: elements, bytes: [], packed: false, elem: elem, view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
+}
+
+function v_bytes_of(heap: interpheap.Heap, b: u8[], elem: string): Value {
+  let unwritten: i64[] = [];
+  return VArr { items: [], bytes: b, packed: true, elem: elem, view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
 }
 
 function v_view_of(heap: interpheap.Heap, elements: Value[], elem: string): Value {
   let unwritten: i64[] = [];
-  return VArr { items: elements, elem: elem, view: true, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
+  return VArr { items: elements, bytes: [], packed: false, elem: elem, view: true, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
 }
 
 function arr_len(a: VArr): i32 {
   let st = interpheap.get(a.store).words;
   if (st.len() == 0 || a.view) {
+    if (a.packed) {
+      return a.bytes.len();
+    }
     return a.items.len();
   }
   return st[0] as i32;
@@ -689,6 +698,9 @@ function arr_len(a: VArr): i32 {
 function arr_at(a: VArr, i: i32): Value {
   let st = interpheap.get(a.store).words;
   if (st.len() == 0) {
+    if (a.packed) {
+      return coerce_int_width(v_int(a.bytes[i] as i32), a.elem);
+    }
     return coerce_int_width(a.items[i], a.elem);
   }
   return coerce_int_width(v_int(st[1 + a.offset + i] as i32), a.elem);
@@ -697,7 +709,7 @@ function arr_at(a: VArr, i: i32): Value {
 // The elements of an array the caller hands over, moved out when nothing
 // else holds them.
 function arr_take_els(own a: VArr): Value[] {
-  if (interpheap.get(a.store).words.len() > 0) {
+  if (a.packed || interpheap.get(a.store).words.len() > 0) {
     return arr_els(a);
   }
   return a.items;
@@ -706,12 +718,24 @@ function arr_take_els(own a: VArr): Value[] {
 function arr_els(a: VArr): Value[] {
   let st = interpheap.get(a.store).words;
   if (st.len() == 0) {
-    return a.items;
+    return arr_items(a);
   }
   let out: Value[] = [];
   let n = arr_len(a);
   for i in 0..n {
     out = out.append(v_int(st[1 + a.offset + i] as i32));
+  }
+  return out;
+}
+
+// The elements an array holds apart from its store.
+function arr_items(a: VArr): Value[] {
+  if (!a.packed) {
+    return a.items;
+  }
+  let out: Value[] = [];
+  for b in a.bytes {
+    out = out.append(v_int(b as i32));
   }
   return out;
 }
@@ -725,11 +749,17 @@ function arr_retyped(a: VArr, elem: string, view: boolean): Value {
   if (view) {
     return arr_view(VArr { ...a, elem: elem }, 0, arr_len(a));
   }
+  if (a.packed && interpheap.get(a.store).words.len() == 0) {
+    return v_bytes_of(a.store.heap, a.bytes, elem);
+  }
   return v_arr_of(a.store.heap, arr_els(a), elem);
 }
 
 // A view of a[from:to], reading what a builtin later writes into `a`.
 function arr_view(a: VArr, from: i32, to: i32): Value {
+  if (a.packed && interpheap.get(a.store).words.len() == 0) {
+    return VArr { ...a, bytes: sub_bytes(a.bytes, from, to - from), view: true, offset: a.offset + from };
+  }
   let els = arr_els(a);
   let items = els;
   if (from != 0 || to != els.len()) {
@@ -738,7 +768,7 @@ function arr_view(a: VArr, from: i32, to: i32): Value {
       items = items.append(els[i]);
     }
   }
-  return VArr { items: items, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
+  return VArr { items: items, bytes: [], packed: false, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
 }
 
 // Every slot of the array's capacity, as the integers a builtin writes.
@@ -748,6 +778,12 @@ function arr_slots(a: VArr): i64[] {
   if (st.len() > 0) {
     for i in 1..st.len() {
       out = out.append(st[i]);
+    }
+    return out;
+  }
+  if (a.packed) {
+    for b in a.bytes {
+      out = out.append(b as i64);
     }
     return out;
   }
@@ -1853,7 +1889,7 @@ function cell_tree_text(h: usize, v: Value, own edges: interpheap.Root[], heap: 
       cell_name_text(h, a.elem);
       let store = a.store;
       edges = unsafe { share_unchecked(edges.append(store)) };
-      return cell_parts_text(h, a.items, edges, heap, captures, seen);
+      return cell_parts_text(h, arr_items(a), edges, heap, captures, seen);
     },
     VTuple(t) => {
       buf_push_byte(h, 116);
@@ -2037,7 +2073,7 @@ function cell_compound_value(s: string, at: Cell[i32], edges: interpheap.Root[],
     let view = cell_hex_value(s, at) != 0i64;
     let elem = cell_name_value(s, at);
     let items = cell_parts_value(s, at, edges, heap, seen);
-    return Got { value: VArr { items: items.values, elem: elem, view: view, store: edges[edge], offset: offset }, seen: items.seen };
+    return Got { value: VArr { items: items.values, bytes: [], packed: false, elem: elem, view: view, store: edges[edge], offset: offset }, seen: items.seen };
   }
   if (tag == 116) {
     let els = cell_parts_value(s, at, edges, heap, seen);
@@ -7185,6 +7221,10 @@ function array_with(heap: interpheap.Heap, own av: VArr, args: Value[]): Value {
   }
   let elem = av.elem;
   let reserve = interpheap.get(av.store).words;
+  if (av.packed && reserve.len() == 0 && is_int_like(args[1])) {
+    let b = (vint_as_i64(args[1]) & 255i64) as u8;
+    return VArr { ...av, bytes: av.bytes.with(wi, b) };
+  }
   let items = arr_take_els(av);
   return arr_reserved(heap, reserve, items.with(wi, args[1]), elem);
 }
@@ -7196,6 +7236,12 @@ function array_truncate(heap: interpheap.Heap, own av: VArr, args: Value[]): Val
   let n = vint_bits(args[0]);
   let elem = av.elem;
   let reserve = interpheap.get(av.store).words;
+  if (av.packed && reserve.len() == 0) {
+    if (n < av.bytes.len()) {
+      return VArr { ...av, bytes: sub_bytes(av.bytes, 0, n) };
+    }
+    return VArr { ...av };
+  }
   let items = arr_take_els(av);
   let keep = n;
   if (keep > items.len()) {
@@ -7225,7 +7271,7 @@ function arr_reserved(heap: interpheap.Heap, reserve: i64[], items: Value[], ele
   for i in items.len()..cap {
     words = words.append(reserve[1 + i]);
   }
-  return VArr { items: items, elem: elem, view: false, store: interpheap.allocate(heap, "", words, []), offset: 0 };
+  return VArr { items: items, bytes: [], packed: false, elem: elem, view: false, store: interpheap.allocate(heap, "", words, []), offset: 0 };
 }
 
 // .len, .with, .truncate, .append and a reserved .concat on an array; None for
@@ -7252,6 +7298,10 @@ function array_method(heap: interpheap.Heap, own av: VArr, name: string, args: V
     }
     let elem = av.elem;
     let reserve = interpheap.get(av.store).words;
+    if (av.packed && reserve.len() == 0 && is_int_like(args[0])) {
+      let b = (vint_as_i64(args[0]) & 255i64) as u8;
+      return Some(VArr { ...av, bytes: av.bytes.append(b) });
+    }
     let items = arr_take_els(av);
     return Some(arr_reserved(heap, reserve, items.append(args[0]), elem));
   }
@@ -7603,6 +7653,10 @@ function byte_args(args: Value[]): u8[][] {
   let out: u8[][] = [];
   for a in args {
     if let VArr(av) = a {
+      if (av.packed && interpheap.get(av.store).words.len() == 0) {
+        out = out.append(av.bytes);
+        continue;
+      }
       let b = __alloc_u8(arr_len(av));
       let i = 0;
       while (i < arr_len(av)) {
@@ -7622,22 +7676,22 @@ function byte_args(args: Value[]): u8[][] {
 }
 
 function byte_value(heap: interpheap.Heap, b: u8[]): Value {
-  let out: Value[] = [];
-  for x in b {
-    out = out.append(v_int(x as i32));
-  }
-  return v_arr(heap, out);
+  return v_bytes_of(heap, b, "");
 }
 
 // A builtin that writes into its destination returns the destination, so a
 // raw-backed one keeps its reserved slots.
 function written_bytes(heap: interpheap.Heap, dest: Value, b: u8[]): Value {
   if let VArr(a) = dest {
+    let reserve = interpheap.get(a.store).words;
+    if (reserve.len() == 0) {
+      return v_bytes_of(heap, b, a.elem);
+    }
     let out: Value[] = [];
     for x in b {
       out = out.append(v_int(x as i32));
     }
-    return arr_reserved(heap, interpheap.get(a.store).words, out, a.elem);
+    return arr_reserved(heap, reserve, out, a.elem);
   }
   return byte_value(heap, b);
 }
@@ -9273,6 +9327,9 @@ function builtin_call_func_targs_set(heap: interpheap.Heap, name: string, args: 
   if (an < 0) {
     return v_abort(aborts.alloc_size(), name + " length " + util.i32_to_string(an));
   }
+  if (name == "__alloc_u8" || name == "__alloc_u8_uninit") {
+    return v_bytes_of(heap, __alloc_u8(an), "");
+  }
   let zero = v_int(0);
   if (name == "__alloc_i64") {
     zero = v_int64(0i64);
@@ -10535,12 +10592,22 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
     return step_stop(env, iv);
   }
   let elems: Value[] = [];
-  match (for_elements(iv)) {
-    Some(walked) => {
-      elems = walked;
+  let packed = packed_array(iv);
+  let n = 0;
+  match (packed) {
+    Some(pa) => {
+      n = arr_len(pa);
     },
     None => {
-      return eval_iterator_for(f, iv, env);
+      match (for_elements(iv)) {
+        Some(walked) => {
+          elems = walked;
+          n = elems.len();
+        },
+        None => {
+          return eval_iterator_for(f, iv, env);
+        }
+      }
     }
   }
   let elem_ty = "";
@@ -10559,8 +10626,9 @@ function eval_for_stmt(f: ast.StmtFor, own env: Env): StepResult {
   let base = env.depth;
   let cur = env;
   let i = 0;
-  while (i < elems.len()) {
-    let iter_env = bind_element(scope_env(Env { ...cur }, true), f, elems[i], elem_ty);
+  while (i < n) {
+    let elem = match (packed) { Some(pa) => arr_at(pa, i), None => elems[i] };
+    let iter_env = bind_element(scope_env(Env { ...cur }, true), f, elem, elem_ty);
     let step = eval_block(f.body, unsafe { share_unchecked(iter_env) });
     if (step.sig == 2) {
       return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
@@ -10770,6 +10838,16 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
     cur = out;
   }
   return step_none(released.update(a.target, cur));
+}
+
+// A packed array, which a loop reads in place rather than as a list of values.
+function packed_array(v: Value): Option[VArr] {
+  if let VArr(a) = v {
+    if (a.packed) {
+      return Some(a);
+    }
+  }
+  return None;
 }
 
 function for_elements(iv: Value): Option[Value[]] {
