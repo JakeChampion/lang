@@ -28167,7 +28167,7 @@ function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
     m = r.moved;
     d = util.append_diags(d, r.diags);
     if let ast.StmtVar(v) = stmt {
-      if (util.has_str(c.owned, v.name) || util.has_str(c.borrowed, v.name)) {
+      if (util.has_str(c.owned, v.name) || util.has_str(c.borrowed, v.name) || ow_local_capture_owner(v.name, c)) {
         locals = locals.append(OwnLocalScope { parent: c, moved: m, name: v.name });
         m = ow_moves_without(m, [v.name]);
         c = ow_shadow_names_ctx(c, [v.name]);
