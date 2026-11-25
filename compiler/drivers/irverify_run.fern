@@ -528,6 +528,24 @@ function gate_checks(): i32 {
   if (irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis())).len() != 0) {
     return 180;
   }
+
+  let unmodelled: ir.Op[] = [ir.op_const_i32(0), ir.op_const_i32(1), ir.op_store(32), ir.op_const_i32(0), ir.op_return()];
+  let ups = irverifygate.verify_problems("f", unmodelled, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
+  if (ups.len() != 1) {
+    return 181;
+  }
+  if (!util.contains(irverify.problem_str(ups[0]), "cannot model this body: unmodelled op store")) {
+    return 182;
+  }
+
+  let no_target: ir.Op[] = [ir.op_br(3)];
+  let nps = irverifygate.verify_problems("f", no_target, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
+  if (nps.len() != 1) {
+    return 183;
+  }
+  if (util.contains(irverify.problem_str(nps[0]), "cannot model")) {
+    return 184;
+  }
   return 0;
 }
 

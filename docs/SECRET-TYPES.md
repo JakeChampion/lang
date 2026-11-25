@@ -15,6 +15,7 @@ The rule applies again to a record or a tuple inside it.
 
 The drop also does the same for an enum value that the record holds alone, such as an `Option`.
 It zeroes the scalars of the variant, and the numeric arrays that the variant holds alone.
+The drop zeroes a scalar payload of an `Option` or a `Result` of each width, also a 64-bit integer or a float.
 
 This holds in each build, not only under `-harden`.
 
@@ -38,7 +39,7 @@ These records of `std/crypto` have the attribute:
 |---|---|
 | `aes` | `Cipher` |
 | `aes_gcm` | `Key` |
-| `des` | `Cipher` |
+| `legacy/des` | `Cipher` |
 | `ecdsa` | `PrivateKey` |
 | `ed25519` | `PrivateKey` |
 | `chacha20poly1305` | `Key` |
@@ -51,8 +52,6 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 ## Limits
 
 - The drop does not wipe a string. It does not wipe an array or a scalar inside an array of records.
-- The drop does not wipe a 64-bit integer or a float that is the payload of an `Option` or of a `Result`.
-  The payload store of that layout takes a 32-bit value.
 - The drop does not wipe a value of a `type A | B` union.
 - The drop does not wipe a nested record or enum that has a `core/mem.Drop` finalizer, because the finalizer reads the fields after the wipe.
   Give a record of that kind the attribute `@secret`, and its own drop then wipes it after the finalizer.

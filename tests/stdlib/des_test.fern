@@ -1,7 +1,7 @@
 import "std/test";
 import "std/hex";
 import "std/codec";
-import "std/crypto/des";
+import "std/crypto/legacy/des";
 
 // The DES example of FIPS 46-3 tutorials, and CBC vectors that Python's
 // cryptography package (OpenSSL) computes for DES and Triple DES.
@@ -70,7 +70,7 @@ function test_refusals(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.new("std/crypto/des");
+  let r = test.new("std/crypto/legacy/des");
   r = r.it("one DES block", test_block);
   r = r.it("CBC with DES and Triple DES", test_cbc);
   r = r.it("Triple DES with three equal keys", test_equal_keys);

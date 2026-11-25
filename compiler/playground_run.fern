@@ -395,7 +395,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
   } else if (form == "core-module") {
     image = util.to_u8(emitforms.stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, false, false, sub)), sub.switches));
   } else {
-    let comp = emitforms.wasm_component(full, sub);
+    let comp = emitforms.wasm_component(full, sub, emitforms.fern_world());
     if (comp.bytes.len() == 0) {
       if (comp.refused.len() > 0) {
         eprint(comp.refused);

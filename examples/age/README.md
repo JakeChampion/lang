@@ -237,7 +237,7 @@ key gets the message of age for a type that it does not use.
 | `testdata/plugin` | The test plugin of age's tests (`age-plugin-test`) and `age-plugin-tagtest`, in Fern. |
 
 The port uses `std/crypto/hpke` for the hybrid and tag stanzas, and
-`std/crypto/aes` and `std/crypto/des` for the encrypted PEM keys. It also
+`std/crypto/aes` and `std/crypto/legacy/des` for the encrypted PEM keys. It also
 uses `std/crypto/scrypt`,
 the RSA-OAEP of `std/crypto/rsa` and the Montgomery form of
 `std/crypto/ed25519`.
@@ -359,7 +359,7 @@ The secret values go through the constant-time gate of the repository:
   public.
 
 - The key that the passphrase of an encrypted PEM key gives is secret. AES
-  and DES in `std/crypto/aes` and `std/crypto/des` have no table index
+  and DES in `std/crypto/aes` and `std/crypto/legacy/des` have no table index
   that depends on the key or the data. The decrypted key becomes public
   for the checks of its padding and its DER, as in Go. The port marks the
   key secret after them.

@@ -13,14 +13,14 @@ import "./rcmemo";
 import "std/envflag";
 import "std/string";
 
-pub struct Gate { sigs: irverify.NameIndex, seen: usize, modelled: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize, memo: rcmemo.Memo, verify: boolean, certify: i32 }
+pub struct Gate { sigs: irverify.NameIndex, seen: usize, abis: rccertify.Abis, rc: rcsigs.Table, rcops: rcsigs.OpTable, kinds: ssa_lift.KindTable, census: usize, memo: rcmemo.Memo, verify: boolean, certify: i32 }
 
 pub function gate(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable, abis: rccertify.Abis): Gate {
   let g = gate_unreported(sigs, kinds, abis);
   if (!report_on()) {
     return g;
   }
-  return Gate { ...g, seen: buf_new(64), modelled: buf_new(64) };
+  return Gate { ...g, seen: buf_new(64) };
 }
 
 pub function gate_unreported(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable, abis: rccertify.Abis): Gate {
@@ -29,7 +29,7 @@ pub function gate_unreported(sigs: irverify.NameIndex, kinds: ssa_lift.KindTable
   if (certify == 1 || certify == 3) {
     census = buf_new(256);
   }
-  return Gate { sigs: physical_signatures(sigs, abis), seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: kinds, census: census, memo: rcmemo.off(), verify: util.verify_on(), certify: certify };
+  return Gate { sigs: physical_signatures(sigs, abis), seen: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: kinds, census: census, memo: rcmemo.off(), verify: util.verify_on(), certify: certify };
 }
 
 // External declarations keep their source arity when a unit has no lowered body.
@@ -92,23 +92,21 @@ pub function report(g: Gate): void {
   if (!report_on()) {
     return;
   }
-  let seen = buf_len(g.seen);
-  let modelled = buf_len(g.modelled);
-  eprint("FERN_IR_VERIFY: " + util.i32_to_string(seen) + " functions verified, " + util.i32_to_string(modelled)
-    + " modelled by the stack verifier, " + util.i32_to_string(seen - modelled) + " skipped");
+  eprint("FERN_IR_VERIFY: " + util.i32_to_string(buf_len(g.seen)) + " functions verified");
   buf_free(g.seen);
-  buf_free(g.modelled);
 }
 
-pub struct Verdict { problems: irverify.Problem[], modelled: boolean }
-
+// A body that the stack pass cannot model is a problem. A malformed body that the
+// structure pass reports also stops the stack pass, so that stop adds no problem.
 pub function verify_problems(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): irverify.Problem[] {
-  return verdict(fn_name, ops, n_params, n_locals, g).problems;
-}
-
-pub function verdict(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): Verdict {
   let out = irverify.verify_fn(fn_name, ops, n_params, n_locals, g.sigs);
   let sr = irverifystack.verify_stack_fn(fn_name, ops, g.kinds.pops);
+  if (sr.bail.len() > 0 && out.len() == 0) {
+    out = out.append(irverify.Problem {
+      fn_name: fn_name, op: 0, kind: "stack",
+      msg: "the stack verifier cannot model this body: " + sr.bail,
+    });
+  }
   for i in 0..sr.problems.len() {
     out = out.append(sr.problems[i]);
   }
@@ -116,21 +114,17 @@ pub function verdict(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32
   for j in 0..rr.problems.len() {
     out = out.append(rr.problems[j]);
   }
-  return Verdict { problems: out, modelled: sr.bail.len() == 0 };
+  return out;
 }
 
 pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, g: Gate): i32 {
   if (!g.verify) {
     return 0;
   }
-  let v = verdict(fn_name, ops, n_params, n_locals, g);
   if (g.seen != 0 as usize) {
     buf_push_byte(g.seen, 1);
-    if (v.modelled) {
-      buf_push_byte(g.modelled, 1);
-    }
   }
-  let ps = v.problems;
+  let ps = verify_problems(fn_name, ops, n_params, n_locals, g);
   if (ps.len() == 0) {
     return 0;
   }

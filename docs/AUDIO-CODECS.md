@@ -112,7 +112,7 @@ The bank also covers short-packet sequences, exact edit trimming, fast-start fil
 The manifest identifies cases outside the FFmpeg decoder's packet support.
 
 Both the byte-view and seekable-file indexes accept ALAC packets from movie fragments on a continuous decode timeline.
-Encryption, external references, configuration changes, and the ALAC decoder's 33-bit compressed-stereo gap remain unsupported.
+Encryption, external references, configuration changes, and ALAC compressed stereo with 33 predictor bits remain unsupported.
 For packet playback from a seekable Reader, call `std/audio/mp4/file.inspect_alac`,
 open the selected track with `index.stream`, and pass its packet number and an owned
 PCM buffer to `read_alac_packet_into`. Each call reads only that packet under the
@@ -280,9 +280,14 @@ python3 scripts/build-alac-reference.py --source-dir /tmp/apple-alac --output /t
 python3 scripts/gen-alac-vectors.py --apple-reference /tmp/alac-reference --check
 ```
 
-Compressed stereo with 33 predictor bits remains unsupported.
+Compressed stereo with 33 predictor bits returns `Unsupported`.
+The two references do not decode this case, so no independent PCM can verify it.
+FFmpeg refuses a packet with more than 32 bits.
+Apple's decoder reads at most 32 residual bits.
+Apple's encoder shifts two bytes from each 32-bit stereo sample, so it does not write this case.
+
 The byte-view M4A decoder in `std/audio/mp4/alac` supports sample-accurate reads on the edited presentation timeline. Build a `seek_index` once from the file, then use `read_into` with the same file bytes and a caller-owned interleaved PCM buffer.
-A seekable Reader supports packet playback. Edited presentation reads from a Reader remain open under [#14685](https://github.com/JakeChampion/lang/issues/14685).
+A seekable Reader supports packet playback and edited presentation reads, as "Lossless M4A playback" describes.
 Native, WASI, and Android compilation checks do not establish physical Android performance or power use.
 
 `std/audio/caf` supplies CAF playback and exact byte-view seeks for ALAC.
@@ -1112,7 +1117,7 @@ Each line names the issue that owns the work.
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
 - AAC: HE-AAC/SBR/PS, protected ADTS verification, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: decode timeline gaps, composition offsets, and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
-- ALAC: edited presentation reads from a Reader and compressed stereo with 33 predictor bits ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
+- ALAC: CPU, allocation and memory measurements against the references, and ARM64 Android qualification ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
 - Encoders: MP3, AAC, and Vorbis have no encoder, the Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
 - Conformance: independent corpora and malformed-stream qualification for each decoder ([#14520](https://github.com/JakeChampion/lang/issues/14520)).
 - Performance: reference baselines ([#14515](https://github.com/JakeChampion/lang/issues/14515)) and the measured CPU and allocation gaps ([#14516](https://github.com/JakeChampion/lang/issues/14516), [#16437](https://github.com/JakeChampion/lang/issues/16437)).

@@ -87,7 +87,9 @@ pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
       }
     },
     typeinfo.TypeUnknown(_) => {},
-    typeinfo.TypeVar(_) => {}
+    typeinfo.TypeVar(_) => {},
+    typeinfo.TypeUnbound(_) => {},
+    typeinfo.TypePending(_) => {}
   }
   return false;
 }

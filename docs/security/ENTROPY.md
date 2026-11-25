@@ -85,6 +85,6 @@ A wasm32-wasi core module calls `random_get` one time for each request.
 A result other than zero writes the same diagnostic to stderr and traps.
 The program does not use the buffer.
 `TestSelfHostWasmEntropyFailure` puts a `random_get` that fails in place of the import, and requires the diagnostic, a trap and no output.
+
 A wasm32-wasi component takes its bytes from `get-random-u64` of `wasi:random/random`, which has no error result.
-The Go oracle continues to use `crypto/rand`.
-This change preserves their current entropy providers.
+The Go oracle uses `crypto/rand`.

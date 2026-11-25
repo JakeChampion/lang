@@ -22,10 +22,8 @@ function retained_type(t: typeinfo.Type): typeinfo.Type {
       let args: typeinfo.Type[] = [];
       for arg in u.args {
         let kept = retained_type(arg);
-        if let typeinfo.TypeUnknown(missing) = arg {
-          if (missing.reason.starts_with("unbound ")) {
-            kept = typeinfo.TypeStruct { name: "$unbound", args: [] };
-          }
+        if let typeinfo.TypeUnbound(_) = arg {
+          kept = typeinfo.TypeStruct { name: "$unbound", args: [] };
         }
         args = args.append(kept);
       }
