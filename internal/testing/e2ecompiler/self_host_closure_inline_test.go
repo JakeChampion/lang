@@ -7,8 +7,7 @@ import (
 )
 
 func TestSelfHostClosureInlineAdmission(t *testing.T) {
-	const src = `import "./ir";
-import "./ssa";
+	const src = `import "./ssa";
 import "./ssasem";
 import "./sourcepos";
 import "./seminline";
@@ -16,7 +15,7 @@ import "./semrecords";
 import "./typeinfo";
 function word(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }; }
 function inst(k: i32, v: i32, args: i32[], imm: i32, text: string): ssa.SInst {
-  return ssa.SInst { ir_kind: if (k == ssa.BINARY) { ir.kind_id(text) } else { 0 }, kind_tag: k, result: v, args: args, imm: imm, str: text };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(k, text), kind_tag: k, result: v, args: args, imm: imm, str: text };
 }
 function body(name: string, params: typeinfo.Type[], types: typeinfo.Type[], ops: ssa.SInst[], ret: i32): ssasem.Func {
   let term = ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: ret };

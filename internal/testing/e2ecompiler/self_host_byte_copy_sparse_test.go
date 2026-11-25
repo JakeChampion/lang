@@ -20,7 +20,6 @@ func TestSelfHostByteCopySparseBlockIDs(t *testing.T) {
 
 const byteCopySparseDriver = `import "./semsource";
 import "./sembytecopy";
-import "./ir";
 import "./ssa";
 import "./ssasem";
 import "./ssaunits";
@@ -29,7 +28,7 @@ import "./parser";
 import "./lexer";
 
 function ins(kind: i32, result: i32, args: i32[], imm: i32, text: string): ssa.SInst {
-  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(text) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: text };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(kind, text), kind_tag: kind, result: result, args: args, imm: imm, str: text };
 }
 function term(kind: i32, target: i32): ssa.STerm {
   return ssa.STerm { kind_tag: kind, target: target, t: 0, f: 0, cond: 0, value: 0 };
