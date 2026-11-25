@@ -233,6 +233,70 @@ function seeks(): test.TestOutcome {
   return test.pass();
 }
 
+function frame_allocations(input: [u8], channels: i32, passes: i32): i64 {
+  let state = mp1.decoder();
+  let output = spectral.zeros(384 * channels);
+  let before = 0i64;
+  for pass in 0..passes {
+    if (pass == 1) {
+      before = __heap_alloc_count();
+    }
+    let at = 0;
+    while (at < input.len()) {
+      let (next, result) = state.decode_frame_into(input[at:], output, pcm.default_limits());
+      let Ok(audio) = result else {
+        return -1i64;
+      };
+      at += audio.bytes_read;
+      output = audio.samples;
+      state = next;
+    }
+  }
+  return __heap_alloc_count() - before;
+}
+
+function steady_state(): test.TestOutcome {
+  for v in mp1_vectors.vectors() {
+    let Ok(input) = ref.unpack(v.encoded) else {
+      return test.fail("fixture");
+    };
+    // Interpreters return zero for the allocator counters. The scratch arrays
+    // stay in the decoder, so a frame allocates only its returned records.
+    let allocations = frame_allocations(input, v.channels, 5);
+    if (allocations < 0i64 || allocations > 3i64 * 3i64 * 4i64) {
+      return test.fail("allocations for 12 steady-state frames: " + allocations.to_string());
+    }
+  }
+  return test.pass();
+}
+
+function failed_stereo_then_mono(): test.TestOutcome {
+  let stereo = mp1_vectors.vectors()[1];
+  let mono = mp1_vectors.vectors()[0];
+  let Ok(first) = ref.unpack(stereo.encoded) else {
+    return test.fail("stereo fixture");
+  };
+  let Ok(input) = ref.unpack(mono.encoded) else {
+    return test.fail("mono fixture");
+  };
+  let Ok(expected) = ref.unpack(mono.pcm) else {
+    return test.fail("mono reference");
+  };
+  // The CRC fails after the stereo allocation table is read.
+  let (state, rejected) = mp1.decoder().decode_frame_into(first.with(4, first[4] ^ 1u8), spectral.zeros(768), pcm.default_limits());
+  if let Err(pcm.Checksum) = rejected {} else {
+    return test.fail("stereo CRC");
+  }
+  let (_, result) = state.decode_frame_into(input, spectral.zeros(384), pcm.default_limits());
+  let Ok(audio) = result else {
+    return test.fail("mono frame after a failed stereo frame");
+  };
+  if let Err(e) = mp2_check.samples(audio.samples, 384, expected, 0) {
+    return test.fail(e);
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("MPEG Layer I");
   runner = runner.it("every sample matches independent scalar minimp3", references);
@@ -240,5 +304,7 @@ function main(): i32 {
   runner = runner.it("format changes preserve the previous stream history", format_changes);
   runner = runner.it("sample fields exactly fill or exceed the frame", sample_extent);
   runner = runner.it("sample-accurate seeks in indexed and free-format streams", seeks);
+  runner = runner.it("steady-state frames reuse the decoder scratch arrays", steady_state);
+  runner = runner.it("a failed stereo frame leaves no width for a mono stream", failed_stereo_then_mono);
   return runner.finish();
 }
