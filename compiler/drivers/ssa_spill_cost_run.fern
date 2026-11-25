@@ -1,3 +1,4 @@
+import "../ir";
 import "../ssa";
 import "../ssafixed";
 import "../util";
@@ -15,7 +16,7 @@ function probe_costs(reads: i32, folded: boolean, rhs: boolean): ssa.Alloc {
   for i in 5..100 {
     if (i < 5 + reads) {
       if (rhs) {
-        ops = ops.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: i, args: [2, 0], imm: 0, str: "add" });
+        ops = ops.append(ssa.SInst { ir_kind: ir.K_ADD, kind_tag: ssa.BINARY, result: i, args: [2, 0], imm: 0, str: "add" });
       } else {
         ops = ops.append(inst(ssa.UNARY, i, [0]));
       }
