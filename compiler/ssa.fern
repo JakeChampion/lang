@@ -4967,6 +4967,9 @@ function constant_value(defs: SInst[], v: i32): Option[i64] {
 
 function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
   if (ins.kind_tag == UNARY && ins.args.len() == 1) {
+    if (ins.ir_kind == ir.K_F32_BITS) {
+      return folded_f32_bits(defs, ins.args[0]);
+    }
     if let Some(a) = constant_value(defs, ins.args[0]) {
       return folded_cast(ins, a);
     }
@@ -4991,6 +4994,15 @@ function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
     }
   }
   return None;
+}
+
+// A float constant holds the bits of its f64 value.
+function folded_f32_bits(defs: SInst[], v: i32): Option[i64] {
+  if (v < 0 || v >= defs.len() || defs[v].kind_tag != CONST_FLOAT || defs[v].str.len() == 0) {
+    return None;
+  }
+  let c = f32_bits(f64_from_bits(util.lit_to_i64(defs[v].str)) as f32) as i64;
+  return if (non_negative_i32(c)) { Some(c) } else { None };
 }
 
 function non_negative_i32(c: i64): boolean {
@@ -5049,6 +5061,31 @@ function folded_cast(ins: SInst, a: i64): Option[i64] {
     return Some(a & 255i64);
   }
   return None;
+}
+
+// The bits of an f32 made from bits x are x sign-extended, with no round trip through f64.
+function fold_f32_round_trips(f: SFunc): SFunc {
+  let defs = inst_defs(f);
+  let blocks = f.blocks;
+  for bi in 0..blocks.len() {
+    let insts = blocks[bi].insts;
+    let edited = false;
+    for k in 0..insts.len() {
+      let ins = insts[k];
+      if (ins.kind_tag != UNARY || ins.ir_kind != ir.K_F32_BITS || ins.args.len() != 1 || ins.args[0] < 0 || ins.args[0] >= defs.len()) {
+        continue;
+      }
+      let d = defs[ins.args[0]];
+      if (d.kind_tag == UNARY && d.ir_kind == ir.K_F32_FROM_BITS && d.args.len() == 1) {
+        insts = insts.with(k, SInst { ir_kind: ir.K_INT_CAST, kind_tag: UNARY, result: ins.result, args: [d.args[0]], imm: 0, str: "int_cast:i32" });
+        edited = true;
+      }
+    }
+    if (edited) {
+      blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: insts });
+    }
+  }
+  return SFunc { ...f, blocks: blocks };
 }
 
 // x + 0, x - 0, x | 0, x ^ 0, x & -1, x shifted by 0 and x * 1 are x.
@@ -6701,7 +6738,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 pub function form(f: SFunc): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged = merge_duplicates(folded.f, false);
-  let plain = fold_identities(share_product_operands(fold_constant_operations(merged.f)));
+  let plain = fold_identities(share_product_operands(fold_constant_operations(fold_f32_round_trips(merged.f))));
   let shared = share_shape_loads(plain.f);
   let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
   let extended = fold_extensions(unwrapped.f);
