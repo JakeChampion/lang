@@ -9215,6 +9215,9 @@ function lc_report_funcs(sanitize: boolean, quar: boolean, set_args: boolean, ta
     o += lc_label(" blocks\n");
     o += "    ))\n";
   }
+  if (quar) {
+    o += "    (call $__fern_san_live_scan)\n";
+  }
   o += "  )\n";
   return o;
 }
@@ -9243,8 +9246,11 @@ function alloc_body_name(h: WasmHeap): string {
 // from its allocation to its release. A block grows in place only inside its
 // class, so the end of the class does not move. $__fern_san_class gives the bytes of the class of a
 // request, as the allocator rounds it. The census counts the request alone.
+// The 8 bytes after the redzone link the block into $__fern_san_live: the
+// next and the previous link.
 function san_redzone_funcs(h: WasmHeap, flc: string): string {
-  let o = "  (func $__fern_san_class (param $n i32) (result i32)\n";
+  let o = "  (global $__fern_san_live (mut i32) (i32.const 0))\n";
+  o += "  (func $__fern_san_class (param $n i32) (result i32)\n";
   o += "    (local $cls i32)\n";
   o += "    (local.set $n (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8)))\n";
   o += "    (local.set $cls (call $__fern_capw (i32.shr_u (local.get $n) (i32.const 3))))\n";
@@ -9252,16 +9258,21 @@ function san_redzone_funcs(h: WasmHeap, flc: string): string {
   o += "    (if (i32.le_u (local.get $n) (i32.const 1073741824)) (then (return (call $__fern_large_cap (local.get $n)))))\n";
   o += "    (local.get $n))\n";
   o += "  (func $__fern_alloc (param $n i32) (result i32)\n";
-  o += "    (local $c i32) (local $p i32)\n";
+  o += "    (local $c i32) (local $p i32) (local $l i32)\n";
   o += "    (if (i32.gt_u (local.get $n) (i32.const 2147483647)) (then (call $__fern_abort_alloc) (unreachable)))\n";
   o += "    (local.set $c (call $__fern_san_class (local.get $n)))\n";
-  o += "    (local.set $p (call $__fern_alloc_inner (i32.add (local.get $c) (i32.const 16))))\n";
+  o += "    (local.set $p (call $__fern_alloc_inner (i32.add (local.get $c) (i32.const 24))))\n";
   if (h.lc) {
-    o += "    (global.set $__fern_lc_alloc_bytes (i64.sub (global.get $__fern_lc_alloc_bytes) (i64.extend_i32_u (i32.sub (i32.add (local.get $c) (i32.const 16)) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))))\n";
+    o += "    (global.set $__fern_lc_alloc_bytes (i64.sub (global.get $__fern_lc_alloc_bytes) (i64.extend_i32_u (i32.sub (i32.add (local.get $c) (i32.const 24)) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))))\n";
   }
   o = o + "    (i64.store (i32.add (local.get $p) (local.get $c)) (i64.const " + san_poison64() + "))\n";
   o = o + "    (i64.store (i32.add (i32.add (local.get $p) (local.get $c)) (i32.const 8)) (i64.const " + san_poison64() + "))\n";
   o += "    (call $__fern_san_fill (i32.add (local.get $p) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))) (i32.sub (local.get $c) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))\n";
+  o += "    (local.set $l (i32.add (i32.add (local.get $p) (local.get $c)) (i32.const 16)))\n";
+  o += "    (i32.store (local.get $l) (global.get $__fern_san_live))\n";
+  o += "    (i32.store (i32.add (local.get $l) (i32.const 4)) (i32.const 0))\n";
+  o += "    (if (global.get $__fern_san_live) (then (i32.store (i32.add (global.get $__fern_san_live) (i32.const 4)) (local.get $l))))\n";
+  o += "    (global.set $__fern_san_live (local.get $l))\n";
   o += "    (local.get $p))\n";
   // A fresh raw block holds the poison pattern, so a read of a byte that the
   // program never wrote gives the same value on each run.
@@ -9322,6 +9333,21 @@ function raw_release_san(): string {
   return o + "    (call $__fern_quar (local.get $base) (local.get $bytes))\n    (return)\n";
 }
 
+// The release side of $__fern_san_live: the block at `$base`, of `$c` bytes
+// of class, leaves the list when its links agree with the list.
+function san_unlink(): string {
+  let o = "    (local.set $l (i32.add (i32.add (local.get $base) (local.get $c)) (i32.const 16)))\n";
+  o += "    (local.set $nx (i32.load (local.get $l)))\n";
+  o += "    (local.set $pv (i32.load (i32.add (local.get $l) (i32.const 4))))\n";
+  o += "    (if (i32.and\n";
+  o += "        (if (result i32) (local.get $pv) (then (i32.eq (i32.load (local.get $pv)) (local.get $l))) (else (i32.eq (global.get $__fern_san_live) (local.get $l))))\n";
+  o += "        (if (result i32) (local.get $nx) (then (i32.eq (i32.load (i32.add (local.get $nx) (i32.const 4))) (local.get $l))) (else (i32.const 1))))\n";
+  o += "      (then\n";
+  o += "        (if (local.get $pv) (then (i32.store (local.get $pv) (local.get $nx))) (else (global.set $__fern_san_live (local.get $nx))))\n";
+  o += "        (if (local.get $nx) (then (i32.store (i32.add (local.get $nx) (i32.const 4)) (local.get $pv))))))\n";
+  return o;
+}
+
 // The -sanitize quarantine: a FIFO through the released blocks. Word 0 of a
 // block holds the poison, word 1 its size, word 2 the next block, and the
 // rest the poison pattern. A block of fewer than 16 bytes has no room for the
@@ -9330,7 +9356,7 @@ function raw_release_san(): string {
 function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
   let o = "  (global $__fern_quar_head (mut i32) (i32.const 0))\n  (global $__fern_quar_tail (mut i32) (i32.const 0))\n  (global $__fern_quar_bytes (mut i64) (i64.const 0))\n";
   o += "  (func $__fern_quar (param $base i32) (param $bytes i32)\n";
-  o += "    (local $e i32) (local $n i32) (local $cls i32) (local $c i32)\n";
+  o += "    (local $e i32) (local $n i32) (local $cls i32) (local $c i32) (local $l i32) (local $nx i32) (local $pv i32)\n";
   o += "    (local.set $c (call $__fern_san_class (local.get $bytes)))\n";
   o += "    (local.set $e (i32.add (local.get $base) (i32.and (i32.add (local.get $bytes) (i32.const 7)) (i32.const -8))))\n";
   o += "    (block $qs_ok (loop $qs\n";
@@ -9339,7 +9365,8 @@ function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
   o += "      (local.set $e (i32.add (local.get $e) (i32.const 8)))\n";
   o += "      (br $qs)))\n";
   o = o + "    (if (i32.or (i64.ne (i64.load (i32.add (local.get $base) (local.get $c))) (i64.const " + san_poison64() + ")) (i64.ne (i64.load (i32.add (i32.add (local.get $base) (local.get $c)) (i32.const 8))) (i64.const " + san_poison64() + "))) (then (call $__fern_san_hbo)))\n";
-  o += "    (local.set $bytes (i32.add (local.get $c) (i32.const 16)))\n";
+  o += san_unlink();
+  o += "    (local.set $bytes (i32.add (local.get $c) (i32.const 24)))\n";
   o = o + "    (i32.store (local.get $base) (i32.const " + san_poison() + "))\n";
   o += "    (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $bytes))\n";
   o += "    (if (i32.lt_u (local.get $bytes) (i32.const 16)) (then (return)))\n";
@@ -9385,6 +9412,16 @@ function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
   o = o + "      (if (i32.ne (i32.load (local.get $p)) (i32.const " + san_poison() + ")) (then (call $__fern_san_waf)))\n";
   o += "      (local.set $p (i32.add (local.get $p) (i32.const 4)))\n";
   o += "      (br $qc))))\n";
+  // At exit the two redzone words before the link of each live block are
+  // checked, as a release checks them.
+  o += "  (func $__fern_san_live_scan\n";
+  o += "    (local $q i32)\n";
+  o += "    (local.set $q (global.get $__fern_san_live))\n";
+  o += "    (block $ls_done (loop $ls\n";
+  o += "      (br_if $ls_done (i32.eqz (local.get $q)))\n";
+  o = o + "      (if (i32.or (i64.ne (i64.load (i32.sub (local.get $q) (i32.const 16))) (i64.const " + san_poison64() + ")) (i64.ne (i64.load (i32.sub (local.get $q) (i32.const 8))) (i64.const " + san_poison64() + "))) (then (call $__fern_san_hbo)))\n";
+  o += "      (local.set $q (i32.load (local.get $q)))\n";
+  o += "      (br $ls))))\n";
   // At exit each block still in the quarantine gets the check of an eviction.
   o += "  (func $__fern_quar_scan\n";
   o += "    (local $q i32)\n";
