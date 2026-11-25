@@ -71,8 +71,19 @@ pub function operation(name: string): string {
   return "";
 }
 
+// Whether a call to the trusted function `name` gives a layout fact. Such a
+// call must reach this pass, so the splice keeps it.
+pub function names_layout(name: string): boolean {
+  let v = operation(name);
+  return from_flat(name) || packed_result(v) || strided_result(v) || v == "reshape";
+}
+
+function from_flat(name: string): boolean {
+  return name.starts_with("ndarray__from_flat__") || name.starts_with("ndarray__from_flat$");
+}
+
 function library_layout(ins: ssa.SInst, values: i32[]): i32 {
-  if (ins.str.starts_with("ndarray__from_flat__") || ins.str.starts_with("ndarray__from_flat$")) {
+  if (from_flat(ins.str)) {
     return packed();
   }
   let v = operation(ins.str);

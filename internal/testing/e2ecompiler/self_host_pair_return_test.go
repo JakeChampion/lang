@@ -453,7 +453,7 @@ trait Source {
 struct Feed { s: string, k: i32 }
 
 impl Source for Feed {
-  function next(self: Feed, n: i32): Result[Got, i32] {
+  @noinline function next(self: Feed, n: i32): Result[Got, i32] {
     if (n % 4 == 3) {
       return Err(n);
     }
