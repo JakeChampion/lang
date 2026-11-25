@@ -89,6 +89,13 @@ func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool
 	if ownedResult {
 		defer distinctBindings(fn)()
 	}
+	b, ok := c.paramBorrowScope(fn, ownedResult)
+	return ok && c.resultBlockBorrows(fn.Body, b)
+}
+
+// paramBorrowScope is the scope of the parameters of fn that can lend, and of
+// the locals that borrow from them. It is false when no parameter can lend.
+func (c *checker) paramBorrowScope(fn *ast.FuncDecl, ownedResult bool) (borrowScope, bool) {
 	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}, handlesOnly: !c.holdsNoHandle(fn.ReturnType), ownedResult: ownedResult}
 	for _, p := range fn.Params {
 		if c.callbackCanLend(p.Type) || !p.Own && p.Type != nil && mayRetainBorrow(p.Type) {
@@ -99,10 +106,35 @@ func (c *checker) funcResultBorrowsWith(fn *ast.FuncDecl, ownedResult bool) bool
 		}
 	}
 	if len(b.borrowed) == 0 {
-		return false
+		return b, false
 	}
 	b.locals = c.borrowedLocals(fn, b)
-	return c.resultBlockBorrows(fn.Body, b)
+	return b, true
+}
+
+// cellLoanParams names each own Cell parameter that a `set` call gives a
+// borrowed payload, directly or through an alias.
+func (c *checker) cellLoanParams(fn *ast.FuncDecl) map[string]bool {
+	out := map[string]bool{}
+	var cells []string
+	for _, p := range fn.Params {
+		if st, ok := p.Type.(ast.StructType); ok && p.Own && st.Name == "Cell" {
+			cells = append(cells, p.Name)
+		}
+	}
+	if len(cells) == 0 || fn.Body == nil {
+		return out
+	}
+	b, ok := c.paramBorrowScope(fn, false)
+	if !ok {
+		return out
+	}
+	for _, name := range cells {
+		if b.locals[name] {
+			out[name] = true
+		}
+	}
+	return out
 }
 
 func (c *checker) resultBlockBorrows(body *ast.Block, b borrowScope) bool {

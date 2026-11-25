@@ -22,6 +22,7 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 		"diag_e051_cell_setter_borrowed_result",
 		"diag_e051_cell_setter_alias",
 		"diag_e051_cell_setter_local",
+		"diag_e051_cell_setter_own_parameter",
 		"diag_e051_generic_result_index",
 		"diag_e051_generic_result_for",
 		"diag_e051_generic_callback_capture",
