@@ -160,7 +160,10 @@ function stab_buckets(): i32 {
   return 2053;
 }
 
-pub function struct_tab(decls: parser.StructDecl[]): StructTab {
+// The tag of a shape is the index of its first declaration, so the variants
+// of an enum must have consecutive first declarations for a dense index.
+pub function struct_tab(given: parser.StructDecl[]): StructTab {
+  let decls = enum_grouped(given);
   let nb = stab_buckets();
   let head = util.minus_ones(nb);
   let ehead = util.minus_ones(nb);
@@ -201,6 +204,87 @@ pub function replaced_decls(decls: parser.StructDecl[], extra: parser.StructDecl
   for i in 0..extra.len() {
     if (!used[i]) {
       out = out.append(extra[i]);
+    }
+  }
+  return out;
+}
+
+// The owner of the first enum whose first declarations of its variants are
+// not at consecutive indexes, or "" when each enum is contiguous.
+pub function enum_tag_gap(decls: parser.StructDecl[]): string {
+  let owners = util.name_index([]);
+  let last: i32[] = [];
+  let shapes = util.name_index([]);
+  for i in 0..decls.len() {
+    let owner = decls[i].enum_owner;
+    if (owner.len() > 0) {
+      let shape = decl_shape(decls[i]);
+      if (!shapes.has(shape)) {
+        shapes = shapes.added(shape);
+        let g = owners.find(owner);
+        if (g < 0) {
+          owners = owners.added(owner);
+          last = last.append(i);
+        } else if (last[g] != i - 1) {
+          return owner;
+        } else {
+          last = last.with(g, i);
+        }
+      }
+    }
+  }
+  return "";
+}
+
+// `decls` with the variants of each enum moved to the place of its first
+// variant. The first declaration of each shape comes before the second ones.
+pub function enum_grouped(decls: parser.StructDecl[]): parser.StructDecl[] {
+  if (enum_tag_gap(decls).len() == 0) {
+    return decls;
+  }
+  let owners = util.name_index([]);
+  let firsts: i32[][] = [];
+  let seconds: i32[][] = [];
+  let shapes = util.name_index([]);
+  for i in 0..decls.len() {
+    let owner = decls[i].enum_owner;
+    if (owner.len() > 0) {
+      let g = owners.find(owner);
+      if (g < 0) {
+        owners = owners.added(owner);
+        firsts = firsts.append([]);
+        seconds = seconds.append([]);
+        g = firsts.len() - 1;
+      }
+      let shape = decl_shape(decls[i]);
+      if (shapes.has(shape)) {
+        seconds = seconds.with(g, seconds[g].append(i));
+      } else {
+        shapes = shapes.added(shape);
+        firsts = firsts.with(g, firsts[g].append(i));
+      }
+    }
+  }
+  let out: parser.StructDecl[] = [];
+  let placed: boolean[] = [];
+  for _ in 0..firsts.len() {
+    placed = placed.append(false);
+  }
+  for i in 0..decls.len() {
+    let owner = decls[i].enum_owner;
+    if (owner.len() == 0) {
+      out = out.append(decls[i]);
+    } else {
+      let g = owners.find(owner);
+      if (!placed[g]) {
+        placed = placed.with(g, true);
+        for k in firsts[g] {
+          out = out.append(decls[k]);
+        }
+        for k in seconds[g] {
+          out = out.append(decls[k]);
+        }
+      }
     }
   }
   return out;
