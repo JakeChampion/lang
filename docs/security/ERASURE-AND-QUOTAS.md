@@ -63,9 +63,12 @@ Uniquely held storage contains zeroes at release.
 Shared storage uses copy-on-write, so other holders retain their bytes.
 The call consumes one holder.
 
-A struct with the attribute `@secret` erases without a call. When the last reference to such a record goes away, its drop zeroes each numeric array and each string that the record holds alone, and each scalar field of the record, in each build.
-The drop does the same inside a nested record, a tuple and an enum value that the record holds alone.
-An array or a string that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays`, `TestSelfHostSecretRecordWipesItsScalars`, `TestSelfHostSecretRecordWipesItsNestedBoxes`, `TestSelfHostSecretRecordWipesItsEnums` and `TestSelfHostSecretRecordWipesItsStrings` pin them on both native targets.
+A struct with the attribute `@secret` erases without a call. When the last reference to such a record goes away, its drop runs in each build.
+The drop zeroes each scalar field of the record, and each numeric array and each string that the record holds alone.
+It does the same inside a nested record, a tuple and an enum value that the record holds alone.
+It also does the same for each element of an array of boxes that the record holds alone.
+
+An array or a string that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays`, `TestSelfHostSecretRecordWipesItsScalars`, `TestSelfHostSecretRecordWipesItsNestedBoxes`, `TestSelfHostSecretRecordWipesItsEnums`, `TestSelfHostSecretRecordWipesItsStrings` and `TestSelfHostSecretRecordWipesItsArraysOfBoxes` pin them on both native targets.
 The key records of `aes`, `aes_gcm`, `legacy/des`, `chacha20poly1305`, `hpke`, `mlkem768` and `rsa` have the attribute. [SECRET-TYPES.md](../SECRET-TYPES.md) lists them.
 
 The stores cannot be elided, because no pass of the compiler removes a store to an array.
