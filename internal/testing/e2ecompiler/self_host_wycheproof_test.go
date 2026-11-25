@@ -24,6 +24,7 @@ func TestSelfHostWycheproofNative(t *testing.T) {
 		"wycheproof_hmac_sha256_test.fern",
 		"wycheproof_mldsa65_test.fern",
 		"wycheproof_mlkem768_test.fern",
+		"wycheproof_mlkem768_decaps_test.fern",
 		"wycheproof_mlkem768_encaps_test.fern",
 		"wycheproof_mlkem768_keygen_test.fern",
 		"wycheproof_rsa_oaep_test.fern",

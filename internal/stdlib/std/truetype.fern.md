@@ -621,7 +621,8 @@ pub const MANUAL_ZWJ: i32 = 4;
 pub struct Positions { advances: i32[], dx: i32[], dy: i32[], chain: i32[], attach: i32[], rtl: boolean }
 
 // A GSUB or GPOS lookup: its type, its flags, its offset, its count of
-// subtables, its mark filtering set or -1, and the offset of its table.
+// subtables, the offset of the coverage of its mark filtering set or -1,
+// and the offset of its table.
 // `opts` holds the flags of `substitute`, and `base` the count of glyphs
 // before the lookup. A prepared lookup has the facts of `subtable_facts`
 // in `subs`, and another lookup has none.
@@ -877,7 +878,7 @@ function lookup_of(f: Font, t: i32, gpos: boolean, li: i32): Lookup {
   let lk = list + u16_at(b, list + 2 + 2 * li);
   let n = u16_at(b, lk + 4);
   let flag = u16_at(b, lk + 2);
-  let set = if ((flag & 16) != 0) { u16_at(b, lk + 6 + 2 * n) } else { -1 };
+  let set = if ((flag & 16) != 0) { mark_set(f, u16_at(b, lk + 6 + 2 * n)) } else { -1 };
   return Lookup { kind: u16_at(b, lk), flag: flag, at: lk, count: n, set: set, table: t, gpos: gpos, opts: 0, base: 0, subs: [] };
 }
 
@@ -914,18 +915,14 @@ function mark_sets(f: Font): i32 {
   return if (at == 0) { -1 } else { f.gdef + at };
 }
 
-// Whether GDEF has the mark glyph set `set`. A lookup whose set is not
-// there does not filter the marks, as in HarfBuzz.
-function has_mark_set(f: Font, set: i32): boolean {
+// The offset of the coverage of the mark glyph set `set` of GDEF, or -1. A
+// lookup whose set is not there does not filter the marks, as in HarfBuzz.
+function mark_set(f: Font, set: i32): i32 {
   let sets = mark_sets(f);
-  return sets >= 0 && set < u16_at(f.data, sets + 2);
-}
-
-// Whether glyph `g` is in the mark glyph set `set` of GDEF, which
-// `has_mark_set` holds.
-function in_mark_set(f: Font, set: i32, g: i32): boolean {
-  let sets = mark_sets(f);
-  return coverage(f.data, sets + u32_at(f.data, sets + 4 + 4 * set), g) >= 0;
+  if (sets < 0 || set >= u16_at(f.data, sets + 2)) {
+    return -1;
+  }
+  return sets + u32_at(f.data, sets + 4 + 4 * set);
 }
 
 // Whether the GDEF table gives the glyph classes.
@@ -988,8 +985,8 @@ function skipped_class(f: Font, l: Lookup, r: Run, i: i32): boolean {
   if ((l.flag & 8) != 0) {
     return true;
   }
-  if (l.set >= 0 && has_mark_set(f, l.set)) {
-    return !in_mark_set(f, l.set, g);
+  if (l.set >= 0) {
+    return coverage(f.data, l.set, g) < 0;
   }
   let kind = l.flag >> 8;
   return kind != 0 && gdef_class(f, 10, g) != kind;

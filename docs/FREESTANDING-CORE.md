@@ -82,7 +82,7 @@ costs a silent failure on the first target that lacks it.
 | `ktls` | `tcp_ktls` | the kernel's TLS record layer under a socket: Linux's `tls` ULP. Granted by `hosted-linux` and `hosted-android`. std/tls/ktls reaches it under a `target_os()` branch |
 | `mmsg` | `udp_sendmmsg`, `udp_recvmmsg` | many datagrams in one system call: Linux's `sendmmsg`, with `UDP_SEGMENT` for a run of datagrams of one size to one peer, and `recvmmsg`, with `UDP_GRO` reporting the segment size of a run the kernel coalesced. Granted by `hosted-linux` and `hosted-android`; std/net reaches it under a `target_os()` branch |
 | `proc` | `proc_fork`, `proc_exec`, `proc_exec_as`, `pipe`, `reader_from_fd`, `proc_waitpid`, `proc_waitpid_nohang`, `proc_waitpid_status`, `proc_wait_any`, `__worker_region`, `__worker_exit`, `__worker_reap`, `__worker_unmap`, `process_alive`, `signal_send`, `set_process_group` | processes |
-| `rlimit` | `rlimit_nofile`, `disable_core_dumps` | a kernel that enforces ceilings on this process's resources |
+| `rlimit` | `rlimit_nofile`, `disable_core_dumps`, `secret_map`, `secret_lock`, `secret_unmap` | a kernel that enforces ceilings on this process's resources, the locked-memory ceiling included |
 | `sched` | `priority`, `set_priority` | a scheduler knob: a nice value this process competes for the CPU by |
 | `subprocess` | `subprocess` | spawning a child and collecting its output; the hosted natives only |
 | `arena` | `__heap_mark`, `__heap_release_to`, `__heap_adopt` | native-only cursor rewind and region adoption. The `kernel` profile grants it too, so a kernel can put the heap on frames of its own (`std/frames`) |

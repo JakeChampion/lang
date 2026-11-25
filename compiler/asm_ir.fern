@@ -11268,6 +11268,12 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ins.kind_tag == ssa.BINARY && ins.str == "and_not") {
     return ssa_and_not(ins, reg_of, s);
   }
+  if (ssa_mul_wide_at(blk, ii, fr)) {
+    return s;
+  }
+  if (ssa_mul_wide_at(blk, ii - 1, fr)) {
+    return ssa_mul_wide(blk.insts[ii - 1], ins, reg_of, s);
+  }
   let role = ssa.carry_role(fr.carry, ins);
   if (role == ssa.CARRY_HEAD) {
     return ssa_carried_sum(ins, ins.result, false, reg_of, s);
@@ -11297,6 +11303,33 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
     return s;
   }
   return ssa_inst(ins, reg_of, lp, fr, r, s);
+}
+
+// The instruction at `ii` is `a * b` and the next one is the high half of the
+// same product, so one `mulq` makes both.
+function ssa_mul_wide_at(blk: ssa.SBlock, ii: i32, fr: SsaFrame): boolean {
+  if (ii < 0 || ii + 1 >= blk.insts.len()) {
+    return false;
+  }
+  let lo = blk.insts[ii];
+  let hi = blk.insts[ii + 1];
+  if (lo.kind_tag != ssa.BINARY || lo.str != "mul" || lo.imm != 64 || lo.args.len() != 2 || lo.result < 0) {
+    return false;
+  }
+  if (hi.kind_tag != ssa.BINARY || hi.str != "mulhi_u" || hi.imm != 64 || hi.args.len() != 2 || fr.imm.is_imm[hi.args[0]] || fr.imm.is_imm[hi.args[1]]) {
+    return false;
+  }
+  return lo.args[0] == hi.args[0] && lo.args[1] == hi.args[1] || lo.args[0] == hi.args[1] && lo.args[1] == hi.args[0];
+}
+
+// The low half goes first: the home of the high half can be `%rax`, and the
+// low half is live across the `mulq`, so its home is not `%rax` or `%rdx`.
+function ssa_mul_wide(lo: ssa.SInst, hi: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_load(reg_of, hi.args[1], "%rcx", s);
+  s = ssa_load(reg_of, hi.args[0], "%rax", s);
+  s = s.write("    mulq %rcx\n");
+  s = ssa_store(reg_of, lo.result, "%rax", s);
+  return ssa_store(reg_of, hi.result, "%rdx", s);
 }
 
 struct SelectCond { fu: SsaFuse, first: boolean }
@@ -13176,6 +13209,14 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
   } else if (o.kind_tag == ir.K_PRCTL_QUERY) {
     s = s.write("    call __fn___fern_prctl_query\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("prctl_query");
+  } else if (o.kind_tag == ir.K_SECRET_MAP) {
+    s = s.write("    call __fn___fern_secret_map\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("secret_map");
+  } else if (o.kind_tag == ir.K_SECRET_LOCK || o.kind_tag == ir.K_SECRET_UNMAP) {
+    let helper = ir.kind_name(o.kind_tag);
+    s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_" + helper + "\n    addq $16, %rsp\n    pushq %rax\n");
+    s = s.need(helper);
   } else if (o.kind_tag == ir.K_CT_MARK) {
     s = s.write("    call __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("ct_mark");
@@ -15532,6 +15573,12 @@ function emit_entry_runtime_part_8(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("prctl_query")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_prctl_query", s);
+  }
+  for helper in ["secret_map", "secret_lock", "secret_unmap"] {
+    if (s.has_need(helper)) {
+      s = s.write("    .text\n");
+      s = emit_runtime("__fern_" + helper, s);
+    }
   }
   return s;
 }

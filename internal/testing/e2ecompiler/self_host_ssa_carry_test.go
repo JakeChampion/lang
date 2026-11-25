@@ -143,6 +143,26 @@ struct W3 { a: u64, b: u64, c: u64 }
     let k3: u64 = ((a3 ^ ALL) & b3 | ((a3 ^ ALL) | b3) & d3) >> 63u64;
     return d0 * 3u64 + d1 * 5u64 + d2 * 7u64 + d3 * 11u64 + k3 * 13u64 + k1 * 17u64;
 }
+@noinline function sub_p(a0: u64, a1: u64, a2: u64, a3: u64): u64 {
+    let d0: u64 = a0 - 0xffffffffffffffffu64;
+    let k0: u64 = ((a0 ^ ALL) & 0xffffffffffffffffu64 | ((a0 ^ ALL) | 0xffffffffffffffffu64) & d0) >> 63u64;
+    let d1: u64 = a1 - 0x00000000ffffffffu64 - k0;
+    let k1: u64 = ((a1 ^ ALL) & 0x00000000ffffffffu64 | ((a1 ^ ALL) | 0x00000000ffffffffu64) & d1) >> 63u64;
+    let d2: u64 = a2 - 0x0000000000000000u64 - k1;
+    let k2: u64 = ((a2 ^ ALL) & 0x0000000000000000u64 | ((a2 ^ ALL) | 0x0000000000000000u64) & d2) >> 63u64;
+    let d3: u64 = a3 - 0xffffffff00000001u64 - k2;
+    let k3: u64 = ((a3 ^ ALL) & 0xffffffff00000001u64 | ((a3 ^ ALL) | 0xffffffff00000001u64) & d3) >> 63u64;
+    return d0 * 3u64 + d1 * 5u64 + d2 * 7u64 + d3 * 11u64 + k3 * 13u64;
+}
+@noinline function add_k(a0: u64, a1: u64): u64 {
+    let s0: u64 = a0 + 0xffffffff00000001u64;
+    let c0: u64 = (a0 & 0xffffffff00000001u64 | (a0 | 0xffffffff00000001u64) & (s0 ^ ALL)) >> 63u64;
+    let s1: u64 = a1 + 0x00000000ffffffffu64 + c0;
+    let c1: u64 = (a1 & 0x00000000ffffffffu64 | (a1 | 0x00000000ffffffffu64) & (s1 ^ ALL)) >> 63u64;
+    let s2: u64 = a0 + 0u64 + c1;
+    let c2: u64 = (a0 & 0u64 | (a0 | 0u64) & (s2 ^ ALL)) >> 63u64;
+    return s0 * 3u64 + s1 * 5u64 + s2 * 7u64 + c2 * 11u64;
+}
 @noinline function add4_spilled(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, b2: u64, b3: u64): u64 {
     let m0: u64 = a0 * b1;
     let m1: u64 = a1 * b2;
@@ -187,6 +207,7 @@ function main(): i32 {
                 let r2 = add3_sum(p, q);
                 let r3 = sub3(p, q);
                 acc = acc * 131u64 + r.a + 3u64 * r.b + 5u64 * r.c + 7u64 * r2.a + 11u64 * r2.b + 13u64 * r2.c + 17u64 * r3.a + 19u64 * r3.b + 23u64 * r3.c;
+                acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h);
                 acc = acc ^ sub4(x, y, h, y - x, y, h, x + 1u64, ALL - y) ^ add4_spilled(x, h, x ^ y, y - x, y, ALL - h, x + 1u64, ALL - y);
             }
         }
@@ -262,7 +283,7 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 		chains := []struct {
 			name         string
 			links, flags int
-		}{{"add3", 2, 0}, {"add3_sum", 2, 0}, {"sub3", 2, 0}, {"add4", 3, 1}, {"sub4", 3, 2}, {"add4_spilled", 3, 2}}
+		}{{"add3", 2, 0}, {"add3_sum", 2, 0}, {"sub3", 2, 0}, {"add4", 3, 1}, {"sub4", 3, 2}, {"add4_spilled", 3, 2}, {"sub_p", 2, 1}, {"add_k", 1, 1}}
 		for _, ch := range chains {
 			fn := functionListing(string(asm), "__fn_"+ch.name)
 			links := len(c.link.FindAllString(fn, -1))

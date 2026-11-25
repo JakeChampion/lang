@@ -6209,6 +6209,14 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
   } else if (o.kind_tag == ir.K_PRCTL_QUERY) {
     s = s.write("    bl __fn___fern_prctl_query\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("prctl_query");
+  } else if (o.kind_tag == ir.K_SECRET_MAP) {
+    s = s.write("    bl __fn___fern_secret_map\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+    s = s.need("secret_map");
+  } else if (o.kind_tag == ir.K_SECRET_LOCK || o.kind_tag == ir.K_SECRET_UNMAP) {
+    let helper = ir.kind_name(o.kind_tag);
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_" + helper + "\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+    s = s.need(helper);
   } else if (o.kind_tag == ir.K_CT_MARK) {
     s = s.need("ct_mark");
     s = s.write("    bl __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -12641,6 +12649,11 @@ function emit_rt_collections_and_proc_part_8(s: asmcore.EmitState, darwin: boole
   }
   if (s.has_need("prctl_query")) {
     s = emit_runtime("__fern_prctl_query", s);
+  }
+  for helper in ["secret_map", "secret_lock", "secret_unmap"] {
+    if (s.has_need(helper)) {
+      s = emit_runtime("__fern_" + helper, s);
+    }
   }
   return s;
 }
