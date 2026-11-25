@@ -8,7 +8,7 @@ Use `ensure_key_with_options(e, alias, options)` when provisioning a new key. St
 
 Use `seal_with_context(e, alias, value, context)` and `open_with_context(e, alias, sealed, context)` for records that share a key. Choose a stable label for each purpose. The cipher authenticates this label alongside the ciphertext. Opening requires the same label. The original functions use empty context and can read existing envelopes.
 
-The Android JNI test app provisions a key that requires an unlocked device. It checks legacy and context-bound envelopes, distinct IVs, and rejection of a changed tag or context. The module clears its Java plaintext input and output arrays before releasing the local frame. The caller owns the input to sealing and the plaintext returned by opening. Run its emulator check for provider behavior. Hardware backing requires testing on the intended physical device.
+The Android JNI test app provisions a key that requires an unlocked device. It checks legacy and context-bound envelopes, distinct IVs, and rejection of a changed tag or context. The module clears its Java plaintext input and output arrays before releasing the local frame. The caller owns the input to sealing and the plaintext returned by opening. Run its emulator check for provider behavior. Hardware backing requires testing on a physical device: `tests/android/keystore/README.md` is the procedure, and `docs/ANDROID-STANDING.md` records each run.
 
 ```fern
 <<*>>=
