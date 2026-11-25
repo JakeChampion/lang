@@ -194,7 +194,7 @@ function shown_apps(name: string, props: string, extra: string): Run {
   let r = Run { s: s, dir: dir, now: 0 };
   r = at(r, 0, android.Start);
   r = at(r, 0, android.WindowCreated(android.Window { ptr: 1 as usize }));
-  return at(r, 0, android.ContentRect(0, 66, W, H - 132));
+  return at(r, 0, android.Insets(0, 66, 0, 132));
 }
 
 function find(r: Run, act: string): scene.Node {

@@ -4,7 +4,7 @@ This module validates certificate paths, host names, and TLS signatures.
 
 ## Model
 
-Verification combines trust roots, certificate paths, host names, time, and signature rules. Root metadata can include a distrust time. Trust can instead be a set of pinned SHA-256 fingerprints of leaf certificates: `pinned` makes it, for a server with a self-signed certificate that a person chose to trust.
+Verification combines trust roots, certificate paths, host names, time, and signature rules. Root metadata can include a distrust time. Trust can instead be a set of pinned SHA-256 fingerprints of leaf certificates: `pinned` makes it, for a server with a self-signed certificate that a person chose to trust. An empty set of pins refuses every server certificate. Client certificate verification requires certificate authorities and returns `ClientPinningUnsupported` for server pins.
 
 ## Contracts
 
@@ -120,12 +120,14 @@ pub enum VerifyError {
   BadSignature(i32),
   NameConstraint(i32),
   RootsUnreadable(string),
+  RemovedRootUnreadable(string),
   UnsupportedAlgorithm(string),
   Distrusted(i32),
   DeniedKey(i32),
   WeakKey(i32),
   SearchLimit,
   NotPinned(string),
+  ClientPinningUnsupported,
 }
 ```
 
@@ -202,6 +204,9 @@ pub function (e: VerifyError) message(): string {
     RootsUnreadable(path) => {
       return "tls verify: no certificates could be read from " + path;
     },
+    RemovedRootUnreadable(path) => {
+      return "tls verify: cannot read the removed roots at " + path;
+    },
     NameConstraint(i) => {
       return "tls verify: certificate " + i.to_string() + "'s name constraints exclude a name below it";
     },
@@ -217,6 +222,9 @@ pub function (e: VerifyError) message(): string {
     SearchLimit => {
       return "tls verify: the certificates need too many signature checks to find a path";
     },
+    ClientPinningUnsupported => {
+      return "tls verify: pinned certificates are supported only for server verification";
+    },
     NotPinned(fingerprint) => {
       return "tls verify: the certificate of the server has the SHA-256 fingerprint " + fingerprint + ", which is not pinned";
     }
@@ -229,10 +237,9 @@ pub function (e: VerifyError) message(): string {
 
 ```fern
 <<7 pub struct Roots>>=
-// `pins` holds the SHA-256 fingerprints of pinned leaf certificates. When it
-// is not empty, a server is trusted only when its own certificate has one
-// of them, and the certificates and the name do not count.
-pub struct Roots { certs: x509.Certificate[], distrust_after: i64[], pins: u8[][] }
+pub enum TrustMode { CertificateAuthorities, PinnedServers(u8[][]) }
+
+pub struct Roots { certs: x509.Certificate[], distrust_after: i64[], mode: TrustMode }
 ```
 
 ### `8 pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots`
@@ -244,7 +251,7 @@ pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots {
 }
 
 pub function no_roots(): Roots {
-  return Roots { certs: [], distrust_after: [], pins: [] };
+  return Roots { certs: [], distrust_after: [], mode: CertificateAuthorities };
 }
 
 // Trust that accepts only a server whose certificate has one of the
@@ -252,7 +259,7 @@ pub function no_roots(): Roots {
 // that a person chose to trust. The chain and the name do not count, but
 // the server must still prove that it holds the key of that certificate.
 pub function pinned(fingerprints: u8[][]): Roots {
-  return Roots { certs: [], distrust_after: [], pins: fingerprints };
+  return Roots { certs: [], distrust_after: [], mode: PinnedServers(fingerprints) };
 }
 
 pub function roots(ders: u8[][]): Roots {
@@ -266,7 +273,7 @@ pub function roots(ders: u8[][]): Roots {
   for c in out {
     dates = dates.append(0 as i64);
   }
-  return Roots { certs: out, distrust_after: dates, pins: [] };
+  return Roots { certs: out, distrust_after: dates, mode: CertificateAuthorities };
 }
 
 pub function roots_from_pem(text: string): Result[Roots, VerifyError] {
@@ -325,13 +332,19 @@ pub function system_roots(): Option[Roots] {
   return None;
 }
 
+// The roots of the first directory that has any, less the roots that the
+// user removed. A removal directory that cannot be read gives no roots: the
+// next directory would give back a root that the user removed.
 function android_roots(): Option[Roots] {
   // Android allocates a range of 100000 UIDs to each user profile.
   let user = getuid() / 100000u32;
   let removed = "/data/misc/user/" + user.to_string() + "/cacerts-removed";
   for dir in ANDROID_ROOT_DIRS {
-    if let Ok(r) = roots_from_dir_excluding(dir, removed) {
-      return Some(r);
+    if let Ok(system) = roots_from_dir(dir) {
+      return match (__without_removed(system, removed)) {
+        Ok(r) => Some(r),
+        Err(_) => None,
+      };
     }
   }
   return None;
@@ -358,20 +371,40 @@ pub function roots_from_dir(dir: string): Result[Roots, VerifyError] {
 
 // Reads system roots and excludes certificates present in the user's
 // removal directory. Android stores removed certificates as DER files.
+// Only a removal directory that does not exist removes nothing. Each other
+// read error, and an entry that holds no certificate, is an error, because
+// a root that the user removed would stay trusted.
 pub function roots_from_dir_excluding(dir: string, removed: string): Result[Roots, VerifyError] {
-  let system = roots_from_dir(dir)?;
-  let Ok(names) = read_dir(removed) else {
-    return Ok(system);
+  return __without_removed(roots_from_dir(dir)?, removed);
+}
+
+function __without_removed(system: Roots, removed: string): Result[Roots, VerifyError] {
+  let names = match (read_dir(removed)) {
+    Ok(names) => names,
+    Err(NotFound(_)) => {
+      return Ok(system);
+    },
+    Err(_) => {
+      return Err(RemovedRootUnreadable(removed));
+    },
   };
   let excluded: u8[][] = [];
   for name in names {
-    if let Ok(data) = read_file_bytes(removed + "/" + name) {
-      if (data.len() > 0 && data[0] == 0x30u8) {
-        excluded = excluded.append(data);
-      } else if let Ok(certs) = pem.certificates(utf8.from_bytes_lossy(data)) {
-        excluded = excluded.concat(certs);
-      }
+    let path = removed + "/" + name;
+    let Ok(data) = read_file_bytes(path) else {
+      return Err(RemovedRootUnreadable(path));
+    };
+    if (data.len() > 0 && data[0] == 0x30u8) {
+      excluded = excluded.append(data);
+      continue;
     }
+    let Ok(certs) = pem.certificates(utf8.from_bytes_lossy(data)) else {
+      return Err(RemovedRootUnreadable(path));
+    };
+    if (certs.len() == 0) {
+      return Err(RemovedRootUnreadable(path));
+    }
+    excluded = excluded.concat(certs);
   }
   if (excluded.len() == 0) {
     return Ok(system);
@@ -906,8 +939,8 @@ function __has(v: string[], x: string): boolean {
 ```fern
 <<19 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>=
 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
-  if (roots.pins.len() > 0) {
-    return __pinned_leaf(chain, roots.pins);
+  if let PinnedServers(pins) = roots.mode {
+    return __pinned_leaf(chain, pins);
   }
   let certs = __parsed(chain)?;
   __leaf_ok(certs[0], name, now.sec)?;
@@ -936,6 +969,9 @@ function __pinned_leaf(chain: u8[][], pins: u8[][]): Result[x509.Certificate, Ve
 }
 
 pub function client(chain: u8[][], roots: Roots, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
+  if let PinnedServers(_) = roots.mode {
+    return Err(ClientPinningUnsupported);
+  }
   let certs = __parsed(chain)?;
   __signing_leaf(certs[0], now.sec)?;
   if (certs[0].has_ext_key_usage && !__has(certs[0].ext_key_usage, x509.EKU_CLIENT_AUTH) && !__has(certs[0].ext_key_usage, x509.EKU_ANY)) {

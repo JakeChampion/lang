@@ -370,6 +370,22 @@ function test_safe_area(): test.TestOutcome {
   return test.assert_eq(boxes(lay.nodes) + " " + s.height().to_string(), "0,24,200,328 328");
 }
 
+function filled_view(m: Counter, s: ui.Screen): ui.El[Msg] {
+  return ui.box().grow(1.0).background(ui.SURFACE);
+}
+
+// From Android 15 the insets of a turned screen come before its new size,
+// and before Android 15 they come after it. The tree fills the free part
+// of the window in both orders.
+function test_the_insets_follow_a_turn(): test.TestOutcome {
+  let s = sim.event(sim.start(new_counter(), ui.program(filled_view, counter_update), fonts(), 200, 400, 1.0), android.Insets(0, 24, 0, 48));
+  let tall = boxes(s.shell.host.lay.nodes);
+  s = sim.resized(sim.event(s, android.Insets(0, 24, 48, 0)), 400, 200);
+  let wide = boxes(s.shell.host.lay.nodes);
+  s = sim.event(sim.resized(s, 200, 400), android.Insets(0, 24, 0, 48));
+  return test.assert_eq(tall + " | " + wide + " | " + boxes(s.shell.host.lay.nodes), "0,24,200,328 | 0,24,352,176 | 0,24,200,328");
+}
+
 function test_button(): test.TestOutcome {
   let lay = laid(ui.column([ui.button("AA", Go)]).padding(10.0));
   // 14 sp: "AA" is 17 pixels wide and 15 high, with 24 dp at each side.
@@ -1060,6 +1076,20 @@ function secret_view(m: Form, s: ui.Screen): ui.El[Msg] {
   return ui.column([name_field(m.name).secret()]);
 }
 
+function scrolling_form(m: Form, s: ui.Screen): ui.El[Msg] {
+  return ui.column([ui.box[Msg]().height(200.0), name_field(m.name).secret()]).scroll("form").tall();
+}
+
+function test_keyboard_clips_focused_field(): test.TestOutcome {
+  let s = sim.start(Form { name: "", sent: "", backs: 0, upper: false, gone: false }, ui.program(scrolling_form, form_update), fonts(), 200, 400, 1.0);
+  s = sim.type_in(s, "name", "A");
+  s = sim.resized(s, 200, 120);
+  let hidden = !sim.spoken(s).contains("AV, 1 characters");
+  s = sim.event(s, android.Text("AVA"));
+  s = sim.resized(s, 200, 400);
+  return test.assert_eq(hidden.to_string() + " " + s.shell.app.name + " " + sim.spoken(s).contains("AV, 3 characters").to_string(), "true AVA true");
+}
+
 function test_secret_field_shows_dots(): test.TestOutcome {
   let s = sim.start(Form { name: "", sent: "", backs: 0, upper: false, gone: false }, ui.program(secret_view, form_update), fonts(), 200, 400, 1.0);
   let hint = sim.shows(s, "AV");
@@ -1458,6 +1488,7 @@ function main(): i32 {
   r = r.it("a seeded theme takes the hue of its seed", test_a_seeded_theme);
   r = r.it("a theme follows the state of the program", test_a_theme_follows_the_state);
   r = r.it("the tree stays out of the bars of the system", test_safe_area);
+  r = r.it("the insets follow a turn of the screen", test_the_insets_follow_a_turn);
   r = r.it("a button is 48 dp high", test_button);
   r = r.it("a column that scrolls clips and moves its rows", test_scroll_column);
   r = r.it("a list builds only the rows that show", test_list_builds_the_rows_that_show);
@@ -1488,6 +1519,7 @@ function main(): i32 {
   r = r.it("the theme follows the system", test_theme_follows_the_system);
   r = r.it("a text follows the font size of the system", test_text_follows_the_font_scale);
   r = r.it("a field has its text, its line and its caret", test_field_layout);
+  r = r.it("a clipped field keeps taking keyboard input", test_keyboard_clips_focused_field);
   r = r.it("a field takes the text of the keyboard", test_field_takes_text);
   r = r.it("a secret field shows a dot for each character", test_secret_field_shows_dots);
   r = r.it("the action key submits and the program clears the field", test_field_submits_and_clears);

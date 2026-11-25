@@ -4660,12 +4660,8 @@ function event(own s: App, e: android.Event): App {
     android.WindowRedraw(w) => {
       return App { ...s, window: w.ptr, dirty: true };
     },
-    android.ContentRect(_, top, _, bottom) => {
-      let b = s.h - bottom;
-      if (b < 0 || s.h == 0) {
-        b = 0;
-      }
-      return App { ...s, top: top, bottom: b, dirty: true };
+    android.Insets(_, top, _, bottom) => {
+      return App { ...s, top: top, bottom: bottom, dirty: true };
     },
     android.WindowDestroyed(_) => {
       let t = s;

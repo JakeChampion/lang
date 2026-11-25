@@ -358,10 +358,11 @@ function serve_conn(first: server.Connection): string {
 }
 
 function serve(count: i32): i32 {
-  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, rand.bytes(32));
+  let cfg: server.Config = server.config_without_tickets(identity.Identity { chain: [], key: identity.Ed25519Seed([]) });
   match (identity_of()) {
     Ok(id) => {
-      cfg = server.config(id, rand.bytes(32));
+      let Ok(tickets) = server.config(id, rand.bytes(32)) else { return 2; };
+      cfg = tickets;
     },
     Err(e) => {
       print("identity: " + e);

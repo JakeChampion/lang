@@ -312,11 +312,11 @@ function resolved_checked(t: typeinfo.Type, template: boolean, b: ssasem.Binding
   if (!template) {
     return runtime_callable_type(t);
   }
-  if let typeinfo.TypeUnknown(u) = t {
-    let name = checker.typevar_reason_name(u.reason);
-    if (parser.looks_type_var(name)) {
-      return ssasem.substitute(typeinfo.TypeErased { name: name }, b);
-    }
+  let name = checker.tvar_name(t);
+  if (name.len() > 0) {
+    return ssasem.substitute(typeinfo.TypeErased { name: name }, b);
+  }
+  if (checker.is_unknown(t)) {
     return t;
   }
   if let typeinfo.TypeErased(_) = t {
@@ -556,10 +556,7 @@ function record_variables(name: string, scope: checker.Scope, seen: string[]): s
 }
 
 function spelled_variables(t: typeinfo.Type, scope: checker.Scope, seen: string[], out: string[]): string[] {
-  let name = "";
-  if let typeinfo.TypeUnknown(u) = t {
-    name = checker.typevar_reason_name(u.reason);
-  }
+  let name = checker.tvar_name(t);
   if let typeinfo.TypeErased(e) = t {
     name = e.name;
   }
@@ -2333,8 +2330,8 @@ function try_layout(layout: i32): boolean {
 }
 
 function type_detail(t: typeinfo.Type): string {
-  if let typeinfo.TypeUnknown(u) = t {
-    return u.reason;
+  if (checker.is_unknown(t)) {
+    return checker.unknown_reason(t);
   }
   return typeinfo.spelling(t);
 }
@@ -3783,6 +3780,29 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   }
   if (lane_memory_call(name, c)) {
     return lane_memory(name, c, s);
+  }
+  return declared_call(e, name, c, s, statement, expected);
+}
+
+function from_stdlib(name: string, module: string, s: State): boolean {
+  for fd in s.funcs {
+    if (fd.name == name) {
+      return fd.stdlib == module;
+    }
+  }
+  return false;
+}
+
+function declared_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, statement: boolean, expected: typeinfo.Type): Value {
+  if ((name == "array__storage_bytes" || util.has_mangled_head(name, "array__storage_bytes")) && from_stdlib(name, "std/array", s) && c.args.len() == 1) {
+    let xs = expr(c.args[0], s, checked(c.args[0], s));
+    if (!xs.s.ok) {
+      return xs;
+    }
+    return define(xs.s, ssasem.storage_bytes(), [xs.id], 0, "", typeinfo.t_i32());
+  }
+  if (name == "crypto____pbkdf2_hw_block" && from_stdlib(name, "std/crypto", s)) {
+    name = "__sha256_hw_digest_block";
   }
   let at = ssasem.find_contract(s.contracts, name);
   if (at < 0) {
@@ -8670,6 +8690,7 @@ function aes_gcm_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__aes_gcm_seal_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
     ssasem.Contract { name: "__aes_gcm_open_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
     ssasem.Contract { name: "__sha256_hw", params: [], modes: [], result: typeinfo.t_bool() },
+    ssasem.Contract { name: "__sha256_hw_digest_block", params: [bytes, view], modes: [ssaunits.counted_mode(), b], result: bytes },
     ssasem.Contract { name: "__sha256_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
     ssasem.Contract { name: "__sha1_hw", params: [], modes: [], result: typeinfo.t_bool() },
     ssasem.Contract { name: "__sha1_hw_blocks", params: [view, view], modes: [b, b], result: bytes },

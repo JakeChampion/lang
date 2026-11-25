@@ -329,21 +329,51 @@ function test_handshake(): test.TestOutcome {
 // report it. A server with another secret, and a ticket past its lifetime,
 // each give a full handshake instead.
 function test_resumption(): test.TestOutcome {
-  if (server_config(["h3"]).with_tickets(__alloc_u8(31)).ticket_key.len() != 0) {
-    return test.fail("short secret enabled QUIC tickets");
+  let base = server_config(["h3"]);
+  for n in [0, 1, 31] {
+    let Err(err) = base.with_tickets(__alloc_u8(n)) else {
+      return test.fail("accepted a short ticket secret");
+    };
+    if let InvalidTicketKey = err {} else {
+      return test.fail(err.message());
+    }
   }
-  let sc = server_config(["h3"]).with_tickets("77777777777777777777777777777777".as_bytes());
+  let Ok(long_key) = base.with_tickets(__alloc_u8(33)) else {
+    return test.fail("rejected a long ticket secret");
+  };
+  if (long_key.ticket_key.len() != 32) {
+    return test.fail("wrong derived key size");
+  }
+  let cc0 = client_config("tls.example", ["h3"]);
+  for size in [1, 31, 33] {
+    let bad = conn.Config { ...base, ticket_key: __alloc_u8(size) };
+    let Ok(pair) = start(cc0, bad) else {
+      return test.fail("client setup");
+    };
+    if (!settle(pair, 2, 10000 * MS).log.contains("session tickets require a key")) {
+      return test.fail("accepted an invalid stored ticket key");
+    }
+  }
+  let Ok(sc) = base.with_tickets("77777777777777777777777777777777".as_bytes()) else {
+    return test.fail("valid ticket secret");
+  };
+  let Ok(other) = base.with_tickets("88888888888888888888888888888888".as_bytes()) else {
+    return test.fail("second ticket secret");
+  };
   let Ok(p0) = start(client_config("tls.example", ["h3"]), sc) else {
     return test.fail("the first handshake did not start");
   };
-  let first = settle(p0, 12, 10000 * MS);
+  // A started handshake keeps the roots and name selected with its ClientHello.
+  let replacement = conn.Config { ...p0.client.config, roots: verify.no_roots(), server_name: "next.example" };
+  let active = conn.Conn { ...p0.client, config: replacement };
+  let first = settle(Pair { ...p0, client: active }, 12, 10000 * MS);
   let tickets = first.client.tickets();
   if (tickets.len() == 0) {
     return test.fail("no ticket: " + first.log);
   }
   let cc = client_config("tls.example", ["h3"]).with_ticket(tickets[0]);
   let line = "first " + first.client.connected().to_string() + " " + first.client.resumed().to_string() + " " + tickets.len().to_string();
-  let cases: (conn.Config, i64, string)[] = [(sc, 60000 as i64, "same"), (server_config(["h3"]).with_tickets("88888888888888888888888888888888".as_bytes()), 60000 as i64, "other"), (sc, 7300000 as i64, "expired")];
+  let cases: (conn.Config, i64, string)[] = [(sc, 60000 as i64, "same"), (other, 60000 as i64, "other"), (sc, 7300000 as i64, "expired")];
   for (scfg, later, name) in cases {
     let Ok(q0) = start_at(cc, scfg, WALL_MS + later) else {
       return test.fail(name + ": did not start");
@@ -360,7 +390,10 @@ function test_resumption(): test.TestOutcome {
 // sends the stream again in 1-RTT once the handshake is done.
 function test_zero_rtt(): test.TestOutcome {
   let (cc0, sc0) = stream_configs();
-  let taking = sc0.with_tickets("55555555555555555555555555555555".as_bytes()).with_early_data();
+  let Ok(ticketed) = sc0.with_tickets("55555555555555555555555555555555".as_bytes()) else {
+    return test.fail("valid ticket secret");
+  };
+  let taking = ticketed.with_early_data();
   let cc = cc0.with_early_data();
   let Ok(p0) = start(cc, taking) else {
     return test.fail("the first handshake did not start");
@@ -381,8 +414,8 @@ function test_zero_rtt(): test.TestOutcome {
   if (rejected.client.connected() || rejected.client.resumed()) {
     return test.fail("untrusted peer connected");
   }
-  let line = "max " + tickets[0].tls.max_early.to_string();
-  let cases: (conn.Config, string)[] = [(taking, "taken"), (sc0.with_tickets("55555555555555555555555555555555".as_bytes()), "refused")];
+  let line = "max " + tickets[0].tls.early_data_limit().to_string();
+  let cases: (conn.Config, string)[] = [(taking, "taken"), (ticketed, "refused")];
   for (scfg, name) in cases {
     let Ok(q0) = start_at(cc.with_ticket(tickets[0]), scfg, WALL_MS + 60000 as i64) else {
       return test.fail(name + ": did not start");

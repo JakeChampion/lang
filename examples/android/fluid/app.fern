@@ -168,8 +168,8 @@ function on_event(own s: App, e: android.Event): App {
     android.WindowDestroyed(_) => {
       return off_window(s);
     },
-    android.ContentRect(_, top, _, bottom) => {
-      return laid_out(App { ...s, mt: overlay.Metrics { ...s.mt, top: top.max(0), bottom: (s.mt.height - bottom).max(0) } });
+    android.Insets(_, top, _, bottom) => {
+      return laid_out(App { ...s, mt: overlay.Metrics { ...s.mt, top: top, bottom: bottom } });
     },
     android.Vsync(ns) => {
       // The next frame is asked for before this one draws. A frame that

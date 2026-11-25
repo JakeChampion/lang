@@ -101,12 +101,12 @@ pub function (e: AesError) message(): string {
 
 ### `4 the key expansion`
 
-`Cipher` holds the number of rounds and the round keys, 16 bytes for each round and one more. The kernel does the expansion of FIPS 197 section 5.2.
+`Cipher` holds the round keys, 16 bytes for each round and one more. The kernel does the expansion of FIPS 197 section 5.2.
 
 ```fern
 <<4 the key expansion>>=
 @secret
-pub struct Cipher { rounds: i32, keys: u8[] }
+pub struct Cipher { keys: u8[] }
 
 // Consumes the key and zeroes its round keys when it owns the last reference.
 pub function (own c: Cipher) erase(): void {
@@ -117,7 +117,7 @@ pub function cipher(key: [u8]): Result[Cipher, AesError] {
   if (key.len() != 16 && key.len() != 24 && key.len() != 32) {
     return Err(KeyLength(key.len()));
   }
-  return Ok(Cipher { rounds: key.len() / 4 + 6, keys: __aes_expand_key(key) });
+  return Ok(Cipher { keys: __aes_expand_key(key) });
 }
 ```
 

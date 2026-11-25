@@ -9,7 +9,7 @@ NativeActivity loads the app library and calls its `ANativeActivity_onCreate` ex
 From Android 13 the system gives the back key and the back gesture to the `OnBackInvokedCallback` of the activity, not to the input queue. From Android 15 the window goes under the system bars, the keyboard and the cutout of the display. So `start` registers two objects on the UI thread:
 
 - A `dev.fern.android.Back` is the back callback. The loop gives each back to the app as a `Key` down and a `Key` up of key code 4.
-- A `dev.fern.android.Insets` listens to the insets of the window. The loop gives the part of the window that the insets leave free to the app as `ContentRect`.
+- A `dev.fern.android.Insets` listens to the insets of the window. The loop gives the insets to the app as `Insets`.
 
 The module declares these two Java classes, so the APK of an app that imports this module holds them. A JNI method needs a native target, so a program for the host cannot import this module. The tests of an app on the host use `std/android/ui/sim`.
 

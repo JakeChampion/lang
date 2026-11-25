@@ -2930,6 +2930,131 @@ pub function file_ranges_bytes(ranges: i64[], seams: u8[][], read: (i64, i64) =>
   }
   return Some(out);
 }
+
+// The ranges of a file of `size` bytes that a body with `ranges` holds: the
+// whole file when `ranges` is empty, and none when a range ends after the
+// end of the file.
+pub function file_ranges_held(size: i64, ranges: i64[]): i64[] {
+  let none: i64[] = [];
+  if (ranges.len() == 0) {
+    return [0 as i64, size];
+  }
+  let i = 0;
+  while (i + 1 < ranges.len()) {
+    if (ranges[i] + ranges[i + 1] > size) {
+      return none;
+    }
+    i += 2;
+  }
+  return ranges;
+}
+
+// FileBody is the body of a `BodyFile` or a `BodyFileRanges`, read from the
+// file in pieces. `id` is the file at the time of `file_body`.
+pub struct FileBody { path: string, id: FileStat, ranges: i64[], seams: u8[][] }
+
+// None when the file cannot be read, or when it does not hold `ranges`.
+pub function file_body(path: string, ranges: i64[], seams: u8[][]): Option[FileBody] {
+  match (__file_stat(path)) {
+    Some(st) => {
+      let held = file_ranges_held(st.size, ranges);
+      if (held.len() == 0) {
+        return None;
+      }
+      return Some(FileBody { path: path, id: st, ranges: held, seams: seams });
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function __file_stat(path: string): Option[FileStat] {
+  match (open_reader(path)) {
+    Ok(r) => {
+      let measured = r.stat();
+      r.close();
+      match (measured) {
+        Ok(st) => {
+          return Some(st);
+        },
+        Err(e) => {
+          return None;
+        }
+      }
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+pub function (f: FileBody) len(): i64 {
+  return file_ranges_len(f.ranges, f.seams);
+}
+
+// Piece `i` of the body: a seam, or at most 64 KiB of a range. None after the
+// last piece, and when the file is not the file that `file_body` measured.
+pub function (f: FileBody) piece(i: i32): Option[u8[]] {
+  let piece = 65536 as i64;
+  let at = i as i64;
+  let k = 0;
+  while (true) {
+    if (f.seams[k].len() > 0) {
+      if (at == 0 as i64) {
+        return Some(f.seams[k]);
+      }
+      at -= 1 as i64;
+    }
+    if (2 * k >= f.ranges.len()) {
+      return None;
+    }
+    let len = f.ranges[2 * k + 1];
+    let pieces = (len + piece - 1 as i64) / piece;
+    if (at < pieces) {
+      let from = at * piece;
+      let want = len - from;
+      if (want > piece) {
+        want = piece;
+      }
+      return __file_read(f, f.ranges[2 * k] + from, want as i32);
+    }
+    at -= pieces;
+    k += 1;
+  }
+  return None;
+}
+
+function __file_read(f: FileBody, offset: i64, n: i32): Option[u8[]] {
+  match (open_reader(f.path)) {
+    Ok(r) => {
+      let got: Option[u8[]] = None;
+      if (__same_file(r, f.id)) {
+        got = __read_span(r, offset, n as i64);
+      }
+      r.close();
+      return got;
+    },
+    Err(e) => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function __same_file(r: Reader, id: FileStat): boolean {
+  match (r.stat()) {
+    Ok(st) => {
+      return st.dev == id.dev && st.ino == id.ino && st.size == id.size && st.mtime == id.mtime && st.mtime_nsec == id.mtime_nsec;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
 ```
 
 ### `64 function __read_span(r: Reader, offset: i64, len: i64): Option[u8[]]`

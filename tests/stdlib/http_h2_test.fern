@@ -650,6 +650,31 @@ function test_client_body_and_interim(): test.TestOutcome {
   return test.assert_eq(got + "next " + next.to_string(), "request 1 POST /up host=example.test body=abc trailer=9\ninterim events=0 open=1\nanswered 1 200 content-type=- body=ok trailer=7\nnext 3");
 }
 
+function test_client_produces_a_body(): test.TestOutcome {
+  let p = paired();
+  let head = http.Outgoing { ...outgoing("PUT", "/up", "", headers.new()), headers: headers.new().append("Content-Length", "100000") };
+  let (sent, stream) = p.client.request_producing(head);
+  let piece = __alloc_u8(50000);
+  let first = sent.conn.write(stream, piece);
+  let second = first.conn.write(stream, piece);
+  let held = second.conn.pending(stream);
+  p = exchanged(Pair { ...p, client: second.conn, events: [] }, sent.output.concat(first.output).concat(second.output), []);
+  let got = "held " + held.to_string() + " then " + p.client.pending(stream).to_string() + " producing " + __bool(p.client.producing(stream)).to_string() + " events " + p.events.len().to_string() + "\n";
+  let fin = p.client.end(stream, headers.new());
+  p = exchanged(Pair { ...p, client: fin.conn, events: [] }, fin.output, []);
+  for e in p.events {
+    match (e) {
+      h2.Request(sid, req) => {
+        got = got + "request " + sid.to_string() + " " + req.method + " " + req.body_bytes().len().to_string() + " length=" + header_or(req.headers, "content-length");
+      },
+      _ => {
+        got += "other";
+      }
+    }
+  }
+  return test.assert_eq(got, "held 34465 then 0 producing 1 events 0\nrequest 1 PUT 100000 length=100000");
+}
+
 function test_client_tunnel(): test.TestOutcome {
   let cs = h2.client(h2.config());
   let ss = h2.server(h2.Config { ...h2.config(), stream_bodies: true });
@@ -982,6 +1007,7 @@ function main(): i32 {
   r = r.it("a client's body, trailers and an interim response", test_client_body_and_interim);
   r = r.it("a client reads a body larger than one window", test_client_reads_a_body_past_one_window);
   r = r.it("a client counts the body of a response as it comes", test_client_received);
+  r = r.it("a client sends a body in parts after the request", test_client_produces_a_body);
   r = r.it("a client opens a CONNECT tunnel", test_client_tunnel);
   r = r.it("a client under GOAWAY, PUSH_PROMISE and RST_STREAM", test_client_goaway_and_push);
   r = r.it("a client refuses DATA before HEADERS and a 101, and ends the requests that a GOAWAY leaves out", test_client_rules);

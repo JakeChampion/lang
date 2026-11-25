@@ -24,6 +24,7 @@ import "std/http";
 import "std/serve";
 import "std/platform";
 import "std/string";
+import "std/tls";
 import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
@@ -70,11 +71,11 @@ function secured(opts: serve.Config): Result[serve.Config, string] {
     return Err("TLS_CERT is set without TLS_KEY");
   };
   let id = identity_from(cert_path, key_path)?;
-  let cfg = server.config(id, rand.bytes(32));
+  let cfg = server.config(id, rand.bytes(32)).map_err((e: tls.TlsError): string => e.message())?;
   if (env("TLS_NO_TICKETS").is_some()) {
     cfg = cfg.without_tickets();
   }
-  let tls = opts.with_tls(client_roots(cfg)?);
+  let tls = opts.with_tls(client_roots(cfg)?).map_err((e: tls.TlsError): string => e.message())?;
   if (env("H3").is_some()) {
     return Ok(tls.with_h3());
   }

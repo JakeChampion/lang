@@ -94,14 +94,16 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   return http.ok("-");
 }
 
-function with_tls(cfg: serve.Config): serve.Config {
+function with_tls(cfg: serve.Config): Option[serve.Config] {
   match (read_file("@CERT@")) {
     Ok(cert) => {
       match (read_file("@KEY@")) {
         Ok(key) => {
           match (identity.from_pem(cert, key)) {
             Ok(id) => {
-              return cfg.with_tls(server.config(id, rand.bytes(32)));
+              let Ok(tickets) = server.config(id, rand.bytes(32)) else { return None; };
+              let Ok(opts) = cfg.with_tls(tickets) else { return None; };
+              return Some(opts);
             },
             Err(e) => {}
           }
@@ -111,7 +113,7 @@ function with_tls(cfg: serve.Config): serve.Config {
     },
     Err(e) => {}
   }
-  return cfg;
+  return None;
 }
 
 function main(): i32 {
@@ -119,7 +121,8 @@ function main(): i32 {
   let cfg: serve.Config = serve.Config { ...serve.config(), proxy_protocol: true, recv_deadline: time.duration_seconds(60 as i64) };
   match (env("PROXY_TLS")) {
     Some(_) => {
-      cfg = with_tls(cfg);
+      let Some(opts) = with_tls(cfg) else { return 2; };
+      cfg = opts;
     },
     None => {}
   }

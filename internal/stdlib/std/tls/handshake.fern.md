@@ -1012,7 +1012,7 @@ pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedu
 pub function client_config(server_name: string): ClientConfig {
   // RFC 6066 section 3 permits only DNS names in the host_name entry.
   let sni = server_name;
-  if let Ok(_) = net.ip_parse(__sni(server_name)) {
+  if (__sni(server_name).len() == 0) {
     sni = "";
   }
   return ClientConfig { server_name: sni, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], shares: 1, schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [], quic: false, extensions: [], tls12: false, early_data: false };
@@ -1167,15 +1167,20 @@ function __shares(config: ClientConfig): i32 {
 
 // RFC 6066 section 3: the name goes on the wire with no trailing dot.
 function __sni(name: string): string {
-  match (name.strip_suffix(".")) {
-    Some(bare) => {
-      return bare;
-    },
-    None => {
-      return name;
+  let bare = name.strip_suffix(".").unwrap_or(name);
+  let address = bare;
+  if (address.starts_with("[") && address.ends_with("]")) {
+    address = slice_unchecked(address, 1, address.len() - 1).to_owned();
+  }
+  if (address.contains(":")) {
+    if let Some(zone) = address.index_of("%") {
+      address = slice_unchecked(address, 0, zone).to_owned();
     }
   }
-  return name;
+  if let Ok(_) = net.ip_parse(address) {
+    return "";
+  }
+  return bare;
 }
 
 function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]): message.Extension[] {
@@ -1184,8 +1189,9 @@ function __hello_extensions(config: ClientConfig, shares: keyshare.ClientShare[]
     entries = entries.append(message.KeyShareEntry { group: sh.group.code(), key: sh.public });
   }
   let exts: message.Extension[] = [];
-  if (config.server_name.len() > 0) {
-    exts = exts.append(message.ext_server_name(__sni(config.server_name)));
+  let sni = __sni(config.server_name);
+  if (sni.len() > 0) {
+    exts = exts.append(message.ext_server_name(sni));
   }
   let versions = [message.TLS13];
   if (config.tls12) {

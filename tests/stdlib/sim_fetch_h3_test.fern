@@ -6,6 +6,7 @@ import "std/time";
 import "std/http";
 import "std/headers";
 import "std/hex";
+import "std/hash/crc32";
 import "std/codec";
 import "std/string";
 import "std/utf8";
@@ -51,6 +52,10 @@ function trusting(): fetch.Policy {
 }
 
 function handle(req: HttpRequest): HttpResponse {
+  if (req.method == "PUT") {
+    let sent = req.body_bytes();
+    return http.ok("put " + sent.len().to_string() + " " + crc32.of(sent).to_string());
+  }
   if (req.method == "POST") {
     let resp = http.ok("got " + req.body_bytes().len().to_string());
     return HttpResponse { ...resp, trailers: headers.new().append("x-served-by", "sim") };
@@ -109,6 +114,29 @@ function test_post_with_trailers(): test.TestOutcome {
     return test.fail("unreachable");
   };
   return test.assert_eq(resp.trailers.get("x-served-by").unwrap_or("-"), "sim");
+}
+
+function test_file_body_over_h3(): test.TestOutcome {
+  let path = "upload.bin";
+  if let Ok(dir) = temp_dir("fern_sim_fetch_h3") {
+    path = dir + "/upload.bin";
+  }
+  let data: u8[] = [];
+  for i in 0..300000 {
+    data = data.append((i % 251) as u8);
+  }
+  if let Err(e) = write_file_bytes(path, data) {
+    return test.fail("write_file_bytes failed");
+  }
+  let d = dated(9);
+  let Ok(n) = offering(d, fetch.idle()) else {
+    return test.fail("no identity");
+  };
+  let got = fetch.send_on(n, fetch.request("PUT", "https://tls.example/upload").with_body(BodyFile(path)), trusting());
+  if (body(got) != "put 300000 " + crc32.of(data).to_string()) {
+    return test.fail(body(got));
+  }
+  return test.assert_eq(n.h3_requests(), 1);
 }
 
 function test_pool_reuses_the_quic_connection(): test.TestOutcome {
@@ -271,6 +299,7 @@ function main(): i32 {
   r = r.it("reads Alt-Svc field values", test_alt_svc_values);
   r = r.it("an Alt-Svc alternative holds for its age", test_alt_svc_noted_and_expired);
   r = r.it("a TCP answer beside an HTTP/3 endpoint carries Alt-Svc", test_tcp_answer_carries_alt_svc);
+  r = r.it("a file body goes over HTTP/3 in pieces", test_file_body_over_h3);
   return r.finish();
 }
 

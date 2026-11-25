@@ -83,6 +83,19 @@ function test_sha384(): test.TestOutcome {
   return test.assert_true(verified(point_a(), sha2.Sha384, message(), sig384()));
 }
 
+// For each curve choose a point R with x = n + r, s = 1, and Q = (R - eG)/r.
+// Verification then reconstructs R and must compare its x modulo n.
+function test_x_above_order(): test.TestOutcome {
+  let msg = "projective verification".bytes();
+  if (!verified_on(ecdsa.P256, "04e1e75e8e141e1e6c0a479a86acb4ed24f265f12141de1659be9bc69ab5932116964ff45afdaf9c1c9a50dc5244b745248ff53c230f1813ea8a49a91b8eae19fc", sha2.Sha256, msg, "3006020103020101")) {
+    return test.fail("P-256 refused x = n + 3");
+  }
+  if (!verified_on(ecdsa.P384, "04246dd3c9ae4414e4180cea534b2284e4848efdc9a7b119e564b0363c58ee8e369ec80617e99019f8fb255fa2d293b4d2d939c4cb646b3768615d2b7bf9fa55f75dfab50d0fec03493edff13b7667f25134953a74a624fcc34d6eb7737ab5c8c4", sha2.Sha384, msg, "3006020102020101")) {
+    return test.fail("P-384 refused x = n + 2");
+  }
+  return test.pass();
+}
+
 function test_refusals(): test.TestOutcome {
   if (verified(point_a(), sha2.Sha256, "fern p256 verification!".bytes(), sig256())) {
     return test.fail("a signature over another message verified");
@@ -252,6 +265,21 @@ function ecdh_shown(curve: ecdsa.Curve, d: string, peer: string): string {
   return "";
 }
 
+function test_sign_checks_stored_public_key(): test.TestOutcome {
+  let Ok(key) = ecdsa.private_key(ecdsa.P256, __alloc_u8(32).with(31, 1u8)) else {
+    return test.fail("the key was refused");
+  };
+  let changed = ecdsa.PrivateKey { ...key, d: __alloc_u8(32).with(31, 2u8) };
+  match (changed.sign(sha2.Sha256, "key consistency".as_bytes())) {
+    Err(ecdsa.SignatureCheck) => {
+      return test.pass();
+    },
+    _ => {
+      return test.fail("sign accepted a scalar inconsistent with the stored public key");
+    }
+  }
+}
+
 function test_erase_key(): test.TestOutcome {
   let Ok(k) = ecdsa.private_key(ecdsa.P256, __codec_bytes(hex.decode(P256_D))) else {
     return test.fail("the P-256 scalar was refused");
@@ -305,9 +333,11 @@ function main(): i32 {
   r = r.it("P-256 SHA-256", test_sha256);
   r = r.it("P-256 SHA-384", test_sha384);
   r = r.it("P-384", test_p384);
+  r = r.it("x coordinate above the group order", test_x_above_order);
   r = r.it("refusals", test_refusals);
   r = r.it("malformed keys", test_bad_keys);
   r = r.it("signing", test_signing);
+  r = r.it("sign checks the stored public key", test_sign_checks_stored_public_key);
   r = r.it("a signature in the high form verifies", test_high_s_verifies);
   r = r.it("signing refusals", test_signing_refusals);
   r = r.it("ECDH", test_ecdh);

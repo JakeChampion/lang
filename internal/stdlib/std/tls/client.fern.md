@@ -6,13 +6,13 @@ This module provides TLS client sessions and connections.
 
 Client configuration supplies a server name, trust roots, ALPN protocols, and optional resumption or client identity. A session advances the TLS handshake and application records.
 
-The client offers TLS 1.3 and TLS 1.2. A server that does not speak TLS 1.3 can pick TLS 1.2 with an ECDHE suite (`std/tls/tls12`). The client checks the signature of its key exchange with `verify.signed12`. A TLS 1.2 session takes no tickets. It sends the client certificate of the configuration when the server asks for one. It cannot be saved, offloaded to the kernel or rekeyed.
+The client offers TLS 1.3 and TLS 1.2 by default. Use `config(...).without_tls12()` to require TLS 1.3. A server that does not speak TLS 1.3 can pick TLS 1.2 with an ECDHE suite (`std/tls/tls12`). The client checks the signature of its key exchange with `verify.signed12`. A TLS 1.2 session takes no tickets. It sends the client certificate of the configuration when the server asks for one. It cannot be saved, offloaded to the kernel or rekeyed.
 
 ## Contracts
 
 A session draws no randomness of its own: `start` takes exactly `entropy(config)` bytes from the caller, so a session given the same bytes and clock writes the same records. `connect` and `over` draw those bytes from the platform's random source.
 
-A verifying client offers a session ticket only when the issuing session verified the server and its certificate chain passes verification under the current roots, name and time. Otherwise the client starts a full handshake.
+The handshake issues opaque tickets. A resumed handshake inherits the authenticated chain of the ticket it used. A verifying client offers a session ticket only when the issuing session verified the server and its certificate chain passes verification under the current roots, name and time. Otherwise the client starts a full handshake.
 
 A session step returns state, output, application data, and ticket updates. The caller must preserve the returned state and apply the configured verification policy.
 
@@ -32,7 +32,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function config(server_name: string, roots: verify.Roots): Config>>
 
-<<5 pub struct Session>>
+<<5 pub opaque struct Session>>
 
 <<6 pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[Step, tls.TlsError]>>
 
@@ -92,6 +92,7 @@ import "std/net";
 import "std/time";
 import "std/clock";
 import "std/tls";
+import "std/crypto";
 import "std/tls/handshake";
 import "std/tls/identity";
 import "std/tls/keyschedule";
@@ -108,11 +109,27 @@ import "std/result";
 ```fern
 <<3 pub struct Config>>=
 // verify is false when the session accepts any certificate chain.
-pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity], verify: boolean }
+pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity], verify: boolean, tls12: boolean }
 
 // verified_chain is empty if the issuing session did not verify its peer.
 // max_early is the most early data the ticket allows, 0 when it allows none.
-pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, age_add: u32, received: time.Timestamp, server_name: string, max_early: u32, verified_chain: u8[][] }
+pub opaque struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, age_add: u32, received: time.Timestamp, server_name: string, max_early: u32, verified_chain: u8[][] }
+
+pub function (t: Ticket) wire_identity(): u8[] {
+  return t.identity;
+}
+
+pub function (t: Ticket) valid_for(): Duration {
+  return t.lifetime;
+}
+
+pub function (t: Ticket) suite_code(): i32 {
+  return t.suite;
+}
+
+pub function (t: Ticket) early_data_limit(): u32 {
+  return t.max_early;
+}
 ```
 
 ### `4 pub function config(server_name: string, roots: verify.Roots): Config`
@@ -120,7 +137,11 @@ pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, a
 ```fern
 <<4 pub function config(server_name: string, roots: verify.Roots): Config>>=
 pub function config(server_name: string, roots: verify.Roots): Config {
-  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None, verify: true };
+  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None, verify: true, tls12: true };
+}
+
+pub function (c: Config) without_tls12(): Config {
+  return Config { ...c, tls12: false };
 }
 
 pub function (c: Config) without_verification(): Config {
@@ -140,11 +161,11 @@ pub function (c: Config) with_identity(id: identity.Identity): Config {
 }
 ```
 
-### `5 pub struct Session`
+### `5 pub opaque struct Session`
 
 ```fern
-<<5 pub struct Session>>=
-pub struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[], verify: boolean, prior_chain: u8[][] }
+<<5 pub opaque struct Session>>=
+pub opaque struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[], verify: boolean, prior_ticket: Option[Ticket] }
 
 pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, tickets: Ticket[], rekeyed: handshake.KernelKeys }
 ```
@@ -157,8 +178,7 @@ pub function start(config: Config, entropy: [u8], now: time.Timestamp): Result[S
   let hc = handshake.ClientConfig { ...__hello(config), resume: __offer(config, now) };
   match (handshake.client_start(hc, entropy)) {
     Ok(step) => {
-      let chain: u8[][] = match (config.resume) { Some(t) => t.verified_chain, None => [] };
-      let s = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [], verify: config.verify, prior_chain: chain };
+      let s = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [], verify: config.verify, prior_ticket: config.resume };
       return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [], rekeyed: __no_keys() });
     },
     Err(e) => {
@@ -173,7 +193,7 @@ pub function entropy(config: Config): i32 {
 }
 
 function __hello(config: Config): handshake.ClientConfig {
-  let hc = handshake.ClientConfig { ...handshake.client_config(config.server_name), alpn: config.alpn, tls12: true };
+  let hc = handshake.ClientConfig { ...handshake.client_config(config.server_name), alpn: config.alpn, tls12: config.tls12 };
   match (config.identity) {
     Some(id) => {
       return handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };
@@ -325,6 +345,10 @@ pub function (s: Session) offload(): Option[Offloaded] {
   return None;
 }
 
+pub(package) function (s: Session) has_pending_record_bytes(): boolean {
+  return s.held.len() > 0;
+}
+
 pub function (s: Session) connected(): boolean {
   return s.client.connected();
 }
@@ -358,7 +382,7 @@ pub function restore(saved: [u8]): Result[Session, tls.TlsError] {
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
-      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __bytes_owned(saved[4 + n:saved.len()]), verify: true, prior_chain: [] });
+      return Ok(Session { client: c, name: "", roots: verify.no_roots(), identity: None, held: __bytes_owned(saved[4 + n:saved.len()]), verify: false, prior_ticket: None });
     },
     Err(e) => {
       return Err(tls.HandshakeFailed(e));
@@ -442,7 +466,7 @@ function __no_keys(): handshake.KernelKeys {
 }
 
 function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: message.NewSessionTicket, now: time.Timestamp): Ticket[] {
-  match (ticket_from_peer(c, t, s.name, now, s.verify, s.prior_chain)) {
+  match (ticket_from_peer(c, t, s.name, now, s.verify, s.prior_ticket)) {
     Some(kept) => {
       return tickets.append(kept);
     },
@@ -473,19 +497,22 @@ function __max_early(t: message.NewSessionTicket): u32 {
   return 0 as u32;
 }
 
-// ticket_from is the ticket a client for `server_name` keeps from the
-// NewSessionTicket `t` that the server sent on the connection `c`.
-// This low-level constructor has no verification policy and records no verified chain.
-pub function ticket_from(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp): Option[Ticket] {
-  return ticket_from_peer(c, t, server_name, now, false, []);
-}
-
 // A resumed handshake inherits its authenticated chain. A full handshake
 // provides a new chain even if the client offered a ticket.
-pub function ticket_from_peer(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp, verify_peer: boolean, prior_chain: u8[][]): Option[Ticket] {
+pub(package) function ticket_from_peer(c: handshake.Client, t: message.NewSessionTicket, server_name: string, now: time.Timestamp, verify_peer: boolean, prior_ticket: Option[Ticket]): Option[Ticket] {
   let chain: u8[][] = [];
   if (verify_peer) {
-    chain = if (c.resumed()) { prior_chain } else { c.chain };
+    if (c.resumed()) {
+      if let Some(previous) = prior_ticket {
+        if let Some(offered) = c.resume {
+          if (previous.server_name == server_name && crypto.consteq(previous.identity, offered.identity) && crypto.consteq(previous.psk, offered.psk)) {
+            chain = previous.verified_chain;
+          }
+        }
+      }
+    } else {
+      chain = c.chain;
+    }
   }
   match (c.resumption_psk(t.nonce)) {
     Ok(psk) => {

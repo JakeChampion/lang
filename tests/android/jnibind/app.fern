@@ -183,10 +183,31 @@ function keystore_part(e: usize): Result[void, jni.JavaError] {
   let alias = "fern.jnibind.test";
   let data: u8[] = [0u8, 255u8, 37u8];
   keystore.ensure_key(e, alias)?;
+  if (!keystore.has_key(e, alias)? || keystore.has_key(e, alias + ".unprovisioned")?) {
+    return Err(jni.JavaError { text: "unexpected key alias status" });
+  }
+  let locked = keystore.KeyOptions { ...keystore.key_options(), unlocked_device_required: true };
+  let locked_alias = alias + ".unlocked";
+  if (!keystore.has_key(e, locked_alias)?) {
+    keystore.ensure_key_with_options(e, locked_alias, locked)?;
+  }
+  if (keystore.ensure_key_with_options(e, alias, locked).is_ok()) {
+    return Err(jni.JavaError { text: "keystore accepted new restrictions for an existing alias" });
+  }
   let sealed = keystore.seal(e, alias, data)?;
   keystore.ensure_key(e, alias)?;
   let again = keystore.seal(e, alias, data)?;
   let plain = keystore.open(e, alias, sealed)?;
+  let seed_context: u8[] = [1u8];
+  let peer_context: u8[] = [2u8];
+  let scoped = keystore.seal_with_context(e, alias, data, seed_context)?;
+  let same = keystore.open_with_context(e, alias, scoped, seed_context)?;
+  if (!crypto.consteq(same, data) || keystore.open_with_context(e, alias, scoped, peer_context).is_ok()) {
+    return Err(jni.JavaError { text: "keystore context authentication failed" });
+  }
+  if (keystore.open(e, alias, scoped).is_ok() || keystore.open_with_context(e, alias, sealed, seed_context).is_ok()) {
+    return Err(jni.JavaError { text: "keystore accepted an unexpected empty context" });
+  }
   let distinct = !crypto.consteq(sealed[:12], again[:12]);
   let last = sealed.len() - 1;
   let changed = sealed.with(last, sealed[last] ^ 1u8);

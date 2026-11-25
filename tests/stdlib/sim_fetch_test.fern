@@ -70,6 +70,140 @@ function __body(got: Result[HttpResponse, fetch.FetchError]): string {
   return "";
 }
 
+function __scratch(name: string): string {
+  match (temp_dir("fern_sim_fetch")) {
+    Ok(dir) => {
+      return dir + "/" + name;
+    },
+    Err(e) => {
+      return name;
+    }
+  }
+  return name;
+}
+
+function __pattern(n: i32): u8[] {
+  let out: u8[] = [];
+  for i in 0..n {
+    out = out.append((i % 251) as u8);
+  }
+  return out;
+}
+
+function __part(data: u8[], from: i32, to: i32): u8[] {
+  let out: u8[] = [];
+  for i in from..to {
+    out = out.append(data[i]);
+  }
+  return out;
+}
+
+// The bytes of the writes after the head, and the size of the largest write.
+function __sent_after_head(n: sim_fetch.Net): (u8[], i32) {
+  let all: u8[] = [];
+  let largest = 0;
+  for i in 1..n.sent_count() {
+    let piece = n.sent(i);
+    if (piece.len() > largest) {
+      largest = piece.len();
+    }
+    all = all.concat(piece);
+  }
+  return (all, largest);
+}
+
+function test_file_body_sent_in_pieces(): test.TestOutcome {
+  let path = __scratch("upload.bin");
+  let data = __pattern(150000);
+  if let Err(e) = write_file_bytes(path, data) {
+    return test.fail("write_file_bytes failed");
+  }
+  let d = sim.new(1);
+  let n = __net(d).route(ORIGIN, 80, "/up", [sim_fetch.reply(201, "stored")]);
+  let got = fetch.send_on(n, fetch.request("PUT", "http://example.test/up").with_body(BodyFile(path)), __open());
+  if (__body(got) != "stored") {
+    return test.fail(__body(got));
+  }
+  let head = __sent_text(n, 0);
+  if (!head.starts_with("PUT /up HTTP/1.1\r\n") || !head.contains("Content-Length: 150000\r\n") || !head.ends_with("\r\n\r\n")) {
+    return test.fail("head: " + head);
+  }
+  let (sent, largest) = __sent_after_head(n);
+  if (!sent.eq(data)) {
+    return test.fail("the body on the wire is not the file: " + sent.len().to_string() + " bytes");
+  }
+  if (largest != 65536) {
+    return test.fail("the largest write has " + largest.to_string() + " bytes");
+  }
+  return test.assert_eq(n.sent_count(), 4);
+}
+
+function test_file_ranges_body(): test.TestOutcome {
+  let path = __scratch("ranges.bin");
+  let data = __pattern(4000);
+  if let Err(e) = write_file_bytes(path, data) {
+    return test.fail("write_file_bytes failed");
+  }
+  let d = sim.new(1);
+  let n = __net(d).route(ORIGIN, 80, "/up", [sim_fetch.reply(200, "ok")]);
+  let ranges: i64[] = [10 as i64, 5 as i64, 3000 as i64, 3 as i64];
+  let body = BodyFileRanges(path, ranges, ["<".bytes(), "|".bytes(), ">".bytes()]);
+  let got = fetch.send_on(n, fetch.request("POST", "http://example.test/up").with_body(body), __open());
+  if (__body(got) != "ok") {
+    return test.fail(__body(got));
+  }
+  if (!__sent_text(n, 0).contains("Content-Length: 11\r\n")) {
+    return test.fail("head: " + __sent_text(n, 0));
+  }
+  let want = "<".bytes().concat(__part(data, 10, 15)).concat("|".bytes()).concat(__part(data, 3000, 3003)).concat(">".bytes());
+  let (sent, largest) = __sent_after_head(n);
+  if (!sent.eq(want)) {
+    return test.fail("the body on the wire: " + sent.len().to_string() + " bytes");
+  }
+  return test.pass();
+}
+
+function test_empty_file_body(): test.TestOutcome {
+  let path = __scratch("empty.bin");
+  if let Err(e) = write_file(path, "") {
+    return test.fail("write_file failed");
+  }
+  let d = sim.new(1);
+  let n = __net(d).route(ORIGIN, 80, "/up", [sim_fetch.reply(200, "ok")]);
+  let got = fetch.send_on(n, fetch.request("PUT", "http://example.test/up").with_body(BodyFile(path)), __open());
+  if (__body(got) != "ok" || n.sent_count() != 1) {
+    return test.fail(__body(got) + " in " + n.sent_count().to_string() + " writes");
+  }
+  if (!__sent_text(n, 0).contains("Content-Length: 0\r\n")) {
+    return test.fail("head: " + __sent_text(n, 0));
+  }
+  return test.pass();
+}
+
+function test_file_body_refused_before_the_dial(): test.TestOutcome {
+  let d = sim.new(1);
+  let n = __net(d).route(ORIGIN, 80, "/up", [sim_fetch.reply(200, "ok")]);
+  let missing = fetch.send_on(n, fetch.request("PUT", "http://example.test/up").with_body(BodyFile(__scratch("no-such-file.bin"))), __open());
+  if (__message(missing) != "invalid request: the file of the body cannot be read") {
+    return test.fail(__message(missing));
+  }
+  let path = __scratch("short.bin");
+  if let Err(e) = write_file(path, "0123456789") {
+    return test.fail("write_file failed");
+  }
+  let none: u8[] = [];
+  let past: i64[] = [8 as i64, 5 as i64];
+  let outside = fetch.send_on(n, fetch.request("PUT", "http://example.test/up").with_body(BodyFileRanges(path, past, [none, none])), __open());
+  if (__message(outside) != "invalid request: the file of the body cannot be read") {
+    return test.fail(__message(outside));
+  }
+  let odd = fetch.send_on(n, fetch.request("PUT", "http://example.test/up").with_body(BodyFileRanges(path, past, [none])), __open());
+  if (__message(odd) != "invalid request: the ranges of the file body do not agree with its seams") {
+    return test.fail(__message(odd));
+  }
+  return test.assert_eq(n.connects(), 0);
+}
+
 function test_answer_at_its_time(): test.TestOutcome {
   let d = sim.new(1);
   let n = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hello").after(time.duration_millis(20))]);
@@ -1071,5 +1205,9 @@ function main(): i32 {
   r = r.it("injects a flaky fault never at 0 and always at 100 percent", test_flaky_never_and_always);
   r = r.it("selects flaky faults from the seed", test_flaky_follows_the_seed);
   r = r.it("injects a flaky fault in front of a served handler", test_flaky_reaches_a_served_handler);
+  r = r.it("sends a file body in pieces of 64 KiB", test_file_body_sent_in_pieces);
+  r = r.it("sends ranges of a file with their seams", test_file_ranges_body);
+  r = r.it("sends an empty file with a length of zero", test_empty_file_body);
+  r = r.it("refuses a file body it cannot read before the dial", test_file_body_refused_before_the_dial);
   return r.finish();
 }

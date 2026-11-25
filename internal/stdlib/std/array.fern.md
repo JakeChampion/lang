@@ -16,6 +16,8 @@ This differs from `string.chunks`, which returns one chunk for a nonempty string
 `rotate_left` and `rotate_right` accept every i32 count and reduce it modulo the array length.
 Negative counts reverse the direction. An empty array remains empty.
 
+`array.bounded(xs, max_bytes)` takes ownership of an array. It returns an empty array for an empty input. For nonempty input the native and WASI compilers can reuse a backing allocation that fits the byte budget plus eight padding bytes. A negative budget counts as zero. Oversized storage is replaced with a clone of the live elements. The clone uses the usual allocation size for its element type and length. Other aliases keep their values throughout.
+
 ## Executable example
 
 ```fern test name=std-array-example
@@ -903,6 +905,26 @@ pub function take[T](xs: T[], n: i32): T[] {
 pub function clone[T](xs: [T]): T[] {
   let out: T[] = [];
   return out.concat(xs);
+}
+
+// Older compilers compact every handoff.
+function storage_bytes[T](xs: T[]): i32 {
+  return -1;
+}
+
+// Reuse the array when its payload allocation fits the byte budget plus up to
+// eight bytes of padding. Keep the handoff out of line so the caller can
+// transfer its array without an extra allocation for the inlined branches.
+@noinline
+pub function bounded[T](own xs: T[], max_bytes: i32): T[] {
+  if (xs.len() == 0) {
+    return [];
+  }
+  let size = storage_bytes(xs);
+  if (size >= 0 && size - 8 <= max_bytes.max(0)) {
+    return xs;
+  }
+  return clone(xs);
 }
 
 pub function drop[T](xs: T[], n: i32): T[] {

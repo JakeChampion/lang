@@ -6,6 +6,8 @@
 import "std/i32";
 import "std/net";
 import "std/time";
+import "std/result";
+import "std/tls";
 import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
@@ -60,7 +62,7 @@ function setting(name: string, fallback: string): string {
 
 function configured(): Result[server.Config, string] {
   let id = identity_of(setting("TLS_CERT", "leaf.pem"), setting("TLS_KEY", "leaf.key"))?;
-  let cfg = server.config(id, rand.bytes(32)).with_alpn(["http/1.1"]);
+  let cfg = server.config(id, rand.bytes(32)).map_err((e: tls.TlsError): string => e.message())?.with_alpn(["http/1.1"]);
   let Some(path) = env("TLS_CLIENT_CA") else {
     return Ok(cfg);
   };

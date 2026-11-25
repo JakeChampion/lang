@@ -2,12 +2,12 @@ import "./aborts";
 import "./util";
 
 pub function texts(): string[] {
-  return [aborts.arr_oob() + "\n", aborts.str_oob() + "\n", aborts.slice_range() + "\n", aborts.alloc_size() + "\n", aborts.oom() + "\n", aborts.free_range() + "\n", aborts.double_free() + "\n"];
+  return [aborts.arr_oob() + "\n", aborts.str_oob() + "\n", aborts.slice_range() + "\n", aborts.alloc_size() + "\n", aborts.oom() + "\n", aborts.free_range() + "\n", aborts.double_free() + "\n", aborts.entropy() + "\n"];
 }
 
 // bytes_at[i] is the address of the first byte of the text of abort i.
 pub function helpers(bytes_at: i32[], mode: i32): string {
-  let names: string[] = ["arr", "str", "slice", "alloc", "oom", "free_range", "double_free"];
+  let names: string[] = ["arr", "str", "slice", "alloc", "oom", "free_range", "double_free", "entropy"];
   let messages = texts();
   let out = "";
   for i in 0..names.len() {

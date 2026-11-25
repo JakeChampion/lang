@@ -24,7 +24,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct Config>>
 
-<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>
+<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]>>
 
 <<5 pub struct Session>>
 
@@ -104,14 +104,29 @@ import "std/utf8";
 pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots] }
 ```
 
-### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Config`
+### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]`
 
 ```fern
-<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Config>>=
+<<4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]>>=
+// Construct a configuration that never issues or accepts session tickets.
+pub function config_without_tickets(id: identity.Identity): Config {
+  return Config { identity: id, alpn: [], tickets: false, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: [], client_roots: None };
+}
+
 // Supply at least 32 bytes from a cryptographic random source for session tickets.
-// A shorter secret is accepted at startup only with without_tickets().
-pub function config(id: identity.Identity, ticket_key: [u8]): Config {
-  return Config { identity: id, alpn: [], tickets: true, ticket_lifetime: time.duration_seconds(7200 as i64), ticket_key: ticket_key_of(ticket_key), client_roots: None };
+pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError] {
+  let key = ticket_key_of(ticket_key);
+  if (key.len() != 32) {
+    return Err(tls.InvalidTicketKey);
+  }
+  return Ok(Config { ...config_without_tickets(id), tickets: true, ticket_key: key });
+}
+
+pub function (c: Config) validate_ticket_key(): Result[void, tls.TlsError] {
+  if (c.tickets && c.ticket_key.len() != 32) {
+    return Err(tls.InvalidTicketKey);
+  }
+  return Ok(());
 }
 
 // Derives a ticket key from at least 32 bytes of secret material. A shorter
@@ -154,9 +169,7 @@ pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean, r
 ```fern
 <<6 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError]>>=
 pub function start(config: Config, entropy: [u8]): Result[Step, tls.TlsError] {
-  if (config.tickets && config.ticket_key.len() != 32) {
-    return Err(tls.HandshakeFailed(handshake.Misuse("session tickets require a secret of at least 32 bytes")));
-  }
+  config.validate_ticket_key()?;
   let sc = __handshake_config(config);
   let n = handshake.server_entropy(sc);
   if (entropy.len() != n + TICKET_ENTROPY) {

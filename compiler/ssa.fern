@@ -290,6 +290,8 @@ pub const SEM_CHECKED_VALUE: i32 = -58;
 
 pub const SEM_ARRAY_ZERO: i32 = -59;
 
+pub const SEM_STORAGE_BYTES: i32 = -60;
+
 function semantic_names_symbol(id: i32): boolean {
   return id == SEM_CALL || id == SEM_VARIANT_NEW || id == SEM_VARIANT_IS || id == SEM_VARIANT_GET
     || id == SEM_VARIANT_UP || id == SEM_VARIANT_AS || id == SEM_CLOSURE_NEW;

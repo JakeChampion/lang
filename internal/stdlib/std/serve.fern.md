@@ -58,9 +58,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<21 function __file_measured(resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): HttpResponse>>
 
-<<22 struct __FileBody>>
-
-<<23 function __file_chunk(f: __FileBody, i: i32): Option[u8[]]>>
+<<23 function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: ...>>
 
 <<24 function __tail_left(c: __Conns, at: i32): i32>>
 
@@ -283,8 +281,9 @@ pub function config(): Config {
   return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, on_metrics_listen: None, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32, loopback: false };
 }
 
-pub function (c: Config) with_tls(cfg: server.Config): Config {
-  return Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) };
+pub function (c: Config) with_tls(cfg: server.Config): Result[Config, tls.TlsError] {
+  cfg.validate_ticket_key()?;
+  return Ok(Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) });
 }
 
 pub function (c: Config) with_loopback(): Config {
@@ -343,6 +342,7 @@ pub function run(port: i32, opts: Config, handler: (HttpRequest, platform.Host) 
 }
 
 pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let l = __serve_listener(port, opts);
   if (l.sock.fd < 0) {
     return Err(__listen_error(port, l.sock.fd));
@@ -403,17 +403,20 @@ function __shut(sock: Socket): i32 {
 
 ### `12 pub struct ListenError`
 
-A port the server could not bind: the server's own, or `metrics_port`.
+The port and cause of a startup failure. For a TLS configuration error, `tls_error` carries the TLS cause and `error` reports an invalid argument.
 
 ```fern
 <<12 pub struct ListenError>>=
-pub struct ListenError { port: i32, error: net.NetError }
+pub struct ListenError { port: i32, error: net.NetError, tls_error: Option[tls.TlsError] }
 
 impl cmp.Display for ListenError {}
 
 impl error.Error for ListenError {}
 
 pub function (e: ListenError) message(): string {
+  if let Some(cause) = e.tls_error {
+    return "cannot listen on port " + e.port.to_string() + ": " + cause.message();
+  }
   return "cannot listen on port " + e.port.to_string() + ": " + e.error.message();
 }
 
@@ -437,7 +440,16 @@ pub function exit_code(r: Result[i32, ListenError]): i32 {
 }
 
 function __listen_error(port: i32, code: i32): ListenError {
-  return ListenError { port: port, error: net.error_from_host(code) };
+  return ListenError { port: port, error: net.error_from_host(code), tls_error: None };
+}
+
+function __validate_tls(port: i32, opts: Config): Result[void, ListenError] {
+  if let Some(cfg) = opts.tls {
+    if let Err(cause) = cfg.validate_ticket_key() {
+      return Err(ListenError { port: port, error: net.error_from_host(-22), tls_error: Some(cause) });
+    }
+  }
+  return Ok(());
 }
 
 function __listener_of(port: i32, opts: Config): __Listen {
@@ -476,6 +488,7 @@ pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequ
 }
 
 pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let l = __serve_listener(port, opts);
   if (l.sock.fd < 0) {
     return Err(__listen_error(port, l.sock.fd));
@@ -701,7 +714,7 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
       let ranges: i64[] = [];
       match (r.stat()) {
         Ok(st) => {
-          ranges = __ranges_held(st.size, body.ranges);
+          ranges = http.file_ranges_held(st.size, body.ranges);
         },
         Err(e) => {}
       }
@@ -733,21 +746,6 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
   return NoTail;
 }
 
-function __ranges_held(size: i64, ranges: i64[]): i64[] {
-  let none: i64[] = [];
-  if (ranges.len() == 0) {
-    return [0 as i64, size];
-  }
-  let i = 0;
-  while (i + 1 < ranges.len()) {
-    if (ranges[i] + ranges[i + 1] > size) {
-      return none;
-    }
-    i += 2;
-  }
-  return ranges;
-}
-
 function __file_chunks(resp: HttpResponse): HttpResponse {
   let none: u8[] = [];
   let whole: i64[] = [];
@@ -774,19 +772,14 @@ function __file_chunks(resp: HttpResponse): HttpResponse {
 ```fern
 <<21 function __file_measured(resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): HttpResponse>>=
 function __file_measured(resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): HttpResponse {
-  match (__file_stat(path)) {
-    Some(st) => {
-      let held: i64[] = __ranges_held(st.size, ranges);
-      if (held.len() == 0) {
-        return http.not_found();
-      }
-      let f: __FileBody = __FileBody { path: path, id: st, ranges: held, seams: seams };
+  match (http.file_body(path, ranges, seams)) {
+    Some(f) => {
       let fields: HeaderMap = resp.headers;
       if (!http.bodiless(resp.status)) {
-        fields = fields.set("content-length", http.file_ranges_len(held, seams).to_string());
+        fields = fields.set("content-length", f.len().to_string());
       }
       let none: u8[] = [];
-      let producer: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => __file_chunk(f, i), idle_ms: 0, filler: none, trailers: (): HeaderMap => HeaderMap { names: [], values: [] } };
+      let producer: ChunkProducer = ChunkProducer { next: (i: i32): Option[u8[]] => f.piece(i), idle_ms: 0, filler: none, trailers: (): HeaderMap => HeaderMap { names: [], values: [] } };
       return HttpResponse { ...resp, body: BodyChunks(producer), headers: fields };
     },
     None => {
@@ -795,129 +788,12 @@ function __file_measured(resp: HttpResponse, path: string, ranges: i64[], seams:
   }
   return http.not_found();
 }
-
-function __file_stat(path: string): Option[FileStat] {
-  match (open_reader(path)) {
-    Ok(r) => {
-      let measured: Result[FileStat, IoError] = r.stat();
-      r.close();
-      match (measured) {
-        Ok(st) => {
-          return Some(st);
-        },
-        Err(e) => {
-          return None;
-        }
-      }
-    },
-    Err(e) => {
-      return None;
-    }
-  }
-  return None;
-}
 ```
 
-### `22 struct __FileBody`
+### `23 function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: ...`
 
 ```fern
-<<22 struct __FileBody>>=
-struct __FileBody { path: string, id: FileStat, ranges: i64[], seams: u8[][] }
-```
-
-### `23 function __file_chunk(f: __FileBody, i: i32): Option[u8[]]`
-
-```fern
-<<23 function __file_chunk(f: __FileBody, i: i32): Option[u8[]]>>=
-function __file_chunk(f: __FileBody, i: i32): Option[u8[]] {
-  let piece: i64 = 65536 as i64;
-  let at: i64 = i as i64;
-  let k: i32 = 0;
-  while (true) {
-    if (f.seams[k].len() > 0) {
-      if (at == 0 as i64) {
-        return Some(f.seams[k]);
-      }
-      at = at - 1 as i64;
-    }
-    if (2 * k >= f.ranges.len()) {
-      return None;
-    }
-    let len: i64 = f.ranges[2 * k + 1];
-    let pieces: i64 = (len + piece - 1 as i64) / piece;
-    if (at < pieces) {
-      let from: i64 = at * piece;
-      let want: i64 = len - from;
-      if (want > piece) {
-        want = piece;
-      }
-      return __file_read(f, f.ranges[2 * k] + from, want as i32);
-    }
-    at = at - pieces;
-    k = k + 1;
-  }
-  return None;
-}
-
-function __file_read(f: __FileBody, offset: i64, n: i32): Option[u8[]] {
-  match (open_reader(f.path)) {
-    Ok(r) => {
-      let got: Option[u8[]] = __read_from(r, f.id, offset, n);
-      r.close();
-      return got;
-    },
-    Err(e) => {
-      return None;
-    }
-  }
-  return None;
-}
-
-function __read_from(r: Reader, id: FileStat, offset: i64, n: i32): Option[u8[]] {
-  if (!__same_file(r, id)) {
-    return None;
-  }
-  match (r.seek(offset, 0)) {
-    Ok(at) => {
-      return __read_n(r, n);
-    },
-    Err(e) => {
-      return None;
-    }
-  }
-  return None;
-}
-
-function __same_file(r: Reader, id: FileStat): boolean {
-  match (r.stat()) {
-    Ok(st) => {
-      return st.dev == id.dev && st.ino == id.ino && st.size == id.size && st.mtime == id.mtime && st.mtime_nsec == id.mtime_nsec;
-    },
-    Err(e) => {
-      return false;
-    }
-  }
-  return false;
-}
-
-function __read_n(r: Reader, n: i32): Option[u8[]] {
-  let out: u8[] = [];
-  while (out.len() < n) {
-    match (r.read_chunk_bytes(n - out.len())) {
-      Ok(bytes) => {
-        if (bytes.len() == 0) {
-          return None;
-        }
-        out = __joined(out, bytes);
-      },
-      Err(e) => {
-        return None;
-      }
-    }
-  }
-  return Some(out);
-}
-
+<<23 function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: ...>>=
 function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: boolean, keep_alive: boolean, date: string): __Tail {
   if (headless) {
     http.serialize_response_head_into(out, version, resp, keep_alive, date);
@@ -5355,6 +5231,7 @@ pub function supervise_with_shutdown[S](port: i32, opts: Config, init: S, handle
 ```fern
 <<67 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer])>>=
 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError]): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let workers = opts.workers;
   if (workers < 1) {
     workers = cpu_count();
@@ -5664,7 +5541,7 @@ function __exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): 
       return Ok(Some(e));
     },
     Err(e) => {
-      return Err(ListenError { port: opts.metrics_port, error: e });
+      return Err(ListenError { port: opts.metrics_port, error: e, tls_error: None });
     }
   }
   return Ok(None);
@@ -6061,6 +5938,9 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
   if (!opts.h3) {
     return __quic_none();
   }
+  let Ok(tickets) = quic.config([]).server_side(t.identity).with_tickets(l.h3_key) else {
+    return __quic_none();
+  };
   let port = tcp_local_port(l.sock);
   let sock = __adopt(opts.h3_sock);
   if (sock.fd < 0) {
@@ -6076,7 +5956,7 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
     let closed = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(quic.config([]).server_side(t.identity).with_tickets(l.h3_key).with_early_data())), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(tickets.with_early_data())), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
 }
 
 function __quic_on(c: __Conns): boolean {

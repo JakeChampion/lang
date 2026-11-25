@@ -36,7 +36,7 @@ func TestSelfHostGroupCheckIsOneUnsignedCompare(t *testing.T) {
 		absent          []string
 		most            int
 	}{
-		{e2eharness.TargetX86_64Linux, "cmpq", []string{"sarq", "orq", "movslq"}, 9},
+		{e2eharness.TargetX86_64Linux, "cmpq", []string{"sarq", "orq", "movslq"}, 6},
 		{e2eharness.TargetArm64Linux, "cmp ", []string{"asr", "orr", "sxtw"}, 12},
 	}
 	for _, c := range cases {

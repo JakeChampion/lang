@@ -1303,12 +1303,8 @@ function event(own s: App, e: android.Event): App {
       let p = s.dev.detach_gpu(s.painter);
       return App { ...s, painter: p, window: 0 as usize };
     },
-    android.ContentRect(_, top, _, bottom) => {
-      let b = s.h - bottom;
-      if (b < 0 || s.h == 0) {
-        b = 0;
-      }
-      return App { ...s, top: top, bottom: b, dirty: true };
+    android.Insets(_, top, _, bottom) => {
+      return App { ...s, top: top, bottom: bottom, dirty: true };
     },
     android.Vsync(ns) => {
       return frame(s, ns);

@@ -707,6 +707,9 @@ function known(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(_) = t {
     return false;
   }
+  if let typeinfo.TypeVar(_) = t {
+    return false;
+  }
   return true;
 }
 
