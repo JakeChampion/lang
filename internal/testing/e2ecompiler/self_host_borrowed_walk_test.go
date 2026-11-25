@@ -165,16 +165,77 @@ function main(): i32 {
 // receiver that each caller keeps: lookup counts nothing and calls no
 // release.
 func TestSelfHostMethodWalkOfAKeptChainBorrows(t *testing.T) {
+	counts := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`(?m)^\s+(addl|subl) \$1, -8\(|call __fn___sem_(release|drop)_|call __fn___fern_box_dec|call __fn___fern_str_free`),
+		"arm64-linux":  regexp.MustCompile(`(?m)^\s+stur w\d+, \[x\d+, #-8\]|bl __fn___sem_(release|drop)_|bl __fn___fern_box_dec|bl __fn___fern_str_free`),
+	}
+	// Each round reads a (1) and b (2), and c (4) two times.
+	checkMethodWalkBorrows(t, borrowedMethodWalkProg, "borrowed-method-walk", counts, 3*(1+2+4+4))
+}
+
+// lookup returns a value whose type can hold the scope, as interp.Value can
+// hold an Env.
+const borrowedHoldingWalkProg = `struct Num { n: i32 }
+struct Text { s: string }
+struct Clo { s: Scope }
+type Val = Num | Text | Clo;
+
+struct Scope { outer: Option[Scope], names: string[], values: Val[] }
+
+@noinline function (e: Scope) lookup(name: string): Val {
+  let i = e.names.len() - 1;
+  while (i >= 0) {
+    if (e.names[i] == name) {
+      return e.values[i];
+    }
+    i -= 1;
+  }
+  return match (e.outer) { Some(parent) => parent.lookup(name), None => Num { n: 0 } };
+}
+
+function num(v: Val): i32 {
+  if let Num(x) = v {
+    return x.n;
+  }
+  return 0;
+}
+
+@noinline function probe(e: Scope, name: string): i32 {
+  return num(e.lookup(name)) + num(e.lookup("c")) + num(e.lookup("none"));
+}
+
+function main(): i32 {
+  let g = Scope { outer: None, names: ["a", "b"], values: [Num { n: 1 }, Num { n: 2 }] };
+  let f = Scope { outer: Some(g), names: ["c"], values: [Num { n: 4 }] };
+  let sum = 0;
+  for round in 0..3 {
+    sum += probe(f, "a") + probe(f, "b");
+  }
+  return sum;
+}
+`
+
+// A self call is not a reason to count a slot, also when the result type can
+// hold the parameter (semsource.quiet_slots). lookup retains the value that it
+// returns, and it releases no scope.
+func TestSelfHostMethodWalkWithAHoldingResultBorrows(t *testing.T) {
+	counts := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`(?m)call __fn___sem_(release|drop)_|call __fn___fern_box_dec`),
+		"arm64-linux":  regexp.MustCompile(`(?m)bl __fn___sem_(release|drop)_|bl __fn___fern_box_dec`),
+	}
+	checkMethodWalkBorrows(t, borrowedHoldingWalkProg, "borrowed-holding-walk", counts, 3*(1+2+4+4))
+}
+
+// checkMethodWalkBorrows requires that Scope.lookup in prog has no match of
+// counts, and that prog exits with want and a balanced census.
+func checkMethodWalkBorrows(t *testing.T, prog, label string, counts map[string]*regexp.Regexp, want int) {
+	t.Helper()
 	h := selfHostCLIForHost(t)
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "walk.fern")
-	if err := os.WriteFile(src, []byte(borrowedMethodWalkProg), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	counts := map[string]*regexp.Regexp{
-		"x86-64-linux": regexp.MustCompile(`(?m)^\s+(addl|subl) \$1, -8\(|call __fn___sem_(release|drop)_|call __fn___fern_box_dec|call __fn___fern_str_free`),
-		"arm64-linux":  regexp.MustCompile(`(?m)^\s+stur w\d+, \[x\d+, #-8\]|bl __fn___sem_(release|drop)_|bl __fn___fern_box_dec|bl __fn___fern_str_free`),
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		asm, err := os.ReadFile(cli.emit(t, src, target))
@@ -194,8 +255,6 @@ func TestSelfHostMethodWalkOfAKeptChainBorrows(t *testing.T) {
 			t.Errorf("%s: lookup counts or releases the scope that its caller keeps (%q):\n%s", target, strings.TrimSpace(m), body)
 		}
 	}
-	// Each round reads a (1) and b (2), and c (4) two times.
-	const want = 3 * (1 + 2 + 4 + 4)
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")
 		h.compileWith(t, tg, src, bin)
@@ -204,11 +263,11 @@ func TestSelfHostMethodWalkOfAKeptChainBorrows(t *testing.T) {
 		}
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
-		stderr, code := cli.exitOf(t, borrowedMethodWalkProg, target, "FERN_LEAKCHECK=1", "FERN_SANITIZE=1")
+		stderr, code := cli.exitOf(t, prog, target, "FERN_LEAKCHECK=1", "FERN_SANITIZE=1")
 		if code != want {
 			t.Fatalf("%s: exit %d, want %d\n%s", target, code, want, stderr)
 		}
-		allocs, frees, live := parseLeakcheck(t, "borrowed-method-walk", stderr)
+		allocs, frees, live := parseLeakcheck(t, label, stderr)
 		if allocs != frees || live != 0 {
 			t.Errorf("%s: allocs=%d frees=%d live_bytes=%d, want a balanced census", target, allocs, frees, live)
 		}

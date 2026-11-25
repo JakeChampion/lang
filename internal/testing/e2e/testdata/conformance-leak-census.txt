@@ -231,6 +231,7 @@ cell_constructor_result_ownership                    0
 cell_constructor_shadowed_callbacks                  0
 cell_in_container                                    0
 cell_native_descriptor_snapshots                     0
+cell_setter_owned_payloads                           0
 cell_settles_to_its_declaration                      0
 cell_string_accumulate                               0
 cell_struct_field_wide                               0

@@ -112,11 +112,35 @@ function bit_count_kind(kt: i32): boolean {
   return kt == ir.K_CLZ || kt == ir.K_CTZ || kt == ir.K_POPCOUNT || kt == ir.K_BSWAP;
 }
 
+// The widths of a conversion that the backends read. An int_extend and an
+// int_wrap of the pointer width are no-ops on a 64-bit target. An i32_to_f64
+// reads 64 as an i64 source and 0 or 32 as an i32 source. An f64_to_i64 reads
+// the pointer width as the pointer type. Each other conversion has no width.
+function conv_width_refusal(kt: i32, w: i32): string {
+  let p = ir.width_ptr();
+  if (kt == ir.K_INT_EXTEND) {
+    return if (w == 64 || w == p) { "" } else { "64 or the pointer width" };
+  }
+  if (kt == ir.K_INT_WRAP || kt == ir.K_F64_TO_I64) {
+    return if (w == 0 || w == p) { "" } else { "0 or the pointer width" };
+  }
+  if (kt == ir.K_I32_TO_F64) {
+    return if (w == 0 || w == 32 || w == 64 || w == p) { "" } else { "0, 32, 64 or the pointer width" };
+  }
+  if (kt == ir.K_F64_TO_I32 || kt == ir.K_INT_CAST || kt == ir.K_U32_WRAP) {
+    return if (w == 0) { "" } else { "0" };
+  }
+  return "";
+}
+
 // The backends read an integer arithmetic or compare op as 64 bits, as the
 // pointer width, or else as 32 bits. Only 0 and 32 name the 32-bit form.
 // The backends have a bit-count op only for 32 and 64 bits.
 // The result is the widths that the op can have, or "" when `w` is one of them.
-function int_width_refusal(kt: i32, w: i32): string {
+function width_refusal(kt: i32, w: i32): string {
+  if (kt >= ir.K_INT_EXTEND && kt <= ir.K_F64_TO_I64) {
+    return conv_width_refusal(kt, w);
+  }
   if (bit_count_kind(kt)) {
     return if (w == 32 || w == 64) { "" } else { "32 or 64" };
   }
@@ -159,7 +183,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
           + " is not 8, 16, 32, 64 or the pointer width",
       });
     }
-    let widths = int_width_refusal(kt, op.width);
+    let widths = width_refusal(kt, op.width);
     if (widths != "") {
       out = out.append(Problem {
         fn_name: fn_name, op: i, kind: ir.kind_name(kt),

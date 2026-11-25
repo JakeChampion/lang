@@ -287,3 +287,14 @@ This proof does not copy a borrowed Cell or callback payload.
 Local and parameter names that shadow `cell_new` keep their resolved callable contracts.
 
 The `diag_e051_cell_constructor_*` cases and `cell_constructor_result_ownership` check these rules.
+
+A call `slot.set(payload)` gives the borrow of its payload to the cell.
+A helper that returns the cell after that call retains the borrow.
+A local cell that gets a borrowed payload is not an owned value at its last use.
+The rule also applies through an alias `let alias = slot`, because both names refer to one cell.
+A fresh payload, an own input, or a local at its last use keeps the cell owned.
+An own Cell parameter that gets a borrowed payload is borrowed.
+It cannot go to an own parameter or to an `own` result.
+A borrowed snapshot that the function only reads is still valid.
+
+The `diag_e051_cell_setter_*` cases and `cell_setter_owned_payloads` check these rules.

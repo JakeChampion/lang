@@ -122,6 +122,28 @@ function test_verify_rs(): test.TestOutcome {
   return test.assert_eq_array(shown, ["true", "false", "false", "false", "false", "false"]);
 }
 
+// With Q = G and e = r, the two products of the check are one point. With
+// Q = -G and e = r they are opposite points, and their sum is the identity.
+function test_verify_rs_shared_points(): test.TestOutcome {
+  let one = bytes(one_hot(31, 1 as u8));
+  let k = bytes(MIXED);
+  let r = p256.sign_rs(one, bytes(one_hot(31, 9 as u8)), k).0;
+  let equal = p256.sign_rs(one, r, k);
+  let minus = bytes(N_MINUS_1);
+  let e = bytes("44acf6b7e36c1342c2c5897204fe09504e1e2efb1a900377dbc4e7a6a133ec56");
+  let negated = p256.sign_rs(minus, e, k);
+  let got = [
+    p256.verify_rs(bytes(G), r, equal.0, equal.1),
+    p256.verify_rs(p256.base_point(minus), e, negated.0, negated.1),
+    p256.verify_rs(p256.base_point(minus), r, r, one),
+  ];
+  let shown: string[] = [];
+  for g in got {
+    shown = shown.append(g.to_string());
+  }
+  return test.assert_eq_array(shown, ["true", "true", "false"]);
+}
+
 // The two points with x = 0: the even y and the odd y.
 const ZERO_X_EVEN: string = "04000000000000000000000000000000000000000000000000000000000000000066485c780e2f83d72433bd5d84a06bb6541c2af31dae871728bf856a174f93f4";
 
@@ -168,6 +190,7 @@ function test_compress(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/crypto/p256");
   r = r.it("verify_rs accepts only the signature of the key", test_verify_rs);
+  r = r.it("verify_rs adds equal and opposite products", test_verify_rs_shared_points);
   r = r.it("[k]G", test_base_point);
   r = r.it("[k]Q", test_scalar_mul);
   r = r.it("[k]Q refuses a point off the curve", test_scalar_mul_refusals);

@@ -1,0 +1,21 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function take(own slot: Cell[Handle]): Handle {
+  return slot.get();
+}
+
+function local_set(borrowed: Handle): i32 {
+  let slot = cell_new(Handle { fd: 1 });
+  slot.set(borrowed);
+  return take(slot).close();
+}
+
+function main(): i32 {
+  let h = Handle { fd: 7 };
+  return local_set(h) + h.close();
+}

@@ -4713,6 +4713,55 @@ function identity_repl(n: i32): i32[] {
   return out;
 }
 
+// The high half of a product reads the operands of the last product before it
+// in its block when the two have the same operands. A literal of the same value
+// counts as the same operand. One multiply can then make both halves, and the
+// second literal is dead.
+function share_product_operands(f: SFunc): SFunc {
+  let defs = inst_defs(f);
+  let changed = false;
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let low = no_inst();
+    let insts: SInst[] = [];
+    for ins in blk.insts {
+      let at = ins;
+      if (product_half(ins, "mul")) {
+        low = ins;
+      } else if ((product_half(ins, "mulhi_u") || product_half(ins, "mulhi_s")) && product_half(low, "mul") && low.imm == ins.imm && !util.same_i32s(low.args, ins.args) && same_operands(low.args, ins.args, defs)) {
+        at = SInst { ...ins, args: low.args };
+        changed = true;
+      }
+      insts = insts.append(at);
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  if (!changed) {
+    return f;
+  }
+  return SFunc { ...f, blocks: blocks };
+}
+
+function product_half(ins: SInst, op: string): boolean {
+  return ins.kind_tag == BINARY && ins.str == op && ins.args.len() == 2 && ins.result >= 0;
+}
+
+function same_operands(a: i32[], b: i32[], defs: SInst[]): boolean {
+  return same_operand(a[0], b[0], defs) && same_operand(a[1], b[1], defs) || same_operand(a[0], b[1], defs) && same_operand(a[1], b[0], defs);
+}
+
+function same_operand(a: i32, b: i32, defs: SInst[]): boolean {
+  if (a == b) {
+    return true;
+  }
+  if (a < 0 || b < 0 || a >= defs.len() || b >= defs.len()) {
+    return false;
+  }
+  let da = defs[a];
+  let db = defs[b];
+  return da.kind_tag == db.kind_tag && (da.kind_tag == CONST_INT || da.kind_tag == CONST_I64) && da.imm == db.imm && da.str == db.str;
+}
+
 // x + 0, x - 0, x | 0, x ^ 0, x shifted by 0 and x * 1 are x.
 function fold_identities(f: SFunc): Formed {
   let defs = inst_defs(f);
@@ -6297,7 +6346,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 pub function form(f: SFunc): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged = merge_duplicates(folded.f, false);
-  let plain = fold_identities(merged.f);
+  let plain = fold_identities(share_product_operands(merged.f));
   let shared = share_shape_loads(plain.f);
   let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
   let extended = fold_extensions(unwrapped.f);
