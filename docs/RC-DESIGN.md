@@ -781,8 +781,10 @@ pointer that flows through the program points past the header.
   value or null (`__map_get_ref_impl`). Each other `Option` and each `Result`
   is a box of two words: the tag and the payload.
 - The certifier reads a **store of null** into a slot as a take of the load
-  of that slot. When the code releases the load before the store, the null is
-  a `None` that overwrites the slot (`rccertify.spent_before`).
+  of that slot. When each path from the load to the store spends the load
+  more times than it retains it, the null is a `None` that overwrites the
+  slot (`rccertify.spent_before`). Then the load gets the unit of the slot,
+  and the store takes no load if that load is the nearest load of the slot.
 - On a native target the **narrow fields of a variant share one word** when
   two or more of them fit in 64 bits (`semsource.packing`). A narrow field is
   a boolean, a `u8`, an `i32`, a `u32` or such an enum. The fields of one
