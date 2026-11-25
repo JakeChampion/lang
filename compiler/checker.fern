@@ -35508,7 +35508,7 @@ function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr
     }
   }
   if let ast.ExprFieldAccess(fa) = c.callee {
-    if (is_unsafe_builtin_method(receiver_key(check_expr(fa.obj, s)), fa.field)) {
+    if (fa.field == "close_unchecked" && is_unsafe_builtin_method(receiver_key(check_expr(fa.obj, s)), fa.field)) {
       return annotate_expr(ast.ExprFieldAccess { ...fa, field: "close" }, s);
     }
   }
