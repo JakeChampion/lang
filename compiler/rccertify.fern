@@ -3310,11 +3310,49 @@ function settle_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
     p = Progress { ...p, state: p.state.with(w.idx[w.root[null_v]], absent()) };
   }
   p = same_box_on_edge(p, w, bi, sid);
+  p = unique_on_edge(p, w, bi, sid);
   p = token_side_on_edge(p, w, bi, sid);
   if (w.pair_words.len() > 0) {
     p = settle_pair_words(p, w, bi, sid);
   }
   return p;
+}
+
+// A uniqueness test skips an immortal box, so a literal is never unique. On
+// the edge where `__fern_rc_is_unique` is true, a value that is a literal on
+// some paths holds the units of the other paths. This applies only where the
+// other edge releases the box: there the box is a literal or holds no unit,
+// and a token reads it as 0 (`token_fed`). Thus both arms of a token of the
+// box hold a plain count.
+function unique_on_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
+  let t = w.f.blocks[bi].term;
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f || sid != t.t) {
+    return p;
+  }
+  let c = def_in(w, t.cond);
+  if (!is_call(c, "__fern_rc_is_unique") || c.args.len() != 1 || c.args[0] < 0 || w.derived[c.args[0]]) {
+    return p;
+  }
+  let r = w.root[c.args[0]];
+  let k = w.idx[r];
+  if (k < 0 || p.state[k] < free_or(0) || !releases_root(w, t.f, r)) {
+    return p;
+  }
+  return Progress { ...p, state: p.state.with(k, p.state[k] - free_or(0)) };
+}
+
+// The block `id` releases the box `r` with `__fern_rc_dec`.
+function releases_root(w: Walk, id: i32, r: i32): boolean {
+  let bi = w.at[id];
+  if (bi < 0) {
+    return false;
+  }
+  for ins in w.f.blocks[bi].insts {
+    if (is_call(ins, "__fern_rc_dec") && ins.args.len() == 1 && ins.args[0] >= 0 && w.root[ins.args[0]] == r) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // On the edge where a call's result is its operand (effect_kept_or_same),
@@ -3642,6 +3680,10 @@ function token_fed(own p: Progress, w: Walk, ins: ssa.SInst, a: i32): Fed {
     p = Progress { ...p, state: p.state.with(kb, flat(p.state[kb])) };
   }
   if (zero_at(w, a)) {
+    // A box that is a literal or holds no unit hands the token nothing.
+    if (p.state[kb] == free_or(0)) {
+      p = Progress { ...p, state: p.state.with(kb, 0) };
+    }
     let held = p.state[kb];
     if (held < 0 || held > cap()) {
       return count_input(p, w, a);
