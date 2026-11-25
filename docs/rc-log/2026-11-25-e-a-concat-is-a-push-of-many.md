@@ -29,6 +29,7 @@ also a value that the certifier does not check.
   twin of the operand's box: it holds no unit where it is that box, and its
   fresh unit where it is new (`kept_or_same_twin`). This is the rule of a
   push (`push_twin`). Where no key names the box, the result is unproved.
+
 - Where the operand of a marked call is not the box of a key, the result is
   not that box either. The result keeps that through the test that decides
   whether it is its operand (`took_operand`).
