@@ -391,101 +391,39 @@ pub function (c: AudioAttributes_BuilderClass) set_usage(e: usize, self: AudioAt
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, class_loader: ClassLoaderClass, class: ClassClass, audio_manager: AudioManagerClass, audio_manager_on_audio_focus_change_listener: AudioManager_OnAudioFocusChangeListenerClass, audio_focus_request: AudioFocusRequestClass, audio_focus_request_builder: AudioFocusRequest_BuilderClass, audio_attributes: AudioAttributesClass, audio_attributes_builder: AudioAttributes_BuilderClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let class_loader = match (class_loader_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let class = match (class_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      return Err(err);
-    },
-  };
-  let audio_manager = match (audio_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      return Err(err);
-    },
-  };
-  let audio_manager_on_audio_focus_change_listener = match (audio_manager_on_audio_focus_change_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      audio_manager.release(e);
-      return Err(err);
-    },
-  };
-  let audio_focus_request = match (audio_focus_request_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      audio_manager.release(e);
-      audio_manager_on_audio_focus_change_listener.release(e);
-      return Err(err);
-    },
-  };
-  let audio_focus_request_builder = match (audio_focus_request_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      audio_manager.release(e);
-      audio_manager_on_audio_focus_change_listener.release(e);
-      audio_focus_request.release(e);
-      return Err(err);
-    },
-  };
-  let audio_attributes = match (audio_attributes_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      audio_manager.release(e);
-      audio_manager_on_audio_focus_change_listener.release(e);
-      audio_focus_request.release(e);
-      audio_focus_request_builder.release(e);
-      return Err(err);
-    },
-  };
-  let audio_attributes_builder = match (audio_attributes_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      audio_manager.release(e);
-      audio_manager_on_audio_focus_change_listener.release(e);
-      audio_focus_request.release(e);
-      audio_focus_request_builder.release(e);
-      audio_attributes.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let class_loader = deleted_on_error(e, class_loader_class(e), made)?;
+  made = made.append(class_loader.class);
+  let class = deleted_on_error(e, class_class(e), made)?;
+  made = made.append(class.class);
+  let audio_manager = deleted_on_error(e, audio_manager_class(e), made)?;
+  made = made.append(audio_manager.class);
+  let audio_manager_on_audio_focus_change_listener = deleted_on_error(e, audio_manager_on_audio_focus_change_listener_class(e), made)?;
+  made = made.append(audio_manager_on_audio_focus_change_listener.class);
+  let audio_focus_request = deleted_on_error(e, audio_focus_request_class(e), made)?;
+  made = made.append(audio_focus_request.class);
+  let audio_focus_request_builder = deleted_on_error(e, audio_focus_request_builder_class(e), made)?;
+  made = made.append(audio_focus_request_builder.class);
+  let audio_attributes = deleted_on_error(e, audio_attributes_class(e), made)?;
+  made = made.append(audio_attributes.class);
+  let audio_attributes_builder = deleted_on_error(e, audio_attributes_builder_class(e), made)?;
   return Ok(Classes { context: context, class_loader: class_loader, class: class, audio_manager: audio_manager, audio_manager_on_audio_focus_change_listener: audio_manager_on_audio_focus_change_listener, audio_focus_request: audio_focus_request, audio_focus_request_builder: audio_focus_request_builder, audio_attributes: audio_attributes, audio_attributes_builder: audio_attributes_builder });
 }
 

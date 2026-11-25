@@ -346,87 +346,37 @@ pub function (c: ArrayListClass) add(e: usize, self: ArrayList, a0: jni.Object):
 // The struct of IDs of each class of this module.
 pub struct Classes { media_browser_service: MediaBrowserServiceClass, media_browser_service_browser_root: MediaBrowserService_BrowserRootClass, media_browser_service_result: MediaBrowserService_ResultClass, media_session_token: MediaSession_TokenClass, media_browser_media_item: MediaBrowser_MediaItemClass, media_description: MediaDescriptionClass, media_description_builder: MediaDescription_BuilderClass, array_list: ArrayListClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let media_browser_service = match (media_browser_service_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let media_browser_service_browser_root = match (media_browser_service_browser_root_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_browser_service.release(e);
-      return Err(err);
-    },
-  };
-  let media_browser_service_result = match (media_browser_service_result_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_browser_service.release(e);
-      media_browser_service_browser_root.release(e);
-      return Err(err);
-    },
-  };
-  let media_session_token = match (media_session_token_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_browser_service.release(e);
-      media_browser_service_browser_root.release(e);
-      media_browser_service_result.release(e);
-      return Err(err);
-    },
-  };
-  let media_browser_media_item = match (media_browser_media_item_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_browser_service.release(e);
-      media_browser_service_browser_root.release(e);
-      media_browser_service_result.release(e);
-      media_session_token.release(e);
-      return Err(err);
-    },
-  };
-  let media_description = match (media_description_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_browser_service.release(e);
-      media_browser_service_browser_root.release(e);
-      media_browser_service_result.release(e);
-      media_session_token.release(e);
-      media_browser_media_item.release(e);
-      return Err(err);
-    },
-  };
-  let media_description_builder = match (media_description_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_browser_service.release(e);
-      media_browser_service_browser_root.release(e);
-      media_browser_service_result.release(e);
-      media_session_token.release(e);
-      media_browser_media_item.release(e);
-      media_description.release(e);
-      return Err(err);
-    },
-  };
-  let array_list = match (array_list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_browser_service.release(e);
-      media_browser_service_browser_root.release(e);
-      media_browser_service_result.release(e);
-      media_session_token.release(e);
-      media_browser_media_item.release(e);
-      media_description.release(e);
-      media_description_builder.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let media_browser_service = deleted_on_error(e, media_browser_service_class(e), made)?;
+  made = made.append(media_browser_service.class);
+  let media_browser_service_browser_root = deleted_on_error(e, media_browser_service_browser_root_class(e), made)?;
+  made = made.append(media_browser_service_browser_root.class);
+  let media_browser_service_result = deleted_on_error(e, media_browser_service_result_class(e), made)?;
+  made = made.append(media_browser_service_result.class);
+  let media_session_token = deleted_on_error(e, media_session_token_class(e), made)?;
+  made = made.append(media_session_token.class);
+  let media_browser_media_item = deleted_on_error(e, media_browser_media_item_class(e), made)?;
+  made = made.append(media_browser_media_item.class);
+  let media_description = deleted_on_error(e, media_description_class(e), made)?;
+  made = made.append(media_description.class);
+  let media_description_builder = deleted_on_error(e, media_description_builder_class(e), made)?;
+  made = made.append(media_description_builder.class);
+  let array_list = deleted_on_error(e, array_list_class(e), made)?;
   return Ok(Classes { media_browser_service: media_browser_service, media_browser_service_browser_root: media_browser_service_browser_root, media_browser_service_result: media_browser_service_result, media_session_token: media_session_token, media_browser_media_item: media_browser_media_item, media_description: media_description, media_description_builder: media_description_builder, array_list: array_list });
 }
 

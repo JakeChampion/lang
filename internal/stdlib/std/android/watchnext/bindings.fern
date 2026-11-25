@@ -445,87 +445,37 @@ pub function (c: LongClass) value_of(e: usize, a0: i64): Result[Long, jni.JavaEr
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, content_resolver: ContentResolverClass, content_values: ContentValuesClass, package_manager: PackageManagerClass, cursor: CursorClass, uri: UriClass, tv_contract: TvContractClass, long: LongClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let content_resolver = match (content_resolver_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let content_values = match (content_values_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      return Err(err);
-    },
-  };
-  let package_manager = match (package_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      content_values.release(e);
-      return Err(err);
-    },
-  };
-  let cursor = match (cursor_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      content_values.release(e);
-      package_manager.release(e);
-      return Err(err);
-    },
-  };
-  let uri = match (uri_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      content_values.release(e);
-      package_manager.release(e);
-      cursor.release(e);
-      return Err(err);
-    },
-  };
-  let tv_contract = match (tv_contract_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      content_values.release(e);
-      package_manager.release(e);
-      cursor.release(e);
-      uri.release(e);
-      return Err(err);
-    },
-  };
-  let long = match (long_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      content_values.release(e);
-      package_manager.release(e);
-      cursor.release(e);
-      uri.release(e);
-      tv_contract.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let content_resolver = deleted_on_error(e, content_resolver_class(e), made)?;
+  made = made.append(content_resolver.class);
+  let content_values = deleted_on_error(e, content_values_class(e), made)?;
+  made = made.append(content_values.class);
+  let package_manager = deleted_on_error(e, package_manager_class(e), made)?;
+  made = made.append(package_manager.class);
+  let cursor = deleted_on_error(e, cursor_class(e), made)?;
+  made = made.append(cursor.class);
+  let uri = deleted_on_error(e, uri_class(e), made)?;
+  made = made.append(uri.class);
+  let tv_contract = deleted_on_error(e, tv_contract_class(e), made)?;
+  made = made.append(tv_contract.class);
+  let long = deleted_on_error(e, long_class(e), made)?;
   return Ok(Classes { context: context, content_resolver: content_resolver, content_values: content_values, package_manager: package_manager, cursor: cursor, uri: uri, tv_contract: tv_contract, long: long });
 }
 

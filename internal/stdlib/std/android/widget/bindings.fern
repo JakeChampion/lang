@@ -391,74 +391,35 @@ pub function (c: RemoteViewsClass) set_text_view_text(e: usize, self: RemoteView
 // The struct of IDs of each class of this module.
 pub struct Classes { pending_intent: PendingIntentClass, app_widget_manager: AppWidgetManagerClass, component_name: ComponentNameClass, context: ContextClass, intent: IntentClass, package_manager: PackageManagerClass, remote_views: RemoteViewsClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let pending_intent = match (pending_intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let app_widget_manager = match (app_widget_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      pending_intent.release(e);
-      return Err(err);
-    },
-  };
-  let component_name = match (component_name_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      pending_intent.release(e);
-      app_widget_manager.release(e);
-      return Err(err);
-    },
-  };
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      pending_intent.release(e);
-      app_widget_manager.release(e);
-      component_name.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      pending_intent.release(e);
-      app_widget_manager.release(e);
-      component_name.release(e);
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let package_manager = match (package_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      pending_intent.release(e);
-      app_widget_manager.release(e);
-      component_name.release(e);
-      context.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let remote_views = match (remote_views_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      pending_intent.release(e);
-      app_widget_manager.release(e);
-      component_name.release(e);
-      context.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let pending_intent = deleted_on_error(e, pending_intent_class(e), made)?;
+  made = made.append(pending_intent.class);
+  let app_widget_manager = deleted_on_error(e, app_widget_manager_class(e), made)?;
+  made = made.append(app_widget_manager.class);
+  let component_name = deleted_on_error(e, component_name_class(e), made)?;
+  made = made.append(component_name.class);
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let package_manager = deleted_on_error(e, package_manager_class(e), made)?;
+  made = made.append(package_manager.class);
+  let remote_views = deleted_on_error(e, remote_views_class(e), made)?;
   return Ok(Classes { pending_intent: pending_intent, app_widget_manager: app_widget_manager, component_name: component_name, context: context, intent: intent, package_manager: package_manager, remote_views: remote_views });
 }
 

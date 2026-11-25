@@ -661,101 +661,39 @@ pub function (c: ArraysClass) fill(e: usize, a0: jni.Object, a1: i32): Result[vo
 // The struct of IDs of each class of this module.
 pub struct Classes { key_store: KeyStoreClass, key_generator: KeyGeneratorClass, key_pair_generator: KeyPairGeneratorClass, key_gen_parameter_spec_builder: KeyGenParameterSpec_BuilderClass, cipher: CipherClass, signature: SignatureClass, certificate: CertificateClass, gcmparameter_spec: GCMParameterSpecClass, arrays: ArraysClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let key_store = match (key_store_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let key_generator = match (key_generator_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      return Err(err);
-    },
-  };
-  let key_pair_generator = match (key_pair_generator_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      key_generator.release(e);
-      return Err(err);
-    },
-  };
-  let key_gen_parameter_spec_builder = match (key_gen_parameter_spec_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      key_generator.release(e);
-      key_pair_generator.release(e);
-      return Err(err);
-    },
-  };
-  let cipher = match (cipher_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      key_generator.release(e);
-      key_pair_generator.release(e);
-      key_gen_parameter_spec_builder.release(e);
-      return Err(err);
-    },
-  };
-  let signature = match (signature_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      key_generator.release(e);
-      key_pair_generator.release(e);
-      key_gen_parameter_spec_builder.release(e);
-      cipher.release(e);
-      return Err(err);
-    },
-  };
-  let certificate = match (certificate_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      key_generator.release(e);
-      key_pair_generator.release(e);
-      key_gen_parameter_spec_builder.release(e);
-      cipher.release(e);
-      signature.release(e);
-      return Err(err);
-    },
-  };
-  let gcmparameter_spec = match (gcmparameter_spec_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      key_generator.release(e);
-      key_pair_generator.release(e);
-      key_gen_parameter_spec_builder.release(e);
-      cipher.release(e);
-      signature.release(e);
-      certificate.release(e);
-      return Err(err);
-    },
-  };
-  let arrays = match (arrays_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      key_store.release(e);
-      key_generator.release(e);
-      key_pair_generator.release(e);
-      key_gen_parameter_spec_builder.release(e);
-      cipher.release(e);
-      signature.release(e);
-      certificate.release(e);
-      gcmparameter_spec.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let key_store = deleted_on_error(e, key_store_class(e), made)?;
+  made = made.append(key_store.class);
+  let key_generator = deleted_on_error(e, key_generator_class(e), made)?;
+  made = made.append(key_generator.class);
+  let key_pair_generator = deleted_on_error(e, key_pair_generator_class(e), made)?;
+  made = made.append(key_pair_generator.class);
+  let key_gen_parameter_spec_builder = deleted_on_error(e, key_gen_parameter_spec_builder_class(e), made)?;
+  made = made.append(key_gen_parameter_spec_builder.class);
+  let cipher = deleted_on_error(e, cipher_class(e), made)?;
+  made = made.append(cipher.class);
+  let signature = deleted_on_error(e, signature_class(e), made)?;
+  made = made.append(signature.class);
+  let certificate = deleted_on_error(e, certificate_class(e), made)?;
+  made = made.append(certificate.class);
+  let gcmparameter_spec = deleted_on_error(e, gcmparameter_spec_class(e), made)?;
+  made = made.append(gcmparameter_spec.class);
+  let arrays = deleted_on_error(e, arrays_class(e), made)?;
   return Ok(Classes { key_store: key_store, key_generator: key_generator, key_pair_generator: key_pair_generator, key_gen_parameter_spec_builder: key_gen_parameter_spec_builder, cipher: cipher, signature: signature, certificate: certificate, gcmparameter_spec: gcmparameter_spec, arrays: arrays });
 }
 
