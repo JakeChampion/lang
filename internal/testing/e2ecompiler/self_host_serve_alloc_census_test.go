@@ -89,6 +89,50 @@ func censusFetchRun(t *testing.T, cli *selfHostCLI, rounds int) map[censusSite]i
 	return traceSites(t, bin, stderrPath)
 }
 
+// TestSelfHostServeAllocsCensusTLS writes the same census for the TLS
+// keep-alive handler of TestSelfHostServeAllocsPerRequestTLS, to the census
+// file's name with ".tls" after it.
+func TestSelfHostServeAllocsCensusTLS(t *testing.T) {
+	out := os.Getenv("FERN_SERVE_ALLOC_CENSUS")
+	if out == "" {
+		t.Skip("set FERN_SERVE_ALLOC_CENSUS to a file to write the census to")
+	}
+	cli := buildSelfHostCLI(t)
+	short := censusTLSRun(t, cli, censusShort)
+	long := censusTLSRun(t, cli, censusLong)
+	var report strings.Builder
+	writeCensus(&report, "TLS, keep-alive", short, long, censusLong-censusShort)
+	if err := os.WriteFile(out+".tls", []byte(report.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func censusTLSRun(t *testing.T, cli *selfHostCLI, rounds int) map[censusSite]int {
+	t.Helper()
+	dir := t.TempDir()
+	certPEM, keyPEM, pool := e2eharness.TLSAllocsCert(t)
+	certPath := filepath.Join(dir, "cert.pem")
+	keyPath := filepath.Join(dir, "key.pem")
+	if err := os.WriteFile(certPath, certPEM, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsTLSServerSource(0, rounds, certPath, keyPath)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_DEBUG_RC_TRACE=1")
+	addr, stderrPath := e2eharness.StartInheritedServer(t, runX86_64Bin(cli.runner, bin))
+	e2eharness.WaitServerReady(t, addr)
+	get := e2eharness.KeepAliveGETTLS(t, addr, pool)
+	for i := 0; i < rounds; i++ {
+		get("/")
+	}
+	return traceSites(t, bin, stderrPath)
+}
+
 func censusRun(t *testing.T, cli *selfHostCLI, mux bool, rounds int) map[censusSite]int {
 	t.Helper()
 	dir := t.TempDir()

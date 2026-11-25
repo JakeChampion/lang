@@ -15189,22 +15189,30 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
           out = out.append(dg_at("E045", kmsg, expr_line(c.args[0]), expr_col(c.args[0])));
         }
       }
-      out = call_argument_diags(c, dest, s, out);
+      if (c.args.len() > 0 && !s.method_missing(receiver, mfa.field)) {
+        out = call_argument_diags(c, dest, s.field_call_param_types(c, mfa.field, receiver), s, out);
+      }
       return field_call_diags(c, mfa, receiver, s, out);
     },
     ast.ExprIdent(cid) => {
-      if (!is_resolvable_value(cid.name, s)) {
+      let resolved = is_resolvable_value(cid.name, s);
+      if (!resolved) {
         out = out.append(undefined_name(cid.name, s, cid.line, cid.col));
       }
       if (is_map_new_name(cid.name) && !s.module_imported("core/map")) {
         out = out.append(dg_at("E001", map_import_msg(), c.line, c.col));
       }
+      if (resolved && c.args.len() > 0) {
+        out = call_argument_diags(c, dest, s.call_param_types(c), s, out);
+      }
     },
     _ => {
       out = callee_diags(c, s, dest);
+      if (c.args.len() > 0) {
+        out = call_argument_diags(c, dest, [], s, out);
+      }
     }
   }
-  out = call_argument_diags(c, dest, s, out);
   let calleet = check_expr(c.callee, s);
   if (!is_unknown(calleet) && !is_func_type(calleet)) {
     out = out.append(dg_at("E038", "calling non-function value of type " + type_label(calleet), c.line, c.col));
@@ -15282,12 +15290,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
   return out;
 }
 
-function call_argument_diags(c: ast.ExprCall, dest: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
-  let dests = variant_payload_dests(c, dest, s, s.call_param_types(c));
+function call_argument_diags(c: ast.ExprCall, dest: typeinfo.Type, params: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
+  let dests = variant_payload_dests(c, dest, s, params);
   let di = 0;
-  if (!s.callee_resolves(c)) {
-    di = c.args.len();
-  }
   while (di < c.args.len()) {
     let arg_dest = t_unknown("no declared parameter");
     if (di < dests.len()) {
@@ -17269,16 +17274,6 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
   }
 }
 
-function (s: Scope) callee_resolves(c: ast.ExprCall): boolean {
-  if let ast.ExprIdent(cid) = c.callee {
-    return is_resolvable_value(cid.name, s);
-  }
-  if let ast.ExprFieldAccess(mfa) = c.callee {
-    return !s.method_missing(check_expr(mfa.obj, s), mfa.field);
-  }
-  return true;
-}
-
 function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -17292,42 +17287,46 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
       }
     },
     ast.ExprFieldAccess(mfa) => {
-      let rt = check_expr(mfa.obj, s);
-      if let typeinfo.TypeStruct(sn) = rt {
-        if let Some(msig) = s.lookup_method(mfa.field, sn.name) {
-          return s.bound_method_param_types(c, msig, rt);
-        }
-        if let typeinfo.TypeFunc(ff) = check_expr(c.callee, s) {
-          if (ff.params_known) {
-            return ff.param_types;
-          }
-        }
-      }
-      if let typeinfo.TypeUnion(un) = rt {
-        if let Some(msig) = s.lookup_method(mfa.field, un.name) {
-          return s.bound_method_param_types(c, msig, rt);
-        }
-      }
-      if let typeinfo.TypeTuple(tup) = rt {
-        if let Some(msig) = s.lookup_method(mfa.field, parser.tuple_arity_namespace(tup.elements.len())) {
-          return s.bound_method_param_types(c, msig, rt);
-        }
-      }
-      if let typeinfo.TypeMap(mt) = rt {
-        if (mfa.field == "insert") {
-          return [mt.key, mt.value];
-        }
-      }
-      if let typeinfo.TypeArray(at) = rt {
-        return match (mfa.field) {
-          "append" => [at.elem],
-          "with" => [typeinfo.t_i32(), at.elem],
-          "truncate" => [typeinfo.t_i32()],
-          _ => s.array_method_param_types(c, rt, mfa.field, at.view),
-        };
-      }
+      return s.field_call_param_types(c, mfa.field, check_expr(mfa.obj, s));
     },
     _ => {}
+  }
+  return [];
+}
+
+function (s: Scope) field_call_param_types(c: ast.ExprCall, field: string, rt: typeinfo.Type): typeinfo.Type[] {
+  if let typeinfo.TypeStruct(sn) = rt {
+    if let Some(msig) = s.lookup_method(field, sn.name) {
+      return s.bound_method_param_types(c, msig, rt);
+    }
+    if let typeinfo.TypeFunc(ff) = check_expr(c.callee, s) {
+      if (ff.params_known) {
+        return ff.param_types;
+      }
+    }
+  }
+  if let typeinfo.TypeUnion(un) = rt {
+    if let Some(msig) = s.lookup_method(field, un.name) {
+      return s.bound_method_param_types(c, msig, rt);
+    }
+  }
+  if let typeinfo.TypeTuple(tup) = rt {
+    if let Some(msig) = s.lookup_method(field, parser.tuple_arity_namespace(tup.elements.len())) {
+      return s.bound_method_param_types(c, msig, rt);
+    }
+  }
+  if let typeinfo.TypeMap(mt) = rt {
+    if (field == "insert") {
+      return [mt.key, mt.value];
+    }
+  }
+  if let typeinfo.TypeArray(at) = rt {
+    return match (field) {
+      "append" => [at.elem],
+      "with" => [typeinfo.t_i32(), at.elem],
+      "truncate" => [typeinfo.t_i32()],
+      _ => s.array_method_param_types(c, rt, field, at.view),
+    };
   }
   return [];
 }
@@ -22053,7 +22052,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           if (ctx.ofuncs.ctors.has(cid.name) && !ow_ctor_name_taken(ctx, cid.name) || ow_builtin_variant(ctx, cid.name)) {
             return ow_variant_args_owned(c, ctx);
           }
-          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && ctx.fresh.has(cid.name) || ow_callback_args_owned(c, ctx.last_use.get());
+          return cid.name == "share_unchecked" || !ow_name_bound(ctx, cid.name) && (ctx.fresh.has(cid.name) || ow_call_args_fresh(c, ctx)) || ow_callback_args_owned(c, ctx.last_use.get());
         },
         ast.ExprFieldAccess(mfa) => {
           // An associated call with no arguments has no source for a loan.
@@ -23512,6 +23511,46 @@ function lu_payload_arg_lends(fx: LuFn, a: ast.Expr): boolean {
 
 // Direct own calls accept actual callbacks that cannot lend a capture.
 // Other borrowed parameters keep their conservative result contract.
+// A result borrows only from its arguments, so fresh arguments give an owned result.
+function ow_call_args_fresh(c: ast.ExprCall, ctx: OwnCtx): boolean {
+  for a in c.args {
+    if (!ow_fresh_arg(a, ctx)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A fresh argument is a construction that no name holds.
+function ow_fresh_arg(a: ast.Expr, ctx: OwnCtx): boolean {
+  if (ow_expr_is_scalar(a, ctx)) {
+    return true;
+  }
+  if let ast.ExprCall(c) = a {
+    return ow_call_checked_result(c, ctx.scope);
+  }
+  if (ow_ident_name(a).len() > 0 || ow_reads_a_part(a)) {
+    return false;
+  }
+  if let ast.ExprLambda(_) = a {
+    return false;
+  }
+  return ow_is_owned_expr(a, ctx);
+}
+
+function ow_reads_a_part(e: ast.Expr): boolean {
+  if let ast.ExprFieldAccess(_) = e {
+    return true;
+  }
+  if let ast.ExprIndex(_) = e {
+    return true;
+  }
+  if let ast.ExprSlice(_) = e {
+    return true;
+  }
+  return false;
+}
+
 function ow_callback_args_owned(c: ast.ExprCall, lu: LastUses): boolean {
   let row = lu.lenders.names.find(ow_ident_name(c.callee));
   if (row < 0) {

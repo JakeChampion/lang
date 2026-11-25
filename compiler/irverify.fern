@@ -150,6 +150,31 @@ function mem_width_refusal(kt: i32, w: i32): string {
   return "";
 }
 
+// The lane widths that the backends read. Each backend refuses an op on
+// integer lanes that are not 8, 16 or 32 bits, and a change of shape that
+// does not start from the lanes it names. They read a float lane op of 32
+// bits as f32 lanes and each other width as f64 lanes. The bitwise ops, the
+// whole-register loads and stores, a vget, a vset and a vpermute take lanes
+// of each type.
+function lane_width_refusal(kt: i32, w: i32): string {
+  if (ir.is_lane_int_kind(kt)) {
+    return if (w == 8 || w == 16 || w == 32) { "" } else { "8, 16 or 32" };
+  }
+  if (kt == ir.K_VISWIZZLE) {
+    return if (w == 8) { "" } else { "8" };
+  }
+  if (kt == ir.K_VINARROWS || kt == ir.K_VINARROWU) {
+    return if (w == 16 || w == 32) { "" } else { "16 or 32" };
+  }
+  if (ir.is_lane_shape_kind(kt)) {
+    return if (w == 8 || w == 16) { "" } else { "8 or 16" };
+  }
+  if (kt >= ir.K_VAND && kt <= ir.K_VSET || kt == ir.K_VPERMUTE) {
+    return if (w == 8 || w == 16 || w == 32 || w == 64) { "" } else { "8, 16, 32 or 64" };
+  }
+  return if (w == 32 || w == 64) { "" } else { "32 or 64" };
+}
+
 // The backends read an integer arithmetic or compare op as 64 bits, as the
 // pointer width, or else as 32 bits. Only 0 and 32 name the 32-bit form.
 // The backends have a bit-count op only for 32 and 64 bits.
@@ -157,6 +182,9 @@ function mem_width_refusal(kt: i32, w: i32): string {
 function width_refusal(kt: i32, w: i32): string {
   if (kt >= ir.K_INT_EXTEND && kt <= ir.K_F64_TO_I64) {
     return conv_width_refusal(kt, w);
+  }
+  if (ir.is_lane_kind(kt)) {
+    return lane_width_refusal(kt, w);
   }
   let mem = mem_width_refusal(kt, w);
   if (mem != "") {
