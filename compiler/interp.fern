@@ -3032,7 +3032,8 @@ function call_integer_lane_builtin(heap: interpheap.Heap, name: string, args: Va
   return integer_lanes_map(ls[0], ls[1], verb);
 }
 
-function lanes_binary(op: string, a: VLanes, rv: Value): Value {
+function lanes_binary(code: i32, a: VLanes, rv: Value): Value {
+  let op = ast.binary_text(code);
   if let VLanes(b) = rv {
     if (a.kind != typeinfo.LANE_FLOAT && (op == "+" || op == "-" || op == "*")) {
       return integer_lanes_map(a, b, op);
@@ -4423,14 +4424,14 @@ function (own e: Env) write_slot(depth: i32, i: i32, v: Value): Env {
   return match (e.outer) { Some(parent) => Env { ...e, outer: Some(unsafe { share_unchecked(parent) }.write_slot(depth - 1, i, v)) }, None => e };
 }
 
-function sat_exact(op: string, a: i64, b: i64): i64 {
-  if (op == "+|") {
+function sat_exact(code: i32, a: i64, b: i64): i64 {
+  if (code == ast.OP_SAT_ADD) {
     return a + b;
   }
-  if (op == "-|") {
+  if (code == ast.OP_SAT_SUB) {
     return a - b;
   }
-  if (op == "<<|") {
+  if (code == ast.OP_SAT_SHL) {
     if (b < 0 || b >= 32) {
       return sat_shl_oor(a);
     }
@@ -4464,10 +4465,10 @@ function sat_clamp(v: i64, minv: i64, maxv: i64): i64 {
   return v;
 }
 
-function sat_i64(op: string, a: i64, b: i64): i64 {
+function sat_i64(code: i32, a: i64, b: i64): i64 {
   let maxv: i64 = 9223372036854775807;
   let minv: i64 = -9223372036854775807 - 1;
-  if (op == "+|") {
+  if (code == ast.OP_SAT_ADD) {
     if (b > 0 && a > maxv - b) {
       return maxv;
     }
@@ -4476,7 +4477,7 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
     }
     return a + b;
   }
-  if (op == "-|") {
+  if (code == ast.OP_SAT_SUB) {
     if (b < 0 && a > maxv + b) {
       return maxv;
     }
@@ -4485,7 +4486,7 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
     }
     return a - b;
   }
-  if (op == "<<|") {
+  if (code == ast.OP_SAT_SHL) {
     if (b >= 0 && b < 64) {
       let sh = a << b;
       if (sh >> b == a) {
@@ -4523,24 +4524,24 @@ function sat_i64(op: string, a: i64, b: i64): i64 {
   return prod;
 }
 
-function sat_u64(op: string, a: u64, b: u64): i64 {
+function sat_u64(code: i32, a: u64, b: u64): i64 {
   let one = 1 as u64;
   let maxv = 0 as u64 - one;
-  if (op == "+|") {
+  if (code == ast.OP_SAT_ADD) {
     let s = a + b;
     if (s < a) {
       return maxv as i64;
     }
     return s as i64;
   }
-  if (op == "-|") {
+  if (code == ast.OP_SAT_SUB) {
     if (a < b) {
       return 0;
     }
     let d = a - b;
     return d as i64;
   }
-  if (op == "<<|") {
+  if (code == ast.OP_SAT_SHL) {
     if (b < 64 as u64) {
       let sh = a << b;
       if (sh >> b == a) {
@@ -4559,36 +4560,40 @@ function sat_u64(op: string, a: u64, b: u64): i64 {
   return prod as i64;
 }
 
-function eval_usize_binary(op: string, a: u64, b: u64): Value {
+function eval_usize_binary(code: i32, a: u64, b: u64): Value {
   let sh = b & (ptr_bits() - 1) as u64;
-  if (op == "+") {
+  if (code == ast.OP_ADD) {
     return v_usize((a + b) as i64);
   }
-  if (op == "-") {
+  if (code == ast.OP_SUB) {
     return v_usize((a - b) as i64);
   }
-  if (op == "*") {
+  if (code == ast.OP_MUL) {
     return v_usize((a * b) as i64);
   }
-  if (op == "/" || op == "%") {
-    return usize_divide(op == "/", a, b);
+  if (code == ast.OP_DIV || code == ast.OP_REM) {
+    return usize_divide(code == ast.OP_DIV, a, b);
   }
-  if (op == "<<") {
+  if (code == ast.OP_SHL) {
     return v_usize((a << sh) as i64);
   }
-  if (op == ">>") {
+  if (code == ast.OP_SHR) {
     return v_usize((a >> sh) as i64);
   }
-  return usize_bitwise(op, a, b);
+  return usize_bitwise(code, a, b);
 }
 
-function usize_bitwise(op: string, a: u64, b: u64): Value {
-  return match (op) {
-    "&" => v_usize((a & b) as i64),
-    "|" => v_usize((a | b) as i64),
-    "^" => v_usize((a ^ b) as i64),
-    _ => usize_compare(op, a, b),
-  };
+function usize_bitwise(code: i32, a: u64, b: u64): Value {
+  if (code == ast.OP_AND) {
+    return v_usize((a & b) as i64);
+  }
+  if (code == ast.OP_OR) {
+    return v_usize((a | b) as i64);
+  }
+  if (code == ast.OP_XOR) {
+    return v_usize((a ^ b) as i64);
+  }
+  return usize_compare(code, a, b);
 }
 
 function usize_divide(quotient: boolean, a: u64, b: u64): Value {
@@ -4604,29 +4609,39 @@ function usize_divide(quotient: boolean, a: u64, b: u64): Value {
   return v_usize((a % b) as i64);
 }
 
-function usize_compare(op: string, a: u64, b: u64): Value {
-  return match (op) {
-    "==" => v_bool(a == b),
-    "!=" => v_bool(a != b),
-    "<" => v_bool(a < b),
-    "<=" => v_bool(a <= b),
-    ">" => v_bool(a > b),
-    ">=" => v_bool(a >= b),
-    _ => v_err("operator `" + op + "` is not defined on usize"),
-  };
+function usize_compare(code: i32, a: u64, b: u64): Value {
+  if (code == ast.OP_EQ) {
+    return v_bool(a == b);
+  }
+  if (code == ast.OP_NE) {
+    return v_bool(a != b);
+  }
+  if (code == ast.OP_LT) {
+    return v_bool(a < b);
+  }
+  if (code == ast.OP_LE) {
+    return v_bool(a <= b);
+  }
+  if (code == ast.OP_GT) {
+    return v_bool(a > b);
+  }
+  if (code == ast.OP_GE) {
+    return v_bool(a >= b);
+  }
+  return v_err("operator `" + ast.binary_text(code) + "` is not defined on usize");
 }
 
-function strings_ordered(op: string, a: string, b: string): boolean {
-  return match (op) {
-    "<" => a < b,
-    "<=" => a <= b,
-    ">" => a > b,
-    _ => a >= b,
-  };
-}
-
-function is_checked_op(op: string): boolean {
-  return op.len() >= 2 && op[op.len() - 1] == b'?' && util.has_str(["+?", "-?", "*?", "/?", "%?", "<<?", ">>?"], op);
+function strings_ordered(code: i32, a: string, b: string): boolean {
+  if (code == ast.OP_LT) {
+    return a < b;
+  }
+  if (code == ast.OP_LE) {
+    return a <= b;
+  }
+  if (code == ast.OP_GT) {
+    return a > b;
+  }
+  return a >= b;
 }
 
 function checked_operand_type(b: ast.ExprBinary, lv: Value): string {
@@ -4770,29 +4785,31 @@ function checked_64(op: string, a: i64, b: i64, signed: boolean): Option[i64] {
   return Some((a as u64 >> b as u64) as i64);
 }
 
-function eval_typed_binary(op: string, lv: Value, rv: Value, ty: string): Value {
-  if (ty == "u8" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
-    return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 255) as i32);
+function eval_typed_binary(code: i32, lv: Value, rv: Value, ty: string): Value {
+  if (ast.is_saturating_code(code) && is_int_like(lv) && is_int_like(rv)) {
+    if (ty == "u8") {
+      return v_int(sat_clamp(sat_exact(code, vint_as_i64(lv), vint_as_i64(rv)), 0, 255) as i32);
+    }
+    if (ty == "u16") {
+      return v_int(sat_clamp(sat_exact(code, vint_as_i64(lv), vint_as_i64(rv)), 0, 65535) as i32);
+    }
+    if (ty == "i16") {
+      return v_int(sat_clamp(sat_exact(code, vint_as_i64(lv), vint_as_i64(rv)), -32768, 32767) as i32);
+    }
   }
-  if (ty == "u16" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
-    return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), 0, 65535) as i32);
-  }
-  if (ty == "i16" && lexer.is_saturating_op(op) && is_int_like(lv) && is_int_like(rv)) {
-    return v_int(sat_clamp(sat_exact(op, vint_as_i64(lv), vint_as_i64(rv)), -32768, 32767) as i32);
-  }
-  let v = eval_binary(op, lv, rv);
+  let v = eval_binary(code, lv, rv);
   if (ty == "i32" || ty == "u8" || ty == "i64" || ty == "u32" || ty == "u64" || ty == "usize" || ty == "u16" || ty == "i16") {
     return coerce_int_width(v, ty);
   }
   return v;
 }
 
-function eval_binary_saturating(op: string, lv: Value, rv: Value): Value {
+function eval_binary_saturating(code: i32, lv: Value, rv: Value): Value {
   match (lv) {
     VInt(li) => {
       match (rv) {
         VInt(ri) => {
-          let sv = sat_exact(op, li.v as i64, ri.v as i64);
+          let sv = sat_exact(code, li.v as i64, ri.v as i64);
           return v_int(sat_clamp(sv, -2147483647 - 1, 2147483647) as i32);
         },
         _ => {
@@ -4844,194 +4861,194 @@ function eval_binary_plus(lv: Value, rv: Value): Value {
   }
 }
 
-function eval_binary_i64(op: string, lv: Value, rv: Value): Value {
+function eval_binary_i64(code: i32, lv: Value, rv: Value): Value {
   let a = vint_as_i64(lv);
   let b = vint_as_i64(rv);
   let uns = is_vuint64(lv) || is_vuint64(rv);
-  if (op == "+") {
+  if (code == ast.OP_ADD) {
     return v_wide(a + b, uns);
   }
-  if (op == "-") {
+  if (code == ast.OP_SUB) {
     return v_wide(a - b, uns);
   }
-  if (op == "*") {
+  if (code == ast.OP_MUL) {
     return v_wide(a * b, uns);
   }
-  if (op == "&") {
+  if (code == ast.OP_AND) {
     return v_wide(a & b, uns);
   }
-  if (op == "|") {
+  if (code == ast.OP_OR) {
     return v_wide(a | b, uns);
   }
-  if (op == "^") {
+  if (code == ast.OP_XOR) {
     return v_wide(a ^ b, uns);
   }
-  if (op == "<<") {
+  if (code == ast.OP_SHL) {
     return v_wide(a << b, uns);
   }
-  if (op == "==") {
+  if (code == ast.OP_EQ) {
     return v_bool(a == b);
   }
-  if (op == "!=") {
+  if (code == ast.OP_NE) {
     return v_bool(a != b);
   }
   if (uns) {
     let ua = a as u64;
     let ub = b as u64;
     let uzero = 0 as u64;
-    if (lexer.is_saturating_op(op)) {
-      return v_uint64(sat_u64(op, ua, ub));
+    if (ast.is_saturating_code(code)) {
+      return v_uint64(sat_u64(code, ua, ub));
     }
-    if (op == "/") {
+    if (code == ast.OP_DIV) {
       if (ub == uzero) {
         return v_uint64(0);
       }
       let uq = ua / ub;
       return v_uint64(uq as i64);
     }
-    if (op == "%") {
+    if (code == ast.OP_REM) {
       if (ub == uzero) {
         return v_uint64(a);
       }
       let ur = ua % ub;
       return v_uint64(ur as i64);
     }
-    if (op == ">>") {
+    if (code == ast.OP_SHR) {
       let ush = ua >> ub;
       return v_uint64(ush as i64);
     }
-    if (op == "<") {
+    if (code == ast.OP_LT) {
       return v_bool(ua < ub);
     }
-    if (op == "<=") {
+    if (code == ast.OP_LE) {
       return v_bool(ua <= ub);
     }
-    if (op == ">") {
+    if (code == ast.OP_GT) {
       return v_bool(ua > ub);
     }
-    if (op == ">=") {
+    if (code == ast.OP_GE) {
       return v_bool(ua >= ub);
     }
   }
-  if (lexer.is_saturating_op(op)) {
-    return v_int64(sat_i64(op, a, b));
+  if (ast.is_saturating_code(code)) {
+    return v_int64(sat_i64(code, a, b));
   }
-  if (op == "/") {
+  if (code == ast.OP_DIV) {
     if (b == 0) {
       return v_int64(0);
     }
     let q64 = a / b;
     return v_int64(q64);
   }
-  if (op == "%") {
+  if (code == ast.OP_REM) {
     if (b == 0) {
       return v_int64(a);
     }
     let r64 = a % b;
     return v_int64(r64);
   }
-  if (op == "<") {
+  if (code == ast.OP_LT) {
     return v_bool(a < b);
   }
-  if (op == "<=") {
+  if (code == ast.OP_LE) {
     return v_bool(a <= b);
   }
-  if (op == ">") {
+  if (code == ast.OP_GT) {
     return v_bool(a > b);
   }
-  if (op == ">=") {
+  if (code == ast.OP_GE) {
     return v_bool(a >= b);
   }
-  if (op == ">>") {
+  if (code == ast.OP_SHR) {
     return v_int64(a >> b);
   }
-  return eval_binary_after_i64(op, lv, rv);
+  return eval_binary_after_i64(code, lv, rv);
 }
 
-function eval_binary_after_i64(op: string, lv: Value, rv: Value): Value {
+function eval_binary_after_i64(code: i32, lv: Value, rv: Value): Value {
   if (is_int_like(lv) && is_int_like(rv) && (is_vuint(lv) || is_vuint(rv))) {
-    return eval_binary_u32(op, lv, rv);
+    return eval_binary_u32(code, lv, rv);
   }
-  return eval_binary_after_u32(op, lv, rv);
+  return eval_binary_after_u32(code, lv, rv);
 }
 
-function eval_binary_u32(op: string, lv: Value, rv: Value): Value {
+function eval_binary_u32(code: i32, lv: Value, rv: Value): Value {
   let la = vint_bits(lv);
   let rb = vint_bits(rv);
-  if (op == "+") {
+  if (code == ast.OP_ADD) {
     return v_uint(la + rb);
   }
-  if (op == "-") {
+  if (code == ast.OP_SUB) {
     return v_uint(la - rb);
   }
-  if (op == "*") {
+  if (code == ast.OP_MUL) {
     return v_uint(la * rb);
   }
-  if (lexer.is_saturating_op(op)) {
-    return v_uint(sat_clamp(sat_exact(op, uint_zext(la), uint_zext(rb)), 0, 4294967295) as i32);
+  if (ast.is_saturating_code(code)) {
+    return v_uint(sat_clamp(sat_exact(code, uint_zext(la), uint_zext(rb)), 0, 4294967295) as i32);
   }
-  if (op == "&") {
+  if (code == ast.OP_AND) {
     return v_uint(la & rb);
   }
-  if (op == "|") {
+  if (code == ast.OP_OR) {
     return v_uint(la | rb);
   }
-  if (op == "^") {
+  if (code == ast.OP_XOR) {
     return v_uint(la ^ rb);
   }
-  if (op == "<<") {
+  if (code == ast.OP_SHL) {
     return v_uint(la << (rb & 31));
   }
   let ua = uint_zext(la);
   let ub = uint_zext(rb);
-  if (op == ">>") {
+  if (code == ast.OP_SHR) {
     let sc = (rb & 31) as i64;
     let shifted = ua >> sc;
     return v_uint(shifted as i32);
   }
-  if (op == "/") {
+  if (code == ast.OP_DIV) {
     if (ub == 0) {
       return v_uint(0);
     }
     let uq = ua / ub;
     return v_uint(uq as i32);
   }
-  if (op == "%") {
+  if (code == ast.OP_REM) {
     if (ub == 0) {
       return v_uint(la);
     }
     let ur = ua % ub;
     return v_uint(ur as i32);
   }
-  if (op == "<") {
+  if (code == ast.OP_LT) {
     return v_bool(ua < ub);
   }
-  if (op == "<=") {
+  if (code == ast.OP_LE) {
     return v_bool(ua <= ub);
   }
-  if (op == ">") {
+  if (code == ast.OP_GT) {
     return v_bool(ua > ub);
   }
-  if (op == ">=") {
+  if (code == ast.OP_GE) {
     return v_bool(ua >= ub);
   }
-  if (op == "==") {
+  if (code == ast.OP_EQ) {
     return v_bool(la == rb);
   }
-  if (op == "!=") {
+  if (code == ast.OP_NE) {
     return v_bool(la != rb);
   }
-  return eval_binary_after_u32(op, lv, rv);
+  return eval_binary_after_u32(code, lv, rv);
 }
 
-function eval_binary_after_u32(op: string, lv: Value, rv: Value): Value {
+function eval_binary_after_u32(code: i32, lv: Value, rv: Value): Value {
   if ((is_vfloat32(lv) || is_vfloat32(rv)) && (is_float_like(lv) || is_int_like(lv)) && (is_float_like(rv) || is_int_like(rv))) {
-    return eval_binary_f32(op, lv, rv);
+    return eval_binary_f32(code, lv, rv);
   }
-  return eval_binary_after_f32(op, lv, rv);
+  return eval_binary_after_f32(code, lv, rv);
 }
 
-function eval_binary_f32(op: string, lv: Value, rv: Value): Value {
+function eval_binary_f32(code: i32, lv: Value, rv: Value): Value {
   let fa = vfloat_as_f64(lv);
   if (is_int_like(lv)) {
     fa = vint_as_i64(lv) as f64;
@@ -5040,82 +5057,82 @@ function eval_binary_f32(op: string, lv: Value, rv: Value): Value {
   if (is_int_like(rv)) {
     fb = vint_as_i64(rv) as f64;
   }
-  if (op == "+") {
+  if (code == ast.OP_ADD) {
     return v_float32(fa + fb);
   }
-  if (op == "-") {
+  if (code == ast.OP_SUB) {
     return v_float32(fa - fb);
   }
-  if (op == "*") {
+  if (code == ast.OP_MUL) {
     return v_float32(fa * fb);
   }
-  if (op == "/") {
+  if (code == ast.OP_DIV) {
     return v_float32(fa / fb);
   }
-  if (op == "%") {
+  if (code == ast.OP_REM) {
     return v_err("`%` on f32 is unsupported");
   }
-  if (op == "<") {
+  if (code == ast.OP_LT) {
     return v_bool(fa < fb);
   }
-  if (op == "<=") {
+  if (code == ast.OP_LE) {
     return v_bool(fa <= fb);
   }
-  if (op == ">") {
+  if (code == ast.OP_GT) {
     return v_bool(fa > fb);
   }
-  if (op == ">=") {
+  if (code == ast.OP_GE) {
     return v_bool(fa >= fb);
   }
-  if (op == "==") {
+  if (code == ast.OP_EQ) {
     return v_bool(fa == fb);
   }
-  if (op == "!=") {
+  if (code == ast.OP_NE) {
     return v_bool(fa != fb);
   }
-  return eval_binary_after_f32(op, lv, rv);
+  return eval_binary_after_f32(code, lv, rv);
 }
 
-function eval_binary_after_f32(op: string, lv: Value, rv: Value): Value {
-  if (lexer.is_saturating_op(op)) {
-    return eval_binary_saturating(op, lv, rv);
+function eval_binary_after_f32(code: i32, lv: Value, rv: Value): Value {
+  if (ast.is_saturating_code(code)) {
+    return eval_binary_saturating(code, lv, rv);
   }
-  if (op == "+") {
+  if (code == ast.OP_ADD) {
     return eval_binary_plus(lv, rv);
   }
-  return eval_binary_arith(op, lv, rv);
+  return eval_binary_arith(code, lv, rv);
 }
 
-function eval_binary(op: string, lv: Value, rv: Value): Value {
+function eval_binary(code: i32, lv: Value, rv: Value): Value {
   if let VInt(_) = lv {
     if let VInt(_) = rv {
-      return eval_binary_after_f32(op, lv, rv);
+      return eval_binary_after_f32(code, lv, rv);
     }
   }
   if let VLanes(a) = lv {
-    return lanes_binary(op, a, rv);
+    return lanes_binary(code, a, rv);
   }
   if (is_int_like(lv) && is_int_like(rv) && (is_vusize(lv) || is_vusize(rv))) {
-    return eval_usize_binary(op, vint_as_i64(lv) as u64, vint_as_i64(rv) as u64);
+    return eval_usize_binary(code, vint_as_i64(lv) as u64, vint_as_i64(rv) as u64);
   }
   if (is_int_like(lv) && is_int_like(rv) && (is_vint64(lv) || is_vint64(rv))) {
-    return eval_binary_i64(op, lv, rv);
+    return eval_binary_i64(code, lv, rv);
   }
-  return eval_binary_after_i64(op, lv, rv);
+  return eval_binary_after_i64(code, lv, rv);
 }
 
-function eval_binary_arith_sub_mul_div(op: string, lv: Value, rv: Value): Value {
+function eval_binary_arith_sub_mul_div(code: i32, lv: Value, rv: Value): Value {
   match (lv) {
     VInt(li) => {
       match (rv) {
         VInt(ri) => {
-          if (op == "-") {
+          if (code == ast.OP_SUB) {
             return v_int(li.v - ri.v);
           }
-          if (op == "*") {
+          if (code == ast.OP_MUL) {
             return v_int(li.v * ri.v);
           }
-          if (op == "/") {
+          if (code == ast.OP_DIV) {
             if (ri.v == 0) {
               return v_int(0);
             }
@@ -5134,12 +5151,16 @@ function eval_binary_arith_sub_mul_div(op: string, lv: Value, rv: Value): Value 
     VFloat(lf) => {
       match (rv) {
         VFloat(rf) => {
-          return match (op) {
-            "-" => v_float(lf.v - rf.v),
-            "*" => v_float(lf.v * rf.v),
-            "/" => v_float(lf.v / rf.v),
-            _ => v_err("`%` on f64 is unsupported"),
-          };
+          if (code == ast.OP_SUB) {
+            return v_float(lf.v - rf.v);
+          }
+          if (code == ast.OP_MUL) {
+            return v_float(lf.v * rf.v);
+          }
+          if (code == ast.OP_DIV) {
+            return v_float(lf.v / rf.v);
+          }
+          return v_err("`%` on f64 is unsupported");
         },
         _ => {
           return v_err("arithmetic rhs not f64");
@@ -5150,20 +5171,24 @@ function eval_binary_arith_sub_mul_div(op: string, lv: Value, rv: Value): Value 
       return v_err("arithmetic lhs not i32 or f64");
     }
   }
-  return unknown_binary_op(op);
+  return unknown_binary_op(code);
 }
 
-function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
+function eval_binary_arith_compare(code: i32, lv: Value, rv: Value): Value {
   match (lv) {
     VInt(li) => {
       match (rv) {
         VInt(ri) => {
-          return match (op) {
-            "<" => v_bool(li.v < ri.v),
-            "<=" => v_bool(li.v <= ri.v),
-            ">" => v_bool(li.v > ri.v),
-            _ => v_bool(li.v >= ri.v),
-          };
+          if (code == ast.OP_LT) {
+            return v_bool(li.v < ri.v);
+          }
+          if (code == ast.OP_LE) {
+            return v_bool(li.v <= ri.v);
+          }
+          if (code == ast.OP_GT) {
+            return v_bool(li.v > ri.v);
+          }
+          return v_bool(li.v >= ri.v);
         },
         _ => {
           return v_err("comparison rhs not i32");
@@ -5173,12 +5198,16 @@ function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
     VFloat(lf) => {
       match (rv) {
         VFloat(rf) => {
-          return match (op) {
-            "<" => v_bool(lf.v < rf.v),
-            "<=" => v_bool(lf.v <= rf.v),
-            ">" => v_bool(lf.v > rf.v),
-            _ => v_bool(lf.v >= rf.v),
-          };
+          if (code == ast.OP_LT) {
+            return v_bool(lf.v < rf.v);
+          }
+          if (code == ast.OP_LE) {
+            return v_bool(lf.v <= rf.v);
+          }
+          if (code == ast.OP_GT) {
+            return v_bool(lf.v > rf.v);
+          }
+          return v_bool(lf.v >= rf.v);
         },
         _ => {
           return v_err("comparison rhs not f64");
@@ -5187,7 +5216,7 @@ function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
     },
     VString(ls) => {
       if let VString(rs) = rv {
-        return v_bool(strings_ordered(op, ls.v, rs.v));
+        return v_bool(strings_ordered(code, ls.v, rs.v));
       }
       return v_err("comparison rhs not a string");
     },
@@ -5195,24 +5224,24 @@ function eval_binary_arith_compare(op: string, lv: Value, rv: Value): Value {
       return v_err("comparison lhs not i32, f64 or string");
     }
   }
-  return unknown_binary_op(op);
+  return unknown_binary_op(code);
 }
 
-function eval_binary_arith_equal(op: string, lv: Value, rv: Value): Value {
+function eval_binary_arith_equal(code: i32, lv: Value, rv: Value): Value {
   let eq = value_eq(lv, rv);
-  if (op == "==") {
+  if (code == ast.OP_EQ) {
     return v_bool(eq);
   }
   return v_bool(!eq);
-  return unknown_binary_op(op);
+  return unknown_binary_op(code);
 }
 
-function eval_binary_arith_logic(op: string, lv: Value, rv: Value): Value {
+function eval_binary_arith_logic(code: i32, lv: Value, rv: Value): Value {
   match (lv) {
     VBool(lb) => {
       match (rv) {
         VBool(rb) => {
-          if (op == "&&") {
+          if (code == ast.OP_LAND) {
             return v_bool(lb.v && rb.v);
           }
           return v_bool(lb.v || rb.v);
@@ -5226,21 +5255,27 @@ function eval_binary_arith_logic(op: string, lv: Value, rv: Value): Value {
       return v_err("logical lhs not bool");
     }
   }
-  return unknown_binary_op(op);
+  return unknown_binary_op(code);
 }
 
-function eval_binary_arith_bits(op: string, lv: Value, rv: Value): Value {
+function eval_binary_arith_bits(code: i32, lv: Value, rv: Value): Value {
   match (lv) {
     VInt(li) => {
       match (rv) {
         VInt(ri) => {
-          return match (op) {
-            "&" => v_int(li.v & ri.v),
-            "|" => v_int(li.v | ri.v),
-            "^" => v_int(li.v ^ ri.v),
-            "<<" => v_int(li.v << ri.v),
-            _ => v_int(li.v >> ri.v),
-          };
+          if (code == ast.OP_AND) {
+            return v_int(li.v & ri.v);
+          }
+          if (code == ast.OP_OR) {
+            return v_int(li.v | ri.v);
+          }
+          if (code == ast.OP_XOR) {
+            return v_int(li.v ^ ri.v);
+          }
+          if (code == ast.OP_SHL) {
+            return v_int(li.v << ri.v);
+          }
+          return v_int(li.v >> ri.v);
         },
         _ => {
           return v_err("bitwise rhs not i32");
@@ -5251,30 +5286,30 @@ function eval_binary_arith_bits(op: string, lv: Value, rv: Value): Value {
       return v_err("bitwise lhs not i32");
     }
   }
-  return unknown_binary_op(op);
+  return unknown_binary_op(code);
 }
 
-function unknown_binary_op(op: string): Value {
-  return v_err("unknown binary op: " + op);
+function unknown_binary_op(code: i32): Value {
+  return v_err("unknown binary op: " + ast.binary_text(code));
 }
 
-function eval_binary_arith(op: string, lv: Value, rv: Value): Value {
-  if (op == "-" || op == "*" || op == "/" || op == "%") {
-    return eval_binary_arith_sub_mul_div(op, lv, rv);
+function eval_binary_arith(code: i32, lv: Value, rv: Value): Value {
+  if (code >= ast.OP_SUB && code <= ast.OP_REM) {
+    return eval_binary_arith_sub_mul_div(code, lv, rv);
   }
-  if (op == "<" || op == "<=" || op == ">" || op == ">=") {
-    return eval_binary_arith_compare(op, lv, rv);
+  if (code >= ast.OP_AND && code <= ast.OP_SHR) {
+    return eval_binary_arith_bits(code, lv, rv);
   }
-  if (op == "==" || op == "!=") {
-    return eval_binary_arith_equal(op, lv, rv);
+  if (ast.is_order_code(code)) {
+    return eval_binary_arith_compare(code, lv, rv);
   }
-  if (op == "&&" || op == "||") {
-    return eval_binary_arith_logic(op, lv, rv);
+  if (code == ast.OP_EQ || code == ast.OP_NE) {
+    return eval_binary_arith_equal(code, lv, rv);
   }
-  if (op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>") {
-    return eval_binary_arith_bits(op, lv, rv);
+  if (code == ast.OP_LAND || code == ast.OP_LOR) {
+    return eval_binary_arith_logic(code, lv, rv);
   }
-  return unknown_binary_op(op);
+  return unknown_binary_op(code);
 }
 
 function f64_trunc_u32(v: f64): i32 {
@@ -5692,13 +5727,13 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_err(lv)) {
     return lv;
   }
-  if (b.op == "&&" || b.op == "||") {
+  if (b.code == ast.OP_LAND || b.code == ast.OP_LOR) {
     match (lv) {
       VBool(lb) => {
-        if (b.op == "&&" && !lb.v) {
+        if (b.code == ast.OP_LAND && !lb.v) {
           return v_bool(false);
         }
-        if (b.op == "||" && lb.v) {
+        if (b.code == ast.OP_LOR && lb.v) {
           return v_bool(true);
         }
       },
@@ -5716,26 +5751,26 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (overload.len() > 0) {
     return call_method(env.heap, lv, overload, [rv], env.funcs, env.aliases, env.type_decls);
   }
-  if (is_checked_op(b.op)) {
+  if (ast.is_checked_code(b.code)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
-  if ((b.op == "==" || b.op == "!=") && has_eq_method(lv, env.funcs, env.aliases)) {
+  if ((b.code == ast.OP_EQ || b.code == ast.OP_NE) && has_eq_method(lv, env.funcs, env.aliases)) {
     let e = call_method(env.heap, lv, "eq", [rv], env.funcs, env.aliases, env.type_decls);
     if let VBool(eb) = e {
-      if (b.op == "!=") {
+      if (b.code == ast.OP_NE) {
         return v_bool(!eb.v);
       }
     }
     return e;
   }
-  if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") && orders_by_cmp(lv)) {
+  if (ast.is_order_code(b.code) && orders_by_cmp(lv)) {
     let c = call_method(env.heap, lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
     if (is_err(c)) {
       return c;
     }
-    return eval_binary(b.op, c, v_int(0));
+    return eval_binary(b.code, c, v_int(0));
   }
-  return eval_typed_binary(b.op, lv, rv, b.ty);
+  return eval_typed_binary(b.code, lv, rv, b.ty);
 }
 
 // orders_by_cmp says whether an order on v calls its `cmp` method.
@@ -10363,14 +10398,14 @@ function eval_match_stmt_mode(m: ast.StmtMatch, own env: Env, value_form: boolea
         if (is_err(low)) {
           return step_stop(env, low);
         }
-        matched = match_test_passes(eval_binary("==", sv, low));
+        matched = match_test_passes(eval_binary(ast.OP_EQ, sv, low));
         if (literal.has_range) {
           let high = eval_expr(literal.range_hi, env);
           if (is_err(high)) {
             return step_stop(env, high);
           }
-          let upper: string = if (literal.range_inclusive) { "<=" } else { "<" };
-          matched = match_test_passes(eval_binary(">=", sv, low)) && match_test_passes(eval_binary(upper, sv, high));
+          let upper = if (literal.range_inclusive) { ast.OP_LE } else { ast.OP_LT };
+          matched = match_test_passes(eval_binary(ast.OP_GE, sv, low)) && match_test_passes(eval_binary(upper, sv, high));
         }
         if (matched && literal.at_binding.len() > 0) {
           bind_names = bind_names.append(literal.at_binding);
