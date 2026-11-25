@@ -138,3 +138,34 @@ func TestLiteralLocalFieldValuesOwned(t *testing.T) {
   return takek(v);
 }`)
 }
+
+const spreadPathPrefix = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct Conns { hs: Handle[], bufs: i32[], n: i32 }
+function rd(own c: Conns, at: i32): (Conns, boolean) { return (c, at > 0); }
+function eat(own c: Conns): i32 { return c.n; }
+`
+
+// A local made by `T { ...q.f, g: v }` takes q.f when q is a fresh local and
+// no run reads q.f after the literal.
+func TestSpreadAliasTakesAFieldPath(t *testing.T) {
+	step := func(body string) string {
+		return spreadPathPrefix + "function step(own c: Conns, at: i32): i32 {\n  let read: (Conns, boolean) = rd(c, at);\n" + body + "\n}"
+	}
+	for _, c := range []struct{ name, body string }{
+		{"replaced field and scalar sibling", "let n = read.0.n;\nlet d = Conns { ...read.0, bufs: read.0.bufs.with(0, 1), n: n };\nif (read.1) { return 1; }\nreturn eat(d);"},
+		{"plain spread", "let d = Conns { ...read.0 };\nreturn eat(d);"},
+		{"scalar copy in the literal", "let d = Conns { ...read.0, n: read.0.n + 1 };\nreturn eat(d);"},
+	} {
+		wantOK(t, c.name, step(c.body))
+	}
+	for _, c := range []struct{ name, body string }{
+		{"scalar read after the literal", "let d = Conns { ...read.0, n: 1 };\nlet m = read.0.n;\nreturn eat(d) + m;"},
+		{"borrow alias before the literal", "let h = read.0.hs;\nlet d = Conns { ...read.0, n: 1 };\nreturn eat(d) + h.len() as i32;"},
+		{"two literals take the path", "let d = Conns { ...read.0, n: 1 };\nlet e = Conns { ...read.0, n: 2 };\nreturn eat(d) + eat(e);"},
+		{"bare mention of the holder", "let d = Conns { ...read.0, n: 1 };\nlet r = read;\nreturn eat(d);"},
+		{"kept handle field read in the literal", "let d = Conns { ...read.0, n: read.0.hs.len() as i32 };\nreturn eat(d);"},
+	} {
+		wantE051(t, c.name, step(c.body))
+	}
+}

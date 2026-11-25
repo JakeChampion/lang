@@ -22092,7 +22092,8 @@ struct LuSel { obj: string, field: string, line: i32, col: i32 }
 // nested field of a primitive type or of an array of one: an array can reach
 // a borrowed parameter as a view, so such a read is not always a copy.
 // scalar_sels holds the reads of a field of a scalar type, which are copies.
-struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: i64[], scalar_sels: i64[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
+// path_copies holds the scalar reads `q.f.g` by the place of q.
+struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns: LuVar[], escaping: string[], sels: LuSel[], value_sels: i64[], scalar_sels: i64[], path_copies: i64[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[], unpacked: LuVar[], matched: LuVar[], rebinds: LuRebind[] }
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
@@ -22309,7 +22310,7 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
           return lu_scalar_selection(fa, LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) });
         },
         _ => {
-          return lu_scalar_selection(fa, lu_value_selection(fa, f));
+          return lu_path_copy(fa, lu_scalar_selection(fa, lu_value_selection(fa, f)));
         }
       }
     },
@@ -22361,7 +22362,7 @@ function lu_value_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
 // A read of a field of a scalar type, such as i32 or boolean: a copy that
 // keeps nothing of its holder, not even a view.
 function lu_scalar_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
-  if (fa.ty == "string" || fa.ty == "str" || !typeinfo.is_primitive_type_name(fa.ty)) {
+  if (!lu_scalar_type(fa.ty)) {
     return f;
   }
   let enclosing = ow_enclosing_field(fa);
@@ -22371,9 +22372,34 @@ function lu_scalar_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   return f;
 }
 
+function lu_path_copy(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
+  let Some(id) = lu_path_root(fa) else {
+    return f;
+  };
+  if (!lu_scalar_type(fa.ty)) {
+    return f;
+  }
+  return LuFacts { ...f, path_copies: f.path_copies.append(lu_selection_pos(id.line, id.col)) };
+}
+
+// The root q of a read `q.f.g`.
+function lu_path_root(fa: ast.ExprFieldAccess): Option[ast.ExprIdent] {
+  let ast.ExprFieldAccess(p) = fa.obj else {
+    return None;
+  };
+  let ast.ExprIdent(id) = p.obj else {
+    return None;
+  };
+  return Some(id);
+}
+
+function lu_scalar_type(ty: string): boolean {
+  return ty != "string" && ty != "str" && typeinfo.is_primitive_type_name(ty);
+}
+
 // A field of this type is a copy: it cannot hold a handle.
 function lu_copy_type(ty: string): boolean {
-  return lu_primitive_array_copy(ty) || ty != "string" && ty != "str" && typeinfo.is_primitive_type_name(ty);
+  return lu_primitive_array_copy(ty) || lu_scalar_type(ty);
 }
 
 function lu_primitive_array_copy(ty: string): boolean {
@@ -23607,7 +23633,7 @@ function lu_unpack_expr(fx: LuFn, init: ast.Expr): boolean {
 function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
   if let ast.ExprFieldAccess(fa) = init {
     let h = ow_ident_name(fa.obj);
-    if (h.len() == 0 || !(lu_fresh_init_in(fx, h, seen) && lu_decl_count(fx, h) == 1) && !lu_own_param(fx, h)) {
+    if (h.len() == 0 || !lu_unpack_holder(fx, h, seen)) {
       return false;
     }
     return lu_sole_field_read(fx, h, fa.field);
@@ -23615,17 +23641,90 @@ function lu_unpack_expr_in(fx: LuFn, init: ast.Expr, seen: string[]): boolean {
   return false;
 }
 
+function lu_selection_count(fx: LuFn, h: string): i32 {
+  let n = 0;
+  for sel in fx.facts.sels {
+    if (sel.obj == h) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+function lu_unpack_holder(fx: LuFn, h: string, seen: string[]): boolean {
+  return lu_fresh_init_in(fx, h, seen) && lu_decl_count(fx, h) == 1 || lu_own_param(fx, h);
+}
+
+// A literal `T { ...q.f, g: v }` takes `q.f` as an unpack does. Each mention
+// of `q` selects a field. In the literal, a read of `q.f` reads a field that
+// the literal replaces or is a scalar copy. Each other read of `q.f` is a
+// scalar copy, and no run reads `q.f` after the literal.
+function lu_path_spread_taken(fx: LuFn, sl: ast.ExprStructLit, path: ast.ExprFieldAccess, seen: string[]): boolean {
+  let ast.ExprIdent(q) = path.obj else {
+    return false;
+  };
+  if (util.has_str(fx.facts.escaping, q.name) || !lu_unpack_holder(fx, q.name, seen)) {
+    return false;
+  }
+  if (lu_selection_count(fx, q.name) != lu_occ_count(fx, q.name)) {
+    return false;
+  }
+  let reads = LuPathReads { q: q.name, field: path.field, fields: sl.field_names, mentions: 0, places: [], line: q.line, col: q.col };
+  for v in sl.field_values {
+    reads = astwalk.fold_expr_pruned(v, reads, lu_path_read_at, lu_runs_in_place);
+  }
+  if (reads.mentions != reads.places.len()) {
+    return false;
+  }
+  for sel in fx.facts.sels {
+    if (sel.obj == q.name && sel.field == path.field && (sel.line != q.line || sel.col != q.col) && !lu_has_selection(reads.places, sel.line, sel.col) && !lu_has_selection(fx.facts.path_copies, sel.line, sel.col)) {
+      return false;
+    }
+  }
+  let n = lu_flow_node(fx.flow, lu_place(reads.line, reads.col));
+  for sel in fx.facts.sels {
+    if (sel.obj == q.name && sel.field == path.field && (sel.line > reads.line || sel.line == reads.line && sel.col > reads.col) && lu_flow_reaches(fx.flow, n, lu_place(sel.line, sel.col))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The mentions of `q.field` in a literal, the places of q in those that read
+// a field in `fields` or copy a scalar, and the last such place.
+struct LuPathReads { q: string, field: string, fields: string[], mentions: i32, places: i64[], line: i32, col: i32 }
+
+function lu_path_read_at(n: ast.Expr, own r: LuPathReads): LuPathReads {
+  let ast.ExprFieldAccess(fa) = n else {
+    return r;
+  };
+  if let ast.ExprIdent(id) = fa.obj {
+    if (id.name == r.q && fa.field == r.field) {
+      return LuPathReads { ...r, mentions: r.mentions + 1 };
+    }
+    return r;
+  }
+  let Some(id) = lu_path_root(fa) else {
+    return r;
+  };
+  let ast.ExprFieldAccess(p) = fa.obj else {
+    return r;
+  };
+  if (id.name != r.q || p.field != r.field || !util.has_str(r.fields, fa.field) && !lu_scalar_type(fa.ty)) {
+    return r;
+  }
+  let later = id.line > r.line || id.line == r.line && id.col > r.col;
+  return LuPathReads { ...r, places: r.places.append(lu_selection_pos(id.line, id.col)), line: if (later) { id.line } else { r.line }, col: if (later) { id.col } else { r.col } };
+}
+
 // One read of `h.field`, and each mention of h selects a field or is the
 // base of a literal that replaces that field.
 function lu_sole_field_read(fx: LuFn, h: string, field: string): boolean {
   let reads = 0;
-  let selections = 0;
+  let selections = lu_selection_count(fx, h);
   for sel in fx.facts.sels {
-    if (sel.obj == h) {
-      selections += 1;
-      if (sel.field == field) {
-        reads += 1;
-      }
+    if (sel.obj == h && sel.field == field) {
+      reads += 1;
     }
   }
   for up in fx.facts.updates {
@@ -23715,8 +23814,9 @@ function lu_alias_admitted(fx: LuFn, name: string, seen: string[]): boolean {
 }
 
 // A struct literal takes its base and the names that it sets. Each must be
-// an owned name at its last use. Each other field value that can hold a
-// handle must be fresh or an unpack.
+// an owned name at its last use, or the base is a field path that
+// lu_path_spread_taken admits. Each other field value that can hold a handle
+// must be fresh or an unpack.
 function lu_admitted_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit, seen: string[]): boolean {
   for v in lu_handle_values(fx, sl) {
     if (!lu_fresh_value(fx, v) && !lu_unpack_expr(fx, v) && !lu_owned_last(fx, v, seen)) {
@@ -23725,6 +23825,9 @@ function lu_admitted_lit(fx: LuFn, init: ast.Expr, sl: ast.ExprStructLit, seen: 
   }
   if (!sl.has_base) {
     return true;
+  }
+  if let ast.ExprFieldAccess(path) = sl.base {
+    return lu_path_spread_taken(fx, sl, path, seen);
   }
   let Some(src) = lu_spread_source(fx, init) else {
     return false;
@@ -24212,7 +24315,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
+  return LuFacts { checked_locals: [], occ: [], vars: [], assigns: [], escaping: [], sels: [], value_sels: [], scalar_sels: [], path_copies: [], captured: [], defer_bare: [], defer_fields: [], updates: [], unpacked: [], matched: [], rebinds: [] };
 }
 
 // A search for an occurrence of a name, the same occurrences that LuFacts.occ
