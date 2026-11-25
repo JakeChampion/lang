@@ -227,6 +227,9 @@ function test_malformed(): test.TestOutcome {
     [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/")],
     [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":authority", "a"), qpack.field(":path", "/"), qpack.field("host", "b")],
     [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":authority", ""), qpack.field(":path", "/")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":path", "/"), qpack.field(":path", "/b")],
+    [qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/")],
+    [qpack.field(":method", "GET"), qpack.field(":scheme", "https"), qpack.field(":authority", "example.com"), qpack.field(":path", "/"), qpack.field(":unknown", "1")],
   ];
   let out = "";
   let id: i64 = 0;
@@ -243,7 +246,7 @@ function test_malformed(): test.TestOutcome {
   out += "\n" + hosted.log;
   let want = "";
   let i = 0;
-  while (i < 9) {
+  while (i < 12) {
     want += "server aborted 0 270; server aborts 0 270; server stops 0 270; client aborted 0 270; \n";
     i += 1;
   }
