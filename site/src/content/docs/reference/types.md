@@ -440,7 +440,9 @@ value, another cell, a `dyn` trait object, a type parameter — is rejected
 (`E057`), as is a borrowed view such as `str`.
 
 `replace(v)` stores `v` and returns the old value. The caller then owns the
-old value, so it can give it to an `own` parameter:
+old value, so it can give it to an `own` parameter. A `get()` snapshot of a
+handle cannot go to an `own` parameter. The cell still holds that handle, and
+a second `get()` can read it again:
 
 ```fern
 struct Conn { fd: i32 }

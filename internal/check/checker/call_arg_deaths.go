@@ -1434,7 +1434,7 @@ func freshInit(info *Info, init ast.Expr) bool {
 		if _, named := init.Callee.(*ast.Ident); !named {
 			return false
 		}
-		if init.Method != nil && (info == nil || info.DeclaredMethod == nil || !info.DeclaredMethod(init)) {
+		if init.Method != nil && !cellGet(init) && (info == nil || info.DeclaredMethod == nil || !info.DeclaredMethod(init)) {
 			return true
 		}
 		return info == nil || info.CallBorrows == nil || !info.CallBorrows(init)
@@ -1457,6 +1457,13 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return tupleProjection(init) && freshInit(info, init.Target)
 	}
 	return false
+}
+
+// cellGet reports a call of the builtin Cell.get. Its result is a snapshot of
+// the payload, so it lends what the cell holds.
+func cellGet(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && call.Method != nil && id.Name == "__method_Cell_get"
 }
 
 // litFieldsOwned reports a struct literal whose field values are each owned,

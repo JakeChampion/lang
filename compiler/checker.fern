@@ -23403,6 +23403,10 @@ function lu_init_borrows(fx: LuFn, e: ast.Expr): boolean {
       return lu_call_site_borrows(fx, c);
     }
     if let ast.ExprFieldAccess(field) = c.callee {
+      // A Cell.get snapshot of a handle lends what the cell holds.
+      if (ast.receiver_tag(field.obj) == "Cell" && field.field == "get") {
+        return c.ty.len() == 0 || !ow_holds_no_handle(c.ty, fx.lenders.decls);
+      }
       for method in fx.lenders.methods {
         if (lu_matches_method(method, field)) {
           return lu_call_site_borrows(fx, c);

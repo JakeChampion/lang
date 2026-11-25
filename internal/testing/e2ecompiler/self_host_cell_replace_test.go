@@ -116,3 +116,80 @@ func TestSelfHostCellReplaceDiagnostics(t *testing.T) {
 		})
 	}
 }
+
+// A Cell.get snapshot of a handle is a loan of the cell. It cannot go to an
+// `own` parameter, because a second get can read the same handle (#15523).
+// A snapshot of data with no handle is an independent copy.
+func TestSelfHostCellGetSnapshotLends(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := buildLangBinForInterp(t)
+	const handle = `struct H { n: i32 }
+function (own h: H) close(): void { print(h.n); }
+`
+	for name, tc := range map[string]struct {
+		src  string
+		want int
+	}{
+		"two-snapshots": {handle + `function main(): i32 {
+  let pool = cell_new(Some(H { n: 1 }));
+  let a = pool.get();
+  let b = pool.get();
+  pool.set(None);
+  match (a) { Some(h) => { h.close(); }, _ => {} }
+  match (b) { Some(h) => { h.close(); }, _ => {} }
+  return 0;
+}
+`, 2},
+		"get-then-clear": {handle + `function main(): i32 {
+  let pool = cell_new(Some(H { n: 1 }));
+  let a = pool.get();
+  pool.set(None);
+  match (a) { Some(h) => { h.close(); }, _ => {} }
+  return 0;
+}
+`, 1},
+		"direct-handle": {handle + `function take(c: Cell[H]): void {
+  let h = c.get();
+  h.close();
+}
+function main(): i32 {
+  take(cell_new(H { n: 1 }));
+  return 0;
+}
+`, 1},
+		"replace": {handle + `function main(): i32 {
+  let pool = cell_new(Some(H { n: 1 }));
+  match (pool.replace(None)) { Some(h) => { h.close(); }, _ => {} }
+  return 0;
+}
+`, 0},
+		"data-snapshot": {`struct P { n: i32, tag: string }
+function keep(own p: P): i32 { return p.n + p.tag.len(); }
+function main(): i32 {
+  let c = cell_new(P { n: 1, tag: "a" });
+  let a = c.get();
+  let b = c.get();
+  let xs = cell_new([1, 2]);
+  let ys = xs.get();
+  return keep(a) + keep(b) + ys.len() - 6;
+}
+`, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(path, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for front, cmd := range map[string]*exec.Cmd{
+				"Go":   exec.Command(oracle, "-check", path),
+				"self": runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib),
+			} {
+				out, err := cmd.CombinedOutput()
+				got := strings.Count(string(out), "error[E051]")
+				if got != tc.want || (tc.want == 0) != (err == nil) {
+					t.Errorf("%s: want %d E051, got %d (%v)\n%s", front, tc.want, got, err, out)
+				}
+			}
+		})
+	}
+}
