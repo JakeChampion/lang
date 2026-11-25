@@ -408,7 +408,8 @@ mask from the split form.
 ## A record or an Option passed as its parts
 
 A parameter that is a record of one to four fields travels as its fields.
-Each field is a scalar or a reference that is not a view. An Option of a
+Each field is a scalar or a reference that is not a view, and not a field
+that is laid out in the box of its record. An Option of a
 record of scalars, or of a scalar, travels as a Some flag followed by the
 payload's parts (`sempair.scalar_params`, run before the
 return pairing so the two compose). The rewrite happens on the semantic
@@ -438,7 +439,10 @@ its parts, so a chain of wrappers passes the parts straight through.
 `TestSelfHostScalarParams` pins a `Duration`, an `Option[Duration]` and an
 `Option[i64]` crossing a module boundary, a method and a trait impl reached
 through a generic at no allocations on the three targets.
-`TestSelfHostCountedRecordParams` pins a record with an array field.
+`TestSelfHostCountedRecordParams` pins a record with an array field. An
+array part keeps the bounds facts of its field: `ssabounds.caller_facts`
+gives each array parameter the length and the bound of the elements that its
+callers give it.
 
 ## A record's field laid out as its parts
 

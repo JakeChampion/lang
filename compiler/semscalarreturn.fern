@@ -392,8 +392,8 @@ pub function capture_imm(base: i32, count: i32): i32 {
 }
 
 // The parts a parameter can travel as: the fields of a record of one to four
-// fields that no finalizer owns, each a scalar or a reference that is not a
-// view, or for an Option of a record of scalars or of a scalar, whether it is
+// fields that no finalizer owns, each a scalar or a part that travels_counted
+// takes, or for an Option of a record of scalars or of a scalar, whether it is
 // Some followed by the payload's parts. Empty when the parameter stays whole.
 pub function param_parts(f: ssasem.Func, ty: typeinfo.Type): typeinfo.Type[] {
   if (option_payload(f, ty).len() == 1) {
@@ -451,8 +451,11 @@ function record_parts(f: ssasem.Func, ty: typeinfo.Type, counted: boolean): type
   return parts.types;
 }
 
+// A field that can travel as a counted part: a reference that is not a view
+// or a cell. A field that laid_parts lays out in the box of its record stays
+// out, because a read of it whole makes a box.
 function travels_counted(f: ssasem.Func, t: typeinfo.Type): boolean {
-  return ssasem.reference(t) && !typeinfo.is_cell(t) && !ssasem.holds_view(f, t);
+  return ssasem.reference(t) && !typeinfo.is_cell(t) && !ssasem.holds_view(f, t) && laid_parts(f, t).len() == 0;
 }
 
 // The spelling of a part's parameter: a reference part keeps the `own` of
