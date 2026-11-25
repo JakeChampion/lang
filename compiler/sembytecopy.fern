@@ -433,12 +433,84 @@ function move_loop(f: ssasem.Func, ix: Index, l: Loop, update: ssa.SInst): Loop 
   }
   let lifted = lifted_consts(ix, l, [from, at]);
   let allowed = [update.result, read.result, read.args[1], update.args[1], inc.result, inc.args[1]];
-  if (!pure_body(f, ix, l, util.append_all(allowed, lifted))) {
+  let probes = group_probes(ix, f.graph.blocks[ix.blocks[l.body]], l, update.args[1], read.args[1]);
+  if (!pure_body(f, ix, l, util.append_all(util.append_all(allowed, lifted), probes))) {
     return no;
   }
   let out = Loop { ...l, update: update, src: -1, from: from, at: at, kind: MOVE, lifted: lifted };
   if (!closed_body(f, ix, out)) {
     return no;
+  }
+  return out;
+}
+
+struct Offset { ok: boolean, c: i32 }
+
+// `v` as the counter plus an integer literal.
+function counter_offset(ix: Index, v: i32, counter: i32): Offset {
+  if (v == counter) {
+    return Offset { ok: true, c: 0 };
+  }
+  let d = ix.defs[v];
+  if (!addition(d)) {
+    return Offset { ok: false, c: 0 };
+  }
+  let k = if (d.args[0] == counter) { d.args[1] } else if (d.args[1] == counter) { d.args[0] } else { -1 };
+  if (k < 0 || ix.defs[k].kind_tag != ssa.CONST_INT) {
+    return Offset { ok: false, c: 0 };
+  }
+  return Offset { ok: true, c: ix.defs[k].imm };
+}
+
+// The values of the check-only probes of the receiver in `body` that
+// ssabounds.grouped_accesses makes for the write at `at` and the read at
+// `from`. A probe tests `(lo + span) | (lo >> 31)`, so it checks the indices
+// lo and lo + span, and these must be the two indices of the move. The move
+// kernel checks both complete ranges, so the probes go with the loop.
+function group_probes(ix: Index, body: ssa.SBlock, l: Loop, at: i32, from: i32): i32[] {
+  let out: i32[] = [];
+  let counter = l.counter.result;
+  let w = counter_offset(ix, at, counter);
+  let r = counter_offset(ix, from, counter);
+  if (!w.ok || !r.ok) {
+    return out;
+  }
+  for ins in body.insts {
+    if (ins.kind_tag == ssasem.array_get() && ins.imm == ssasem.check_only() && ins.args.len() == 2 && ins.args[0] == l.array.result) {
+      out = util.append_all(out, group_probe(ix, ins, counter, w.c, r.c));
+    }
+  }
+  return out;
+}
+
+function group_probe(ix: Index, probe: ssa.SInst, counter: i32, w: i32, r: i32): i32[] {
+  let none: i32[] = [];
+  let idx = ix.defs[probe.args[1]];
+  if (idx.kind_tag != ssa.BINARY || idx.str != "|" || idx.args.len() != 2) {
+    return none;
+  }
+  let top = ix.defs[idx.args[0]];
+  let sign = ix.defs[idx.args[1]];
+  if (!addition(top) || sign.kind_tag != ssa.BINARY || sign.str != ">>" || sign.args.len() != 2 || sign.args[0] != top.args[0]) {
+    return none;
+  }
+  let span = ix.defs[top.args[1]];
+  if (span.kind_tag != ssa.CONST_INT || !literal(ix, sign.args[1], 31)) {
+    return none;
+  }
+  let lo = top.args[0];
+  let start = counter_offset(ix, lo, counter);
+  if (!start.ok) {
+    return none;
+  }
+  let end = start.c + span.imm;
+  if (!(start.c == w && end == r || start.c == r && end == w)) {
+    return none;
+  }
+  let out = [probe.result, idx.result, top.result, span.result, sign.result, sign.args[1], lo];
+  let base = ix.defs[lo];
+  if (lo != counter) {
+    out = out.append(if (base.args[0] == counter) { base.args[1] } else { base.args[0] });
   }
   return out;
 }
