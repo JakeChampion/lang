@@ -297,10 +297,47 @@ function failed_stereo_then_mono(): test.TestOutcome {
   return test.pass();
 }
 
+// A flipped bit in the first Layer I frame can decode. Each result must keep
+// its format, fill only its frame of the output and give finite samples.
+function mutations(): test.TestOutcome {
+  let limits = pcm.Limits { max_input_bytes: 65536, max_samples: 4608 };
+  let state = mp1.decoder();
+  for v in mp1_vectors.vectors() {
+    let Ok(input) = ref.unpack(v.encoded) else {
+      return test.fail("fixture");
+    };
+    let span = match (mp1.frame_bytes(input, 0, limits.max_input_bytes)) {
+      Ok(n) => if (n > 0 && n <= input.len()) { n } else { input.len() },
+      Err(_) => input.len(),
+    };
+    let seed = 4127u32 + input.len() as u32;
+    for _ in 0..32 {
+      seed = seed * 1664525u32 + 1013904223u32;
+      let at = (seed >> 8) as i32 % span;
+      let bytes = input.with(at, input[at] ^ 1u8 << (seed & 7u32) as u8);
+      let (next, result) = state.decode_frame_into(bytes, spectral.zeros(769).with(768, 321.5f32), limits);
+      state = next;
+      if let Ok(frame) = result {
+        let count = 384 * frame.channels;
+        if (frame.channels < 1 || frame.channels > 2 || frame.bytes_read > bytes.len() || frame.samples[768] != 321.5f32) {
+          return test.fail("mutated frame bounds");
+        }
+        for sample in frame.samples[:count] {
+          if (!sample.is_finite()) {
+            return test.fail("nonfinite mutated frame");
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("MPEG Layer I");
   runner = runner.it("every sample matches independent scalar minimp3", references);
   runner = runner.it("frame grammar, CRC, truncation and output limits", boundaries);
+  runner = runner.it("seeded bit mutations stay finite and in the limits", mutations);
   runner = runner.it("format changes preserve the previous stream history", format_changes);
   runner = runner.it("sample fields exactly fill or exceed the frame", sample_extent);
   runner = runner.it("sample-accurate seeks in indexed and free-format streams", seeks);
