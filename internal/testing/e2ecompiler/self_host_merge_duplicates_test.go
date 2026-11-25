@@ -11,10 +11,14 @@ import (
 // except a compare, an operation in a sibling block, and an operation that
 // reads a value with two definitions.
 func TestSelfHostMergeDuplicatesAcrossBlocks(t *testing.T) {
-	const src = `import "./ssa";
+	const src = `import "./ir"; import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  let ir_kind = 0;
+  if (kind == ssa.BINARY) {
+    ir_kind = ir.kind_id(op);
+  }
+  return ssa.SInst { ir_kind: ir_kind, kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 // b0 computes v2 = v0 * v1, v3 = v0 == v1 and v6 = v5 - v1, then branches.
