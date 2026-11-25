@@ -2187,7 +2187,6 @@ TestSelfHostMismatchIRArm64 2
 TestSelfHostMismatchIRWasm 2
 TestSelfHostMissingModuleMember 4
 TestSelfHostMitigationsReport 5
-TestSelfHostMlDsaVectors 20
 TestSelfHostMixedStructReleaseArm64 4
 TestSelfHostMixedStructReleaseWasm 4
 TestSelfHostMixedStructReleaseX86_64 4
@@ -4188,7 +4187,7 @@ TestSelfHostWriterIRArm64 2
 TestSelfHostWriterIRX86_64 2
 TestSelfHostWrittenLiteralImage 3
 TestSelfHostWrittenLiteralIsHeapX86_64 3
-TestSelfHostWycheproofEcdsaP256 6
+TestSelfHostWycheproofNative 55
 TestSelfHostX25519Iterated1000 5
 TestSelfHostX86AlignHoldsForAddresses 2
 TestSelfHostX86AtomicsStringMiscGas 2

@@ -831,7 +831,7 @@ function dl_hoist_expr(e: ast.Expr, want: string[]): DeferHoistExpr {
   return DeferHoistExpr { expr: parser.dl_expr_with_kids(e, out), decls: decls };
 }
 
-function dl_defret_decl(ret: string, fn_ret: string, fn_param_types: string): ast.Stmt {
+function dl_defret_decl(ret: string, fn_ret: string, fn_param_types: string[]): ast.Stmt {
   if (!dl_zeroable(ret)) {
     return parser.s_var("__defret", "", parser.e_number("0", "", false));
   }
@@ -887,7 +887,7 @@ pub function lower_defers_func(fn: parser.FuncDecl): parser.FuncDecl {
   return parser.FuncDecl { ...fn, body: lower_defers_body(fn.body, pnames, fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types) };
 }
 
-function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_ret: string, fn_param_types: string): ast.Stmt[] {
+function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_ret: string, fn_param_types: string[]): ast.Stmt[] {
   let src = dl_lower_lambda_bodies(body0);
   if (!dl_stmts_have_defer(src)) {
     return src;

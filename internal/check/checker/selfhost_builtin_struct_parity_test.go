@@ -103,7 +103,13 @@ func injectedFieldSpelling(lit string) string {
 	}
 	name, ty := attr("name"), attr("type_name")
 	if ty == "fn" {
-		ty = "(" + attr("fn_param_types") + ") => " + attr("fn_ret")
+		var params []string
+		if m := regexp.MustCompile(`fn_param_types: \[((?:"[^"]*"(?:, )?)*)\]`).FindStringSubmatch(lit); m != nil {
+			for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+				params = append(params, q[1])
+			}
+		}
+		ty = "(" + strings.Join(params, ", ") + ") => " + attr("fn_ret")
 	}
 	return name + ": " + ty
 }

@@ -87,7 +87,7 @@ function irt_arm_scope(pattern: ast.Pattern, scrut_ty: string, params: ast.Param
 }
 
 function irt_bind_param(params: ast.ParamDecl[], name: string, ty: string): ast.ParamDecl[] {
-  let binding = ast.ParamDecl { name: name, type_name: ty, own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
+  let binding = ast.ParamDecl { name: name, type_name: ty, own: false, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 };
   for i in 0..params.len() {
     if (params[i].name == name) {
       return params.with(i, binding);

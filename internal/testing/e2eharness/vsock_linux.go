@@ -4,6 +4,7 @@ package e2eharness
 
 import (
 	"encoding/binary"
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -21,6 +22,24 @@ func VsockConnectErrno(cid, port uint32) (int, bool) {
 	binary.LittleEndian.PutUint16(sa[0:], 40)
 	binary.LittleEndian.PutUint32(sa[4:], port)
 	binary.LittleEndian.PutUint32(sa[8:], cid)
-	_, _, e = syscall.Syscall(syscall.SYS_CONNECT, fd, uintptr(unsafe.Pointer(&sa[0])), uintptr(len(sa)))
+	// A VSOCK connect has a timeout, so a signal ends it with EINTR. The
+	// program under test has no signal handlers, and the test process gets
+	// SIGURG from the Go runtime and SIGCHLD from its children.
+	withSignalsBlocked(func() {
+		_, _, e = syscall.Syscall(syscall.SYS_CONNECT, fd, uintptr(unsafe.Pointer(&sa[0])), uintptr(len(sa)))
+	})
 	return int(e), true
+}
+
+// withSignalsBlocked runs f on one OS thread with each signal blocked. A
+// signal that comes during f stays pending until f returns.
+func withSignalsBlocked(f func()) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	all := ^uint64(0)
+	var old uint64
+	const sigBlock, sigSetmask = 0, 2
+	syscall.RawSyscall6(syscall.SYS_RT_SIGPROCMASK, sigBlock, uintptr(unsafe.Pointer(&all)), uintptr(unsafe.Pointer(&old)), 8, 0, 0)
+	defer syscall.RawSyscall6(syscall.SYS_RT_SIGPROCMASK, sigSetmask, uintptr(unsafe.Pointer(&old)), 0, 8, 0, 0)
+	f()
 }

@@ -443,7 +443,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   let opts: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "config"), args: [], line: 0, col: 0, type_args: [], ty: "" };
   let state: ast.Expr = init_call;
   if (init_kind == 3) {
-    body = body.append(ast.StmtVar { name: "", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: "", destr: ast.tuple_destr(["__fern_opts", "__fern_state"]), header: false });
+    body = body.append(ast.StmtVar { name: "", type_name: "", init: init_call, line: 0, col: 0, fn_ret: "", fn_param_types: [], destr: ast.tuple_destr(["__fern_opts", "__fern_state"]), header: false });
     opts = ast.ExprIdent { name: "__fern_opts", line: 0, col: 0, ty: "", builtin: false };
     state = ast.ExprIdent { name: "__fern_state", line: 0, col: 0, ty: "", builtin: false };
   } else if (init_kind == 2) {
@@ -475,7 +475,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     params: [], ret_own: false, ret_type: "i32", body: body, line: 0, col: 0,
     import_iface: "", import_wit: "", import_weak: false, all_type_params: [],
     bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
-    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: "", module: "", impl_trait: "", dyn_traits: [], streams: [],
+    is_const: false, is_pub: true, is_package: false, ret_fn_ret: "", ret_fn_param_types: [], module: "", impl_trait: "", dyn_traits: [], streams: [],
   };
   return parser.Module { ...entry, funcs: entry.funcs.append(main) };
 }
@@ -527,7 +527,7 @@ pub function with_result_handler(entry: parser.Module, error_pfx: string, http_p
     adapter = mangled_name(http_pfx, adapter);
   }
   let call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: adapter, line: 0, col: 0, ty: "", builtin: false }, args: adapter_args, line: 0, col: 0, type_args: [], ty: "" };
-  let wrapper = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: "" };
+  let wrapper = parser.FuncDecl { ...handle, name: "handle", ret_type: ret, body: [ast.StmtReturn { value: call, line: 0, col: 0 }], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, ret_fn_ret: "", ret_fn_param_types: [] };
   let funcs: parser.FuncDecl[] = [];
   for i in 0..entry.funcs.len() {
     if (i == hi) {
@@ -1137,17 +1137,10 @@ function rewrite_params(params: ast.ParamDecl[], ctx: RewriteCtx): ast.ParamDecl
   return out;
 }
 
-function rewrite_type_name_list(list: string, ctx: RewriteCtx): string {
-  if (list.len() == 0) {
-    return "";
-  }
-  let parts = parser.split_top_commas(list);
-  let out = "";
-  for i in 0..parts.len() {
-    if (i > 0) {
-      out += ",";
-    }
-    out += rewrite_type_name(parts[i], ctx);
+function rewrite_type_name_list(list: string[], ctx: RewriteCtx): string[] {
+  let out: string[] = [];
+  for t in list {
+    out = out.append(rewrite_type_name(t, ctx));
   }
   return out;
 }
@@ -1294,7 +1287,11 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
     }
     let vargs: string[] = [];
     for a in mod.aliases[k].variant_args {
-      vargs = vargs.append(rewrite_type_name_list(a, tctx));
+      if (a.len() == 0) {
+        vargs = vargs.append(a);
+      } else {
+        vargs = vargs.append(rewrite_type_name_list(parser.split_top_commas(a), tctx).join(","));
+      }
     }
     aliases = aliases.append(parser.TypeAlias {
       name: mangle_bare(mod.aliases[k].name, ctx),
