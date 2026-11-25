@@ -237,8 +237,13 @@ function coerce_int_width(val: Value, type_name: string): Value {
       }
     }
   }
-  if (k == SC_I32 && is_int_like(val)) {
-    return v_int(vint_as_i64(val) as i32);
+  if (k == SC_I32) {
+    if let VInt(_) = val {
+      return val;
+    }
+    if (is_int_like(val)) {
+      return v_int(vint_as_i64(val) as i32);
+    }
   }
   if (k == SC_U8 && is_int_like(val)) {
     return v_byte(vint_as_i64(val) as i32);
@@ -5082,6 +5087,11 @@ function eval_binary_after_f32(op: string, lv: Value, rv: Value): Value {
 }
 
 function eval_binary(op: string, lv: Value, rv: Value): Value {
+  if let VInt(_) = lv {
+    if let VInt(_) = rv {
+      return eval_binary_after_f32(op, lv, rv);
+    }
+  }
   if let VLanes(a) = lv {
     return lanes_binary(op, a, rv);
   }
@@ -5699,7 +5709,7 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_err(rv)) {
     return rv;
   }
-  if (ast.is_unsettled_int_literal(b.left)) {
+  if (float_width(rv).len() > 0 && ast.is_unsettled_int_literal(b.left)) {
     lv = eval_expr(float_operand(b.left, b.right, rv), env);
   }
   let overload = struct_op_method(b.op, lv);
@@ -5746,20 +5756,26 @@ function orders_by_cmp(v: Value): boolean {
   }
 }
 
+// The float type of a float value, or "" for any other value.
+function float_width(v: Value): string {
+  if let VFloat(_) = v {
+    return "f64";
+  }
+  if let VFloat32(_) = v {
+    return "f32";
+  }
+  return "";
+}
+
 // An integer literal beside a typed float operand is a float of its width, as
 // the checker settles it. Beside a float literal it keeps its integer type,
 // and the mixed operation is the error the checker reports.
 function float_operand(e: ast.Expr, other: ast.Expr, value: Value): ast.Expr {
-  if (!ast.is_unsettled_int_literal(e) || ast.float_literal_tree(other)) {
+  let width = float_width(value);
+  if (width.len() == 0 || !ast.is_unsettled_int_literal(e) || ast.float_literal_tree(other)) {
     return e;
   }
-  if let VFloat(_) = value {
-    return parser.settle_int_tree(e, "f64");
-  }
-  if let VFloat32(_) = value {
-    return parser.settle_int_tree(e, "f32");
-  }
-  return e;
+  return parser.settle_int_tree(e, width);
 }
 
 function struct_op_method(op: string, lv: Value): string {
