@@ -19,16 +19,18 @@ v7533 = phi v4196 v7532        // the token: the box or 0
 
 `token_fed` needs a plain count of the box on each arm. The box is free or 1
 on the unique arm and free or 0 after the release. Thus the token met free
-or 1 with 0, and the reuse took a maybe. These were the 10 values that
-`lift_impl` had left.
+or 1 with 0, and the reuse took a maybe. These were the last 10 unproved
+values of `lift_impl`.
 
 ## The change
 
 - A uniqueness test skips an immortal box, so a literal is never unique. On
   the edge where `__fern_rc_is_unique` is true, a count met with free is
   that count (`unique_on_edge`).
+
 - A box that is free or 0 hands a token nothing. On the zero arm,
   `token_fed` reads it as 0.
+
 - The first rule applies only where the false edge releases the box with
   `__fern_rc_dec`. Without that condition, the rule alone raised the census
   from 781 to 785. In `semsink.reread` and `literate.expand`, the false edge
