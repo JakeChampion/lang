@@ -47,3 +47,45 @@ func TestSelfHostAllocatorDenyMask(t *testing.T) {
 		}
 	}
 }
+
+const spilledConstantProg = `function mix(n: i32, seed: i64): i64 {
+  let h = seed;
+  let i = 0;
+  while (i < n) {
+    h = (h * 1000003i64 + i as i64) ^ 77777i64;
+    i += 1;
+  }
+  return h;
+}
+
+function main(): i32 {
+  if (mix(1000, 7i64) != -1413053815659120261i64) {
+    return 1;
+  }
+  return 0;
+}
+`
+
+// With each integer register denied, the constants of the loop are in frame
+// slots. A read of such a constant on arm64 writes the value again, so the
+// literal appears at its definition and at its read, and no read loads it.
+func TestSelfHostSpilledConstantIsRewritten(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(spilledConstantProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const deny = "FERN_DEBUG_SSA_DENY=8388607"
+	asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", deny))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := regexp.MustCompile(`=77777\b`).FindAll(asm, -1); len(n) != 2 {
+		t.Errorf("arm64 writes the spilled constant 77777 %d times, want 2 (its definition and its read)", len(n))
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		if stderr, code := cli.exitOf(t, spilledConstantProg, target, deny); code != 0 {
+			t.Errorf("%s %s: exit %d, want 0\n%s", target, deny, code, stderr)
+		}
+	}
+}

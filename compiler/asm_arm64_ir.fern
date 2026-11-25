@@ -1759,6 +1759,9 @@ function ssa_load_pushed(reg_of: i32[], v: i32, reg: string, pushed: i32, s: asm
     s = asmcore.EmitState { ...s, ssa_x0: v };
   }
   if (reg_of[v] < 0) {
+    if (v < s.ssa_konst.len() && s.ssa_konst[v] && (reg[0] == b'x' || reg[0] == b'w')) {
+      return ssa_const_reg(util.i64_to_string(s.ssa_konst_value[v]), reg, s);
+    }
     return ssa_fr_ldr(s, reg, ssa_slot_off(ssa.spill_slot(reg_of[v])), pushed);
   }
   let home = ssa_reg(reg_of[v]);
@@ -5733,7 +5736,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = s.write("    adrp x17, __fern_canary\n    ldr x17, [x17, :lo12:__fern_canary]\n");
     s = fr_str(s, "x17", -canary);
   }
-  s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes) };
+  s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), ssa_konst: imm.konst, ssa_konst_value: imm.value };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr.fmask, s);
   let frame_homes = reg_of;
   let order = ssa_emit_order(f, fr, reg_of);
@@ -5817,7 +5820,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     }
     s = ssa_resolve_exits(text, framed, saved, s);
   }
-  s = asmcore.EmitState { ...s, ssa_frame: 0, ssa_save: 0, ssa_lane_slots: [] };
+  s = asmcore.EmitState { ...s, ssa_frame: 0, ssa_save: 0, ssa_lane_slots: [], ssa_konst: [], ssa_konst_value: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg).write("    .ltorg\n");
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }

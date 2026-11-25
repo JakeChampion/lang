@@ -7864,6 +7864,9 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
     s = asmcore.EmitState { ...s, ssa_x0: v };
   }
   if (reg_of[v] < 0) {
+    if (v < s.ssa_konst.len() && s.ssa_konst[v] && !ssa_is_xmm(reg)) {
+      return ssa_konst_reg(s.ssa_konst_value[v], reg, s);
+    }
     return ssa_mov_slot(s, true, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
   }
   let home = ssa_reg(reg_of[v]);
@@ -8185,6 +8188,18 @@ function ssa_mov_im(s: asmcore.EmitState, bits: i32, imm: i64, base: string, dis
   }
   let op = if (bits == 32) { "    movl $" } else { "    movq $" };
   return s.write(op + util.i64_to_string(imm) + ", " + ssa_mem(base, disp, false) + "\n");
+}
+
+// A move of a constant that keeps the flags, unlike `ssa_zero`.
+function ssa_konst_reg(c: i64, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  let text = util.i64_to_string(c);
+  if (c >= 0i64 && c <= 4294967295i64) {
+    return ssa_mov_ir(s, 32, c, text, d);
+  }
+  if (c < 0i64 && c >= 0i64 - 2147483648i64) {
+    return ssa_mov_ir(s, 64, c, text, d);
+  }
+  return s.write("    movabsq $" + text + ", " + d + "\n");
 }
 
 function ssa_zero(s: asmcore.EmitState, d: string): asmcore.EmitState {
@@ -12566,7 +12581,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame, canary);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1 };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1, ssa_konst: imm.konst, ssa_konst_value: imm.value };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, s);
   let frame_homes = reg_of;
   let pos = 0;
@@ -12649,7 +12664,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s.write(ssa_resolve_tails(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)), ssa_leaf_epilogue(saved)));
     }
   }
-  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "", ssa_lane_slots: [] };
+  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "", ssa_lane_slots: [], ssa_konst: [], ssa_konst_value: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
