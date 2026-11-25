@@ -135,7 +135,7 @@ function conv_width_refusal(kt: i32, w: i32): string {
 
 // The backends read an integer arithmetic or compare op as 64 bits, as the
 // pointer width, or else as 32 bits. Only 0 and 32 name the 32-bit form.
-// The backends have a bit-count op only for 32 and 64 bits.
+// The backends have a bit-count op only for 32 and 64 bits, and a load only for 16 bits.
 // The result is the widths that the op can have, or "" when `w` is one of them.
 function width_refusal(kt: i32, w: i32): string {
   if (kt >= ir.K_INT_EXTEND && kt <= ir.K_F64_TO_I64) {
@@ -143,6 +143,9 @@ function width_refusal(kt: i32, w: i32): string {
   }
   if (bit_count_kind(kt)) {
     return if (w == 32 || w == 64) { "" } else { "32 or 64" };
+  }
+  if (kt == ir.K_LOAD) {
+    return if (w == 16) { "" } else { "16" };
   }
   if (kt >= ir.K_ADD && kt <= ir.K_GE_U || kt == ir.K_MULHI_U || kt == ir.K_MULHI_S) {
     return if (w == 0 || w == 32 || w == 64 || w == ir.width_ptr()) { "" } else { "0, 32, 64 or the pointer width" };

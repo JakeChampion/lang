@@ -653,6 +653,19 @@ function conv_width_checks(): i32 {
   if (count_problems(bits_ops(ir.Op { ...ir.op_int_cast("u16"), width: 16 }), 1, 1) != 1 || count_problems(bits_ops(ir.Op { ...ir.op_u32_wrap(), width: 32 }), 1, 1) != 1) {
     return 249;
   }
+  return load_width_checks();
+}
+
+function load_width_checks(): i32 {
+  if (count_problems(bits_ops(ir.op_load_u16()), 1, 1) != 0) {
+    return 250;
+  }
+  if (!util.contains(first_msg(bits_ops(ir.op_load(32)), 1, 1), "op 1 (load): width 32 is not 16")) {
+    return 251;
+  }
+  if (count_problems(bits_ops(ir.op_load(8)), 1, 1) != 1 || count_problems(bits_ops(ir.op_load(ir.width_ptr())), 1, 1) != 1) {
+    return 252;
+  }
   return 0;
 }
 
