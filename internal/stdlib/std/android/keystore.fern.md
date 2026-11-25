@@ -218,12 +218,16 @@ pub function seal_with_context(e: usize, alias: string, value: [u8], context: [u
   c.cipher.init_int_key(e, cipher, 1, handle)?;
   authenticate(e, c, cipher, context)?;
   let iv = nonce(e, c, cipher)?;
+  let body = encrypt_value(e, c, cipher, value)?;
+  return Ok(iv.concat(body));
+}
+
+function encrypt_value(e: usize, c: bindings.Classes, cipher: bindings.Cipher, value: [u8]): Result[u8[], jni.JavaError] {
   let input = java_bytes(e, value)?;
   let encrypted = c.cipher.do_final(e, cipher, input);
   c.arrays.fill(e, input, 0)?;
   let output = encrypted?;
-  let body = read_bytes(e, output, value.len() + TAG)?;
-  return Ok(iv.concat(body));
+  return read_bytes(e, output, value.len() + TAG);
 }
 
 pub function open(e: usize, alias: string, sealed: [u8]): Result[u8[], jni.JavaError] {
@@ -244,10 +248,14 @@ pub function open_with_context(e: usize, alias: string, sealed: [u8], context: [
   authenticate(e, c, cipher, context)?;
   let input = java_bytes(e, sealed[IV:])?;
   let output = c.cipher.do_final(e, cipher, input)?;
+  return take_plaintext(e, c, output, sealed.len() - IV - TAG);
+}
+
+function take_plaintext(e: usize, c: bindings.Classes, output: jni.Object, size: i32): Result[u8[], jni.JavaError] {
   if (output.is_null()) {
     return Err(failure("missing provider output"));
   }
-  let plain = read_bytes(e, output, sealed.len() - IV - TAG);
+  let plain = read_bytes(e, output, size);
   if let Err(err) = c.arrays.fill(e, output, 0) {
     if let Ok(bytes) = plain {
       crypto.erase(bytes);
