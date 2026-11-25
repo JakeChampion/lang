@@ -597,6 +597,24 @@ function pick(name: string): Case {
         let b18: ssa.SBlock = block(18, [16, 17], [], br(1));
         return Case { f: func(1, 35, [b0, b1, b19, b20, b2, b3, b4, b5, b6, b7, b8, b9, b21, b10, b11, b12, b13, b14, b15, b16, b17, b18]), modes: [rccertify.value_mode()], returns_unit: true };
     }
+    if (name == "concat-onto-its-parameter" || name == "concat-onto-its-parameter-unreleased") {
+        // v5 is a push onto the borrowed v0. Where v5 is v0, a concat gives
+        // v0 or a new box (v8). Where it is not, a concat gives v5 or a new
+        // box (v10), and v5 is released where v10 is new. The join v13 is
+        // retained where it is still v0. Without the release of v5, v5 keeps
+        // its unit where v10 is new.
+        let release: ssa.SInst[] = [call(12, "__fern_rc_dec", [5])];
+        if (name == "concat-onto-its-parameter-unreleased") { release = []; }
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1), const_int(2, 1), const_int(3, 8), const_int(4, 7), inst(50, 5, [0, 4], 0, "arr_push_u32"), inst(9, 6, [5, 0], 0, "eq")], brif(6, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [inst(11, 8, [2, 3, 4, 5], 0, "__fern_arr_concat")], br(5));
+        let b2: ssa.SBlock = block(2, [0], [inst(11, 10, [2, 3, 4, 5], 1, "__fern_arr_concat"), inst(9, 11, [10, 5], 0, "ne")], brif(11, 3, 4));
+        let b3: ssa.SBlock = block(3, [2], release, br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [], br(5));
+        let b5: ssa.SBlock = block(5, [1, 4], [inst(8, 13, [8, 10], 0, ""), inst(9, 14, [13, 0], 0, "eq")], brif(14, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [call(15, "__fern_rc_inc", [13])], br(7));
+        let b7: ssa.SBlock = block(7, [5, 6], [], ret(13));
+        return Case { f: func(2, 16, [b0, b1, b2, b3, b4, b5, b6, b7]), modes: [borrow, value], returns_unit: true };
+    }
     if (name == "loop-pushes-onto-its-parameter" || name == "loop-pushes-onto-its-parameter-unretained") {
         // The loop carries v5, which starts as the borrowed v0. A test
         // against v0 selects the push: a copy where v5 is v0, and an owned
@@ -993,6 +1011,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"unique-test-of-a-literal-phi-feeds-a-reuse-unreleased", []string{"leaked where it dies of v5"}, 1},
 		{"loop-takes-a-field-under-each-arms-token", nil, 0},
 		{"loop-takes-a-field-under-each-arms-token-unretained", nil, 1},
+		{"concat-onto-its-parameter", nil, 0},
+		{"concat-onto-its-parameter-unreleased", []string{"leaked where it dies of v5"}, 0},
 		{"loop-pushes-onto-its-parameter", nil, 0},
 		{"loop-pushes-onto-its-parameter-unretained", nil, 1},
 		{"push-joins-its-parameter", nil, 0},
