@@ -25,12 +25,12 @@ import "std/i32";
 
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
 
-pub opaque struct Decoder { rate: i32, channels: i32, free: i32, history: f32[], bands: f32[], lines: f32[], transform: f32[] }
+pub opaque struct Decoder { rate: i32, channels: i32, free: i32, history: f32[], bands: f32[], lines: f32[], transform: f32[], widths: u8[], scales: f32[] }
 
 pub struct Frame { sample_rate: i32, channels: i32, bytes_read: i32, samples: f32[] }
 
 pub function decoder(): Decoder {
-  return Decoder { rate: 0, channels: 0, free: 0, history: spectral.zeros(960), bands: spectral.zeros(1152), lines: spectral.zeros(1728), transform: spectral.zeros(128) };
+  return Decoder { rate: 0, channels: 0, free: 0, history: spectral.zeros(960), bands: spectral.zeros(1152), lines: spectral.zeros(1728), transform: spectral.zeros(128), widths: __alloc_u8(64), scales: spectral.zeros(64) };
 }
 
 struct Header { rate: i32, channels: i32, separate: i32, bytes: i32, free: i32, crc: boolean }
@@ -127,27 +127,28 @@ pub function (own state: Decoder) decode_packet_into(packet: [u8], own output: f
   return (next, result);
 }
 
-function allocation(data: [u8], h: Header): Result[(bits.Bits, u8[]), pcm.AudioError] {
+function allocation(data: [u8], h: Header, own widths: u8[]): (u8[], Result[bits.Bits, pcm.AudioError]) {
   let b = bits.new(data.len() * 8);
-  let widths = __alloc_u8(64);
   for band in 0..32 {
     let width = 0;
-    for ch in 0..h.channels {
-      if (ch == 0 || band < h.separate) {
+    for ch in 0..2 {
+      if (ch == h.channels) {
+        width = 0;
+      } else if (ch == 0 || band < h.separate) {
         let (next, value) = bits.read(data, b, 4);
         b = next;
         if (b.bad) {
-          return Err(pcm.Truncated);
+          return (widths, Err(pcm.Truncated));
         }
         if (value == 15) {
-          return Err(pcm.Header);
+          return (widths, Err(pcm.Header));
         }
         width = if (value == 0) { 0 } else { value + 1 };
       }
       widths = widths.with(2 * band + ch, width as u8);
     }
   }
-  return Ok((b, widths));
+  return (widths, Ok(b));
 }
 
 // Sample fields are 2–15 bits. Their complete extent is checked once
@@ -165,12 +166,13 @@ function sample_code(data: [u8], pos: i32, width: i32): i32 {
   return value >> 24 - end & (1 << width) - 1;
 }
 
-function scales_for(frame: [u8], data: [u8], h: Header): Result[(i32, u8[], f32[]), pcm.AudioError] {
-  let (b, widths) = allocation(data, h)?;
+function scales_for(frame: [u8], data: [u8], h: Header, own widths: u8[], own scales: f32[]): (u8[], f32[], Result[i32, pcm.AudioError]) {
+  let (filled, allocated) = allocation(data, h, widths);
+  widths = filled;
+  let b = match (allocated) { Ok(value) => value, Err(e) => { return (widths, scales, Err(e)); } };
   if (h.crc && layer.checksum(frame[2:4], data, b.pos) != wire.be(frame, 4, 2) as i32) {
-    return Err(pcm.Checksum);
+    return (widths, scales, Err(pcm.Checksum));
   }
-  let scales = spectral.zeros(64);
   let slot_bits = 0;
   for i in 0..64 {
     let width = widths[i] as i32;
@@ -185,9 +187,9 @@ function scales_for(frame: [u8], data: [u8], h: Header): Result[(i32, u8[], f32[
     }
   }
   if (b.bad || slot_bits * 12 > b.limit - b.pos) {
-    return Err(pcm.Truncated);
+    return (widths, scales, Err(pcm.Truncated));
   }
-  return Ok((b.pos, widths, scales));
+  return (widths, scales, Ok(b.pos));
 }
 
 function decode_slots(data: [u8], h: Header, widths: [u8], scales: [f32], pos: i32, own samples: f32[]): f32[] {
@@ -219,11 +221,15 @@ function render(own state: Decoder, input: [u8], h: Header, own output: f32[]): 
   }
   let frame = input[:h.bytes];
   let data = frame[if (h.crc) { 6 } else { 4 }:];
-  let (pos, widths, scales) = match (scales_for(frame, data, h)) { Ok(value) => value, Err(e) => { return (state, Err(e)); } };
-  let Decoder { rate, channels, free, history, bands, lines, transform } = state;
-  bands = decode_slots(data, h, widths, scales, pos, bands);
+  let Decoder { rate, channels, free, history, bands, lines, transform, widths, scales } = state;
+  let (next_widths, next_scales, scaled) = scales_for(frame, data, h, widths, scales);
+  let pos = match (scaled) {
+    Ok(value) => value,
+    Err(e) => { return (Decoder { rate: rate, channels: channels, free: free, history: history, bands: bands, lines: lines, transform: transform, widths: next_widths, scales: next_scales }, Err(e)); },
+  };
+  bands = decode_slots(data, h, next_widths, next_scales, pos, bands);
   let (next, samples, next_bands, next_lines, next_transform) = synthesis.granule12_into(history, bands, h.channels, output, 0, lines, transform);
-  return (Decoder { rate: h.rate, channels: h.channels, free: if (h.free > 0) { h.free } else { free }, history: next, bands: next_bands, lines: next_lines, transform: next_transform }, Ok(Frame { sample_rate: h.rate, channels: h.channels, bytes_read: h.bytes, samples: samples }));
+  return (Decoder { rate: h.rate, channels: h.channels, free: if (h.free > 0) { h.free } else { free }, history: next, bands: next_bands, lines: next_lines, transform: next_transform, widths: next_widths, scales: next_scales }, Ok(Frame { sample_rate: h.rate, channels: h.channels, bytes_read: h.bytes, samples: samples }));
 }
 
 pub function (own state: Decoder) decode_frame_into(input: [u8], own output: f32[], limits: pcm.Limits): (Decoder, Result[Frame, pcm.AudioError]) {
