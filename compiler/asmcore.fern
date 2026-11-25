@@ -6195,7 +6195,7 @@ pub function ssa_funary_known(ins: ssa.SInst): boolean {
   if (k == ir.K_I32_TO_F64) {
     return ssa.op_width(ins) != 0;
   }
-  let un: i32[] = [ir.K_FSQRT, ir.K_FFLOOR, ir.K_FCEIL, ir.K_FTRUNC, ir.K_FABS, ir.K_FROUND, ir.K_FNEG, ir.K_F64_TO_I32, ir.K_F64_TO_I64, ir.K_F32_BITS, ir.K_F32_FROM_BITS, ir.K_F64_BITS, ir.K_F64_FROM_BITS];
+  let un: i32[] = [ir.K_FSQRT, ir.K_FFLOOR, ir.K_FCEIL, ir.K_FTRUNC, ir.K_FABS, ir.K_FROUND, ir.K_FNEG, ir.K_F64_TO_I32, ir.K_F64_TO_I64, ir.K_F32_BITS, ir.K_F32_FROM_BITS, ir.K_F32_ROUND, ir.K_F64_BITS, ir.K_F64_FROM_BITS];
   return util.index_of_i32(un, k) >= 0;
 }
 

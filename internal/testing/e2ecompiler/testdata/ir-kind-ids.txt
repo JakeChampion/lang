@@ -531,3 +531,4 @@ secret_map=581
 secret_lock=582
 secret_unmap=583
 and_not=584
+f32_round=585
