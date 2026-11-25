@@ -1902,11 +1902,11 @@ struct Plan {
   virama: i32,
   rphf: boolean,
   pref: boolean,
-  blwf_lookups: i32[],
-  vatu_lookups: i32[],
-  pstf_lookups: i32[],
-  pref_lookups: i32[],
-  rphf_lookups: i32[],
+  blwf_lookups: truetype.PreparedLookup[],
+  vatu_lookups: truetype.PreparedLookup[],
+  pstf_lookups: truetype.PreparedLookup[],
+  pref_lookups: truetype.PreparedLookup[],
+  rphf_lookups: truetype.PreparedLookup[],
 }
 
 // A glyph of a run, with its fields of the run. `key` holds the place of
@@ -1943,9 +1943,9 @@ function indic_plan(f: truetype.Font, c: Config): Option[Plan] {
   return Some(Plan {
     config: c, gsub: gsub, gpos: gpos, old_spec: old_spec, zero: !old_spec && c.script != "mlym",
     virama: f.glyph(c.virama), rphf: f.has_feature(gsub, "rphf"), pref: f.has_feature(gsub, "pref"),
-    blwf_lookups: f.feature_lookups(gsub, "blwf"), vatu_lookups: f.feature_lookups(gsub, "vatu"),
-    pstf_lookups: f.feature_lookups(gsub, "pstf"), pref_lookups: f.feature_lookups(gsub, "pref"),
-    rphf_lookups: f.feature_lookups(gsub, "rphf"),
+    blwf_lookups: f.prepared_substitutions(gsub, "blwf"), vatu_lookups: f.prepared_substitutions(gsub, "vatu"),
+    pstf_lookups: f.prepared_substitutions(gsub, "pstf"), pref_lookups: f.prepared_substitutions(gsub, "pref"),
+    rphf_lookups: f.prepared_substitutions(gsub, "rphf"),
   });
 }
 
@@ -2191,13 +2191,13 @@ function reversed(gs: Glyph[], start: i32, end: i32): Glyph[] {
 
 // The glyphs `gs` after the initial reordering of each syllable.
 function initially_reordered(f: truetype.Font, p: Plan, gs0: Glyph[]): Glyph[] {
-  let gs = with_dotted_circles(f, with_consonant_positions(f, p, gs0), SYL_BROKEN, INDIC_CIRCLE, CAT_REPHA);
+  let gs = with_dotted_circles(f, with_consonant_positions(p, gs0), SYL_BROKEN, INDIC_CIRCLE, CAT_REPHA);
   let start = 0;
   while (start < gs.len()) {
     let end = syllable_end(gs, start);
     let kind = syllable_of(gs[start]) & 15;
     if (kind <= SYL_BROKEN && kind != SYL_SYMBOL) {
-      gs = reordered_syllable(f, p, gs, start, end);
+      gs = reordered_syllable(p, gs, start, end);
     }
     start = end;
   }
@@ -2207,7 +2207,7 @@ function initially_reordered(f: truetype.Font, p: Plan, gs0: Glyph[]): Glyph[] {
 // `gs` with the position of each consonant from the font: below the base
 // when the lookups of blwf or vatu join it with the virama, and after the
 // base when those of pstf or pref do.
-function with_consonant_positions(f: truetype.Font, p: Plan, gs0: Glyph[]): Glyph[] {
+function with_consonant_positions(p: Plan, gs0: Glyph[]): Glyph[] {
   if (p.virama == 0) {
     return gs0;
   }
@@ -2224,18 +2224,18 @@ function with_consonant_positions(f: truetype.Font, p: Plan, gs0: Glyph[]): Glyp
     }
     if (k == known.len()) {
       known = known.append(gs[i].id);
-      found = found.append(consonant_position(f, p, gs[i].id));
+      found = found.append(consonant_position(p, gs[i].id));
     }
     gs = gs.with(i, with_pos(gs[i], found[k]));
   }
   return gs;
 }
 
-function consonant_position(f: truetype.Font, p: Plan, g: i32): i32 {
-  if (with_virama(f, p, p.blwf_lookups, g) || with_virama(f, p, p.vatu_lookups, g)) {
+function consonant_position(p: Plan, g: i32): i32 {
+  if (with_virama(p, p.blwf_lookups, g) || with_virama(p, p.vatu_lookups, g)) {
     return POS_BELOW_C;
   }
-  if (with_virama(f, p, p.pstf_lookups, g) || with_virama(f, p, p.pref_lookups, g)) {
+  if (with_virama(p, p.pstf_lookups, g) || with_virama(p, p.pref_lookups, g)) {
     return POS_POST_C;
   }
   return POS_BASE_C;
@@ -2243,11 +2243,11 @@ function consonant_position(f: truetype.Font, p: Plan, g: i32): i32 {
 
 // Whether one of the lookups joins the virama and the glyph `g`, in either
 // order: some fonts have the order of the old specification in new tables.
-function with_virama(f: truetype.Font, p: Plan, lookups: i32[], g: i32): boolean {
+function with_virama(p: Plan, lookups: truetype.PreparedLookup[], g: i32): boolean {
   if (lookups.len() == 0) {
     return false;
   }
-  return f.would_substitute_lookups(lookups, [p.virama, g], p.zero) || f.would_substitute_lookups(lookups, [g, p.virama], p.zero);
+  return truetype.would_substitute_lookups(lookups, [p.virama, g], p.zero) || truetype.would_substitute_lookups(lookups, [g, p.virama], p.zero);
 }
 
 // `gs` with a dotted circle at the start of each syllable of the type
@@ -2292,8 +2292,8 @@ function with_dotted_circles(f: truetype.Font, gs: Glyph[], broken: i32, value: 
 // The index of the base of the syllable from `start` to `end`, the last
 // consonant that has no below-base or post-base form, and whether a reph
 // forms at the start.
-function base_of(f: truetype.Font, p: Plan, gs: Glyph[], start: i32, end: i32): (i32, boolean) {
-  let limit = reph_limit(f, p, gs, start, end);
+function base_of(p: Plan, gs: Glyph[], start: i32, end: i32): (i32, boolean) {
+  let limit = reph_limit(p, gs, start, end);
   let reph = limit > start;
   let base = base_search(gs, start, end, limit, if (reph) { start } else { end });
   // A Ra and a virama with no other consonant do not form a reph.
@@ -2302,9 +2302,9 @@ function base_of(f: truetype.Font, p: Plan, gs: Glyph[], start: i32, end: i32): 
 
 // The index after the reph at `start` and the joiners after it, or `start`
 // when no reph forms there. In Malayalam the reph is a repha character.
-function reph_limit(f: truetype.Font, p: Plan, gs: Glyph[], start: i32, end: i32): i32 {
+function reph_limit(p: Plan, gs: Glyph[], start: i32, end: i32): i32 {
   let logical = p.config.reph_mode == MODE_LOG_REPHA;
-  if (logical && cat_of(gs[start]) != CAT_REPHA || !logical && (!p.rphf || start + 3 > end || !reph_formed(f, p, gs, start))) {
+  if (logical && cat_of(gs[start]) != CAT_REPHA || !logical && (!p.rphf || start + 3 > end || !reph_formed(p, gs, start))) {
     return start;
   }
   let limit = start + (if (logical) { 1 } else { 2 });
@@ -2316,12 +2316,12 @@ function reph_limit(f: truetype.Font, p: Plan, gs: Glyph[], start: i32, end: i32
 
 // Whether a Ra and a virama at `start` form a reph by rphf. In Telugu a ZWJ
 // must follow them.
-function reph_formed(f: truetype.Font, p: Plan, gs: Glyph[], start: i32): boolean {
+function reph_formed(p: Plan, gs: Glyph[], start: i32): boolean {
   let two = [gs[start].id, gs[start + 1].id];
   if (p.config.reph_mode == MODE_IMPLICIT) {
-    return !is_one_of(gs[start + 2], joiner_bits()) && f.would_substitute_lookups(p.rphf_lookups, two, p.zero);
+    return !is_one_of(gs[start + 2], joiner_bits()) && truetype.would_substitute_lookups(p.rphf_lookups, two, p.zero);
   }
-  return cat_of(gs[start + 2]) == CAT_ZWJ && (f.would_substitute_lookups(p.rphf_lookups, two, p.zero) || f.would_substitute_lookups(p.rphf_lookups, two.append(gs[start + 2].id), p.zero));
+  return cat_of(gs[start + 2]) == CAT_ZWJ && (truetype.would_substitute_lookups(p.rphf_lookups, two, p.zero) || truetype.would_substitute_lookups(p.rphf_lookups, two.append(gs[start + 2].id), p.zero));
 }
 
 // The base from the end of the syllable back to `limit`: the last consonant
@@ -2361,9 +2361,9 @@ function half_requested(gs: Glyph[], start: i32, i: i32): boolean {
 }
 
 // `gs` after the initial reordering of the syllable from `start` to `end`.
-function reordered_syllable(f: truetype.Font, p: Plan, gs0: Glyph[], start: i32, end: i32): Glyph[] {
+function reordered_syllable(p: Plan, gs0: Glyph[], start: i32, end: i32): Glyph[] {
   let gs = kannada_swapped(p, gs0, start, end);
-  let (base, reph) = base_of(f, p, gs, start, end);
+  let (base, reph) = base_of(p, gs, start, end);
   for i in start..base {
     gs = gs.with(i, with_pos(gs[i], pos_of(gs[i]).min(POS_PRE_C)));
   }
@@ -2385,7 +2385,7 @@ function reordered_syllable(f: truetype.Font, p: Plan, gs0: Glyph[], start: i32,
       break;
     }
   }
-  return with_initial_masks(f, p, gs, start, end, new_base);
+  return with_initial_masks(p, gs, start, end, new_base);
 }
 
 // In Kannada a Ra, a halant and a ZWJ at the start of a syllable act as a
@@ -2561,13 +2561,13 @@ function cycles_merged(gs0: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
 
 // `gs` with the masks of the features that apply to each glyph of the
 // syllable from `start` to `end` with the base at `base`.
-function with_initial_masks(f: truetype.Font, p: Plan, gs0: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
+function with_initial_masks(p: Plan, gs0: Glyph[], start: i32, end: i32, base: i32): Glyph[] {
   let gs = side_masked(p, gs0, start, end, base);
   if (p.old_spec && p.config.script == "deva") {
     gs = eyelash_masked(gs, start, base);
   }
   if (p.pref && base + 2 < end) {
-    gs = pref_masked(f, p, gs, base, end);
+    gs = pref_masked(p, gs, base, end);
   }
   return zwnj_masked(gs, start, end);
 }
@@ -2611,9 +2611,9 @@ function eyelash_masked(gs0: Glyph[], start: i32, base: i32): Glyph[] {
 }
 
 // `gs` with pref on the first two glyphs after the base that pref joins.
-function pref_masked(f: truetype.Font, p: Plan, gs: Glyph[], base: i32, end: i32): Glyph[] {
+function pref_masked(p: Plan, gs: Glyph[], base: i32, end: i32): Glyph[] {
   for k in base + 1..end - 1 {
-    if (f.would_substitute_lookups(p.pref_lookups, [gs[k].id, gs[k + 1].id], p.zero)) {
+    if (truetype.would_substitute_lookups(p.pref_lookups, [gs[k].id, gs[k + 1].id], p.zero)) {
       return with_mask(with_mask(gs, k, PREF), k + 1, PREF);
     }
   }

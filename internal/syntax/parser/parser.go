@@ -2557,7 +2557,14 @@ func (p *parser) parseBlockStmtsMode(block *ast.Block, tailValue, discardTail, s
 			return
 		}
 		if p.match(lexer.Keyword, "let") {
-			s, err := p.parseLet(letRestStmts)
+			rest := letRestStmts
+			if tailValue && !discardTail {
+				rest = letRestLambda
+				if statementBranches {
+					rest = letRestLambdaVoidBranches
+				}
+			}
+			s, err := p.parseLet(rest)
 			if err != nil {
 				p.errors = append(p.errors, err)
 				p.syncToStmt()
@@ -4569,14 +4576,16 @@ func (p *parser) parseUse(parent *ast.Block) error {
 }
 
 // letRest says what a let-else takes as the success path: nothing, the
-// statements to the end of the block, or those statements and the value of
-// a value branch.
+// statements to the end of the block, those statements and the value of a
+// value branch, or the rest of a lambda body that can end in a tail.
 type letRest int
 
 const (
 	letRestNone letRest = iota
 	letRestStmts
 	letRestValue
+	letRestLambda
+	letRestLambdaVoidBranches
 )
 
 func (p *parser) parseLet(rest letRest) (ast.Stmt, error) {
@@ -4636,8 +4645,11 @@ func (p *parser) parseLet(rest letRest) (ast.Stmt, error) {
 		return nil, err
 	}
 	success := &ast.Block{P: semi.Pos}
-	if rest == letRestStmts {
+	switch rest {
+	case letRestStmts:
 		p.parseBlockStmts(success, false)
+	case letRestLambda, letRestLambdaVoidBranches:
+		p.parseBlockStmtsMode(success, true, false, rest == letRestLambdaVoidBranches)
 	}
 	return p.buildPatternBindingMatch(kw.Pos, pats, src, success, elseBlk, ast.OriginLetElse), nil
 }

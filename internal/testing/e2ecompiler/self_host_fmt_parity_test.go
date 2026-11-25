@@ -85,6 +85,16 @@ function one(t: (i32, i32)): i32 {
   return s;
 }
 `},
+	{"let-else-lambda-body", `function one(t: Option[i32]): i32 {
+  let f = (): i32 => {
+    let Some(s) = t else {
+      return 0;
+    };
+    s + 2
+  };
+  return f();
+}
+`},
 	{"match-header-and-arm-comments", `enum E { A, B(i32), C }
 
 function f(e: E, s: string, t: (i32, i32)): i32 {
