@@ -7796,8 +7796,8 @@ pub function hoisted_invariants(f: SFunc): Formed {
             merged = true;
           } else {
             lifted = lifted.append(ins);
-            def_pos = def_pos.with(ins.result, pre);
           }
+          def_pos = def_pos.with(ins.result, pre);
         }
         blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(lifted) });
         changed = true;
