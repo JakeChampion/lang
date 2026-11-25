@@ -274,3 +274,59 @@ func TestSelfHostWorkerEndsWithItsParent(t *testing.T) {
 		}
 	}
 }
+
+// The parent frees blocks of many sizes before each fork, so its free lists
+// are full. A worker clears them before it copies its result, and a block it
+// took from them would not be in its region. Each worker's result must equal
+// the same parts that the parent builds itself.
+const workerFreeListsProg = `import "std/worker";
+
+function make(n: i32, seed: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..n {
+    out = out.append(i * seed);
+  }
+  return out;
+}
+
+function parts(job: i32): i32[][] {
+  let out: i32[][] = [];
+  for k in 1..60 {
+    out = out.append(make(k * 5 + job, k + job));
+  }
+  return out;
+}
+
+function main(): i32 {
+  let keep: i32[][] = [];
+  for job in 0..24 {
+    for k in 1..200 {
+      let a = make(k * 3 + job, k);
+      if (k % 7 == 0) {
+        keep = keep.append(a);
+      }
+    }
+    let w = worker.spawn((): i32[][] => parts(job));
+    let got = w.join();
+    let want = parts(job);
+    if (got.len() != want.len()) { return 1; }
+    for i in 0..want.len() {
+      if (got[i] != want[i]) { return 2; }
+    }
+  }
+  if (keep.len() != 24 * 28) { return 3; }
+  return 0;
+}
+`
+
+func TestSelfHostWorkerResultAfterFullFreeLists(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, workerFreeListsProg, target, "FERN_SANITIZE=1")
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+		})
+	}
+}

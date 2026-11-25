@@ -29,14 +29,14 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	if len(p.PubUses) != 0 {
 		t.Fatal("semantic types must not export the names of another module")
 	}
-	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeLanes", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeVar", "TypeErased", "TypeNever", "TypeConst"}
+	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeLanes", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeVar", "TypeUnbound", "TypeErased", "TypeNever", "TypeConst"}
 	wantFields := [][]string{
 		{"is_char:boolean", "width:i32", "unsigned:boolean", "polymorphic:boolean"},
 		{"tag:i32"}, {"tag:i32"}, {"width:i32", "polymorphic:boolean"}, {"width:i32", "kind:i32"}, {"elem:Type", "view:boolean"},
 		{"name:string", "args:Type[]"}, {"elements:Type[]"},
 		{"param_types:Type[]", "param_own:boolean[]", "ret_own:boolean", "ret_type:Type", "params_known:boolean", "once:boolean"},
 		{"key:Type", "value:Type"}, {"name:string", "args:Type[]"},
-		{"traits:string"}, {"resource:string", "borrowed:boolean"}, {"tag:i32"}, {"reason:string"}, {"name:string", "declared:boolean"}, {"name:string"}, {"tag:i32"},
+		{"traits:string"}, {"resource:string", "borrowed:boolean"}, {"tag:i32"}, {"reason:string"}, {"name:string", "declared:boolean"}, {"param:string"}, {"name:string"}, {"tag:i32"},
 		{"value:string"},
 	}
 	if len(p.Structs) != len(wantNames) || len(p.Unions) != 1 || p.Unions[0].Name != "Type" {

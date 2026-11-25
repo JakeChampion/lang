@@ -11,6 +11,7 @@ function flag(b: boolean): string {
 function row(label: string, t: typeinfo.Type): string {
   return label
     + ": unknown=" + flag(checker.is_unknown(t))
+    + " open=" + flag(checker.unbound_enum_argument(t))
     + " name=" + checker.tvar_name(t)
     + " reason=" + checker.unknown_reason(t)
     + " label=" + checker.type_label(t) + "\n";
@@ -21,6 +22,8 @@ function main(): i32 {
   out += row("declared", typeinfo.TypeVar { name: "0_T", declared: true });
   out += row("unresolved", typeinfo.TypeVar { name: "0_Elem", declared: false });
   out += row("not a variable spelling", typeinfo.TypeVar { name: "widget", declared: false });
+  out += row("unbound", typeinfo.TypeUnbound { param: "T" });
+  out += row("unbound lifted", typeinfo.TypeUnbound { param: "" });
   out += row("unchecked", typeinfo.unchecked());
   out += row("erased", typeinfo.TypeErased { name: "T" });
   out += row("i32", typeinfo.t_i32());

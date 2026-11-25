@@ -260,6 +260,8 @@ jobs:
         with:
           path: ~/.cache/go-build
           key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-${{ steps.day.outputs.stamp }}
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   check-corpus:
     if: ${{ contains(fromJSON(inputs.groups || '["heavy","rest"]'), 'rest') && (inputs.packages == '' || inputs.packages == '[]' || contains(fromJSON(inputs.packages), './cmd/fern')) }}
@@ -288,6 +290,8 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   verify-heavy:
     name: test-units-x86_64-heavy
