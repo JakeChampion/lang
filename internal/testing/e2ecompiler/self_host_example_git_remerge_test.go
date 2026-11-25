@@ -820,6 +820,13 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	rightMerge := g.git("commit-tree", "-p", "module-1", "-p", "module-2", "-m", "take second parent", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
 	g.git("init", "-q", "--object-format="+run.format, "module")
+	// With an initialized checkout, two independent additions have no base
+	// gitlink, even when the checkout lacks both commits.
+	addLeft := g.git("commit-tree", "-p", "base", "-m", "add module on left", tree)
+	addRight := g.git("commit-tree", "-p", "base", "-m", "add module on right", rightTree)
+	addMerge := g.git("commit-tree", "-p", addLeft, "-p", addRight, "-m", "both add module", rightTree)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", addMerge)
+
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--format=%s", "-1", rightMerge)
 	// With the commits available locally, either parent order picks s2.
 	g.git("-C", "module", "fetch", "-q", dir, "module-history")

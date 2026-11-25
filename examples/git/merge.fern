@@ -831,6 +831,10 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
     if let Some(repo) = st.o.repo {
       if (repo.top != "") {
         if let Some(sub) = refs.checkout_at(repo.top + "/" + path) {
+          if (o.hash == no_version(st.store).hash) {
+            st = message(st, path, "Failed to merge submodule " + path + " (no merge base)");
+            return (st, false, if (st.depth > 0) { o } else { a });
+          }
           if let Some(later) = submodule_fast_forward(sub, o, a, b) {
             return (st, clean, later);
           }
