@@ -281,7 +281,7 @@ def rsa_suite(data, scheme):
             names = ["ct", "label", "msg"] if private else ["msg", "sig"]
             return vector_call(t, *(t[n] for n in names)).replace("check(", "check_%d(" % i)
         groups.extend(vector_groups({"testGroups": [g]}, call))
-    return "\n\n".join(helpers), groups
+    return "\n" + "\n\n".join(helpers), groups
 
 
 def extended_suites(d):
