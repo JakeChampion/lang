@@ -1025,6 +1025,9 @@ function emit_packed_arrays(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_push_u8")) {
     s = emit_arr_push_packed(s, "u8", 3, ".Lapou");
   }
+  if (s.has_need("arr_pushn_u8")) {
+    s = emit_arr_pushn_u8(s);
+  }
   if (s.has_need("arr_push_u16")) {
     s = emit_arr_push_packed(s, "u16", 2, ".Lapoh");
   }
@@ -1243,6 +1246,18 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
     s = s.write("    leaq -16(%r12), %r8\n    leaq 0(,%rcx,8), %rsi\n    pushq %rax\n    call __fern_large_push\n    popq %rax\n    jmp " + own + "_ret\n");
   }
   return s;
+}
+
+// The append of the %edx bytes packed in %esi, low byte first, to the byte
+// array at %rdi: the slow path of a fused append (ssa.fused_push).
+function emit_arr_pushn_u8(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_arr_pushn_owned_u8:\n");
+  s = s.write("    pushq %rbp\n    movq %rsp, %rbp\n    pushq %r12\n    pushq %r13\n");
+  s = s.write("    movl %esi, %r12d\n    movl %edx, %r13d\n");
+  s = s.write(".Larr_pushn_u8_loop:\n");
+  s = s.write("    movzbl %r12b, %esi\n    call __fern_arr_push_owned_u8\n    movq %rax, %rdi\n");
+  s = s.write("    shrl $8, %r12d\n    decl %r13d\n    jnz .Larr_pushn_u8_loop\n");
+  return s.write("    popq %r13\n    popq %r12\n    leave\n    ret\n");
 }
 
 // The store of the low part of `v` to element `i` of the box at `b`.
@@ -10913,6 +10928,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = s.need("arr_push");
     sym = "__fern_arr_push";
   }
+  if (ssa.fused_push(ins)) {
+    return ssa_fused_push(ins, reg_of, lp + "apush" + util.i32_to_string(ins.result), saves, s);
+  }
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a = 0;
@@ -10943,6 +10961,42 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
     s = lc_rt_uncount(s, "__fern_lc_alloc_bytes", "__fern_lc_alloc_count");
   }
+  return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+}
+
+// An append of 2 to 4 bytes (ssa.fused_push). The array goes to %rdi, and
+// the bytes go to the other registers that a cold append changes. They are
+// packed into %eax, low byte first, unless the operand holds them packed,
+// and one move stores them.
+function ssa_fused_push(ins: ssa.SInst, reg_of: i32[], l: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
+  s = s.need("arr_pushn_u8");
+  let n = ssa.fused_count(ins);
+  let last = ins.args.len() - 1;
+  let homes: i32[] = [2, 1, 7, 6];
+  let bytes: string[] = ["", "%sil", "%dl", "%cl"];
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  for a in 0..ins.args.len() {
+    srcs = srcs.append(reg_of[ins.args[a]]);
+    dsts = dsts.append(if (a == last) { 0 } else { homes[a] });
+  }
+  s = ssa_parallel_moves(srcs, dsts, s);
+  for k in 1..last {
+    s = s.write("    shll $8, %eax\n    movb " + bytes[last - k] + ", %al\n");
+  }
+  let ls = arr_push_labs(l, s);
+  s = ls.state;
+  if (!s.rc_free_debug) {
+    let wide = n > 2;
+    s = s.write("    movq (%rdi), %rdx\n" + packed_room("%rcx", 3) + "    leaq " + (if (wide) { "4" } else { "2" }) + "(%rdx), %rsi\n    cmpq %rcx, %rsi\n");
+    s = ssa_branch(s, J_JG, ls.slow);
+    s = push_count_test((ins.imm & 1) == 1, ls, s).lab_def(ls.store);
+    s = s.write(if (wide) { "    movl %eax, 8(%rdi,%rdx)\n" } else { "    movw %ax, 8(%rdi,%rdx)\n" });
+    s = s.write("    addq $" + util.i32_to_string(n) + ", (%rdi)\n");
+    s = ssa_branch(ssa_mov_rr(s, "%rax", "%rdi"), J_JMP, ls.end).lab_def(ls.slow);
+  }
+  s = s.write("    movl %eax, %esi\n    movl $" + util.i32_to_string(n) + ", %edx\n");
+  s = ssa_call_saving(s, "__fern_arr_pushn_owned_u8", saves).lab_def(ls.end);
   return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
 }
 

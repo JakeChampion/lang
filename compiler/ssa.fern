@@ -9262,6 +9262,177 @@ function rotate_half_pair(defs: SInst[], or: SInst, rv: i32, lv: i32): SInst {
   return SInst { ir_kind: 0, kind_tag: UNARY, result: or.result, args: [rs.args[0]], imm: 0, str: "rotr:" + util.i32_to_string(w) + ":" + util.i64_to_string(n) };
 }
 
+// The most bytes that one fused append takes. Each emitter moves the array
+// and the bytes to the registers that a cold append changes, and it has five.
+pub const FUSED_PUSH_MAX: i32 = 4;
+
+// The imm bit of a fused append whose operand 1 holds its bytes, low byte
+// first. The count of bytes is the imm shifted right by 4.
+pub const PUSH_PACKED: i32 = 2;
+
+// A byte append that is not fused.
+function byte_push(ins: SInst): boolean {
+  return ins.kind_tag == RT_CALL && ins.result >= 0 && ins.args.len() == 2 && (ins.imm & PUSH_PACKED) == 0 && ins.str == "arr_push_owned_u8";
+}
+
+// An append of more than one byte, which `fuse_byte_pushes` makes. Operand 0
+// is the array. The other operands are the bytes in order, or one word that
+// holds them (PUSH_PACKED).
+pub function fused_push(ins: SInst): boolean {
+  return ins.kind_tag == RT_CALL && ins.str == "arr_push_owned_u8" && (ins.args.len() > 2 || (ins.imm & PUSH_PACKED) != 0);
+}
+
+// The count of bytes that a fused append writes.
+pub function fused_count(ins: SInst): i32 {
+  return if ((ins.imm & PUSH_PACKED) != 0) { ins.imm >> 4 } else { ins.args.len() - 1 };
+}
+
+// Each chain of byte appends in a block, where each result is read only by
+// the next append, becomes appends of up to FUSED_PUSH_MAX bytes. The fused
+// append takes the place of the last append of its group. No call can be
+// between two appends of a group, and nothing between them can read the
+// array of the first.
+pub function fuse_byte_pushes(f: SFunc): SFunc {
+  if (!has_byte_push(f)) {
+    return f;
+  }
+  let uses = use_counts(f);
+  let defs = inst_defs(f);
+  let nblocks: SBlock[] = [];
+  let changed = false;
+  for blk in f.blocks {
+    let insts = fuse_block_pushes(blk.insts, uses, defs);
+    if (insts.len() != blk.insts.len()) {
+      changed = true;
+    }
+    nblocks = nblocks.append(SBlock { ...blk, insts: insts });
+  }
+  return if (changed) { prune_dead(SFunc { ...f, blocks: nblocks }) } else { f };
+}
+
+function has_byte_push(f: SFunc): boolean {
+  for blk in f.blocks {
+    let seen = false;
+    for ins in blk.insts {
+      if (byte_push(ins)) {
+        if (seen) {
+          return true;
+        }
+        seen = true;
+      }
+    }
+  }
+  return false;
+}
+
+function fuse_block_pushes(insts: SInst[], uses: i32[], defs: SInst[]): SInst[] {
+  let out: SInst[] = [];
+  let gone = __alloc_bool(insts.len());
+  let at = __alloc_i32(insts.len());
+  let fused: SInst[] = [];
+  for i in 0..insts.len() {
+    at = at.with(i, -1);
+  }
+  for i in 0..insts.len() {
+    if (gone[i] || !byte_push(insts[i])) {
+      continue;
+    }
+    let first = insts[i];
+    let args: i32[] = [first.args[0], first.args[1]];
+    let last = i;
+    let j = next_push(insts, last, first.args[0], uses);
+    while (j >= 0 && args.len() <= FUSED_PUSH_MAX) {
+      args = args.append(insts[j].args[1]);
+      gone = gone.with(last, true);
+      last = j;
+      j = next_push(insts, last, first.args[0], uses);
+    }
+    if (last != i) {
+      gone = gone.with(last, true);
+      at = at.with(last, fused.len());
+      fused = fused.append(fused_of(insts[last], args, first, defs));
+    }
+  }
+  if (fused.len() == 0) {
+    return insts;
+  }
+  for i in 0..insts.len() {
+    if (at[i] >= 0) {
+      out = out.append(fused[at[i]]);
+    } else if (!gone[i]) {
+      out = out.append(insts[i]);
+    }
+  }
+  return out;
+}
+
+// The fused append in the place of `last`. When the bytes are the low bytes
+// of one value in order, that value is the one operand of the bytes.
+function fused_of(last: SInst, args: i32[], first: SInst, defs: SInst[]): SInst {
+  let word = -1;
+  for k in 1..args.len() {
+    let b = byte_source(args[k], defs);
+    if (b.shift != 8 * (k - 1) || word >= 0 && b.value != word) {
+      word = -1;
+      break;
+    }
+    word = b.value;
+  }
+  if (word >= 0) {
+    return SInst { ...last, args: [args[0], word], imm: first.imm & 1 | PUSH_PACKED | args.len() - 1 << 4, ir_kind: first.ir_kind };
+  }
+  return SInst { ...last, args: args, imm: first.imm, ir_kind: first.ir_kind };
+}
+
+struct ByteSource { value: i32, shift: i32 }
+
+// The value and the right shift that byte `v` is the low byte of. A wrap, a
+// cast and a mask of 255 keep the low byte.
+function byte_source(v: i32, defs: SInst[]): ByteSource {
+  v = low_byte_source(v, defs);
+  let d = defs[v];
+  if (d.kind_tag == BINARY && (d.str == "shr_u" || d.str == "shr_s") && d.args.len() == 2) {
+    let c = const_value(defs, d.args[1]);
+    if (c > 0i64 && c < 32i64) {
+      return ByteSource { value: d.args[0], shift: c as i32 };
+    }
+  }
+  return ByteSource { value: v, shift: 0 };
+}
+
+function low_byte_source(v: i32, defs: SInst[]): i32 {
+  let d = defs[v];
+  while (d.kind_tag == UNARY && low_byte_cast(d.str) || d.kind_tag == BINARY && d.str == "and" && d.args.len() == 2 && const_value(defs, d.args[1]) == 255i64) {
+    v = d.args[0];
+    d = defs[v];
+  }
+  return v;
+}
+
+function low_byte_cast(what: string): boolean {
+  return what == "int_wrap" || what == "int_extend" || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16";
+}
+
+// The position of the byte append that reads the result of the append at
+// `k` as its only use, or -1. Nothing between them can be a call or read
+// `array`.
+function next_push(insts: SInst[], k: i32, array: i32, uses: i32[]): i32 {
+  let v = insts[k].result;
+  if (uses[v] != 1) {
+    return -1;
+  }
+  for j in k + 1..insts.len() {
+    let ins = insts[j];
+    if (byte_push(ins) && ins.args[0] == v) {
+      return j;
+    }
+    if (inst_is_call(ins) || ins.args.contains(array)) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
 pub function fuse_and_not(f: SFunc): SFunc {
   if (!has_and_xor(f)) {
     return f;

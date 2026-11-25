@@ -114,7 +114,7 @@ pub function with_selects(b: Body): Body {
       terms = terms.with(to[k], terms[from[k]]);
     }
   }
-  return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.fuse_and_not(ssa.fuse_carries(returned.f)) }, source: SourceLines { ...b.source, terms: terms } };
+  return Body { ...b, formed: ssa.Formed { ...b.formed, f: ssa.fuse_byte_pushes(ssa.fuse_and_not(ssa.fuse_carries(returned.f))) }, source: SourceLines { ...b.source, terms: terms } };
 }
 
 pub struct SourceLines { values: sourcepos.SourcePos[], terms: sourcepos.SourcePos[] }

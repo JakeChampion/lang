@@ -4162,6 +4162,9 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = s.need("arr_push");
     sym = "__fern_arr_push";
   }
+  if (ssa.fused_push(ins)) {
+    return ssa_fused_push(ins, reg_of, lp + "apush" + util.i32_to_string(ins.result), saves, s);
+  }
   s = ssa_load_abi_args(reg_of, ins.args, 2, s);
   if (ins.str == "raw_alloc") {
     s = s.write("    tbz w0, #31, 1f\n    b __fern_alloc_size_abort\n1:\n");
@@ -4184,6 +4187,50 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   if (ins.str == "alloc" && s.leak_check && s.rt_owned_allocs) {
     s = lc_rt_uncount(s, "__fern_lc_alloc_bytes", "__fern_lc_alloc_count");
   }
+  return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
+}
+
+// An append of 2 to 4 bytes (ssa.fused_push). The array goes to x0, and the
+// bytes go to the other registers that a cold append changes. They are
+// packed into w1, low byte first, unless the operand holds them packed, and
+// one store writes them.
+function ssa_fused_push(ins: ssa.SInst, reg_of: i32[], l: string, saves: SlowSaves, s: asmcore.EmitState): asmcore.EmitState {
+  s = s.need("arr_pushn_u8");
+  let n = ssa.fused_count(ins);
+  let homes: i32[] = [0, 8, 9, 10, 12];
+  let words: string[] = ["", "w1", "w2", "w3", "w30"];
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  for a in 0..ins.args.len() {
+    srcs = srcs.append(reg_of[ins.args[a]]);
+    dsts = dsts.append(homes[a]);
+  }
+  s = ssa_parallel_moves(srcs, dsts, s);
+  for a in 2..ins.args.len() {
+    s = s.write("    bfi w1, " + words[a] + ", #" + util.i32_to_string(8 * (a - 1)) + ", #8\n");
+  }
+  let sn = asmcore.lab_new(s, l + "s");
+  let on = asmcore.lab_new(sn.state, l + "o");
+  let en = asmcore.lab_new(on.state, l + "e");
+  s = en.state;
+  if (!s.rc_free_debug) {
+    let wide = n > 2;
+    s = ssa_ldst0(s, true, "x2", "x0");
+    s = ssa_unscaled(s, true, "x3", "x0", -16);
+    s = s.write("    lsl x3, x3, #3\n    sub x3, x3, #" + (if (wide) { "4" } else { "2" }) + "\n");
+    s = ssa_cmp_rr(s, "x2", "x3");
+    s = ssa_bcond(s, CC_GT, sn.lab);
+    s = push_count_test((ins.imm & 1) == 1, sn.lab, on.lab, s);
+    s = s.lab_def(on.lab);
+    s = ssa_addsub_rr(s, false, "x3", "x0", "x2");
+    s = s.write(if (wide) { "    str w1, [x3, #8]\n" } else { "    strh w1, [x3, #8]\n" });
+    s = ssa_addsub_imm(s, false, "x2", "x2", n);
+    s = ssa_ldst0(s, false, "x2", "x0");
+    s = ssa_b(s, en.lab);
+    s = s.lab_def(sn.lab);
+  }
+  s = s.write("    mov w2, #" + util.i32_to_string(n) + "\n");
+  s = ssa_bl_saving(s, "__fern_arr_pushn_owned_u8", saves).lab_def(en.lab);
   return ssa_store(reg_of, ins.result, "x0", asmcore.ssa_x0_forget(s));
 }
 
@@ -9254,6 +9301,9 @@ function emit_packed_arrays(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("arr_push_u8")) {
     s = emit_arr_push_packed(s, "u8", 3, ".Lapou");
   }
+  if (s.has_need("arr_pushn_u8")) {
+    s = emit_arr_pushn_u8(s);
+  }
   if (s.has_need("arr_push_u16")) {
     s = emit_arr_push_packed(s, "u16", 2, ".Lapoh");
   }
@@ -9350,6 +9400,16 @@ function emit_arr_push_packed(s: asmcore.EmitState, sfx: string, shift: i32, own
 }
 
 // The store of `v` to element `i` of the box at `b`, with `t` for the address.
+// The append of the w2 bytes packed in w1, low byte first, to the byte array
+// at x0: the slow path of a fused append (ssa.fused_push).
+function emit_arr_pushn_u8(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_arr_pushn_owned_u8:\n");
+  s = s.write(rt_frame(s) + "    mov x29, sp\n    stp x19, x20, [sp, #-16]!\n    mov w19, w1\n    mov w20, w2\n");
+  s = s.write(".Larr_pushn_u8_loop:\n");
+  s = s.write("    and w1, w19, #255\n    bl __fern_arr_push_owned_u8\n    lsr w19, w19, #8\n    subs w20, w20, #1\n    b.ne .Larr_pushn_u8_loop\n");
+  return s.write("    ldp x19, x20, [sp], #16\n" + rt_unframe(s) + "    ret\n");
+}
+
 function packed_store(v: string, t: string, b: string, i: string, shift: i32): string {
   if (shift == 3) {
     return "    add " + t + ", " + b + ", " + i + "\n    strb " + v + ", [" + t + ", #8]\n";
