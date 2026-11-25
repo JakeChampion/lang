@@ -20,6 +20,7 @@ var selfHostPassSwitches = []string{
 	"FERN_DEBUG_NO_SCALE_KERNEL=1",
 	"FERN_DEBUG_NO_PRODUCT_KERNEL=1",
 	"FERN_DEBUG_NO_RANGE_PROOFS=1",
+	"FERN_DEBUG_NO_FLAT_ARRAYS=1",
 }
 
 func selfHostPassConfig(seed uint64) []string {

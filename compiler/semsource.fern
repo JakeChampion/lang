@@ -34,6 +34,7 @@ import "./semcse";
 import "./semthread";
 import "./semunroll";
 import "./semfuse";
+import "./semflat";
 import "./semreserve";
 import "./semoption";
 import "./semndarray";
@@ -9563,7 +9564,7 @@ function infer_ownership(all: Produced[], names: string[], table: ssasem.Contrac
 // once, where the build options are made.
 // range_proofs covers each rewrite that a proof of a range permits: a check
 // that is removed or grouped, a word load, a loop version, a quotient.
-pub struct PassSwitches { reach: boolean, inline: boolean, scale_kernel: boolean, product_kernel: boolean, fusion: boolean, range_proofs: boolean }
+pub struct PassSwitches { reach: boolean, inline: boolean, scale_kernel: boolean, product_kernel: boolean, fusion: boolean, range_proofs: boolean, flat_arrays: boolean }
 
 pub function env_passes(): PassSwitches {
   let inline = true;
@@ -9580,6 +9581,7 @@ pub function env_passes(): PassSwitches {
     product_kernel: !util.debug_flag("FERN_DEBUG_NO_PRODUCT_KERNEL", "FERN_NO_PRODUCT_KERNEL"),
     fusion: !util.debug_flag("FERN_DEBUG_NO_ARRAY_FUSION", "FERN_NO_ARRAY_FUSION"),
     range_proofs: !util.debug_flag("FERN_DEBUG_NO_RANGE_PROOFS", "FERN_NO_RANGE_PROOFS"),
+    flat_arrays: !util.debug_flag("FERN_DEBUG_NO_FLAT_ARRAYS", "FERN_NO_FLAT_ARRAYS"),
   };
 }
 
@@ -9673,6 +9675,10 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     if (opts.passes.range_proofs) {
       all = sign_tested_reads(caller_ranges(all, names, mod));
     }
+    let flat = flat_arrays(all, names, table, opts.passes);
+    all = flat.all;
+    table = flat.table;
+    instance_contracts = flat_contracts(flat.plan, instance_contracts);
   }
   all = niche_options(all);
   if (opts.shape_slot) {
@@ -9772,6 +9778,58 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
 struct Spliced { all: Produced[], spliced: boolean[], laid: semrecords.Record[] }
 
 // A callee that takes a record parameter as its fields declares the fields.
+struct Flattened { all: Produced[], table: ssasem.Contracts, plan: semflat.Plan }
+
+// An array of a record of integer fields keeps its elements as slots in its
+// own buffer, for each function of the module (semflat).
+function flat_arrays(all: Produced[], names: string[], table: ssasem.Contracts, passes: PassSwitches): Flattened {
+  if (!passes.flat_arrays) {
+    return Flattened { all: all, table: table, plan: semflat.no_plan() };
+  }
+  let funcs: ssasem.Func[] = [];
+  let live: boolean[] = [];
+  let closed: boolean[] = [];
+  for p in all {
+    funcs = funcs.append(p.func);
+    live = live.append(p.ok && !p.template && !p.bodyless);
+    closed = closed.append(!p.template && !p.dropped && (!p.ok || p.bodyless));
+  }
+  let plan = semflat.plan(funcs, live, closed, names);
+  if (util.debug_flag("FERN_DEBUG_FLAT_ARRAYS", "FERN_FLAT_ARRAYS")) {
+    for r in plan.refused {
+      eprint("flat arrays: boxed " + r + "\n");
+    }
+  }
+  if (semflat.is_empty(plan)) {
+    return Flattened { all: all, table: table, plan: plan };
+  }
+  let out: Produced[] = [];
+  for i in 0..all.len() {
+    let r = if (live[i]) { semflat.rewrite(plan, all[i].func) } else { semflat.Rewritten { f: all[i].func, changed: false } };
+    if (r.changed) {
+      out = out.append(Produced { ...all[i], func: seminline.split_records(r.f, all[i].modes), analysis: None });
+    } else {
+      out = out.append(all[i]);
+    }
+  }
+  let envs: ssasem.Contract[] = [];
+  for c in table.envs {
+    envs = envs.append(semflat.retype_contract(plan, c));
+  }
+  return Flattened { all: out, table: ssasem.Contracts { ...table, list: flat_contracts(plan, table.list), envs: envs }, plan: plan };
+}
+
+function flat_contracts(plan: semflat.Plan, list: ssasem.Contract[]): ssasem.Contract[] {
+  if (semflat.is_empty(plan)) {
+    return list;
+  }
+  let out: ssasem.Contract[] = [];
+  for c in list {
+    out = out.append(semflat.retype_contract(plan, c));
+  }
+  return out;
+}
+
 function split_contracts(table: ssasem.Contracts, all: Produced[], names: string[]): ssasem.Contracts {
   let list = table.list;
   for i in 0..names.len() {

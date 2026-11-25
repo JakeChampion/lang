@@ -1,0 +1,174 @@
+// Each case runs on an array of a record of integer fields, which keeps its
+// fields in the buffer of the array (semflat), and on columns of i32. The
+// exit code names the first case whose answers differ.
+import "std/array";
+
+struct G { id: i32, cluster: i32, mask: u8, big: i64 }
+
+struct C { ids: i32[], clusters: i32[], masks: i32[], bigs: i64[] }
+
+function g_of(i: i32): G {
+  return G { id: i, cluster: 10 - i, mask: (i * 37 % 256) as u8, big: i as i64 * 1000000007 };
+}
+
+function built(n: i32): G[] {
+  let out: G[] = [];
+  for i in 0..n {
+    out = out.append(g_of(i));
+  }
+  return out;
+}
+
+function columns(n: i32): C {
+  let c = C { ids: [], clusters: [], masks: [], bigs: [] };
+  for i in 0..n {
+    let g = g_of(i);
+    c = C { ids: c.ids.append(g.id), clusters: c.clusters.append(g.cluster), masks: c.masks.append(g.mask as i32), bigs: c.bigs.append(g.big) };
+  }
+  return c;
+}
+
+function same(gs: G[], c: C): boolean {
+  if (gs.len() != c.ids.len()) {
+    return false;
+  }
+  for i in 0..gs.len() {
+    let g = gs[i];
+    if (g.id != c.ids[i] || g.cluster != c.clusters[i] || g.mask as i32 != c.masks[i] || g.big != c.bigs[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sum(gs: G[]): i64 {
+  let t: i64 = 0;
+  for g in gs {
+    t = t + g.id as i64 + g.mask as i64 * 3 + g.big;
+  }
+  return t;
+}
+
+// The element at `from` moved to `to`, with a read of the whole element
+// before the writes in place.
+function moved(gs: G[], from: i32, to: i32): G[] {
+  let g = gs[from];
+  let out = gs;
+  if (from < to) {
+    for i in from..to {
+      out = out.with(i, out[i + 1]);
+    }
+  } else {
+    let i = from;
+    while (i > to) {
+      out = out.with(i, out[i - 1]);
+      i -= 1;
+    }
+  }
+  return out.with(to, g);
+}
+
+function moved_ints(xs: i32[], from: i32, to: i32): i32[] {
+  let x = xs[from];
+  let out = xs;
+  if (from < to) {
+    for i in from..to {
+      out = out.with(i, out[i + 1]);
+    }
+  } else {
+    let i = from;
+    while (i > to) {
+      out = out.with(i, out[i - 1]);
+      i -= 1;
+    }
+  }
+  return out.with(to, x);
+}
+
+// A stable sort by cluster that swaps two elements in place.
+function by_cluster(gs0: G[]): G[] {
+  let gs = gs0;
+  for a in 1..gs.len() {
+    let b = a;
+    while (b > 0 && gs[b - 1].cluster > gs[b].cluster) {
+      let t = gs[b];
+      gs = gs.with(b, gs[b - 1]).with(b - 1, t);
+      b -= 1;
+    }
+  }
+  return gs;
+}
+
+// A copy loop of a prefix, which the compiler makes a range concat, then an
+// element made of the fields of another.
+function with_marker(gs: G[], first: i32): G[] {
+  let out: G[] = [];
+  for i in 0..first {
+    out = out.append(gs[i]);
+  }
+  out = out.append(G { id: 99, cluster: gs[first].cluster, mask: 7, big: -1 });
+  for i in first..gs.len() {
+    out = out.append(gs[i]);
+  }
+  return out;
+}
+
+function split_at(gs: G[], k: i32): ([G], i32, [G]) {
+  return (gs[:k], k, gs[k:]);
+}
+
+function main(): i32 {
+  let n = 9;
+  let gs = built(n);
+  let c = columns(n);
+  if (!same(gs, c)) {
+    return 1;
+  }
+  let t: i64 = 0;
+  for i in 0..n {
+    t = t + c.ids[i] as i64 + c.masks[i] as i64 * 3 + c.bigs[i];
+  }
+  if (sum(gs) != t) {
+    return 2;
+  }
+  let hs = gs.with(2, G { ...gs[7], mask: 200 });
+  if (hs[2].id != 7 || hs[2].mask != 200 || hs[2].big != gs[7].big || gs[2].id != 2) {
+    return 3;
+  }
+  let m = moved(gs, 6, 1);
+  let mi = moved_ints(c.ids, 6, 1);
+  let mb = moved_ints(c.clusters, 6, 1);
+  for i in 0..n {
+    if (m[i].id != mi[i] || m[i].cluster != mb[i]) {
+      return 4;
+    }
+  }
+  let back = moved(m, 1, 6);
+  if (!same(back, c)) {
+    return 5;
+  }
+  let sorted = by_cluster(gs);
+  for i in 0..n {
+    if (sorted[i].id != n - 1 - i) {
+      return 6;
+    }
+  }
+  let marked = with_marker(gs, 4);
+  if (marked.len() != n + 1 || marked[4].id != 99 || marked[4].cluster != gs[4].cluster || marked[3].id != 3 || marked[5].id != 4 || marked[n].id != n - 1) {
+    return 7;
+  }
+  let (left, k, right) = split_at(gs, 3);
+  if (left.len() != 3 || k != 3 || right.len() != n - 3 || right[0].id != 3 || left[2].big != gs[2].big) {
+    return 8;
+  }
+  let lit = [G { id: -5, cluster: 4, mask: 255, big: 9223372036854775807 }, gs[8]];
+  let both = array.concat(lit, gs);
+  if (both.len() != n + 2 || both[0].mask != 255 || both[0].big != 9223372036854775807 || both[1].id != 8 || both[n + 1].id != 8) {
+    return 9;
+  }
+  let mid = both[2:6];
+  if (mid.len() != 4 || mid[0].id != 0 || mid[3].cluster != 7) {
+    return 10;
+  }
+  return 0;
+}
