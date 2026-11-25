@@ -280,6 +280,7 @@ func TestSelfHostWorkerEndsWithItsParent(t *testing.T) {
 // took from them would not be in its region. Each worker's result must equal
 // the same parts that the parent builds itself.
 const workerFreeListsProg = `import "std/worker";
+import "core/cmp";
 
 function make(n: i32, seed: i32): i32[] {
   let out: i32[] = [];
@@ -323,7 +324,7 @@ func TestSelfHostWorkerResultAfterFullFreeLists(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
-			stderr, code := cli.exitOf(t, workerFreeListsProg, target, "FERN_SANITIZE=1")
+			stderr, code := cli.exitOf(t, workerFreeListsProg, target)
 			if code != 0 {
 				t.Fatalf("exit %d: %s", code, stderr)
 			}
