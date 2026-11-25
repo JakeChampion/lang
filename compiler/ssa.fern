@@ -1844,7 +1844,7 @@ function int_resize(kind: i32): boolean {
 }
 
 function float_math(kind: i32): boolean {
-  return kind >= ir.K_FNEG && kind <= ir.K_FROUND;
+  return kind >= ir.K_FNEG && kind <= ir.K_FROUND || kind == ir.K_F32_ROUND;
 }
 
 function class_order(order: i32[], fl: boolean[]): i32[] {
@@ -7443,7 +7443,7 @@ pub function fold_lane_identities(f: SFunc): SFunc {
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_VSPLAT || facts[ins.args[0]] == 1 && (ins.ir_kind == ir.K_F32_BITS || ins.ir_kind == ir.K_F32_FROM_BITS))) {
+      if (ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_VSPLAT || facts[ins.args[0]] == 1 && (ins.ir_kind == ir.K_F32_BITS || ins.ir_kind == ir.K_F32_FROM_BITS || ins.ir_kind == ir.K_F32_ROUND))) {
         facts = facts.with(ins.result, facts[ins.args[0]]);
       }
     }

@@ -14,8 +14,8 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/ir_kind_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_kind_run.fern", "ir_kind_run")
 
-	const want = "kind_count=584\n" +
-		"bijection_ok=533\n" +
+	const want = "kind_count=585\n" +
+		"bijection_ok=534\n" +
 		"bijection_failures=0\n" +
 		"retired=51\n" +
 		"neg_ok=15\n" +
