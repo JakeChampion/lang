@@ -434,6 +434,104 @@ function main(): i32 {
 }
 `
 
+// The strings that the runtime builds keep their bytes in the block of the
+// string, so the drop of a `@secret` record wipes them: a file that
+// read_file reads, a repeat, a concatenation, and a string that an append
+// grows into a block with spare capacity. No step releases a secret byte outside the record, so the secret
+// side must read none back. A mapped file is a read-only mapping of the
+// file: the drop must leave it, and the file keeps its bytes. KEYFILE holds
+// 56 bytes "A".
+const secretBuiltStringSrc = `import "std/string";
+
+@secret
+struct Key { text: string, n: i32 }
+
+struct Plain { text: string, n: i32 }
+
+@noinline
+function join2(a: string, b: string): string {
+  return a + b;
+}
+
+@noinline
+function build(how: string, n: i32): string {
+  if (how == "file") {
+    match (read_file("KEYFILE")) {
+      Ok(s) => { return s; },
+      Err(e) => { return ""; },
+    }
+  }
+  if (how == "repeat") {
+    return "A".repeat(n);
+  }
+  if (how == "concat") {
+    return join2("AAAAAAAAAAAAAAAAAAAAAAAAAAAA", "AAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+  }
+  let s = join2("BBBBBBBBBBBBBB", "BBBBBBBBBBBBBB");
+  s = s + "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  return s;
+}
+
+@noinline
+function key(how: string, n: i32): i32 {
+  let k = Key { text: build(how, n), n: 1 };
+  return k.text.len();
+}
+
+@noinline
+function plain(how: string, n: i32): i32 {
+  let k = Plain { text: build(how, n), n: 1 };
+  return k.text.len();
+}
+
+@noinline
+function mapped(): i32 {
+  let file = unsafe { map_file_unchecked("KEYFILE") };
+  match (file) {
+    Ok(s) => {
+      let k = Key { text: s, n: 1 };
+      return k.text.len();
+    },
+    Err(e) => { return -1; },
+  }
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 2..24 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let n: i32 = 54 + args().len();
+  if (mode == "mapped") {
+    let m = mapped();
+    match (read_file("KEYFILE")) {
+      Ok(s) => { print((m == 56 && s == "A".repeat(56)).to_string()); },
+      Err(e) => { print("false"); },
+    }
+    return 0;
+  }
+  if (mode.starts_with("secret-")) {
+    let m = key(mode.drop(7), n);
+  } else {
+    let m = plain(mode, n);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 // A record of a `@secret` struct also wipes each element of an array of
 // boxes that it holds alone: here the rows of a `u8[][]`, and the byte array
 // and the scalar of each record in a `Sub[]`. The probe reads back the
@@ -979,6 +1077,33 @@ func TestSelfHostSecretRecordWipesItsStrings(t *testing.T) {
 			}
 			if got := run("literal"); len(got) != 2 || got[0] != "20" {
 				t.Fatalf("literal printed %q; a string literal in a @secret record must keep its bytes", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsBuiltStrings(t *testing.T) {
+	keyfile := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(keyfile, bytes.Repeat([]byte("A"), 56), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := strings.ReplaceAll(secretBuiltStringSrc, "KEYFILE", keyfile)
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, src)
+			for _, c := range []struct {
+				how  string
+				want int
+			}{{"file", 56}, {"repeat", 56}, {"concat", 56}, {"grow", 40}} {
+				if got := secretCount(t, c.how, run(c.how)); got < c.want {
+					t.Fatalf("plain %s read %d secret bytes back, want at least %d; the raw allocations no longer observe the released string", c.how, got, c.want)
+				}
+				if got := secretCount(t, c.how, run("secret-"+c.how)); got != 0 {
+					t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its %s string back, want 0", got, c.how)
+				}
+			}
+			if got := run("mapped"); len(got) != 1 || got[0] != "true" {
+				t.Fatalf("mapped printed %q; the drop must leave a mapped file, and the file must keep its bytes", got)
 			}
 		})
 	}
