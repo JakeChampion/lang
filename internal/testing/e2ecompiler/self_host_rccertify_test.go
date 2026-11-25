@@ -655,6 +655,19 @@ function pick(name: string): Case {
         let b10: ssa.SBlock = block(10, [8, 9], [], ret(11));
         return Case { f: func(2, 14, [b0, b1, b3, b4, b2, b5, b6, b7, b8, b9, b10]), modes: [borrow, value], returns_unit: true };
     }
+    if (name == "element-taken-through-a-second-constant" || name == "element-taken-through-a-second-constant-other-slot") {
+        // v2 is element 1 of the counted v0. Where v0 is unique, a store of
+        // null clears that slot, so v2 takes its unit. The store writes the
+        // index as a second constant v4. Where v0 is shared, v2 is retained.
+        // A store into slot 2 leaves v2 with no unit where v0 is unique.
+        let slot: i32 = 1;
+        if (name == "element-taken-through-a-second-constant-other-slot") { slot = 2; }
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 1), inst(42, 2, [0, 1], 0, "rc"), call(3, "__fern_rc_is_unique", [0])], brif(3, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [const_int(4, slot), const_int(5, 0), inst(43, 0 - 1, [0, 4, 5], 0, "")], br(3));
+        let b2: ssa.SBlock = block(2, [0], [call(6, "__fern_rc_inc", [2])], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [call(7, "__fern_rc_dec", [0])], ret(2));
+        return Case { f: func(1, 8, [b0, b1, b2, b3]), modes: [counted], returns_unit: true };
+    }
     if (name == "push-onto-a-field-clears-its-slot" || name == "push-onto-a-field-keeps-its-slot") {
         // A push onto the field v11 of the borrowed v0, retained and released
         // around the push where v0 has another holder. Where the push keeps
@@ -979,6 +992,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"take-for-the-load-read-after", nil, 0},
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0},
 		{"retained-on-one-arm-released-on-another", nil, 0},
+		{"element-taken-through-a-second-constant", nil, 0},
+		{"element-taken-through-a-second-constant-other-slot", nil, 1},
 		{"push-onto-a-field-clears-its-slot", nil, 0},
 		{"push-onto-a-field-keeps-its-slot", nil, 1},
 		{"retained-on-one-arm-released-on-the-other-side", []string{"leaked where it dies of v0", "spent without a unit of v0"}, 0},

@@ -2060,7 +2060,7 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   if (st.kind_tag == ssa.ST_AT) {
     return ld.kind_tag == ssa.LD_AT && ld.imm == st.imm;
   }
-  return ld.kind_tag == ssa.ARR_AT && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
+  return ld.kind_tag == ssa.ARR_AT && ld.args.len() >= 2 && st.args.len() >= 3 && index_key(w, ld.args[1]) == index_key(w, st.args[1]);
 }
 
 function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i32, st: ssa.SInst): i32 {
