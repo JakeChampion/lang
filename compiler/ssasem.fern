@@ -409,7 +409,7 @@ pub function is_env_take(name: string): boolean {
 
 const FRESH_RESULT_BUILTINS: string[] = [
   "__bytes_owned", "__bytes_range", "__bytes_into", "__aes_expand_key", "__aes_ctr32", "__aes_dec_blocks", "__ghash",
-  "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks", "__sha256x8_hw_blocks",
+  "__aes_gcm_seal_into", "__aes_gcm_open_into", "__sha256_hw_blocks", "__sha256_hw_digest_block", "__sha1_hw_blocks", "__sha1x8_hw_blocks", "__sha256x8_hw_blocks",
   "__chacha20_xor_into", "__poly1305_blocks", "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix",
 ];
 
@@ -465,6 +465,10 @@ pub function variant_up(): i32 {
 
 pub function variant_as(): i32 {
   return ssa.SEM_VARIANT_AS;
+}
+
+pub function storage_bytes(): i32 {
+  return ssa.SEM_STORAGE_BYTES;
 }
 
 pub function length(): i32 {
@@ -2016,7 +2020,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 }
 
 function is_builtin_op(kind: i32): boolean {
-  return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
+  return kind == storage_bytes() || kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
     || kind == append_range() || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || kind == truncate() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
 }
 
@@ -2072,6 +2076,12 @@ function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   }
   if (ins.kind_tag == truncate()) {
     return truncate_error(ins, f, result);
+  }
+  if (ins.kind_tag == storage_bytes()) {
+    if (ins.args.len() != 1 || !typeinfo.is_owned_array(f.values[ins.args[0]]) || !is_i32(result)) {
+      return "storage size type";
+    }
+    return "";
   }
   if (ins.kind_tag == length()) {
     return length_error(ins, f, result);

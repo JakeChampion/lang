@@ -22,6 +22,13 @@ class NodeTests(unittest.TestCase):
         self.assertEqual(check.point_of(xml, "Open"), (200, 300))
         self.assertEqual(check.point_of(xml, "Phone storage"), (540, 600))
 
+    def test_wrapped_preview(self):
+        xml = tree(("dev.fern.files", "The WebDAV folder of the emulator check has ", "", "[16,72][282,89]"),
+                   ("dev.fern.files", "this line.", "", "[16,89][65,106]"))
+        self.assertTrue(check.preview_shows(xml, check.DAV_TEXT))
+        self.assertFalse(check.preview_shows(xml, check.SMB_TEXT))
+        self.assertFalse(check.preview_shows(xml, "this line. The WebDAV folder"))
+
     def test_other_apps_and_empty_bounds_do_not_match(self):
         xml = tree(("com.android.launcher3", "Open", "", "[100,200][300,400]"),
                    ("dev.fern.files", "Delete", "", "[0,0][0,0]"),

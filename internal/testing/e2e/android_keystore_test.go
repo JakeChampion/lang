@@ -20,6 +20,10 @@ function main(): i32 {
   if (!refused(keystore.open(e, "k", __alloc_u8(4125)))) { return 4; }
   if (!refused(keystore.open(e, "", __alloc_u8(29)))) { return 5; }
   if (!refused(keystore.seal(0 as usize, "k", [1u8]))) { return 6; }
+  if (!refused(keystore.seal_with_context(e, "k", [], [1u8]))) { return 7; }
+  if (!refused(keystore.seal_with_context(e, "k", __alloc_u8(4097), [1u8]))) { return 8; }
+  if (!refused(keystore.open_with_context(e, "k", __alloc_u8(28), [1u8]))) { return 9; }
+  if (!refused(keystore.open_with_context(e, "k", __alloc_u8(4125), [1u8]))) { return 10; }
   return 0;
 }`
 	if _, got := compileAndRunX86_64(t, program); got != 0 {

@@ -75,6 +75,7 @@ pub enum TlsError {
   OffloadRefused(i32),
   KeysRefused(i32),
   KernelReadFailed(i32),
+  InvalidTicketKey,
 }
 ```
 
@@ -102,6 +103,9 @@ impl cmp.Display for TlsError {}
 <<6 pub function (e: TlsError) message(): string>>=
 pub function (e: TlsError) message(): string {
   match (e) {
+    InvalidTicketKey => {
+      return "session tickets require a key derived from at least 32 bytes of secret material";
+    },
     HandshakeFailed(h) => {
       return h.message();
     },

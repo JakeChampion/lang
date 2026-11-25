@@ -10,9 +10,9 @@ Digest states are values. Every digest has the same surface: `<algorithm>_new()`
 
 ## Contracts
 
-PBKDF2-SHA256 requires at least one iteration and at least one output byte. Its error carries the rejected count or length.
+PBKDF2-SHA256 requires at least one iteration and at least one output byte. Its error carries the rejected count or length. Before passing an iteration count from storage to `pbkdf2_sha256_verify`, the caller must enforce its own maximum work factor.
 
-The one-shot SHAKE functions require a positive output length in bytes. They return `InvalidOutputLength` with the supplied length for zero or negative requests.
+The one-shot SHAKE functions require a positive output length in bytes. They return `InvalidOutputLength` with the supplied length for lengths outside 1 through `MAX_OUTPUT_BYTES`. PBKDF2 uses the same output bound. For streaming SHAKE, `try_squeeze` accepts zero and returns a typed error for an invalid count. The tuple-returning `squeeze` returns empty output and preserves the reader position for an invalid count.
 
 HKDF expansion and combined extraction/expansion return an error when the requested output is below one byte or above 255 hash blocks (8160 bytes for SHA-256 and 12240 for SHA-384). The error carries the requested length.
 
@@ -812,6 +812,7 @@ pub function sha1(s: [u8]): u8[] {
 
 // === SHA-224 and SHA-256 (FIPS 180-4) ===
 
+@secret
 pub struct Sha256 {
   h0: u32,
   h1: u32,
@@ -2473,6 +2474,7 @@ pub function sm3(s: [u8]): u8[] {
 
 // === BLAKE2b (RFC 7693), unkeyed, digest length 1..64 bytes ===
 
+@secret
 pub struct Blake2b {
   h0: u64,
   h1: u64,
@@ -3499,7 +3501,7 @@ The state has the layout of `Sha1x8`, with eight words for each lane: word `w` o
 ```fern
 <<sha256 on eight lanes>>=
 // Eight SHA-256 states. Word `w` of lane `k` is at byte `4 * (8 * w + k)`.
-pub struct Sha256x8 { state: u8[] }
+pub opaque struct Sha256x8 { state: u8[] }
 
 function __sha256_words(h: Sha256): u32[] {
   return [h.h0, h.h1, h.h2, h.h3, h.h4, h.h5, h.h6, h.h7];
@@ -3678,16 +3680,23 @@ function __pbkdf2_start(words: [u8], own tail: u8[]): Sha256 {
   };
 }
 
+// The pinned bootstrap compiler uses the allocating bulk kernel here.
+// Native code generation replaces this standard-library helper with a
+// single compression that writes the result directly into the owned block.
+function __pbkdf2_hw_block(own block: u8[], words: [u8]): u8[] {
+  let out = __sha256_hw_blocks(words, block);
+  for i in 0..8 {
+    block = __put_be32(block, 4 * i, __get_le32(out, 4 * i));
+  }
+  erase(out);
+  return block;
+}
+
 // After the 64-byte pad, each 32-byte digest needs one more block.
 // Replace its first 32 bytes with the next digest and keep the padding.
 function __pbkdf2_digest_block(words: [u8], own block: u8[]): u8[] {
   if (__sha256_hw()) {
-    let out = __sha256_hw_blocks(words, block);
-    for i in 0..8 {
-      block = __put_be32(block, 4 * i, __get_le32(out, 4 * i));
-    }
-    erase(out);
-    return block;
+    return __pbkdf2_hw_block(block, words);
   }
   let st = __sha256_soft_blocks(__pbkdf2_start(words, []), block, 0, 1);
   block = __put_be32(block, 0, st.h0);
@@ -3754,7 +3763,11 @@ function __pbkdf2_core(pw: [u8], salt: [u8], iterations: i32, dk_len: i32): u8[]
 
 ```fern
 <<7 pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: i32): Result[u8[], Pbkdf2Error]>>=
+// Largest eight-byte-aligned payload with space for a 32-byte array header in i32.
+pub const MAX_OUTPUT_BYTES: i32 = 2147483608;
+
 pub enum Pbkdf2Error {
+  InvalidSaltLength(i32),
   InvalidIterations(i32),
   InvalidKeyLength(i32),
 }
@@ -3765,8 +3778,9 @@ impl cmp.Display for Pbkdf2Error {}
 
 pub function (e: Pbkdf2Error) message(): string {
   return match (e) {
+    InvalidSaltLength(n) => "PBKDF2 salt is too long to append a block number, got " + n.to_string(),
     InvalidIterations(n) => "PBKDF2 iteration count must be positive, got " + n.to_string(),
-    InvalidKeyLength(n) => "PBKDF2 key length must be positive, got " + n.to_string(),
+    InvalidKeyLength(n) => if (n > MAX_OUTPUT_BYTES) { "PBKDF2 key length exceeds the array limit, got " + n.to_string() } else { "PBKDF2 key length must be positive, got " + n.to_string() },
   };
 }
 
@@ -3778,8 +3792,11 @@ pub function pbkdf2_sha256(password: [u8], salt: [u8], iterations: i32, dk_len: 
   if (iterations < 1) {
     return Err(InvalidIterations(iterations));
   }
-  if (dk_len < 1) {
+  if (dk_len < 1 || dk_len > MAX_OUTPUT_BYTES) {
     return Err(InvalidKeyLength(dk_len));
+  }
+  if (salt.len() > MAX_OUTPUT_BYTES - 4) {
+    return Err(InvalidSaltLength(salt.len()));
   }
   return Ok(__pbkdf2_core(password, salt, iterations, dk_len));
 }
@@ -4381,6 +4398,9 @@ pub function (x: Shake) reader(): ShakeReader {
 }
 
 pub function (r: ShakeReader) squeeze(n: i32): (u8[], ShakeReader) {
+  if (n < 0 || n > MAX_OUTPUT_BYTES) {
+    return ([], r);
+  }
   let st = r.sponge;
   let out = __alloc_u8(n);
   let at = 0;
@@ -4400,6 +4420,13 @@ pub function (r: ShakeReader) squeeze(n: i32): (u8[], ShakeReader) {
   return (out, ShakeReader { sponge: st });
 }
 
+pub function (r: ShakeReader) try_squeeze(n: i32): Result[(u8[], ShakeReader), ShakeError] {
+  if (n < 0 || n > MAX_OUTPUT_BYTES) {
+    return Err(InvalidOutputLength(n));
+  }
+  return Ok(r.squeeze(n));
+}
+
 pub enum ShakeError {
   InvalidOutputLength(i32),
 }
@@ -4410,7 +4437,7 @@ impl cmp.Display for ShakeError {}
 
 pub function (e: ShakeError) message(): string {
   return match (e) {
-    InvalidOutputLength(n) => "SHAKE output length must be positive, got " + n.to_string(),
+    InvalidOutputLength(n) => if (n > MAX_OUTPUT_BYTES) { "SHAKE output length exceeds the array limit, got " + n.to_string() } else { "SHAKE output length must be positive, got " + n.to_string() },
   };
 }
 
@@ -4419,14 +4446,14 @@ pub function (e: ShakeError) to_string(): string {
 }
 
 pub function shake128(data: [u8], out_len: i32): Result[u8[], ShakeError] {
-  if (out_len < 1) {
+  if (out_len < 1 || out_len > MAX_OUTPUT_BYTES) {
     return Err(InvalidOutputLength(out_len));
   }
   return Ok(shake128_new().update(data).reader().squeeze(out_len).0);
 }
 
 pub function shake256(data: [u8], out_len: i32): Result[u8[], ShakeError] {
-  if (out_len < 1) {
+  if (out_len < 1 || out_len > MAX_OUTPUT_BYTES) {
     return Err(InvalidOutputLength(out_len));
   }
   return Ok(shake256_new().update(data).reader().squeeze(out_len).0);

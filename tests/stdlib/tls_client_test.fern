@@ -167,18 +167,20 @@ function exchanged(s: client.Session, server: handshake.Server): string {
   return "";
 }
 
-function ticket(n: i32): client.Ticket {
-  return client.Ticket { identity: [n as u8], psk: [], suite: 0, lifetime: time.duration_seconds(60), age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "", max_early: 0 as u32, verified_chain: [] };
-}
-
 function test_tickets_have_a_limit(): test.TestOutcome {
+  let Ok(pair) = connect(client.config("tls.example", roots(ROOT)), [], false) else {
+    return test.fail("ticket handshake");
+  };
   let held: client.Ticket[] = [];
   let n = 0;
   while (n < client.MAX_TICKETS + 5) {
-    held = client.more_tickets(held, [ticket(n)]);
+    let Ok(item) = issued_at(pair, 60u32, [n as u8], WALL_MS) else {
+      return test.fail("issuing ticket " + n.to_string());
+    };
+    held = client.more_tickets(held, [item.0]);
     n += 1;
   }
-  return test.assert_eq(held.len().to_string() + " " + held[0].identity[0].to_string() + " " + held[held.len() - 1].identity[0].to_string(), "8 5 12");
+  return test.assert_eq(held.len().to_string() + " " + held[0].wire_identity()[0].to_string() + " " + held[held.len() - 1].wire_identity()[0].to_string(), "8 5 12");
 }
 
 function test_trusted(): test.TestOutcome {
@@ -436,9 +438,13 @@ function has_resume(events: handshake.Event[]): boolean {
 }
 
 function issued(p: Pair, lifetime: u32): Result[(client.Ticket, u8[]), tls.TlsError] {
-  let t = message.NewSessionTicket { lifetime: lifetime, age_add: 99 as u32, nonce: [0 as u8], ticket: "ticket-1".bytes(), extensions: [] };
+  return issued_at(p, lifetime, "ticket-1".bytes(), WALL_MS);
+}
+
+function issued_at(p: Pair, lifetime: u32, wire_identity: u8[], now: i64): Result[(client.Ticket, u8[]), tls.TlsError] {
+  let t = message.NewSessionTicket { lifetime: lifetime, age_add: 99 as u32, nonce: [0 as u8], ticket: wire_identity, extensions: [] };
   let st = srv(p.server.ticket(t))?;
-  let cr = rd(p.session, st.output)?;
+  let cr = rd_at(p.session, st.output, now)?;
   if (cr.tickets.len() != 1) {
     return Err(tls.HandshakeFailed(handshake.Misuse("tickets")));
   }
@@ -478,11 +484,11 @@ function test_ticket_authentication(): test.TestOutcome {
   let Ok(checked) = connect(cfg, [], false) else {
     return test.fail("verified handshake");
   };
-  let Ok(got) = issued(checked, 7200u32) else {
+  let Ok(got) = issued_at(checked, 7200u32, "ticket-1".bytes(), NOT_AFTER_MS) else {
     return test.fail("verified ticket");
   };
   let last = time.timestamp_from_unix_millis(NOT_AFTER_MS);
-  let ticket = client.Ticket { ...got.0, received: last };
+  let ticket = got.0;
   if (client.offered_for(ticket, cfg.server_name, last, cfg.roots, true).is_none()) {
     return test.fail("certificate still valid");
   }
@@ -497,7 +503,7 @@ function test_resumption(): test.TestOutcome {
     Ok(p) => {
       match (issued(p, 2592000 as u32)) {
         Ok(long) => {
-          if (!long.0.lifetime.eq(time.duration_seconds(604800))) {
+          if (!long.0.valid_for().eq(time.duration_seconds(604800))) {
             return test.fail("a lifetime above seven days");
           }
         },
@@ -508,7 +514,10 @@ function test_resumption(): test.TestOutcome {
       match (issued(p, 7200 as u32)) {
         Ok(got) => {
           let t = got.0;
-          if (t.server_name != "tls.example" || t.suite != keyschedule.Aes128GcmSha256.code() || !t.lifetime.eq(time.duration_seconds(7200)) || hex.encode(t.psk) != hex.encode(got.1)) {
+          let Some(offer) = client.offered(t, "tls.example", time.timestamp_from_unix_millis(WALL_MS)) else {
+            return test.fail("ticket metadata");
+          };
+          if (t.suite_code() != keyschedule.Aes128GcmSha256.code() || !t.valid_for().eq(time.duration_seconds(7200)) || hex.encode(offer.psk) != hex.encode(got.1)) {
             return test.fail("the ticket kept");
           }
           let refused = client.config("tls.example", roots(OTHER_ROOT)).with_ticket(t);
@@ -534,8 +543,8 @@ function test_resumption(): test.TestOutcome {
           if (outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)) != "tls handshake: no ticket offered called out of turn") {
             return test.fail("another name: " + outcome(connect_resumed(client.config("192.0.2.7", roots(ROOT)).with_ticket(t), got.1)));
           }
-          let stale = client.Ticket { ...t, received: t.received.sub(time.duration_seconds(7200)) };
-          return test.assert_eq(outcome(connect_resumed(client.config("tls.example", roots(ROOT)).with_ticket(stale), got.1)), "tls handshake: no ticket offered called out of turn");
+          let expired = time.timestamp_from_unix_millis(WALL_MS).add(time.duration_seconds(7200));
+          return test.assert_true(client.offered_for(t, "tls.example", expired, roots(ROOT), true).is_none());
         },
         Err(e) => {
           return test.fail(e.message());

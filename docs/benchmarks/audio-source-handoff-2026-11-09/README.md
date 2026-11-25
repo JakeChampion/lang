@@ -84,3 +84,17 @@ Commit `9c0c1cca70` later introduced direct transfer for both Readers and arbitr
 Both binaries used the same optimized self-host compiler on x86-64 Linux. The EOF variant changed the frozen probe to truncate to zero and check each buffer for EOF and zero available bytes. Reading the frozen 7,300,140-byte CAF through the direct Reader in 16 KiB chunks retained the same checksum and 1,791 allocations in both builds.
 
 Seven alternating trials of the 100,000-packet CAF benchmark verified the same frame counts and packet checksum. Copying callback results added 457 allocations in each CAF source mode. Median index time changed from 20.05 to 20.17 ms with the CAF Reader API and from 18.32 to 19.46 ms with retained callbacks. Both CAF paths delegate window reads through callbacks. The generic bounded-capacity array handoff remains open in #14876.
+
+## Bounded callback handoff, 2026-11-25
+
+The callback window now uses `array.bounded`. On x86-64 Linux the following allocation counts come from five paired trials at each size, alternating the order of the two executables. Both used the same compiler and the CAF source benchmark. Packet counts, frame counts and checksums matched for all three modes in every trial.
+
+| Packets | Reader before | Reader after | Retained callbacks before | Retained callbacks after |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,000 | 10,321 | 10,306 | 6,227 | 6,212 |
+| 10,000 | 100,855 | 100,800 | 60,599 | 60,544 |
+| 100,000 | 1,006,112 | 1,005,655 | 604,226 | 603,769 |
+
+The byte-view control recorded 38, 50 and 59 allocations respectively in both builds. The sixteen-window probe retained prefixes of sixteen 8 MiB allocations. The one-byte and empty cases both peaked at 12,364 KiB RSS. The allocator counted 196 allocations and frees in the one-byte case and 164 of each in the empty case.
+
+A separate counter probe handed off packed bytes and 32-bit integers. The suitable arrays needed zero new allocations. Each oversized truncated array needed one copy and preserved the live prefix. The probe passed on x86-64 Linux, ARM64 Linux under QEMU, and WASI. It also compiled for x86-64 and ARM64 Android.

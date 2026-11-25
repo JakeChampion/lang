@@ -281,8 +281,9 @@ pub function config(): Config {
   return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, on_metrics_listen: None, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1, h3_retry_above: 32, loopback: false };
 }
 
-pub function (c: Config) with_tls(cfg: server.Config): Config {
-  return Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) };
+pub function (c: Config) with_tls(cfg: server.Config): Result[Config, tls.TlsError] {
+  cfg.validate_ticket_key()?;
+  return Ok(Config { ...c, tls: Some(cfg.with_alpn(["http/1.1"])) });
 }
 
 pub function (c: Config) with_loopback(): Config {
@@ -341,6 +342,7 @@ pub function run(port: i32, opts: Config, handler: (HttpRequest, platform.Host) 
 }
 
 pub function run_shutdown(port: i32, opts: Config, handler: (HttpRequest, platform.Host) => HttpResponse, shutdown: (string) => void): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let l = __serve_listener(port, opts);
   if (l.sock.fd < 0) {
     return Err(__listen_error(port, l.sock.fd));
@@ -401,17 +403,20 @@ function __shut(sock: Socket): i32 {
 
 ### `12 pub struct ListenError`
 
-A port the server could not bind: the server's own, or `metrics_port`.
+The port and cause of a startup failure. For a TLS configuration error, `tls_error` carries the TLS cause and `error` reports an invalid argument.
 
 ```fern
 <<12 pub struct ListenError>>=
-pub struct ListenError { port: i32, error: net.NetError }
+pub struct ListenError { port: i32, error: net.NetError, tls_error: Option[tls.TlsError] }
 
 impl cmp.Display for ListenError {}
 
 impl error.Error for ListenError {}
 
 pub function (e: ListenError) message(): string {
+  if let Some(cause) = e.tls_error {
+    return "cannot listen on port " + e.port.to_string() + ": " + cause.message();
+  }
   return "cannot listen on port " + e.port.to_string() + ": " + e.error.message();
 }
 
@@ -435,7 +440,16 @@ pub function exit_code(r: Result[i32, ListenError]): i32 {
 }
 
 function __listen_error(port: i32, code: i32): ListenError {
-  return ListenError { port: port, error: net.error_from_host(code) };
+  return ListenError { port: port, error: net.error_from_host(code), tls_error: None };
+}
+
+function __validate_tls(port: i32, opts: Config): Result[void, ListenError] {
+  if let Some(cfg) = opts.tls {
+    if let Err(cause) = cfg.validate_ticket_key() {
+      return Err(ListenError { port: port, error: net.error_from_host(-22), tls_error: Some(cause) });
+    }
+  }
+  return Ok(());
 }
 
 function __listener_of(port: i32, opts: Config): __Listen {
@@ -474,6 +488,7 @@ pub function run_with[S](port: i32, opts: Config, init: S, handler: (S, HttpRequ
 }
 
 pub function run_with_shutdown[S](port: i32, opts: Config, init: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let l = __serve_listener(port, opts);
   if (l.sock.fd < 0) {
     return Err(__listen_error(port, l.sock.fd));
@@ -5216,6 +5231,7 @@ pub function supervise_with_shutdown[S](port: i32, opts: Config, init: S, handle
 ```fern
 <<67 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer])>>=
 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError]): Result[i32, ListenError] {
+  __validate_tls(port, opts)?;
   let workers = opts.workers;
   if (workers < 1) {
     workers = cpu_count();
@@ -5525,7 +5541,7 @@ function __exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): 
       return Ok(Some(e));
     },
     Err(e) => {
-      return Err(ListenError { port: opts.metrics_port, error: e });
+      return Err(ListenError { port: opts.metrics_port, error: e, tls_error: None });
     }
   }
   return Ok(None);
@@ -5922,6 +5938,9 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
   if (!opts.h3) {
     return __quic_none();
   }
+  let Ok(tickets) = quic.config([]).server_side(t.identity).with_tickets(l.h3_key) else {
+    return __quic_none();
+  };
   let port = tcp_local_port(l.sock);
   let sock = __adopt(opts.h3_sock);
   if (sock.fd < 0) {
@@ -5937,7 +5956,7 @@ function __quic_open[D: async.Driver](drv: D, l: __Listen, opts: Config): __Quic
     let closed = net.close(sock);
     return __quic_none();
   }
-  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(quic.config([]).server_side(t.identity).with_tickets(l.h3_key).with_early_data())), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
+  return __Quic { ...__quic_none(), sock: Some(sock), port: port, cfg: __h3_marked(h3q.transport(tickets.with_early_data())), key: l.h3_key, inbox: net.inbox(__h3_slots(), 65536) };
 }
 
 function __quic_on(c: __Conns): boolean {

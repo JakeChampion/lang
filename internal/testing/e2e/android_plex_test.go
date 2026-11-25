@@ -81,7 +81,7 @@ func TestAndroidPlexApk(t *testing.T) {
 	}
 	// fern.toml of the app gives the banner of the launcher of Android TV,
 	// and the media browser gives the file of Android Auto.
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex classes2.dex resources.arsc res/drawable/banner.png res/xml/automotive_app_desc.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex classes2.dex resources.arsc res/drawable/banner.png res/xml/automotive_app_desc.xml res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	banner, err := os.ReadFile(e2eharness.RepoPath(plexApp, "banner.png"))

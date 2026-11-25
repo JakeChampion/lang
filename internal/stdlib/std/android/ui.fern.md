@@ -3006,11 +3006,19 @@ function drawn[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M]
   }
   let lay = built.layout();
   host = Host { ...host, input: initial_scrolls(host.input, lay) };
+  let said = built.messages();
+  // The keyboard can shrink the viewport until it clips the field that
+  // holds the focus. Its edit and submit actions still belong to the form.
+  if (host.focus.len() > 0 && field_messages(said, host.focus).is_none()) {
+    if let Some(f) = field_el(root, host.focus) {
+      said = Messages { ...said, fields: said.fields.append(FieldMessages { name: f.field, edit: f.edit, submit: f.submit }) };
+    }
+  }
   let msg: Option[M] = None;
   if let Some(visible) = p.visible {
     msg = visible(s.app, screen, lay, host.input);
   }
-  return told_maybe(Shell { app: s.app, host: painted(host, lay, over, screen, animating, cost), said: built.messages(), jobs: s.jobs }, p, msg);
+  return told_maybe(Shell { app: s.app, host: painted(host, lay, over, screen, animating, cost), said: said, jobs: s.jobs }, p, msg);
 }
 
 function frame[S, M](own s: Shell[S, M], p: Program[S, M], ns: i64): Shell[S, M] {

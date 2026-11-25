@@ -239,7 +239,7 @@ function trust(o: options.Options, tls: boolean, required: boolean): Result[veri
   if (o.cacert.len() > 0) {
     match (verify.roots_from_file(o.cacert)) {
       Ok(more) => {
-        roots = verify.Roots { certs: roots.certs.concat(more.certs), distrust_after: roots.distrust_after.concat(more.distrust_after), pins: roots.pins.concat(more.pins) };
+        roots = verify.Roots { ...roots, certs: roots.certs.concat(more.certs), distrust_after: roots.distrust_after.concat(more.distrust_after) };
       },
       Err(e) => {
         return Err(f"--cacert {o.cacert}: {e.message()}");

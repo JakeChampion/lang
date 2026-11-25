@@ -2441,13 +2441,16 @@ function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function x86_sha256_blocks(): string {
+  let frame = "    pushq %rbx\n    pushq %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n    subq $56, %rsp\n";
   let o: string = "    .globl __fern_sha256_hw_blocks\n    .type __fern_sha256_hw_blocks, @function\n__fern_sha256_hw_blocks:\n"
-    + "    pushq %rbx\n    pushq %rbp\n    pushq %r12\n    pushq %r13\n    pushq %r14\n    pushq %r15\n    subq $56, %rsp\n"
+    + frame
     + x86_aes_view("%rsi", "%r8", "%r9", ".Lsha_data") + "    movq %r8, 16(%rsp)\n    movq %r9, 24(%rsp)\n"
     + x86_aes_view("%rdi", "%r8", "%r10", ".Lsha_st") + "    movq %r8, 32(%rsp)\n"
     + "    movl $32, %ebx\n    cmpq $32, %r10\n    jae .Lsha_stok\n    xorl %ebx, %ebx\n.Lsha_stok:\n"
     + "    leaq 7(%rbx), %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    movq %rbx, (%rax)\n    movq %rax, 40(%rsp)\n    testq %rbx, %rbx\n    jz .Lsha_ret\n"
-    + "    movq 32(%rsp), %r8\n    movdqu (%r8), %xmm0\n    movdqu 16(%r8), %xmm1\n    movdqu %xmm0, 8(%rax)\n    movdqu %xmm1, 24(%rax)\n"
+    + "    jmp .Lsha_load\n.Lsha_preallocated:\n" + frame
+    + "    movq %rdx, 16(%rsp)\n    movq $64, 24(%rsp)\n    movq %rsi, 32(%rsp)\n    movq %rdi, 40(%rsp)\n    movq %rdi, %rax\n"
+    + ".Lsha_load:\n    movq 32(%rsp), %r8\n    movdqu (%r8), %xmm0\n    movdqu 16(%r8), %xmm1\n    movdqu %xmm0, 8(%rax)\n    movdqu %xmm1, 24(%rax)\n"
     + "    movdqu .Lsha_bswap(%rip), %xmm15\n    leaq .Lsha_k(%rip), %rbp\n";
   o += ".Lsha_loop:\n    movq 24(%rsp), %rcx\n    cmpq $64, %rcx\n    jb .Lsha_ret\n    subq $64, %rcx\n    movq %rcx, 24(%rsp)\n    movq 16(%rsp), %rsi\n";
   for j in 0..4 {
@@ -2467,7 +2470,19 @@ function x86_sha256_blocks(): string {
   }
   return o + "    jmp .Lsha_loop\n.Lsha_ret:\n    movq 40(%rsp), %rax\n    addq $56, %rsp\n"
     + "    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n    popq %rbp\n    popq %rbx\n    ret\n"
-    + "    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n";
+    + "    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n" + x86_sha256_digest_block();
+}
+
+// Compress the padded block before overwriting its first half with the digest.
+function x86_sha256_digest_block(): string {
+  return "    .globl __fern_sha256_hw_digest_block\n    .type __fern_sha256_hw_digest_block, @function\n__fern_sha256_hw_digest_block:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $224, %rsp\n    movq %rdi, -48(%rbp)\n"
+    + x86_aes_view("%rsi", "%r10", "%r11", ".Lsd_state")
+    + "    cmpq $32, %r11\n    jne __fern_slice_abort\n    movq %r10, -24(%rbp)\n    movq -48(%rbp), %r8\n    movq (%r8), %r9\n    cmpq $64, %r9\n    jne __fern_slice_abort\n"
+    + x86_aes_gcm_own(".Lsd") + "    leaq -144(%rbp), %rdi\n    movq -24(%rbp), %rsi\n    movq -48(%rbp), %rdx\n    addq $8, %rdx\n    call .Lsha_preallocated\n"
+    + "    movdqu -136(%rbp), %xmm0\n    movdqu -120(%rbp), %xmm1\n    pshufb %xmm15, %xmm0\n    pshufb %xmm15, %xmm1\n    movq -48(%rbp), %rax\n"
+    + "    movdqu %xmm0, 8(%rax)\n    movdqu %xmm1, 24(%rax)\n    pxor %xmm0, %xmm0\n    movdqu %xmm0, -136(%rbp)\n    movdqu %xmm0, -120(%rbp)\n    leave\n    ret\n"
+    + "    .size __fern_sha256_hw_digest_block, .-__fern_sha256_hw_digest_block\n";
 }
 
 function x86_sha256_rounds(): string {
@@ -11222,6 +11237,29 @@ function ssa_fusable_cmp(ins: ssa.SInst): boolean {
   return ins.kind_tag == ssa.BINARY && (ircore.is_int_cmp_kind(ir.kind_id(ins.str)) || ssa.float_cmp(ins.str));
 }
 
+// An add and an immediate adjustment truncated to u32 fit in one LEA.
+// The immediate has no register home, so no move intervenes.
+function ssa_index_lea(blk: ssa.SBlock, ii: i32, end: i32, fr: SsaFrame, reg_of: i32[]): string {
+  let sum = blk.insts[ii];
+  if (sum.kind_tag != ssa.BINARY || sum.str != "add" || ii + 3 >= end) {
+    return "";
+  }
+  let k = blk.insts[ii + 1];
+  let op = blk.insts[ii + 2];
+  if (k.kind_tag != ssa.CONST_INT || !fr.imm.is_imm[k.result] || !ssa.low_word_pair(blk, ii + 2, fr.uses)) {
+    return "";
+  }
+  if (op.str != "sub" && op.str != "add" || op.args[0] != sum.result || op.args[1] != k.result || fr.uses[sum.result] != 1) {
+    return "";
+  }
+  let dst = blk.insts[ii + 3].result;
+  if (!ssa_in_x(reg_of, dst) || !ssa_in_x(reg_of, sum.args[0]) || !ssa_in_x(reg_of, sum.args[1])) {
+    return "";
+  }
+  let disp = if (op.str == "sub") { 0 - k.imm } else { k.imm };
+  return "    leal " + util.i32_to_string(disp) + "(" + ssa_reg(reg_of[sum.args[0]]) + "," + ssa_reg(reg_of[sum.args[1]]) + "), " + ssa_r32(ssa_reg(reg_of[dst])) + "\n";
+}
+
 function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let ins = blk.insts[ii];
   if (ins.kind_tag == ssa.SELECT) {
@@ -12441,6 +12479,13 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     while (ii < blk.insts.len() - fu.n) {
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins = blk.insts[ii];
+      let index_lea = if (s.symbols) { "" } else { ssa_index_lea(blk, ii, blk.insts.len() - fu.n, fr, reg_of) };
+      if (index_lea != "") {
+        s = asmcore.ssa_prepared_loc(prepared.source.values, ins.result, s);
+        s = asmcore.ssa_x0_forget(s.write(index_lea));
+        ii += 4;
+        continue;
+      }
       if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
         s = asmcore.ssa_prepared_loc(prepared.source.values, ins.result, s);
         s = ssa_emit_tail_call(ins, reg_of, fr, sourcepos.at(prepared.source.terms, blk.id), s);
@@ -12999,6 +13044,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     }
     s = s.write("    pushq $0\n");
     s = s.need("heap");
+  } else if (o.kind_tag == ir.K_STORAGE_BYTES) {
+    s = s.write("    popq %rax\n    movq -16(%rax), %rax\n    shlq $3, %rax\n    pushq %rax\n");
   } else if (o.kind_tag == ir.K_ARR_RC) {
     s = s.write("    popq %rax\n    movslq -8(%rax), %rax\n    pushq %rax\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {

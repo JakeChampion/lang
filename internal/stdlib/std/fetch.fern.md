@@ -1457,24 +1457,7 @@ function __place_key(p: __Place): string {
   return key;
 }
 
-function __roots_key(roots: Option[verify.Roots]): string {
-  match (roots) {
-    Some(r) => {
-      let h = crypto.sha256_new();
-      for c in r.certs {
-        h = h.update(c.raw);
-      }
-      for pin in r.pins {
-        h = h.update("pin".bytes()).update(pin);
-      }
-      return hex.encode(h.finish());
-    },
-    None => {
-      return "system";
-    }
-  }
-  return "system";
-}
+<<fetch connection pool trust key>>
 
 function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
   let rows = __live_kept(tr);
@@ -1749,6 +1732,51 @@ function __alt_max_age(parts: string[]): Duration {
     }
   }
   return ALT_SVC_DAY;
+}
+```
+
+```fern
+<<fetch connection pool trust key>>=
+function __roots_key(roots: Option[verify.Roots]): string {
+  match (roots) {
+    Some(r) => {
+      let h = crypto.sha256_new();
+      if let verify.PinnedServers(pins) = r.mode {
+        for pin in pins {
+          if (pin.len() == 32) {
+            h = h.update(pin);
+          }
+        }
+        return "pinned " + hex.encode(h.finish());
+      }
+      for c in r.certs {
+        h = h.update(c.raw);
+      }
+      return hex.encode(h.finish());
+    },
+    None => {
+      return "system";
+    }
+  }
+  return "system";
+}
+```
+
+```fern test name=fetch-pool-trust-mode
+import "std/crypto";
+import "std/hex";
+import "std/tls/verify";
+
+<<fetch connection pool trust key>>
+
+function main(): i32 {
+  let empty = __roots_key(Some(verify.pinned([])));
+  let authorities = __roots_key(Some(verify.no_roots()));
+  let pinned = __roots_key(Some(verify.pinned([__alloc_u8(32)])));
+  if (empty == authorities || empty == pinned || pinned == authorities) {
+    return 1;
+  }
+  return 0;
 }
 ```
 
@@ -4090,7 +4118,7 @@ function __recv_records[T: Transport](tr: T, conn: __Conn, s: client.Session, ti
   while (true) {
     let raw = __recv_raw(tr, conn.fd, timeouts, started, size)?;
     if (raw.len() == 0) {
-      if (session.held.len() > 0) {
+      if (session.has_pending_record_bytes()) {
         return Err(Tls(tls.RecordCut));
       }
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });

@@ -1,14 +1,103 @@
+// Android Keystore wraps a fresh data key for each saved list. Its size is
+// independent of the number of phones, including when the list is empty.
+import "std/option";
+import "std/crypto/aead";
+import "std/crypto";
+import "std/crypto/chacha20poly1305" as cipher;
+import "std/rand";
 import "std/result";
+import "./identity_store" as store;
 
-// Move the previous list of known phones into the no-backup directory.
-pub function migrate(keys: string, old: string): void {
-  if (keys.len() == 0 || old.len() == 0 || read_file_bytes(keys + "/peers").is_ok()) {
-    return;
+const CONTEXT: string = "walkie.peers.v1";
+
+function pack(pins: [u8[]], wrap: (u8[]) => Result[u8[], string]): Result[u8[], string] {
+  let raw = rand.bytes(32);
+  defer crypto.erase(raw);
+  let wrapped = wrap(raw)?;
+  if (wrapped.len() < 1 || wrapped.len() > 255) {
+    return Err("invalid wrapped peer-list key");
   }
-  let Ok(b) = read_file_bytes(old + "/peers") else {
-    return;
-  };
-  if (write_file_bytes(keys + "/peers", b).is_ok()) {
-    let removed = remove_file(old + "/peers");
+  let key = cipher.key(raw).map_err((e: aead.AeadError): string => e.message())?;
+  defer key.erase();
+  let bytes: u8[] = [];
+  for pin in pins {
+    if (pin.len() != 32) {
+      return Err("invalid phone identity");
+    }
+    for b in pin {
+      bytes = bytes.append(b);
+    }
   }
+  let data = key.seal_random(bytes, CONTEXT.as_bytes()).map_err((e: aead.AeadError): string => e.message())?;
+  return Ok([1u8, wrapped.len() as u8].concat(wrapped).concat(data));
+}
+
+function copy_bytes(bytes: [u8]): u8[] {
+  let out: u8[] = [];
+  for b in bytes {
+    out = out.append(b);
+  }
+  return out;
+}
+
+function decode(bytes: [u8]): Result[u8[][], string] {
+  if (bytes.len() % 32 != 0) {
+    return Err("invalid peer list length");
+  }
+  let pins: u8[][] = [];
+  for i in 0..bytes.len() / 32 {
+    pins = pins.append(copy_bytes(bytes[i * 32:(i + 1) * 32]));
+  }
+  return Ok(pins);
+}
+
+function unpack(data: [u8], unwrap: (u8[]) => Result[u8[], string]): Result[u8[][], string] {
+  if (data.len() < 2 || data[0] != 1u8) {
+    return Err("invalid peer list envelope");
+  }
+  let end = 2 + data[1] as i32;
+  if (end == 2 || end > data.len()) {
+    return Err("invalid wrapped peer-list key");
+  }
+  let raw = unwrap(copy_bytes(data[2:end]))?;
+  defer crypto.erase(raw);
+  let key = cipher.key(raw).map_err((e: aead.AeadError): string => e.message())?;
+  defer key.erase();
+  return decode(key.open_prefixed(data[end:], CONTEXT.as_bytes()).map_err((e: aead.AeadError): string => e.message())?);
+}
+
+// Commit the ciphertext before recording migration in Keystore. A restart
+// can then finish recording the marker and removing the plaintext.
+pub function save(dir: string, pins: [u8[]], wrap: (u8[]) => Result[u8[], string], mark: () => Result[void, string]): Result[void, string] {
+  store.commit(dir + "/peers.sealed", pack(pins, wrap)?)?;
+  store.sync_dir(dir)?;
+  return mark();
+}
+
+pub function load(dir: string, old: string, has_key: () => Result[boolean, string], wrap: (u8[]) => Result[u8[], string], unwrap: (u8[]) => Result[u8[], string], mark: () => Result[void, string]): Result[u8[][], string] {
+  let pins: u8[][] = [];
+  if let Some(data) = store.read_optional(dir + "/peers.sealed")? {
+    pins = unpack(data, unwrap)?;
+    store.sync_dir(dir)?;
+    mark()?;
+  } else {
+    if (has_key()?) {
+      return Err("sealed peer list is missing");
+    }
+    let plain = store.read_optional(dir + "/peers")?;
+    if (plain.is_none() && old != "" && old != dir) {
+      plain = store.read_optional(old + "/peers")?;
+    }
+    if let Some(bytes) = plain {
+      pins = decode(bytes)?;
+      save(dir, pins, wrap, mark)?;
+    } else {
+      return Ok(pins);
+    }
+  }
+  store.remove_plain(dir, "peers")?;
+  if (old != "" && old != dir) {
+    store.remove_plain(old, "peers")?;
+  }
+  return Ok(pins);
 }

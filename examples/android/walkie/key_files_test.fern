@@ -27,6 +27,21 @@ function same(seed: Result[u8[], string]): test.TestOutcome {
   return test.assert_true(crypto.consteq(bytes, SEED.as_bytes()));
 }
 
+function new_store(): Result[boolean, string] {
+  return Ok(false);
+}
+
+function mark(): Result[void, string] {
+  return Ok(());
+}
+
+function same_peer(pins: Result[u8[][], string]): test.TestOutcome {
+  let Ok(list) = pins else {
+    return test.fail("could not load known phones");
+  };
+  return test.assert_true(list.len() == 1 && crypto.consteq(list[0], SEED.as_bytes()));
+}
+
 function main(): i32 {
   let r = test.new("walkie key files");
   let (old, r1) = test.must_temp_dir(r, "walkie-old");
@@ -35,38 +50,83 @@ function main(): i32 {
     return r2.finish();
   }
   let identity = write_file(old + "/identity", SEED);
-  let peers = write_file(old + "/peers", "known phones");
-  key_files.migrate(keys, old);
-  r2 = r2.it("failed seal preserves the identity", () => test.assert_true(identity_store.load(keys, old, unavailable, open).is_err()));
+  let peers = write_file(old + "/peers", SEED);
+  r2 = r2.it("failed seal preserves the identity", () => test.assert_true(identity_store.load(keys, old, new_store, unavailable, open).is_err()));
   r2 = r2.it("plaintext available to retry", () => test.assert_file_contents(old + "/identity", SEED));
-  r2 = r2.it("old identity migrates without changing", () => same(identity_store.load(keys, old, seal, open)));
-  r2 = r2.it("restart opens the sealed identity", () => same(identity_store.load(keys, old, unavailable, open)));
+  r2 = r2.it("old identity migrates without changing", () => same(identity_store.load(keys, old, new_store, seal, open)));
+  r2 = r2.it("restart opens the sealed identity", () => same(identity_store.load(keys, old, new_store, unavailable, open)));
   let duplicate = write_file(keys + "/identity", SEED);
-  r2 = r2.it("unavailable keystore cannot fall back to plaintext", () => test.assert_true(identity_store.load(keys, old, seal, unavailable).is_err()));
-  r2 = r2.it("retry completes interrupted cleanup", () => same(identity_store.load(keys, old, unavailable, open)));
+  r2 = r2.it("unavailable keystore cannot fall back to plaintext", () => test.assert_true(identity_store.load(keys, old, new_store, seal, unavailable).is_err()));
+  r2 = r2.it("retry completes interrupted cleanup", () => same(identity_store.load(keys, old, new_store, unavailable, open)));
   r2 = r2.it("no plaintext in no-backup directory", () => test.assert_file_not_exists(keys + "/identity"));
   let removed = remove_file(keys + "/identity.sealed");
   let prior = write_file(keys + "/identity", SEED);
-  r2 = r2.it("no-backup identity also migrates", () => same(identity_store.load(keys, old, seal, open)));
-  r2 = r2.it("peers migrated", () => test.assert_file_contents(keys + "/peers", "known phones"));
+  r2 = r2.it("no-backup identity also migrates", () => same(identity_store.load(keys, old, new_store, seal, open)));
+  r2 = r2.it("failed migration preserves the old list", () => test.assert_true(key_files.load(keys, old, new_store, unavailable, open, mark).is_err()));
+  r2 = r2.it("legacy list stays available for retry", () => test.assert_file_contents(old + "/peers", SEED));
+  r2 = r2.it("commit precedes migration marker", () => test.assert_true(key_files.load(keys, old, new_store, seal, open, (): Result[void, string] => Err("marker unavailable")).is_err()));
+  r2 = r2.it("retry opens committed peers", () => same_peer(key_files.load(keys, old, new_store, unavailable, open, mark)));
   r2 = r2.it("old identity removed", () => test.assert_file_not_exists(old + "/identity"));
   r2 = r2.it("old peers removed", () => test.assert_file_not_exists(old + "/peers"));
   let stale = write_file(old + "/peers", "stale phones");
   r2 = r2.it("stale peer fixture written", () => test.assert_is_ok(stale));
-  key_files.migrate(keys, old);
-  r2 = r2.it("existing peers preserved", () => test.assert_file_contents(keys + "/peers", "known phones"));
+  r2 = r2.it("existing peers preserved", () => same_peer(key_files.load(keys, old, new_store, unavailable, open, mark)));
+  r2 = r2.it("stale plain file removed", () => test.assert_file_not_exists(old + "/peers"));
+  r2 = r2.it("larger lists round trip through a wrapped key", () => {
+    let many: u8[][] = [];
+    let pin: u8[] = [];
+    for b in SEED.as_bytes() {
+      pin = pin.append(b);
+    }
+    for i in 0..140 {
+      many = many.append(pin);
+    }
+    let saved = key_files.save(keys, many, seal, mark);
+    let Ok(list) = key_files.load(keys, old, new_store, seal, open, mark) else {
+      return test.fail("read peers");
+    };
+    return test.assert_true(saved.is_ok() && list.len() == many.len() && crypto.consteq(list[139], SEED.as_bytes()));
+  });
+  r2 = r2.it("forget persists an empty list", () => {
+    let saved = key_files.save(keys, [], seal, mark);
+    let Ok(list) = key_files.load(keys, old, new_store, seal, open, mark) else {
+      return test.fail("read empty peers");
+    };
+    return test.assert_true(saved.is_ok() && list.len() == 0);
+  });
+  r2 = r2.it("peer list must authenticate before opening", () => {
+    let Ok(envelope) = read_file_bytes(keys + "/peers.sealed") else {
+      return test.fail("read peer list");
+    };
+    let last = envelope.len() - 1;
+    let changed = write_file_bytes(keys + "/peers.sealed", envelope.with(last, envelope[last] ^ 1u8));
+    return test.assert_true(changed.is_ok() && key_files.load(keys, old, new_store, seal, open, mark).is_err());
+  });
+  let truncated = write_file(keys + "/peers.sealed", "incomplete");
+  r2 = r2.it("an unreadable sealed list is refused", () => test.assert_true(key_files.load(keys, old, new_store, seal, open, mark).is_err()));
   let corrupted = write_file(keys + "/identity.sealed", "bad envelope");
-  r2 = r2.it("damaged envelope is refused", () => test.assert_true(identity_store.load(keys, old, seal, open).is_err()));
+  r2 = r2.it("damaged envelope is refused", () => test.assert_true(identity_store.load(keys, old, new_store, seal, open).is_err()));
   r2 = r2.it("damaged envelope is preserved", () => test.assert_file_contents(keys + "/identity.sealed", "bad envelope"));
   let clear = remove_file(keys + "/identity.sealed");
+  r2 = r2.it("known phones require the existing identity", () => test.assert_true(identity_store.load(keys, old, new_store, seal, open).is_err()));
+  let clear_peers = remove_file(keys + "/peers.sealed");
+  r2 = r2.it("a completed migration requires its sealed list", () => test.assert_true(key_files.load(keys, old, (): Result[boolean, string] => Ok(true), seal, open, mark).is_err()));
+  let clear_old_peers = remove_file(old + "/peers");
+  r2 = r2.it("a provisioned key requires the sealed identity", () => test.assert_true(identity_store.load(keys, old, (): Result[boolean, string] => Ok(true), seal, open).is_err()));
+  let legacy_copy = write_file(old + "/identity", SEED);
+  r2 = r2.it("legacy migration requires an unused key alias", () => test.assert_true(identity_store.load(keys, old, (): Result[boolean, string] => Ok(true), seal, open).is_err()));
+  r2 = r2.it("a failed key lookup stops provisioning", () => test.assert_true(identity_store.load(keys, old, (): Result[boolean, string] => Err("key store unavailable"), seal, open).is_err()));
+  r2 = r2.it("a failed recovery preserves the legacy file", () => test.assert_file_contents(old + "/identity", SEED));
+  let malformed = write_file(old + "/identity", "incomplete");
   r2 = r2.it("fresh install keeps the same seed after restart", () => {
-    let Ok(first) = identity_store.load(keys, old, seal, open) else {
+    let Ok(first) = identity_store.load(keys, old, new_store, seal, open) else {
       return test.fail("first install");
     };
-    let Ok(next) = identity_store.load(keys, old, unavailable, open) else {
+    let Ok(next) = identity_store.load(keys, old, new_store, unavailable, open) else {
       return test.fail("restart");
     };
     return test.assert_true(first.len() == 32 && crypto.consteq(first, next));
   });
+  r2 = r2.it("successful provisioning cleans up an incomplete legacy file", () => test.assert_file_not_exists(old + "/identity"));
   return r2.finish();
 }

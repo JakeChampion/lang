@@ -82,6 +82,15 @@ function main(): i32 {
   }
   print(hex(crypto.sha256_new().update(pattern(1048576)).finish()));
   let st: u8[] = iv();
+  if (__sha256_hw()) {
+    let block = __alloc_u8(64).with(0, 128 as u8);
+    let digest = __sha256_hw_digest_block(block, st);
+    let expected = crypto.sha256("".as_bytes());
+    for i in 0..32 {
+      if (digest[i] != expected[i] || digest[i + 32] != block[i + 32]) { return 1; }
+    }
+    if (block[0] != 128 || block[1] != 0) { return 1; }
+  }
   print("k=" + hex(__sha256_hw_blocks(st, big[3:205])));
   print("k=" + hex(__sha256_hw_blocks(st, big[0:63])));
   print("k=" + hex(__sha256_hw_blocks(st[0:31], big)));

@@ -10,7 +10,7 @@ An empty successful read means permanent EOF. I/O errors remain distinct from co
 `view` borrows the remaining bytes. `advance` consumes a checked prefix.
 The same source must continue from its current position across calls.
 
-An empty buffer can take a bounded chunk directly from a Reader. For an arbitrary callback, the buffer retains only the returned bytes because even a short or empty array can have a large backing allocation.
+An empty buffer takes a chunk directly when its backing allocation fits the read budget and its padding. A short chunk with oversized storage is copied, and an empty chunk ends the stream without retaining its allocation.
 A nonempty buffer preserves its unread prefix before it appends the next chunk.
 Shared chunk values retain their original bytes through the normal array ownership rules.
 
@@ -21,6 +21,7 @@ Shared chunk values retain their original bytes through the normal array ownersh
 import "core/cmp";
 import "core/error";
 import "std/audio/pcm";
+import "std/array";
 
 pub enum ReadError { ReadIo(IoError), ReadAudio(pcm.AudioError), ReadSize }
 
@@ -82,10 +83,11 @@ function compact(buffer: Buffer): u8[] {
   return bytes;
 }
 
-function extend(own buffer: Buffer, own chunk: u8[], bounded_chunk: boolean): Buffer {
-  if (bounded_chunk && buffer.available() == 0) {
+function extend(own buffer: Buffer, own chunk: u8[], count: i32): Buffer {
+  if (buffer.available() == 0) {
     let ended = chunk.len() == 0;
-    return Buffer { ...buffer, bytes: chunk, position: 0, eof: ended };
+    let bytes = array.bounded(chunk, count);
+    return Buffer { bytes: bytes, position: 0, eof: ended, limits: buffer.limits };
   }
   let bytes = if (buffer.position == 0) { buffer.bytes } else { compact(buffer) };
   for byte in chunk {
@@ -94,7 +96,7 @@ function extend(own buffer: Buffer, own chunk: u8[], bounded_chunk: boolean): Bu
   return Buffer { bytes: bytes, position: 0, eof: chunk.len() == 0, limits: buffer.limits };
 }
 
-function ensure_chunk(own buffer: Buffer, needed: i32, read: (i32) => Result[u8[], IoError], bounded_chunk: boolean): Result[(Buffer, boolean), ReadError] {
+pub function (own buffer: Buffer) ensure(needed: i32, read: (i32) => Result[u8[], IoError]): Result[(Buffer, boolean), ReadError] {
   if (needed < 0 || needed > buffer.limits.max_buffer_bytes) {
     return Err(ReadSize);
   }
@@ -108,16 +110,12 @@ function ensure_chunk(own buffer: Buffer, needed: i32, read: (i32) => Result[u8[
   if (chunk.len() > count) {
     return Err(ReadSize);
   }
-  let next = extend(buffer, chunk, bounded_chunk);
+  let next = extend(buffer, chunk, count);
   let ready = next.available() >= needed;
   return Ok((next, ready));
 }
 
-pub function (own buffer: Buffer) ensure(needed: i32, read: (i32) => Result[u8[], IoError]): Result[(Buffer, boolean), ReadError] {
-  return ensure_chunk(buffer, needed, read, false);
-}
-
 pub function (own buffer: Buffer) ensure_reader(needed: i32, reader: Reader): Result[(Buffer, boolean), ReadError] {
-  return ensure_chunk(buffer, needed, (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count), true);
+  return buffer.ensure(needed, (count: i32): Result[u8[], IoError] => reader.read_chunk_bytes(count));
 }
 ```

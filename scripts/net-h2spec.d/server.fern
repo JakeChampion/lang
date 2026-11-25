@@ -6,6 +6,7 @@ import "std/result";
 import "std/http";
 import "std/platform";
 import "std/serve";
+import "std/tls";
 import "std/tls/identity";
 import "std/tls/server";
 import "std/rand";
@@ -37,7 +38,9 @@ function tls_config(cfg: serve.Config): Result[serve.Config, string] {
   let Ok(key) = read_file(key_path) else {
     return Err("TLS_KEY could not be read");
   };
-  return match (identity.from_pem(cert, key)) { Ok(id) => Ok(cfg.with_tls(server.config(id, rand.bytes(32)))), Err(e) => Err(e.message()) };
+  let id = identity.from_pem(cert, key).map_err((e: identity.KeyError): string => e.message())?;
+  let tickets = server.config(id, rand.bytes(32)).map_err((e: tls.TlsError): string => e.message())?;
+  return cfg.with_tls(tickets).map_err((e: tls.TlsError): string => e.message());
 }
 
 function main(): i32 {
