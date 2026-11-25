@@ -18,12 +18,9 @@ No frames, or a count of durations that is not the count of frames, gives `NoFra
 
 An animated file gives `Animated`. A file that is not WebP gives `NotWebpFile`. An image chunk that is not valid gives `BadHeader`, `BadCode`, `BadData` or `Truncated`.
 
-`decode` gives the pixels of `dwebp` of libwebp: the same loop filter, the same upsampling of the chroma, and the same conversion to RGB. It accepts the files that libwebp accepts, with the exception below. Thus the bitstream can read past the end of its chunk, to the end of the file. An `ALPH` chunk has no effect on a lossless image. The last `ALPH` chunk before a `VP8 ` chunk gives the alpha, also when the `VP8X` chunk has no alpha flag.
+`decode` gives the pixels of `dwebp` of libwebp: the same loop filter, the same upsampling of the chroma, and the same conversion to RGB. It accepts the files that libwebp accepts. Thus the bitstream can read past the end of its chunk, to the end of the file. An `ALPH` chunk has no effect on a lossless image. The last `ALPH` chunk before a `VP8 ` chunk gives the alpha, also when the `VP8X` chunk has no alpha flag.
 
-These are the differences from libwebp, each for a file that no encoder writes:
-
-- A lossless `ALPH` stream that reads past the end of its chunk gives `Truncated`. libwebp accepts some of these streams, and reads the last bytes of the chunk again.
-- A coefficient outside the range of the format gives the pixels of the C code of libwebp (`dwebp -noasm`). The SIMD code of libwebp computes in 16 bits and can give other pixels.
+There is one difference from libwebp, for a file that no encoder writes. A coefficient outside the range of the format gives the pixels of the C code of libwebp (`dwebp -noasm`). The SIMD code of libwebp computes in 16 bits and can give other pixels.
 
 `decode_animation` reads an animated file. It gives the canvas after each frame, as the animation decoder of libwebp gives it.
 
@@ -422,31 +419,41 @@ function code_or_fail(lengths: [i32], own b: Bits): (Code, Bits) {
   }
 }
 
+// The symbol of the code `c` at the low end of `word`, and the length of its
+// code. The length is 0 when no code of 15 bits or fewer matches.
+function decoded(c: Code, word: i64): (i32, i32) {
+  let w = word;
+  let code = 0;
+  let first = 0;
+  let index = 0;
+  for n in 1..16 {
+    code |= (w & 1i64) as i32;
+    w >>= 1i64;
+    let count = c.counts[n];
+    if (code - first < count) {
+      return (c.symbols[index + code - first], n);
+    }
+    index += count;
+    first = first + count << 1;
+    code <<= 1;
+  }
+  return (0, 0);
+}
+
 // The next symbol of the code `c`.
 function symbol(own b: Bits, data: [u8], c: Code): (i32, Bits) {
   if (c.symbols.len() == 1) {
     return (c.symbols[0], b);
   }
   let r = if (b.count < 15) { refilled(b, data) } else { b };
-  let word = r.word;
-  let code = 0;
-  let first = 0;
-  let index = 0;
-  for n in 1..16 {
-    code |= (word & 1i64) as i32;
-    word >>= 1i64;
-    let count = c.counts[n];
-    if (code - first < count) {
-      if (n > r.count) {
-        return (0, failed(r, Truncated));
-      }
-      return (c.symbols[index + code - first], Bits { ...r, word: r.word >> n as i64, count: r.count - n });
-    }
-    index += count;
-    first = first + count << 1;
-    code <<= 1;
+  let (s, n) = decoded(c, r.word);
+  if (n == 0) {
+    return (0, failed(r, BadCode));
   }
-  return (0, failed(r, BadCode));
+  if (n > r.count) {
+    return (0, failed(r, Truncated));
+  }
+  return (s, Bits { ...r, word: r.word >> n as i64, count: r.count - n });
 }
 
 // The order in which a code of code lengths gives its own lengths.
@@ -705,23 +712,41 @@ function cached(own d: Decoded, green: i32, cache_bits: i32): Decoded {
   return Decoded { px: d.px.with(at, argb), colors: remembered(d.colors, argb, cache_bits), pos: at + 1 };
 }
 
-// The pixels of an entropy-coded image of `width` by `height`. Only the main
-// image (`main`) can have an entropy image.
-function coded_image(own b: Bits, data: [u8], width: i32, height: i32, main: boolean): (i32[], Bits) {
+// The fields of an entropy-coded image before its pixels.
+struct Coded { cache_bits: i32, groups: Groups, codes: Code[] }
+
+// The fields before the pixels of an entropy-coded image of `width` by
+// `height`. Only the main image (`main`) can have an entropy image.
+function coded_header(own b: Bits, data: [u8], width: i32, height: i32, main: boolean): (Coded, Bits) {
   let (cache_bits, b1) = cache_bits_of(b, data);
   let (groups, b2) = entropy_image(b1, data, width, height, main);
   if (b2.failed) {
-    return ([], b2);
+    return (Coded { cache_bits: 0, groups: groups, codes: [] }, b2);
   }
   let cache = if (cache_bits > 0) { 1 << cache_bits } else { 0 };
   let (codes, b3) = read_groups(b2, data, group_count(groups.meta), cache);
-  if (b3.failed) {
-    return ([], b3);
+  return (Coded { cache_bits: cache_bits, groups: groups, codes: codes }, b3);
+}
+
+// The pixels of an entropy-coded image of `width` by `height`.
+function coded_image(own b: Bits, data: [u8], width: i32, height: i32, main: boolean): (i32[], Bits) {
+  let (c, b1) = coded_header(b, data, width, height, main);
+  if (b1.failed) {
+    return ([], b1);
   }
+  return coded_pixels(c, b1, data, width, height);
+}
+
+// The pixels that follow the fields `c`.
+function coded_pixels(c: Coded, own b: Bits, data: [u8], width: i32, height: i32): (i32[], Bits) {
+  let cache_bits = c.cache_bits;
+  let groups = c.groups;
+  let codes = c.codes;
   let near = near_codes();
   let total = width * height;
+  let cache = if (cache_bits > 0) { 1 << cache_bits } else { 0 };
   let d = Decoded { px: __alloc_i32(total), colors: __alloc_i32(cache), pos: 0 };
-  let cur = b3;
+  let cur = b;
   while (d.pos < total && !cur.failed) {
     let g = group_at(groups, d.pos % width, d.pos / width);
     let (green, b4) = symbol(cur, data, codes[g]);
@@ -2602,6 +2627,8 @@ function lossy_rgba(r: Recon, h: Lossy): u8[] {
 
 An `ALPH` chunk gives the alpha of a lossy image. Its first byte gives the compression in bits 0 and 1, and the filter in bits 2 and 3. Bits 4 and 5 give the preprocessing, which has no effect on the decode. Bits 6 and 7 are 0. The alpha values follow as bytes, or as a lossless image stream without its header. The green values of that image are the alpha values.
 
+libwebp reads most lossless alpha streams on a path of its own: the stream has only the color-indexing transform and no color cache, and its red, blue and alpha codes have one symbol each. On this path, a read past the end of the chunk during the last value is not an error. After the end, the bit reader of libwebp takes the bits of its last 8 bytes again. `byte_pixels` reads these streams with a copy of that reader, so the alpha values are the values of libwebp.
+
 The filter predicts each value from the value on the left (1) or above (2). The filter 3 predicts from these values and the value above on the left. The first row is predicted from the left, and the first value of a row from above.
 
 ```fern
@@ -2641,16 +2668,190 @@ function lossless_alpha(file: [u8], at: i32, end: i32, width: i32, height: i32):
   if (cur.failed) {
     return Err(cur.error);
   }
-  let (px, b1) = coded_image(cur, file, coded_width, height, true);
+  let (c, b1) = coded_header(cur, file, coded_width, height, true);
   if (b1.failed) {
     return Err(b1.error);
   }
+  let px = if (byte_path(transforms, c, coded_width * height)) {
+    byte_pixels(c, b1, file, at, end, coded_width, height)?
+  } else {
+    let (all, b2) = coded_pixels(c, b1, file, coded_width, height);
+    if (b2.failed) {
+      return Err(b2.error);
+    }
+    all
+  };
   let argb = undone_all(px, transforms, height);
   let raw = __alloc_u8(width * height);
   for i in 0..raw.len() {
     raw = raw.with(i, byte_of(argb[i], 8) as u8);
   }
   return Ok(raw);
+}
+
+// libwebp decodes the pixels of an alpha stream on a path of its own when the
+// only transform is the color indexing, the image has no color cache, and
+// each group that it keeps has red, blue and alpha codes of one symbol. A
+// group that no block uses is not kept when there are more than 1000 groups
+// or more groups than pixels.
+function byte_path(transforms: [Transform], c: Coded, pixels: i32): boolean {
+  if (transforms.len() != 1 || c.cache_bits != 0) {
+    return false;
+  }
+  match (transforms[0]) {
+    Index(_, _, _) => {},
+    _ => {
+      return false;
+    }
+  }
+  let groups = group_count(c.groups.meta);
+  let used = __alloc_i32(groups);
+  for p in c.groups.meta {
+    used = used.with(p >> 8 & 65535, 1);
+  }
+  let all = c.groups.meta.len() == 0 || groups <= 1000 && groups <= pixels;
+  for g in 0..groups {
+    if (all || used[g] == 1) {
+      for k in 1..4 {
+        if (c.codes[g * 5 + k].symbols.len() != 1) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// The bit reader of libwebp: a window `val` of the 8 bytes before `pos`, and
+// the read position `bit_pos` in it. A read never fails. Past the end of the
+// data, `eos` is set and `bit_pos` goes back to 0, so the next reads take the
+// bits of the window again.
+struct Window { val: i64, pos: i32, end: i32, bit_pos: i32, eos: boolean }
+
+// The reader of the data from `start` to `end` after `p` bits.
+function window_at(data: [u8], start: i32, end: i32, p: i32): Window {
+  let pos = if (end - start < 8) { end } else { (start + 8 + (p >> 3)).min(end) };
+  let first = (pos - 8).max(start);
+  let val = 0i64;
+  for i in first..pos {
+    val |= data[i] as i64 << ((i - first) * 8) as i64;
+  }
+  return Window { val: val, pos: pos, end: end, bit_pos: p - (first - start) * 8, eos: false };
+}
+
+// `v` shifted right by `n` bits, from 0 to 63, with zero bits in at the top.
+function unsigned_shift(v: i64, n: i32): i64 {
+  if (n == 0) {
+    return v;
+  }
+  return v >> n as i64 & (1i64 << (64 - n) as i64) - 1i64;
+}
+
+// The next 24 bits. As in libwebp, the position wraps at 64 bits.
+function window_bits(w: Window): i64 {
+  return unsigned_shift(w.val, w.bit_pos & 63) & 16777215i64;
+}
+
+function window_eos(w: Window): boolean {
+  return w.eos || w.pos == w.end && w.bit_pos > 64;
+}
+
+function window_shifted(own w: Window, data: [u8]): Window {
+  let val = w.val;
+  let pos = w.pos;
+  let bit_pos = w.bit_pos;
+  while (bit_pos >= 8 && pos < w.end) {
+    val = unsigned_shift(val, 8) | data[pos] as i64 << 56i64;
+    pos += 1;
+    bit_pos -= 8;
+  }
+  let r = Window { ...w, val: val, pos: pos, bit_pos: bit_pos };
+  if (window_eos(r)) {
+    return Window { ...r, eos: true, bit_pos: 0 };
+  }
+  return r;
+}
+
+function window_filled(own w: Window, data: [u8]): Window {
+  if (w.bit_pos >= 32) {
+    return window_shifted(w, data);
+  }
+  return w;
+}
+
+// The next `n` bits, or 0 after the end.
+function window_take(own w: Window, data: [u8], n: i32): (i32, Window) {
+  if (w.eos) {
+    return (0, Window { ...w, bit_pos: 0 });
+  }
+  let v = (window_bits(w) & (1i64 << n as i64) - 1i64) as i32;
+  let pos = w.bit_pos + n;
+  return (v, window_shifted(Window { ...w, bit_pos: pos }, data));
+}
+
+// The next symbol of `c`, with the two-level table of libwebp: the code
+// after its first 8 bits is read again at the position after them.
+function window_symbol(own w: Window, c: Code): (i32, Window) {
+  if (c.symbols.len() == 1) {
+    return (c.symbols[0], w);
+  }
+  let first = window_bits(w);
+  let (s, n) = decoded(c, first);
+  if (n <= 8) {
+    return (s, Window { ...w, bit_pos: w.bit_pos + n });
+  }
+  let rest = window_bits(Window { ...w, bit_pos: w.bit_pos + 8 });
+  let (s2, n2) = decoded(c, first & 255i64 | rest << 8i64);
+  return (s2, Window { ...w, bit_pos: w.bit_pos + n2 });
+}
+
+function window_amount(own w: Window, data: [u8], sym: i32): (i32, Window) {
+  if (sym < 4) {
+    return (sym + 1, w);
+  }
+  let extra = sym - 2 >> 1;
+  let offset = 2 + (sym & 1) << extra;
+  let (v, w1) = window_take(w, data, extra);
+  return (offset + v + 1, w1);
+}
+
+// The pixels after the fields `c` on the path of `byte_path`, read from `b`
+// in the data from `start` to `end`, as `DecodeAlphaData` of libwebp reads
+// them. Only the green byte of each pixel is kept. The end of the data during
+// the last pixel is not an error.
+function byte_pixels(c: Coded, b: Bits, data: [u8], start: i32, end: i32, width: i32, height: i32): Result[i32[], DecodeError] {
+  let near = near_codes();
+  let total = width * height;
+  let px = __alloc_i32(total);
+  let w = window_at(data, start, end, (b.at - start) * 8 - b.count);
+  let pos = 0;
+  while (!w.eos && pos < total) {
+    let g = group_at(c.groups, pos % width, pos / width);
+    let (code, w1) = window_symbol(window_filled(w, data), c.codes[g]);
+    if (code < 256) {
+      px = px.with(pos, code << 8);
+      pos += 1;
+      w = w1;
+    } else {
+      let (length, w2) = window_amount(w1, data, code - 256);
+      let (dsym, w3) = window_symbol(w2, c.codes[g + 4]);
+      let (dcode, w4) = window_amount(window_filled(w3, data), data, dsym);
+      let dist = distance(width, dcode, near);
+      if (dist > pos || length > total - pos) {
+        return Err(BadData);
+      }
+      for k in pos..pos + length {
+        px = px.with(k, px[k - dist]);
+      }
+      pos += length;
+      w = w4;
+    }
+    w = Window { ...w, eos: window_eos(w) };
+  }
+  if (window_eos(w) && pos < total) {
+    return Err(Truncated);
+  }
+  return Ok(px);
 }
 
 // The alpha values with the prediction of the filter added.

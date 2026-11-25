@@ -396,6 +396,23 @@ function test_decode_lossy_alpha(): test.TestOutcome {
   return test.assert_eq(got.join(" | "), "3x2 2463566941 | 11x7 11913073 | 11x7 11913073 | 11x7 11913073 | 11x7 11913073 | 19x13 3126748487");
 }
 
+// A 1 by 17 file of the encoder of libwebp. Its lossless ALPH stream has its
+// last byte cut off, so the read of the last value goes past the end of the
+// chunk. libwebp 1.3.2 decodes it to these pixels. With one more byte cut
+// off, the end comes before the last value, and libwebp refuses the file.
+function alpha_past_end(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 120u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 16u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 16u8, 0u8, 0u8, 65u8, 76u8, 80u8, 72u8, 13u8, 0u8, 0u8, 0u8, 1u8, 15u8, 48u8, 255u8, 17u8, 17u8, 98u8, 2u8, 34u8, 250u8, 31u8, 170u8, 170u8, 0u8, 86u8, 80u8, 56u8, 32u8, 68u8, 0u8, 0u8, 0u8, 48u8, 3u8, 0u8, 157u8, 1u8, 42u8, 1u8, 0u8, 17u8, 0u8, 62u8, 145u8, 58u8, 151u8, 71u8, 165u8, 163u8, 34u8, 33u8, 48u8, 8u8, 0u8, 176u8, 18u8, 9u8, 64u8, 19u8, 160u8, 4u8, 59u8, 245u8, 137u8, 6u8, 128u8, 0u8, 254u8, 249u8, 201u8, 11u8, 143u8, 212u8, 168u8, 94u8, 147u8, 95u8, 243u8, 113u8, 190u8, 180u8, 206u8, 230u8, 6u8, 99u8, 182u8, 23u8, 89u8, 56u8, 247u8, 218u8, 130u8, 1u8, 245u8, 161u8, 199u8, 146u8, 48u8, 0u8, 0u8];
+}
+
+function alpha_before_end(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 118u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 16u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 16u8, 0u8, 0u8, 65u8, 76u8, 80u8, 72u8, 12u8, 0u8, 0u8, 0u8, 1u8, 15u8, 48u8, 255u8, 17u8, 17u8, 98u8, 2u8, 34u8, 250u8, 31u8, 170u8, 86u8, 80u8, 56u8, 32u8, 68u8, 0u8, 0u8, 0u8, 48u8, 3u8, 0u8, 157u8, 1u8, 42u8, 1u8, 0u8, 17u8, 0u8, 62u8, 145u8, 58u8, 151u8, 71u8, 165u8, 163u8, 34u8, 33u8, 48u8, 8u8, 0u8, 176u8, 18u8, 9u8, 64u8, 19u8, 160u8, 4u8, 59u8, 245u8, 137u8, 6u8, 128u8, 0u8, 254u8, 249u8, 201u8, 11u8, 143u8, 212u8, 168u8, 94u8, 147u8, 95u8, 243u8, 113u8, 190u8, 180u8, 206u8, 230u8, 6u8, 99u8, 182u8, 23u8, 89u8, 56u8, 247u8, 218u8, 130u8, 1u8, 245u8, 161u8, 199u8, 146u8, 48u8, 0u8, 0u8];
+}
+
+function test_decode_alpha_past_end(): test.TestOutcome {
+  let got = [decoded(alpha_past_end()), decoded(alpha_before_end())];
+  return test.assert_eq(got.join(" | "), "1x17 2562067526 | webp: the data ends early");
+}
+
 function test_decode_lossy_errors(): test.TestOutcome {
   let n = lossy_normal();
   // The VP8 chunk keeps 700 of its 1084 bytes, so the tokens end early.
@@ -454,6 +471,7 @@ function main(): i32 {
   r = r.it("decode lossy files", test_decode_lossy);
   r = r.it("decode the pixels of a lossy file of Pillow", test_decode_lossy_pixels);
   r = r.it("decode lossy files with alpha", test_decode_lossy_alpha);
+  r = r.it("decode an alpha stream that reads past its end", test_decode_alpha_past_end);
   r = r.it("lossy decode errors", test_decode_lossy_errors);
   r = r.it("a short lossy file with a large frame", test_decode_lossy_short_large_frame);
   r = r.it("the limits of the size of an image", test_size_limits);
