@@ -343,6 +343,10 @@ pub function lane_writes(id: i32): boolean {
   return id == K_VSTORE || id == K_VSET;
 }
 
+pub function is_int_cmp_kind(id: i32): boolean {
+  return id >= K_EQ && id <= K_GE_U;
+}
+
 pub function is_lane_kind(id: i32): boolean {
   return id >= LANE_KIND_FIRST && id <= LANE_KIND_LAST || id == K_VPACK || id == K_VPERMUTE || id == K_VEXTRACT_BITS || id == K_VLOAD_F32 || is_lane_int_kind(id) || is_lane_shape_kind(id);
 }

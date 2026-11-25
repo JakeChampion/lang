@@ -331,6 +331,37 @@ func TestWasmSanitizeReportsSlackWrite(t *testing.T) {
 	}
 }
 
+// A 64-byte block that is never released, written at byte OFFSET.
+const sanWasmLeakedRedzoneSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_u8(p + OFFSET, 7);
+  }
+  print("survived");
+  return 0;
+}`
+
+// At exit the leak census checks the redzone of each block that is still
+// live, as the native census does.
+func TestWasmSanitizeReportsLeakedBlockRedzone(t *testing.T) {
+	const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
+	const leak = "fern-sanitizer: leak 64 bytes in 1 blocks"
+	for _, offset := range []string{"64", "79"} {
+		stdout, stderr, code := runSanitizeWasm(t, strings.Replace(sanWasmLeakedRedzoneSrc, "OFFSET", offset, 1), "FERN_SANITIZE=1")
+		if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) || !strings.Contains(stderr, leak) || !strings.Contains(stdout, "survived") {
+			t.Errorf("write at %s: exit=%d, want %d with the leak verdict and the report\nstdout: %s\nstderr: %s", offset, code, e2eharness.ExitSanitizer, stdout, stderr)
+		}
+	}
+	stdout, stderr, code := runSanitizeWasm(t, strings.Replace(sanWasmLeakedRedzoneSrc, "OFFSET", "63", 1), "FERN_SANITIZE=1")
+	if code != 0 || strings.Contains(stderr, report) || !strings.Contains(stderr, leak) || !strings.Contains(stdout, "survived") {
+		t.Errorf("write at 63: exit=%d, want the leak verdict and no report\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	stdout, stderr, code = runSanitizeWasm(t, strings.Replace(sanWasmLeakedRedzoneSrc, "OFFSET", "64", 1))
+	if code != 0 || !strings.Contains(stdout, "survived") {
+		t.Errorf("release build: exit=%d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
 // The wasm quarantine fills a released block with the poison pattern and
 // checks it at eviction and at exit, as the native quarantine does.
 func TestWasmSanitizeReportsWriteAfterFree(t *testing.T) {

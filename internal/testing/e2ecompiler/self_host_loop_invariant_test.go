@@ -10,7 +10,9 @@ import (
 // change in a loop to the block before the loop. It reads a copy of each
 // constant of the loop, and the constant stays in the loop. A computation of
 // constants only, a division by 0 or by a value that is not a constant, a
-// load, and a loop with a second way in stay where they are.
+// load, and a loop with a second way in stay where they are. Two equal
+// computations from different blocks of the loop become one value in front
+// of it.
 func TestSelfHostLoopInvariantHoist(t *testing.T) {
 	const src = `import "./ssa";
 
@@ -42,6 +44,17 @@ function graph(side_entry: boolean): ssa.SFunc {
   return ssa.SFunc { name: "invariant", nparams: 2, nvals: 14, blocks: blocks, entry: 0, takes_env: false };
 }
 
+function twin(): ssa.SFunc {
+  let blocks = [
+    ssa.SBlock { id: 0, preds: [], insts: [inst(ssa.PARAM, 0, [], 0, ""), inst(ssa.PARAM, 1, [], 1, "")], term: ssa.t_br(1) },
+    ssa.SBlock { id: 1, preds: [0, 3], insts: [inst(ssa.PHI, 2, [1, 9], 0, "")], term: ssa.t_brif(2, 2, 4) },
+    ssa.SBlock { id: 2, preds: [1], insts: [inst(ssa.CONST_INT, 3, [], -8, ""), inst(ssa.BINARY, 4, [0, 3], 64, "add"), inst(ssa.ST_AT, -1, [4, 2], 0, "")], term: ssa.t_br(3) },
+    ssa.SBlock { id: 3, preds: [2], insts: [inst(ssa.BINARY, 6, [0, 3], 64, "add"), inst(ssa.ST_AT, -1, [6, 2], 0, ""), inst(ssa.BINARY, 9, [2, 6], 64, "sub")], term: ssa.t_br(1) },
+    ssa.SBlock { id: 4, preds: [1], insts: [], term: ssa.t_ret(2) }
+  ];
+  return ssa.SFunc { name: "twin", nparams: 2, nvals: 10, blocks: blocks, entry: 0, takes_env: false };
+}
+
 function results(insts: ssa.SInst[]): i32[] {
   return insts.map((i: ssa.SInst): i32 => i.result);
 }
@@ -59,7 +72,7 @@ function same(a: i32[], b: i32[]): boolean {
 }
 
 function main(): i32 {
-  let f = ssa.hoisted_invariants(graph(false));
+  let f = ssa.hoisted_invariants(graph(false)).f;
   if (!same(results(f.blocks[0].insts), [0, 1, 14, 4, 11, 12])) {
     return 1;
   }
@@ -73,9 +86,17 @@ function main(): i32 {
   if (copy.kind_tag != ssa.CONST_INT || copy.imm != 8 || !same(f.blocks[0].insts[3].args, [0, 14])) {
     return 5;
   }
-  let side = ssa.hoisted_invariants(graph(true));
+  let side = ssa.hoisted_invariants(graph(true)).f;
   if (side.blocks[0].insts.len() != 2 || side.blocks[2].insts.len() != 11) {
     return 4;
+  }
+  let t = ssa.hoisted_invariants(twin());
+  if (!same(results(t.f.blocks[0].insts), [0, 1, 10, 4])) {
+    return 5;
+  }
+  let st = t.f.blocks[3].insts[0];
+  if (st.args[0] != 4 || t.f.blocks[3].insts[1].args[1] != 4 || t.repl.len() != 11 || t.repl[6] != 4) {
+    return 6;
   }
   return 0;
 }`

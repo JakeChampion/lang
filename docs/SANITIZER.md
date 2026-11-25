@@ -252,6 +252,11 @@ each word of the payload. A word that lost the poison reports
 check to each block that is still in the quarantine. A read through a stale
 pointer gives the poison pattern, not the old byte.
 
+Each block also has 8 bytes after its redzone that link it into
+`__fern_san_live`: the next and the previous block. `__fern_quar` takes the
+block off the list. After the leak verdict, `__fern_san_live_scan` reads the
+redzone of each block that is still on the list.
+
 A core module exits with 124 after a report, as a native program does. A
 component has no exit status but success or failure, so it traps.
 `TestWasmSanitizeReportsFreedBlocks` holds the reports, a clean run, and a
@@ -374,8 +379,8 @@ whose reference outlived the count.
   census reads the two redzone words after the class of each live block
   (the `redzone-of-a-leaked-block` case of `TestSelfHostQuarantinePolicy`).
   The words of the class past the request are not checked there, because a
-  string grows into them. Wasm keeps no list of live blocks, so it has no
-  such check.
+  string grows into them. Wasm makes the same check
+  (`TestWasmSanitizeReportsLeakedBlockRedzone`).
 
 - **A misaligned ordinary raw access.** The native targets accept a
   misaligned `__load_*` or `__store_*`, so only the atomics are checked

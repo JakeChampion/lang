@@ -1,4 +1,5 @@
 import "./util";
+import "./ir";
 import "./ssa";
 import "./ssadeps";
 
@@ -31,11 +32,11 @@ function test_of(defs: ssa.SInst[], term: ssa.STerm): Test {
     return no_test();
   }
   let c = defs[term.cond];
-  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.ir_kind != ir.K_EQ && c.ir_kind != ir.K_NE) {
     return no_test();
   }
   if (is_zero(defs, c.args[1]) && !is_zero(defs, c.args[0])) {
-    return Test { value: c.args[0], eq: c.str == "eq", width: c.imm };
+    return Test { value: c.args[0], eq: c.ir_kind == ir.K_EQ, width: c.imm };
   }
   return no_test();
 }
@@ -106,7 +107,7 @@ function own_test(b: ssa.SBlock): i32 {
   }
   for k in 0..b.insts.len() {
     let ins = b.insts[k];
-    if (ins.result == b.term.cond && ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "eq" || ins.str == "ne")) {
+    if (ins.result == b.term.cond && ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.ir_kind == ir.K_EQ || ins.ir_kind == ir.K_NE)) {
       return k;
     }
   }

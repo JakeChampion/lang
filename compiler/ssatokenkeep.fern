@@ -281,7 +281,7 @@ function proves_shape(f: ssa.SFunc, at: i32[], defs: ssa.SInst[], p: i32, box: i
 }
 
 function compared_shape(defs: ssa.SInst[], c: ssa.SInst, box: i32): string {
-  if (c.kind_tag != ssa.BINARY || c.str != "eq" || c.args.len() != 2) {
+  if (c.kind_tag != ssa.BINARY || c.ir_kind != ir.K_EQ || c.args.len() != 2) {
     return "";
   }
   let word = defs[c.args[0]];
@@ -302,7 +302,7 @@ function excludes_pair(defs: ssa.SInst[], c: ssa.SInst, box: i32, shape: string,
   if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.args[0] != box) {
     return false;
   }
-  if (!(c.str == "eq" && !taken || c.str == "ne" && taken)) {
+  if (!(c.ir_kind == ir.K_EQ && !taken || c.ir_kind == ir.K_NE && taken)) {
     return false;
   }
   let lit = defs[c.args[1]];

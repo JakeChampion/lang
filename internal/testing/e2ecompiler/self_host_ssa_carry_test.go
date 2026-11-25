@@ -217,6 +217,15 @@ struct W3 { a: u64, b: u64, c: u64 }
     let hi: u64 = __mulhi_u64(y, x);
     return lo ^ hi;
 }
+@noinline function high_only(x: u64, y: u64): u64 {
+    return __mulhi_u64(x, y) ^ y;
+}
+@noinline function sat_mul_s(x: u64, y: u64): u64 {
+    return (x as i64 *| y as i64) as u64;
+}
+@noinline function sat_mul_u(x: u64, y: u64): u64 {
+    return x *| y;
+}
 function main(): i32 {
     let edges: u64[] = [0u64, 1u64, 2u64, 0x7fffffffffffffffu64, 0x8000000000000000u64, 0xfffffffffffffffeu64, 0xffffffffffffffffu64, 0x123456789abcdef0u64, 0xedcba98765432110u64];
     let acc: u64 = 0u64;
@@ -228,7 +237,8 @@ function main(): i32 {
             r = r + 128u64 * wide_in(x, y, 0x8000000000000001u64) + 256u64 * wide_in(x, y, 3u64);
             acc = acc * 1000003u64 + r;
             acc = acc ^ add4(x, y, x ^ y, y - x, y, x, x + 1u64, ALL - y);
-            acc = acc * 7u64 + wide_k(x) + 3u64 * wide_small(y) + 5u64 * wide_xy(x, y);
+            acc = acc * 7u64 + wide_k(x) + 3u64 * wide_small(y) + 5u64 * wide_xy(x, y) + 11u64 * high_only(x, y);
+            acc = acc * 13u64 + sat_mul_s(x, y) + 3u64 * sat_mul_u(x, y);
             for h in [0u64, x ^ y, ALL] {
                 acc = acc * 31u64 + add_carried(x, y, h) + 3u64 * add_carried_left(x, y, h) + 5u64 * sub_borrowed(x, y, h);
                 acc = acc * 41u64 + carried_imm(x, y) + 3u64 * borrowed_imm(x, y) + 5u64 * linked_imm(x, y, h);
@@ -362,6 +372,37 @@ func TestSelfHostSSAProductHalvesShareOneMultiply(t *testing.T) {
 		}
 		if n := len(mulq.FindAllString(fn, -1)); n != 1 || imulq.MatchString(fn) {
 			t.Errorf("%s has %d mulq, want one mulq and no imulq:\n%s", name, n, fn)
+		}
+	}
+}
+
+// mulq reads the factor that is not in %rax from its own register or slot.
+func TestSelfHostSSAMultiplyReadsItsFactorInPlace(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := regexp.MustCompile(`(?m)^\s+movq [^\n]+, %rcx\n(\s+movq [^\n]+, %rax\n)?\s+mulq %rcx$`)
+	for _, name := range []string{"wide_xy", "high_only", "add4"} {
+		fn := functionListing(string(asm), "__fn_"+name)
+		if fn == "" {
+			t.Fatalf("no __fn_%s in the listing", name)
+		}
+		if !regexp.MustCompile(`(?m)^\s+mulq `).MatchString(fn) {
+			t.Fatalf("%s has no mulq:\n%s", name, fn)
+		}
+		if copied.MatchString(fn) {
+			t.Errorf("%s copies a factor to %%rcx for its mulq:\n%s", name, fn)
 		}
 	}
 }
