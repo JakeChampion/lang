@@ -63,8 +63,12 @@ them are gone, with `reads_at`.
 850 is the count of the same program with `fin_sent: fin`, which has no
 join.
 
-`TestSelfHostServeAllocsPerRequestH3` and its multiplexed form give 49.69
-and 28.67 allocations a request, on main and with the change.
+The HTTP/3 probes, allocations a request, x86-64:
+
+| Probe | main | with the change |
+|---|--:|--:|
+| `TestSelfHostServeAllocsPerRequestH3` | 49.69 | 49.69 |
+| `TestSelfHostServeAllocsPerRequestH3Mux` | 28.67 | 28.48 |
 
 ## The traps
 
