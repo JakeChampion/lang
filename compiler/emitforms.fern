@@ -88,13 +88,21 @@ function declares_extern(full: parser.Module): boolean {
   return false;
 }
 
-pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.Composed {
+// The world that a wasm32-wasi component imports from. `embedded` marks the
+// fern world, whose fixed component shapes need no composition.
+pub struct World { payload: i32[], name: string, embedded: boolean }
+
+pub function fern_world(): World {
+  return World { payload: watbin.hex_to_bytes(wit_fern_world.fern_world_payload()), name: "the fern world", embedded: true };
+}
+
+pub function wasm_component(full: parser.Module, sub: ircore.Sub, world: World): wit_compose.Composed {
   let ap = async_plan(full);
   if (ap.refused.len() > 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + ap.refused };
   }
   let shape = wasm_ir.lowered_shape(full, sub.switches, util.append_all(sub.bodies, sub.extra));
-  let framed = shape >= 0 && !declares_extern(full) && ap.asy.lifts.len() == 0;
+  let framed = world.embedded && shape >= 0 && !declares_extern(full) && ap.asy.lifts.len() == 0;
   if (framed && shape == 0) {
     return wit_compose.Composed { bytes: watbin.component_full(stamped_core(watbin.wat_to_binary(wasm_ir.emit_module_mode_or_error_sub(full, true, false, sub)), sub.switches)), refused: "" };
   }
@@ -105,10 +113,10 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub): wit_compose.C
   if (framed && wasm_ir.component_framable(core.needs)) {
     return wit_compose.Composed { bytes: framed_component(stamped_core(watbin.wat_to_binary(core.wat), sub.switches), shape), refused: "" };
   }
-  let tbody = wit_decode.wit_section_body(watbin.hex_to_bytes(wit_fern_world.fern_world_payload()), 7);
+  let tbody = wit_decode.wit_section_body(world.payload, 7);
   let c = wit_compose.compose_run(tbody, stamped_core(watbin.wat_to_binary(core.wat), sub.switches), ap.asy);
   if (c.bytes.len() == 0) {
-    return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: the fern world cannot take this program: " + c.refused };
+    return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + world.name + " cannot take this program: " + c.refused };
   }
   return c;
 }
