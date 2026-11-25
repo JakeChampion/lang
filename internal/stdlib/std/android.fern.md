@@ -1001,7 +1001,9 @@ function on_content_rect(activity: usize, rect: usize): void {
     if (ctx == 0 as usize || Context.c_load_insets_class(ctx) != 0 as usize) {
       return;
     }
-    let (w, h) = decor_size(ui_env(activity), NativeActivity.c_load_clazz(activity));
+    let Ok((w, h)) = decor_size(ui_env(activity), bindings.Activity { ref: NativeActivity.c_load_clazz(activity) }) else {
+      return;
+    };
     if (w <= 0 || h <= 0) {
       return;
     }
@@ -1967,28 +1969,6 @@ function audio_manager(e: usize, obj: usize): Option[bindings.AudioManager] {
   return Some(bindings.AudioManager { ref: am.ref });
 }
 
-function call_int(e: usize, obj: usize, name: string, sig: string, values: usize[]): i32 {
-  let class: usize = jni.get_object_class(e, obj);
-  let args: usize = jni.jvalues(values);
-  let got: i32 = jni.call_int_method_a(e, obj, jni.get_method_id(e, class, name, sig), args);
-  jni.free_buffer(args);
-  let a: usize = jni.delete_local_ref(e, class);
-  let cleared: usize = jni.exception_clear(e);
-  return got;
-}
-
-// The result of the boolean method `name` of `obj`, or false when it throws.
-function call_boolean(e: usize, obj: usize, name: string, sig: string, values: usize[]): boolean {
-  let class: usize = jni.get_object_class(e, obj);
-  let args: usize = jni.jvalues(values);
-  let got: i32 = jni.call_boolean_method_a(e, obj, jni.get_method_id(e, class, name, sig), args);
-  jni.free_buffer(args);
-  let a: usize = jni.delete_local_ref(e, class);
-  let threw = jni.exception_occurred(e) != 0 as usize;
-  let cleared: usize = jni.exception_clear(e);
-  return !threw && got != 0;
-}
-
 // The offset of the local time of the device from UTC, in milliseconds, at
 // `unix_ms`. It comes from java.util.TimeZone, so it follows the time zone
 // and the zone data of the device. Call it on the loop thread.
@@ -2794,17 +2774,26 @@ function back_callback(e: usize, obj: usize, ctx: usize): usize {
   if (class == 0 as usize) {
     return class;
   }
-  let dispatcher: usize = jni.call_object(e, obj, "getOnBackInvokedDispatcher", "()Landroid/window/OnBackInvokedDispatcher;", []);
-  let registered = dispatcher != 0 as usize && jni.call_void(e, dispatcher, "registerOnBackInvokedCallback", "(ILandroid/window/OnBackInvokedCallback;)V", [BACK_PRIORITY as usize, callback]);
-  let cleared: usize = jni.exception_clear(e);
-  for r in [dispatcher, callback] {
-    let d: usize = jni.delete_local_ref(e, r);
-  }
-  if (!registered) {
+  let registered = register_back(e, bindings.Activity { ref: obj }, bindings.OnBackInvokedCallback { ref: callback });
+  let d: usize = jni.delete_local_ref(e, callback);
+  let Ok(_) = registered else {
     let g: usize = jni.delete_global_ref(e, class);
     return 0 as usize;
-  }
+  };
   return class;
+}
+
+function register_back(e: usize, activity: bindings.Activity, callback: bindings.OnBackInvokedCallback): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 4)) {
+    return Err(jni.JavaError { text: "no local frame" });
+  }
+  defer end_frame(e);
+  let activities = bindings.activity_class(e)?;
+  defer activities.release(e);
+  let dispatchers = bindings.on_back_invoked_dispatcher_class(e)?;
+  defer dispatchers.release(e);
+  let dispatcher = activities.get_on_back_invoked_dispatcher(e, activity)?;
+  return dispatchers.register_on_back_invoked_callback(e, dispatcher, BACK_PRIORITY, callback);
 }
 
 // Sets an `Insets` as the insets listener of the decor view of the activity
@@ -2814,18 +2803,24 @@ function insets_listener(e: usize, obj: usize, ctx: usize): usize {
   if (class == 0 as usize) {
     return class;
   }
-  let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
-  let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
-  let set = decor != 0 as usize && jni.call_void(e, decor, "setOnApplyWindowInsetsListener", "(Landroid/view/View$OnApplyWindowInsetsListener;)V", [listener]);
-  let cleared: usize = jni.exception_clear(e);
-  for r in [decor, window, listener] {
-    let d: usize = jni.delete_local_ref(e, r);
-  }
-  if (!set) {
+  let set = listen_insets(e, bindings.Activity { ref: obj }, bindings.View_OnApplyWindowInsetsListener { ref: listener });
+  let d: usize = jni.delete_local_ref(e, listener);
+  let Ok(_) = set else {
     let g: usize = jni.delete_global_ref(e, class);
     return 0 as usize;
-  }
+  };
   return class;
+}
+
+function listen_insets(e: usize, activity: bindings.Activity, listener: bindings.View_OnApplyWindowInsetsListener): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Err(jni.JavaError { text: "no local frame" });
+  }
+  defer end_frame(e);
+  let decor = decor_of(e, activity)?;
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  return views.set_on_apply_window_insets_listener(e, decor.view, listener);
 }
 
 // The back callback, on the UI thread.
@@ -2843,61 +2838,72 @@ pub(package) function insets_applied(env: usize, thiz: usize, view: usize, inset
   if (ctx != 0 as usize) {
     send_insets(env, ctx, insets);
   }
-  let out: usize = jni.call_object(env, view, "onApplyWindowInsets", "(Landroid/view/WindowInsets;)Landroid/view/WindowInsets;", [insets]);
-  if (out == 0 as usize) {
-    let cleared: usize = jni.exception_clear(env);
-    return insets;
-  }
-  return out;
+  return match (view_insets(env, bindings.View { ref: view }, bindings.WindowInsets { ref: insets })) {
+    Ok(out) => if (out.ref == 0 as usize) { insets } else { out.ref },
+    Err(_) => insets,
+  };
+}
+
+// What the method of the view `view` makes of `insets`, as a local reference
+// for the listener to give back.
+function view_insets(e: usize, view: bindings.View, insets: bindings.WindowInsets): Result[bindings.WindowInsets, jni.JavaError] {
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  return views.on_apply_window_insets(e, view, insets);
 }
 
 // Asks the decor view of the activity `obj` for its insets again.
 function ask_insets(e: usize, obj: usize): void {
-  let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
-  let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
-  let asked = decor != 0 as usize && jni.call_void(e, decor, "requestApplyInsets", "()V", []);
-  let cleared: usize = jni.exception_clear(e);
-  for r in [decor, window] {
-    let d: usize = jni.delete_local_ref(e, r);
+  let asked = request_insets(e, bindings.Activity { ref: obj });
+}
+
+function request_insets(e: usize, activity: bindings.Activity): Result[void, jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Err(jni.JavaError { text: "no local frame" });
   }
+  defer end_frame(e);
+  let decor = decor_of(e, activity)?;
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  return views.request_apply_insets(e, decor.view);
 }
 
 // Keeps whether the keyboard of the system shows in `insets`. Then it sends
 // the insets of the bars, the keyboard and the cutout to the loop thread,
 // while the activity has a window.
 function send_insets(e: usize, ctx: usize, insets: usize): void {
-  let type_class: usize = jni.find_class(e, "android/view/WindowInsets$Type");
-  let none: usize = jni.jvalue_alloc(0);
-  let keyboard = jni.call_static_int_method_a(e, type_class, jni.get_static_method_id(e, type_class, "ime", "()I"), none);
-  let shows = call_boolean(e, insets, "isVisible", "(I)Z", [keyboard as usize]);
+  let Ok(seen) = seen_insets(e, bindings.WindowInsets { ref: insets }) else {
+    return;
+  };
   unsafe {
-    Context.c_store_ime(ctx, if (shows) { 1 } else { 0 });
+    Context.c_store_ime(ctx, if (seen.ime) { 1 } else { 0 });
     if (Context.c_load_windowed(ctx) == 0) {
-      jni.free_buffer(none);
-      let cleared: usize = jni.exception_clear(e);
-      let d: usize = jni.delete_local_ref(e, type_class);
       return;
     }
   }
-  let types = 0;
-  for name in ["systemBars", "ime", "displayCutout"] {
-    types |= jni.call_static_int_method_a(e, type_class, jni.get_static_method_id(e, type_class, name, "()I"), none);
+  deliver_insets(ctx, seen.edges);
+}
+
+// Whether the keyboard shows in a WindowInsets, and the insets of the bars,
+// the keyboard and the cutout.
+struct Seen { ime: boolean, edges: Rect }
+
+function seen_insets(e: usize, insets: bindings.WindowInsets): Result[Seen, jni.JavaError] {
+  if (!jni.push_local_frame(e, 4)) {
+    return Err(jni.JavaError { text: "no local frame" });
   }
-  jni.free_buffer(none);
-  let edges: usize = jni.call_object(e, insets, "getInsets", "(I)Landroid/graphics/Insets;", [types as usize]);
-  if (edges != 0 as usize) {
-    let class: usize = jni.get_object_class(e, edges);
-    let left = jni.get_int_field(e, edges, jni.get_field_id(e, class, "left", "I"));
-    let top = jni.get_int_field(e, edges, jni.get_field_id(e, class, "top", "I"));
-    let right = jni.get_int_field(e, edges, jni.get_field_id(e, class, "right", "I"));
-    let bottom = jni.get_int_field(e, edges, jni.get_field_id(e, class, "bottom", "I"));
-    let a: usize = jni.delete_local_ref(e, class);
-    deliver_insets(ctx, Rect { left: left, top: top, right: right, bottom: bottom });
-  }
-  let cleared: usize = jni.exception_clear(e);
-  for r in [edges, type_class] {
-    let d: usize = jni.delete_local_ref(e, r);
-  }
+  defer end_frame(e);
+  let types = bindings.window_insets_type_class(e)?;
+  defer types.release(e);
+  let all = bindings.window_insets_class(e)?;
+  defer all.release(e);
+  let sides = bindings.insets_class(e)?;
+  defer sides.release(e);
+  let ime = types.ime(e)?;
+  let shows = all.is_visible(e, insets, ime)?;
+  let edges = all.get_insets(e, insets, types.system_bars(e)? | ime | types.display_cutout(e)?)?;
+  let r = Rect { left: sides.left(e, edges)?, top: sides.top(e, edges)?, right: sides.right(e, edges)?, bottom: sides.bottom(e, edges)? };
+  return Ok(Seen { ime: shows, edges: r });
 }
 
 // Sends the insets `r` to the loop thread, and waits for its reply.
@@ -2910,22 +2916,16 @@ function deliver_insets(ctx: usize, r: Rect): void {
   }
 }
 
-// The width and the height of the decor view of the activity `obj`, or 0
-// and 0.
-function decor_size(e: usize, obj: usize): (i32, i32) {
-  let window: usize = jni.call_object(e, obj, "getWindow", "()Landroid/view/Window;", []);
-  let decor: usize = jni.call_object(e, window, "getDecorView", "()Landroid/view/View;", []);
-  let w = 0;
-  let h = 0;
-  if (decor != 0 as usize) {
-    w = call_int(e, decor, "getWidth", "()I", []);
-    h = call_int(e, decor, "getHeight", "()I", []);
+// The width and the height of the decor view of the activity `activity`.
+function decor_size(e: usize, activity: bindings.Activity): Result[(i32, i32), jni.JavaError] {
+  if (!jni.push_local_frame(e, 8)) {
+    return Err(jni.JavaError { text: "no local frame" });
   }
-  let cleared: usize = jni.exception_clear(e);
-  for r in [decor, window] {
-    let d: usize = jni.delete_local_ref(e, r);
-  }
-  return (w, h);
+  defer end_frame(e);
+  let decor = decor_of(e, activity)?;
+  let views = bindings.view_class(e)?;
+  defer views.release(e);
+  return Ok((views.get_width(e, decor.view)?, views.get_height(e, decor.view)?));
 }
 ```
 

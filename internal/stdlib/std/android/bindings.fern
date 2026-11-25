@@ -131,13 +131,14 @@ pub function (x: Activity) as_context(): Context {
 }
 
 // The class android.app.Activity and the IDs of its members.
-pub struct ActivityClass { class: usize, id_get_intent: usize, id_get_window: usize, id_get_window_manager: usize, id_is_in_picture_in_picture_mode: usize, id_move_task_to_back: usize, id_request_permissions: usize, id_set_picture_in_picture_params: usize, id_set_requested_orientation: usize, id_set_volume_control_stream: usize }
+pub struct ActivityClass { class: usize, id_get_intent: usize, id_get_on_back_invoked_dispatcher: usize, id_get_window: usize, id_get_window_manager: usize, id_is_in_picture_in_picture_mode: usize, id_move_task_to_back: usize, id_request_permissions: usize, id_set_picture_in_picture_params: usize, id_set_requested_orientation: usize, id_set_volume_control_stream: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
   let class = jni.global_class(e, "android/app/Activity")?;
   let id_get_intent = jni.checked_id(e, class, jni.get_method_id(e, class, "getIntent", "()Landroid/content/Intent;"))?;
+  let id_get_on_back_invoked_dispatcher = jni.optional_id(e, jni.get_method_id(e, class, "getOnBackInvokedDispatcher", "()Landroid/window/OnBackInvokedDispatcher;"));
   let id_get_window = jni.checked_id(e, class, jni.get_method_id(e, class, "getWindow", "()Landroid/view/Window;"))?;
   let id_get_window_manager = jni.checked_id(e, class, jni.get_method_id(e, class, "getWindowManager", "()Landroid/view/WindowManager;"))?;
   let id_is_in_picture_in_picture_mode = jni.optional_id(e, jni.get_method_id(e, class, "isInPictureInPictureMode", "()Z"));
@@ -146,7 +147,7 @@ pub function activity_class(e: usize): Result[ActivityClass, jni.JavaError] {
   let id_set_picture_in_picture_params = jni.optional_id(e, jni.get_method_id(e, class, "setPictureInPictureParams", "(Landroid/app/PictureInPictureParams;)V"));
   let id_set_requested_orientation = jni.checked_id(e, class, jni.get_method_id(e, class, "setRequestedOrientation", "(I)V"))?;
   let id_set_volume_control_stream = jni.checked_id(e, class, jni.get_method_id(e, class, "setVolumeControlStream", "(I)V"))?;
-  return Ok(ActivityClass { class: class, id_get_intent: id_get_intent, id_get_window: id_get_window, id_get_window_manager: id_get_window_manager, id_is_in_picture_in_picture_mode: id_is_in_picture_in_picture_mode, id_move_task_to_back: id_move_task_to_back, id_request_permissions: id_request_permissions, id_set_picture_in_picture_params: id_set_picture_in_picture_params, id_set_requested_orientation: id_set_requested_orientation, id_set_volume_control_stream: id_set_volume_control_stream });
+  return Ok(ActivityClass { class: class, id_get_intent: id_get_intent, id_get_on_back_invoked_dispatcher: id_get_on_back_invoked_dispatcher, id_get_window: id_get_window, id_get_window_manager: id_get_window_manager, id_is_in_picture_in_picture_mode: id_is_in_picture_in_picture_mode, id_move_task_to_back: id_move_task_to_back, id_request_permissions: id_request_permissions, id_set_picture_in_picture_params: id_set_picture_in_picture_params, id_set_requested_orientation: id_set_requested_orientation, id_set_volume_control_stream: id_set_volume_control_stream });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
@@ -161,6 +162,23 @@ pub function (c: ActivityClass) get_intent(e: usize, self: Activity): Result[Int
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(Intent { ref: got });
+}
+
+// False when the device does not have the member of `get_on_back_invoked_dispatcher`.
+pub function (c: ActivityClass) has_get_on_back_invoked_dispatcher(): boolean {
+  return c.id_get_on_back_invoked_dispatcher != 0 as usize;
+}
+
+// android.app.Activity.getOnBackInvokedDispatcher()Landroid/window/OnBackInvokedDispatcher;
+pub function (c: ActivityClass) get_on_back_invoked_dispatcher(e: usize, self: Activity): Result[OnBackInvokedDispatcher, jni.JavaError] {
+  if (c.id_get_on_back_invoked_dispatcher == 0 as usize) {
+    return Err(jni.absent("android.app.Activity.getOnBackInvokedDispatcher"));
+  }
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_on_back_invoked_dispatcher, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(OnBackInvokedDispatcher { ref: got });
 }
 
 // android.app.Activity.getWindow()Landroid/view/Window;
@@ -782,20 +800,62 @@ pub function (x: View) object(): jni.Object {
 }
 
 // The class android.view.View and the IDs of its members.
-pub struct ViewClass { class: usize, id_request_unbuffered_dispatch: usize, id_set_system_ui_visibility: usize }
+pub struct ViewClass { class: usize, id_get_height: usize, id_get_width: usize, id_on_apply_window_insets: usize, id_request_apply_insets: usize, id_request_unbuffered_dispatch: usize, id_set_on_apply_window_insets_listener: usize, id_set_system_ui_visibility: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function view_class(e: usize): Result[ViewClass, jni.JavaError] {
   let class = jni.global_class(e, "android/view/View")?;
+  let id_get_height = jni.checked_id(e, class, jni.get_method_id(e, class, "getHeight", "()I"))?;
+  let id_get_width = jni.checked_id(e, class, jni.get_method_id(e, class, "getWidth", "()I"))?;
+  let id_on_apply_window_insets = jni.checked_id(e, class, jni.get_method_id(e, class, "onApplyWindowInsets", "(Landroid/view/WindowInsets;)Landroid/view/WindowInsets;"))?;
+  let id_request_apply_insets = jni.checked_id(e, class, jni.get_method_id(e, class, "requestApplyInsets", "()V"))?;
   let id_request_unbuffered_dispatch = jni.optional_id(e, jni.get_method_id(e, class, "requestUnbufferedDispatch", "(I)V"));
+  let id_set_on_apply_window_insets_listener = jni.checked_id(e, class, jni.get_method_id(e, class, "setOnApplyWindowInsetsListener", "(Landroid/view/View$OnApplyWindowInsetsListener;)V"))?;
   let id_set_system_ui_visibility = jni.checked_id(e, class, jni.get_method_id(e, class, "setSystemUiVisibility", "(I)V"))?;
-  return Ok(ViewClass { class: class, id_request_unbuffered_dispatch: id_request_unbuffered_dispatch, id_set_system_ui_visibility: id_set_system_ui_visibility });
+  return Ok(ViewClass { class: class, id_get_height: id_get_height, id_get_width: id_get_width, id_on_apply_window_insets: id_on_apply_window_insets, id_request_apply_insets: id_request_apply_insets, id_request_unbuffered_dispatch: id_request_unbuffered_dispatch, id_set_on_apply_window_insets_listener: id_set_on_apply_window_insets_listener, id_set_system_ui_visibility: id_set_system_ui_visibility });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
 pub function (c: ViewClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
+}
+
+// android.view.View.getHeight()I
+pub function (c: ViewClass) get_height(e: usize, self: View): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_height, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.View.getWidth()I
+pub function (c: ViewClass) get_width(e: usize, self: View): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 15, self.ref, c.id_get_width, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.View.onApplyWindowInsets(Landroid/view/WindowInsets;)Landroid/view/WindowInsets;
+pub function (c: ViewClass) on_apply_window_insets(e: usize, self: View, a0: WindowInsets): Result[WindowInsets, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_on_apply_window_insets, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(WindowInsets { ref: got });
+}
+
+// android.view.View.requestApplyInsets()V
+pub function (c: ViewClass) request_apply_insets(e: usize, self: View): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_request_apply_insets, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
 }
 
 // False when the device does not have the member of `request_unbuffered_dispatch`.
@@ -816,6 +876,16 @@ pub function (c: ViewClass) request_unbuffered_dispatch(e: usize, self: View, a0
   return Ok(());
 }
 
+// android.view.View.setOnApplyWindowInsetsListener(Landroid/view/View$OnApplyWindowInsetsListener;)V
+pub function (c: ViewClass) set_on_apply_window_insets_listener(e: usize, self: View, a0: View_OnApplyWindowInsetsListener): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_set_on_apply_window_insets_listener, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
 // android.view.View.setSystemUiVisibility(I)V
 pub function (c: ViewClass) set_system_ui_visibility(e: usize, self: View, a0: i32): Result[void, jni.JavaError] {
   let args = jni.jvalue_alloc(1);
@@ -824,6 +894,274 @@ pub function (c: ViewClass) set_system_ui_visibility(e: usize, self: View, a0: i
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(());
+}
+
+// A android.view.View.OnApplyWindowInsetsListener.
+pub struct View_OnApplyWindowInsetsListener { ref: usize }
+
+pub function (x: View_OnApplyWindowInsetsListener) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: View_OnApplyWindowInsetsListener) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.View.OnApplyWindowInsetsListener and the IDs of its members.
+pub struct View_OnApplyWindowInsetsListenerClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function view_on_apply_window_insets_listener_class(e: usize): Result[View_OnApplyWindowInsetsListenerClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/View$OnApplyWindowInsetsListener")?;
+  return Ok(View_OnApplyWindowInsetsListenerClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: View_OnApplyWindowInsetsListenerClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// A android.view.WindowInsets.
+pub struct WindowInsets { ref: usize }
+
+pub function (x: WindowInsets) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WindowInsets) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.WindowInsets and the IDs of its members.
+pub struct WindowInsetsClass { class: usize, id_get_insets: usize, id_is_visible: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function window_insets_class(e: usize): Result[WindowInsetsClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/WindowInsets")?;
+  let id_get_insets = jni.optional_id(e, jni.get_method_id(e, class, "getInsets", "(I)Landroid/graphics/Insets;"));
+  let id_is_visible = jni.optional_id(e, jni.get_method_id(e, class, "isVisible", "(I)Z"));
+  return Ok(WindowInsetsClass { class: class, id_get_insets: id_get_insets, id_is_visible: id_is_visible });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WindowInsetsClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// False when the device does not have the member of `get_insets`.
+pub function (c: WindowInsetsClass) has_get_insets(): boolean {
+  return c.id_get_insets != 0 as usize;
+}
+
+// android.view.WindowInsets.getInsets(I)Landroid/graphics/Insets;
+pub function (c: WindowInsetsClass) get_insets(e: usize, self: WindowInsets, a0: i32): Result[Insets, jni.JavaError] {
+  if (c.id_get_insets == 0 as usize) {
+    return Err(jni.absent("android.view.WindowInsets.getInsets"));
+  }
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_insets, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Insets { ref: got });
+}
+
+// False when the device does not have the member of `is_visible`.
+pub function (c: WindowInsetsClass) has_is_visible(): boolean {
+  return c.id_is_visible != 0 as usize;
+}
+
+// android.view.WindowInsets.isVisible(I)Z
+pub function (c: WindowInsetsClass) is_visible(e: usize, self: WindowInsets, a0: i32): Result[boolean, jni.JavaError] {
+  if (c.id_is_visible == 0 as usize) {
+    return Err(jni.absent("android.view.WindowInsets.isVisible"));
+  }
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  let got = jni.invoke(e, jni.CALL_METHOD + 3, self.ref, c.id_is_visible, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok((got & 255 as usize) != 0 as usize);
+}
+
+// A android.view.WindowInsets.Type.
+pub struct WindowInsets_Type { ref: usize }
+
+pub function (x: WindowInsets_Type) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: WindowInsets_Type) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.view.WindowInsets.Type and the IDs of its members.
+pub struct WindowInsets_TypeClass { class: usize, id_display_cutout: usize, id_ime: usize, id_system_bars: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function window_insets_type_class(e: usize): Result[WindowInsets_TypeClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/view/WindowInsets$Type")?;
+  let id_display_cutout = jni.checked_id(e, class, jni.get_static_method_id(e, class, "displayCutout", "()I"))?;
+  let id_ime = jni.checked_id(e, class, jni.get_static_method_id(e, class, "ime", "()I"))?;
+  let id_system_bars = jni.checked_id(e, class, jni.get_static_method_id(e, class, "systemBars", "()I"))?;
+  return Ok(WindowInsets_TypeClass { class: class, id_display_cutout: id_display_cutout, id_ime: id_ime, id_system_bars: id_system_bars });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: WindowInsets_TypeClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.view.WindowInsets.Type.displayCutout()I
+pub function (c: WindowInsets_TypeClass) display_cutout(e: usize): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 15, c.class, c.id_display_cutout, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.WindowInsets.Type.ime()I
+pub function (c: WindowInsets_TypeClass) ime(e: usize): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 15, c.class, c.id_ime, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.view.WindowInsets.Type.systemBars()I
+pub function (c: WindowInsets_TypeClass) system_bars(e: usize): Result[i32, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 15, c.class, c.id_system_bars, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.graphics.Insets.
+pub struct Insets { ref: usize }
+
+pub function (x: Insets) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Insets) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.graphics.Insets and the IDs of its members.
+pub struct InsetsClass { class: usize, id_bottom: usize, id_left: usize, id_right: usize, id_top: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function insets_class(e: usize): Result[InsetsClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/graphics/Insets")?;
+  let id_bottom = jni.checked_id(e, class, jni.get_field_id(e, class, "bottom", "I"))?;
+  let id_left = jni.checked_id(e, class, jni.get_field_id(e, class, "left", "I"))?;
+  let id_right = jni.checked_id(e, class, jni.get_field_id(e, class, "right", "I"))?;
+  let id_top = jni.checked_id(e, class, jni.get_field_id(e, class, "top", "I"))?;
+  return Ok(InsetsClass { class: class, id_bottom: id_bottom, id_left: id_left, id_right: id_right, id_top: id_top });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: InsetsClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.graphics.Insets.bottom
+pub function (c: InsetsClass) bottom(e: usize, self: Insets): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_bottom, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.graphics.Insets.left
+pub function (c: InsetsClass) left(e: usize, self: Insets): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_left, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.graphics.Insets.right
+pub function (c: InsetsClass) right(e: usize, self: Insets): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_right, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// android.graphics.Insets.top
+pub function (c: InsetsClass) top(e: usize, self: Insets): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_FIELD + 5, self.ref, c.id_top, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
+// A android.window.OnBackInvokedDispatcher.
+pub struct OnBackInvokedDispatcher { ref: usize }
+
+pub function (x: OnBackInvokedDispatcher) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: OnBackInvokedDispatcher) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.window.OnBackInvokedDispatcher and the IDs of its members.
+pub struct OnBackInvokedDispatcherClass { class: usize, id_register_on_back_invoked_callback: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function on_back_invoked_dispatcher_class(e: usize): Result[OnBackInvokedDispatcherClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/window/OnBackInvokedDispatcher")?;
+  let id_register_on_back_invoked_callback = jni.checked_id(e, class, jni.get_method_id(e, class, "registerOnBackInvokedCallback", "(ILandroid/window/OnBackInvokedCallback;)V"))?;
+  return Ok(OnBackInvokedDispatcherClass { class: class, id_register_on_back_invoked_callback: id_register_on_back_invoked_callback });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: OnBackInvokedDispatcherClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.window.OnBackInvokedDispatcher.registerOnBackInvokedCallback(ILandroid/window/OnBackInvokedCallback;)V
+pub function (c: OnBackInvokedDispatcherClass) register_on_back_invoked_callback(e: usize, self: OnBackInvokedDispatcher, a0: i32, a1: OnBackInvokedCallback): Result[void, jni.JavaError] {
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, a0 as usize);
+  jni.jvalue_set_int(args, 1, a1.ref);
+  jni.invoke(e, jni.CALL_METHOD + 27, self.ref, c.id_register_on_back_invoked_callback, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(());
+}
+
+// A android.window.OnBackInvokedCallback.
+pub struct OnBackInvokedCallback { ref: usize }
+
+pub function (x: OnBackInvokedCallback) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: OnBackInvokedCallback) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.window.OnBackInvokedCallback and the IDs of its members.
+pub struct OnBackInvokedCallbackClass { class: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function on_back_invoked_callback_class(e: usize): Result[OnBackInvokedCallbackClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/window/OnBackInvokedCallback")?;
+  return Ok(OnBackInvokedCallbackClass { class: class });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: OnBackInvokedCallbackClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
 }
 
 // A android.view.WindowManager.
@@ -1281,7 +1619,7 @@ pub function (c: Build_VERSIONClass) sdk_int(e: usize): Result[i32, jni.JavaErro
 }
 
 // The struct of IDs of each class of this module.
-pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass, window: WindowClass, view: ViewClass, window_manager: WindowManagerClass, window_manager_layout_params: WindowManager_LayoutParamsClass, display: DisplayClass, display_mode: Display_ModeClass, picture_in_picture_params_builder: PictureInPictureParams_BuilderClass, rational: RationalClass, input_device: InputDeviceClass, system: SystemClass, build_version: Build_VERSIONClass }
+pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass, window: WindowClass, view: ViewClass, view_on_apply_window_insets_listener: View_OnApplyWindowInsetsListenerClass, window_insets: WindowInsetsClass, window_insets_type: WindowInsets_TypeClass, insets: InsetsClass, on_back_invoked_dispatcher: OnBackInvokedDispatcherClass, on_back_invoked_callback: OnBackInvokedCallbackClass, window_manager: WindowManagerClass, window_manager_layout_params: WindowManager_LayoutParamsClass, display: DisplayClass, display_mode: Display_ModeClass, picture_in_picture_params_builder: PictureInPictureParams_BuilderClass, rational: RationalClass, input_device: InputDeviceClass, system: SystemClass, build_version: Build_VERSIONClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
@@ -1463,6 +1801,141 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
+  let view_on_apply_window_insets_listener = match (view_on_apply_window_insets_listener_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      return Err(err);
+    },
+  };
+  let window_insets = match (window_insets_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      return Err(err);
+    },
+  };
+  let window_insets_type = match (window_insets_type_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      return Err(err);
+    },
+  };
+  let insets = match (insets_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      return Err(err);
+    },
+  };
+  let on_back_invoked_dispatcher = match (on_back_invoked_dispatcher_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      return Err(err);
+    },
+  };
+  let on_back_invoked_callback = match (on_back_invoked_callback_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      return Err(err);
+    },
+  };
   let window_manager = match (window_manager_class(e)) {
     Ok(c) => c,
     Err(err) => {
@@ -1480,6 +1953,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       return Err(err);
     },
   };
@@ -1500,6 +1979,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       return Err(err);
     },
@@ -1521,6 +2006,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       window_manager_layout_params.release(e);
       return Err(err);
@@ -1543,6 +2034,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       window_manager_layout_params.release(e);
       display.release(e);
@@ -1566,6 +2063,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       window_manager_layout_params.release(e);
       display.release(e);
@@ -1590,6 +2093,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       window_manager_layout_params.release(e);
       display.release(e);
@@ -1615,6 +2124,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       window_manager_layout_params.release(e);
       display.release(e);
@@ -1641,6 +2156,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       window_manager_layout_params.release(e);
       display.release(e);
@@ -1668,6 +2189,12 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       locale_list.release(e);
       window.release(e);
       view.release(e);
+      view_on_apply_window_insets_listener.release(e);
+      window_insets.release(e);
+      window_insets_type.release(e);
+      insets.release(e);
+      on_back_invoked_dispatcher.release(e);
+      on_back_invoked_callback.release(e);
       window_manager.release(e);
       window_manager_layout_params.release(e);
       display.release(e);
@@ -1679,7 +2206,7 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
-  return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list, window: window, view: view, window_manager: window_manager, window_manager_layout_params: window_manager_layout_params, display: display, display_mode: display_mode, picture_in_picture_params_builder: picture_in_picture_params_builder, rational: rational, input_device: input_device, system: system, build_version: build_version });
+  return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list, window: window, view: view, view_on_apply_window_insets_listener: view_on_apply_window_insets_listener, window_insets: window_insets, window_insets_type: window_insets_type, insets: insets, on_back_invoked_dispatcher: on_back_invoked_dispatcher, on_back_invoked_callback: on_back_invoked_callback, window_manager: window_manager, window_manager_layout_params: window_manager_layout_params, display: display, display_mode: display_mode, picture_in_picture_params_builder: picture_in_picture_params_builder, rational: rational, input_device: input_device, system: system, build_version: build_version });
 }
 
 // Deletes the reference to each class. Do not use `c` after this call.
@@ -1698,6 +2225,12 @@ pub function (c: Classes) release(e: usize): void {
   c.locale_list.release(e);
   c.window.release(e);
   c.view.release(e);
+  c.view_on_apply_window_insets_listener.release(e);
+  c.window_insets.release(e);
+  c.window_insets_type.release(e);
+  c.insets.release(e);
+  c.on_back_invoked_dispatcher.release(e);
+  c.on_back_invoked_callback.release(e);
   c.window_manager.release(e);
   c.window_manager_layout_params.release(e);
   c.display.release(e);
