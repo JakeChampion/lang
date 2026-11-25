@@ -41,6 +41,48 @@ function sp_bail(ops: ir.Op[]): string {
   return irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind()).bail;
 }
 
+function class_checks(): i32 {
+  let fine: ir.Op[] = [
+    ir.op_const_f64(1.0), ir.op_lane("vsplat", 64), ir.op_const_f64(2.0), ir.op_lane("vsplat", 64),
+    ir.op_lane("vadd", 64), ir.op_lane_at("vextract", 64, 0), ir.op_float("fneg"), ir.op_f64_to_i64(),
+    ir.op_const_i32(3), ir.op_bin("add", 64, false), ir.op_return(),
+  ];
+  if (sp_count(fine) != 0) {
+    return 142;
+  }
+  let int_splat: ir.Op[] = [ir.op_const_i32(1), ir.op_lane("vsplat", 64), ir.op_drop(), ir.op_const_i32(0), ir.op_return()];
+  if (!util.contains(sp_msg(int_splat), "op 1 (vsplat): operand 1 of 1 is an integer, but the op reads a float")) {
+    return 143;
+  }
+  let lane_add: ir.Op[] = [
+    ir.op_const_f64(1.0), ir.op_lane("vsplat", 64), ir.op_const_i32(2), ir.op_bin("add", 64, false), ir.op_return(),
+  ];
+  if (!util.contains(sp_msg(lane_add), "op 3 (add): operand 1 of 2 is a lane value, but the op reads an integer")) {
+    return 144;
+  }
+  let float_cond: ir.Op[] = [ir.op_const_f64(1.0), ir.op_if(0), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+  if (!util.contains(sp_msg(float_cond), "op 1 (if): operand 1 of 1 is a float, but the op reads an integer")) {
+    return 145;
+  }
+  let teed: ir.Op[] = [
+    ir.op_const_i32(4), ir.op_tee_local(0), ir.op_lane("vsplat", 32), ir.op_drop(), ir.op_const_i32(0), ir.op_return(),
+  ];
+  if (sp_count(teed) != 1) {
+    return 146;
+  }
+  let unknown: ir.Op[] = [ir.op_load_local(0), ir.op_lane("vsplat", 64), ir.op_drop(), ir.op_const_i32(0), ir.op_return()];
+  if (sp_count(unknown) != 0) {
+    return 147;
+  }
+  let stored: ir.Op[] = [
+    ir.op_load_local(0), ir.op_const_f64(1.0), ir.op_lane("vstore", 64), ir.op_const_i32(0), ir.op_return(),
+  ];
+  if (!util.contains(sp_msg(stored), "op 2 (vstore): operand 2 of 2 is a float, but the op reads a lane value")) {
+    return 148;
+  }
+  return 0;
+}
+
 function stack_checks(): i32 {
   if (sp_count([ir.op_const_i32(1), ir.op_return()]) != 0) {
     return 70;
@@ -1357,6 +1399,11 @@ function main(): i32 {
   let fc = fip_checks();
   if (fc != 0) {
     return fc;
+  }
+
+  let cc = class_checks();
+  if (cc != 0) {
+    return cc;
   }
 
   let pc = provided_checks();
