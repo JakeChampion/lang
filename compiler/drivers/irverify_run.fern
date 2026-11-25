@@ -546,6 +546,40 @@ function gate_checks(): i32 {
   if (util.contains(irverify.problem_str(nps[0]), "cannot model")) {
     return 184;
   }
+  return width_checks();
+}
+
+function width_checks(): i32 {
+  let widths: i32[] = [8, 16, 32, 64, ir.width_ptr()];
+  for w in widths {
+    let ok: ir.Op[] = [ir.op_load_local(0), ir.op_load_local(1), ir.op_arr_get(w), ir.op_return()];
+    if (count_problems(ok, 2, 2) != 0) {
+      return 185;
+    }
+  }
+  let bools: ir.Op[] = [ir.op_load_local(0), ir.op_alloc_slots(1), ir.op_return()];
+  if (count_problems(bools, 1, 1) != 0) {
+    return 186;
+  }
+  let words: ir.Op[] = [ir.op_load_local(0), ir.op_alloc_u8(), ir.op_return()];
+  if (count_problems(words, 1, 1) != 0) {
+    return 187;
+  }
+  let odd: ir.Op[] = [ir.op_load_local(0), ir.op_load_local(1), ir.op_arr_get(7), ir.op_return()];
+  if (count_problems(odd, 2, 2) != 1) {
+    return 188;
+  }
+  if (!util.contains(first_msg(odd, 2, 2), "op 2 (arr_get): element width 7 is not 8, 16, 32, 64 or the pointer width")) {
+    return 189;
+  }
+  let zero: ir.Op[] = [ir.op_load_local(0), ir.op_arr_slice(0), ir.op_return()];
+  if (count_problems(zero, 1, 1) != 1) {
+    return 235;
+  }
+  let gate_odd = irverifygate.verify_problems("f", odd, 2, 2, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
+  if (gate_odd.len() != 1 || !util.contains(irverify.problem_str(gate_odd[0]), "element width 7")) {
+    return 236;
+  }
   return 0;
 }
 

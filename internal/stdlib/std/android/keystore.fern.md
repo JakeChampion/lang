@@ -14,7 +14,7 @@ The result gives the DER SubjectPublicKeyInfo of the key and the DER chain from 
 
 `sign(e, alias, message)` signs with SHA-256 and ECDSA and gives a DER ECDSA-Sig-Value. `delete_key(e, alias)` deletes the key of an alias.
 
-The Android JNI test app provisions a key that requires an unlocked device. It checks legacy and context-bound envelopes, distinct IVs, and rejection of a changed tag or context. The module clears its Java plaintext input and output arrays before releasing the local frame. The caller owns the input to sealing and the plaintext returned by opening. Run its emulator check for provider behavior. Hardware backing requires testing on the intended physical device.
+The Android JNI test app provisions a key that requires an unlocked device. It checks legacy and context-bound envelopes, distinct IVs, and rejection of a changed tag or context. The module clears its Java plaintext input and output arrays before releasing the local frame. The caller owns the input to sealing and the plaintext returned by opening. Run its emulator check for provider behavior. Hardware backing requires testing on a physical device: `tests/android/keystore/README.md` is the procedure, and `docs/ANDROID-STANDING.md` records each run.
 
 ```fern
 <<*>>=
