@@ -1015,6 +1015,105 @@ function counts_kept(ops: ir.Op[]): boolean {
   return r.checked == 1 && r.problems.len() == 0;
 }
 
+// A carried donor: the gate holds the donor in its own local, and a later
+// block moves it into the token local just before the reuse call.
+function hold_gate(donor: i32): ir.Op[] {
+  return [
+    ir.op_load_local(donor),
+    ir.op_call_direct("__fern_rc_is_unique", 1),
+    ir.op_if(0),
+    ir.op_else(),
+    ir.op_load_local(donor),
+    ir.op_call_direct("__fern_rc_dec", 1),
+    ir.op_drop(),
+    ir.op_const_i32(0),
+    ir.op_store_local(donor),
+    ir.op_end(),
+  ];
+}
+
+function keep_gate(donor: i32, flag: i32): ir.Op[] {
+  return [
+    ir.op_load_local(donor),
+    ir.op_call_direct("__fern_rc_is_unique", 1),
+    ir.op_if(0),
+    ir.op_load_local(donor),
+    ir.op_store_local(flag),
+    ir.op_else(),
+    ir.op_const_i32(0),
+    ir.op_store_local(flag),
+    ir.op_end(),
+    ir.op_load_local(flag),
+    ir.op_const_i32(0),
+    ir.op_bin("ne", 0, false),
+    ir.op_if(0),
+    ir.op_else(),
+    ir.op_load_local(donor),
+    ir.op_call_direct("__sem_release_P", 1),
+    ir.op_drop(),
+    ir.op_const_i32(0),
+    ir.op_store_local(donor),
+    ir.op_end(),
+  ];
+}
+
+function carried_use(donor: i32): ir.Op[] {
+  return [
+    ir.op_load_local(donor),
+    ir.op_store_local(6),
+    ir.op_const_i32(0),
+    ir.op_store_local(donor),
+    ir.op_load_local(6),
+    ir.op_const_i32(3),
+    ir.op_call_direct("__fern_alloc_reuse", 2),
+  ];
+}
+
+function carried(gate: ir.Op[], between: ir.Op[]): ir.Op[] {
+  return concat_ops(concat_ops(gate, between), carried_use(1));
+}
+
+function rc_carried_checks(): i32 {
+  if (!counts_kept(carried(hold_gate(1), []))) {
+    return 26;
+  }
+  let inc_arm: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_load_local(1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_drop(), ir.op_end()];
+  if (!counts_changed(carried(hold_gate(1), inc_arm))) {
+    return 27;
+  }
+  let dec_exit: ir.Op[] = [ir.op_const_i32(1), ir.op_if(0), ir.op_load_local(1), ir.op_call_direct("__fern_rc_dec", 1), ir.op_drop(), ir.op_return(), ir.op_end()];
+  if (!counts_kept(carried(hold_gate(1), dec_exit))) {
+    return 28;
+  }
+  if (!counts_kept(carried(keep_gate(1, 7), []))) {
+    return 29;
+  }
+  let in_keep = insert_ops(keep_gate(1, 7), 9, count_call(1, "__fern_rc_inc"));
+  if (!counts_changed(carried(in_keep, []))) {
+    return 52;
+  }
+  if (!rc_only_skip(carried_use(1), "a path to the carried reuse has no uniqueness gate")) {
+    return 53;
+  }
+  let one_arm = concat_ops([ir.op_const_i32(1), ir.op_if(0)], hold_gate(1));
+  one_arm = concat_ops(one_arm, [ir.op_end()]);
+  if (!rc_only_skip(carried(one_arm, []), "a path to the carried reuse has no uniqueness gate")) {
+    return 54;
+  }
+  if (!rc_only_skip(carried(hold_gate(2), []), "a path to the carried reuse has no uniqueness gate")) {
+    return 55;
+  }
+  let rewritten: ir.Op[] = [ir.op_load_local(2), ir.op_store_local(1)];
+  if (!rc_only_skip(carried(hold_gate(1), rewritten), "carried donor is written before the reuse call")) {
+    return 56;
+  }
+  let other_flag = concat_ops(keep_gate(2, 7), [ir.op_load_local(1), ir.op_call_direct("__fern_rc_inc", 1), ir.op_drop()]);
+  if (!counts_changed(carried(concat_ops(hold_gate(1), other_flag), []))) {
+    return 57;
+  }
+  return 0;
+}
+
 // The donor's count must not change between the uniqueness gate and the
 // reuse call, on the reuse path.
 function rc_count_checks(): i32 {
@@ -1258,6 +1357,10 @@ function rc_checks(): i32 {
   let counts = rc_count_checks();
   if (counts != 0) {
     return counts;
+  }
+  let carried_paths = rc_carried_checks();
+  if (carried_paths != 0) {
+    return carried_paths;
   }
   let branch_paths = rc_branch_paths();
   if (branch_paths != 0) {

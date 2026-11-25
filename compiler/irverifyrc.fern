@@ -644,6 +644,188 @@ function reaches(ops: ir.Op[], flow: Flow, from: i32, to: i32, donor: i32): bool
   return false;
 }
 
+// A carried site moves its donor into the token local just before the call:
+// load D, store T, const 0, store D, load T. The gate of D is in an earlier
+// block, so each path back from the move must reach it.
+function carried_donor(ops: ir.Op[], call: i32): i32 {
+  let tok = token_arg_slot(ops, call);
+  if (tok < 4) {
+    return -1;
+  }
+  let t = ops[tok].i32_imm;
+  let d = ops[tok - 4].i32_imm;
+  if (ops[tok - 4].kind_tag != ir.K_LOAD_LOCAL || ops[tok - 3].kind_tag != ir.K_STORE_LOCAL || ops[tok - 3].i32_imm != t
+    || ops[tok - 2].kind_tag != ir.K_CONST_I32 || ops[tok - 2].i32_imm != 0
+    || ops[tok - 1].kind_tag != ir.K_STORE_LOCAL || ops[tok - 1].i32_imm != d || d == t) {
+    return -1;
+  }
+  return tok - 4;
+}
+
+// The predecessors of each op, as offsets into one list.
+struct Preds { start: i32[], list: i32[] }
+
+function preds_of(ops: ir.Op[], flow: Flow): Preds {
+  let n = ops.len();
+  let count = __alloc_i32(n + 1);
+  for i in 0..n {
+    if (flow.next[i] < n) {
+      count = count.with(flow.next[i], count[flow.next[i]] + 1);
+    }
+    if (flow.other[i] < n) {
+      count = count.with(flow.other[i], count[flow.other[i]] + 1);
+    }
+  }
+  let start = __alloc_i32(n + 1);
+  for i in 0..n {
+    start = start.with(i + 1, start[i] + count[i]);
+  }
+  let fill = __alloc_i32(n);
+  let list = __alloc_i32(start[n]);
+  for i in 0..n {
+    for t in [flow.next[i], flow.other[i]] {
+      if (t < n) {
+        list = list.with(start[t] + fill[t], i);
+        fill = fill.with(t, fill[t] + 1);
+      }
+    }
+  }
+  return Preds { start: start, list: list };
+}
+
+function tests_unique(ops: ir.Op[], if_at: i32, donor: i32): boolean {
+  return if_at >= 2 && is_is_unique(ops[if_at - 1])
+    && ops[if_at - 2].kind_tag == ir.K_LOAD_LOCAL && ops[if_at - 2].i32_imm == donor;
+}
+
+function writes_local(op: ir.Op, slot: i32): boolean {
+  return (op.kind_tag == ir.K_STORE_LOCAL || op.kind_tag == ir.K_TEE_LOCAL) && op.i32_imm == slot;
+}
+
+// The flag local of an if on `flag != 0`, or -1.
+function nonzero_flag(ops: ir.Op[], if_at: i32): i32 {
+  if (if_at < 3 || ops[if_at - 1].kind_tag != ir.K_NE || ops[if_at - 2].kind_tag != ir.K_CONST_I32
+    || ops[if_at - 2].i32_imm != 0 || ops[if_at - 3].kind_tag != ir.K_LOAD_LOCAL) {
+    return -1;
+  }
+  return ops[if_at - 3].i32_imm;
+}
+
+// The end of the select that sets flag to the donor when the donor is unique
+// and to 0 otherwise, the last op before at that writes flag, or -1.
+function keep_select_end(ops: ir.Op[], at: i32, flag: i32, donor: i32): i32 {
+  let k = at - 1;
+  while (k >= 0 && !writes_local(ops[k], flag)) {
+    k -= 1;
+  }
+  if (k < 2 || k + 1 >= ops.len() || ops[k + 1].kind_tag != ir.K_END) {
+    return -1;
+  }
+  let sel = match_if_backwards(ops, k + 1);
+  if (!sel.ok || sel.else_at != sel.if_at + 3 || k != sel.else_at + 2 || !tests_unique(ops, sel.if_at, donor)
+    || ops[sel.if_at + 1].kind_tag != ir.K_LOAD_LOCAL || ops[sel.if_at + 1].i32_imm != donor
+    || !writes_local(ops[sel.if_at + 2], flag) || ops[sel.if_at + 2].kind_tag != ir.K_STORE_LOCAL
+    || ops[k - 1].kind_tag != ir.K_CONST_I32 || ops[k - 1].i32_imm != 0) {
+    return -1;
+  }
+  return k + 1;
+}
+
+// True when the ops after from and before to are structured code with no
+// exit and no write of the donor or the flag.
+function plain_span(ops: ir.Op[], from: i32, to: i32, donor: i32, flag: i32): boolean {
+  let depth = 0;
+  for j in from + 1..to {
+    let t = ops[j].kind_tag;
+    if (t == ir.K_LOOP || t == ir.K_BR || t == ir.K_BRIF || t == ir.K_RETURN
+      || writes_local(ops[j], donor) || writes_local(ops[j], flag)) {
+      return false;
+    }
+    depth += scope_delta(ops[j]);
+    if (depth < 0) {
+      return false;
+    }
+  }
+  return depth == 0;
+}
+
+struct Carried { ok: boolean, why: string, donor: i32, at: i32 }
+
+// Walks back from the move at `from`. A path ends at a clear of the donor or
+// at the reuse arm of a uniqueness gate on it. Each other path is a skip. The
+// first op on a path that changes the donor's count is at.
+function read_carried(ops: ir.Op[], from: i32, preds: Preds, sigs: rcsigs.Table): Carried {
+  let donor = ops[from].i32_imm;
+  let held = [donor];
+  let change: i32 = -1;
+  let gated = false;
+  let seen = __alloc_bool(ops.len());
+  let work: i32[] = [from];
+  while (work.len() > 0) {
+    let j = work[work.len() - 1];
+    work = work.truncate(work.len() - 1);
+    for q in preds.start[j]..preds.start[j + 1] {
+      let p = preds.list[q];
+      let op = ops[p];
+      if (op.kind_tag == ir.K_IF && j == p + 1) {
+        if (tests_unique(ops, p, donor)) {
+          gated = true;
+          continue;
+        }
+        let flag = nonzero_flag(ops, p);
+        let e: i32 = -1;
+        if (flag >= 0 && flag != donor) {
+          e = keep_select_end(ops, p - 3, flag, donor);
+        }
+        if (e >= 0 && plain_span(ops, e, p - 3, donor, flag)) {
+          let scan = first_count_change(ops, e + 1, p - 3, [donor], sigs);
+          if (change < 0 && scan.at >= 0) {
+            change = scan.at;
+          }
+          gated = true;
+          continue;
+        }
+      }
+      if (seen[p]) {
+        continue;
+      }
+      seen = seen.with(p, true);
+      if (writes_local(op, donor)) {
+        if (op.kind_tag == ir.K_STORE_LOCAL && p >= 1 && ops[p - 1].kind_tag == ir.K_CONST_I32 && ops[p - 1].i32_imm == 0) {
+          continue;
+        }
+        return Carried { ok: false, why: "carried donor is written before the reuse call", donor: donor, at: -1 };
+      }
+      if (change < 0 && changes_count_of(ops, p, held, sigs)) {
+        change = p;
+      }
+      if (p == 0) {
+        return Carried { ok: false, why: "a path to the carried reuse has no uniqueness gate", donor: donor, at: -1 };
+      }
+      work = work.append(p);
+    }
+  }
+  if (!gated) {
+    return Carried { ok: false, why: "a path to the carried reuse has no uniqueness gate", donor: donor, at: -1 };
+  }
+  return Carried { ok: true, why: "", donor: donor, at: change };
+}
+
+function carried_problems(fn_name: string, ops: ir.Op[], call: i32, c: Carried): irverify.Problem[] {
+  let out: irverify.Problem[] = [];
+  if (c.at >= 0) {
+    out = out.append(irverify.Problem {
+      fn_name: fn_name,
+      op: call,
+      kind: "call_direct",
+      msg: "carried reuse site's donor local " + util.i32_to_string(c.donor)
+        + " goes to " + ops[c.at].str + " at op " + util.i32_to_string(c.at)
+        + ", on a path from its uniqueness gate to the reuse call: the count that the gate tested is not the count at the reuse",
+    });
+  }
+  return out;
+}
+
 function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): irverify.Problem[] {
   let out: irverify.Problem[] = [];
   if (claims.len() < 2) {
@@ -672,6 +854,8 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[], sigs: rcsigs.Table): Rc
   let r = rc_result_new();
   let claims: Claim[] = [];
   let k_calld = ir.K_CALL_DIRECT;
+  let preds = Preds { start: [], list: [] };
+  let have_preds = false;
   for i in 0..ops.len() {
     if (is_reuse_alloc(ops[i], k_calld)) {
       r = RcResult { ...r, sites: r.sites + 1 };
@@ -689,7 +873,26 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[], sigs: rcsigs.Table): Rc
         r = RcResult { ...r, checked: r.checked + 1, problems: acc };
         claims = claims.append(claim_of(ops, i, s.gate));
       } else {
-        r = RcResult { ...r, skips: r.skips.append(s.why) };
+        let mv = carried_donor(ops, i);
+        let why = s.why;
+        if (mv >= 0) {
+          if (!have_preds) {
+            preds = preds_of(ops, flow_graph(ops));
+            have_preds = true;
+          }
+          let c = read_carried(ops, mv, preds, sigs);
+          if (c.ok) {
+            let acc = r.problems;
+            for p in carried_problems(fn_name, ops, i, c) {
+              acc = acc.append(p);
+            }
+            r = RcResult { ...r, checked: r.checked + 1, problems: acc };
+            claims = claims.append(claim_of(ops, i, c.donor));
+            continue;
+          }
+          why = c.why;
+        }
+        r = RcResult { ...r, skips: r.skips.append(why) };
       }
     }
   }
