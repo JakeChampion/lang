@@ -999,6 +999,9 @@ pub function can_hold(f: Func, outer: typeinfo.Type, inner: typeinfo.Type): bool
       typeinfo.TypeUnbound(_) => {
         return true;
       },
+      typeinfo.TypePending(_) => {
+        return true;
+      },
       typeinfo.TypeErased(_) => {
         return true;
       },
@@ -4304,6 +4307,9 @@ function passes_code(f: Func, args: i32[]): boolean {
         return true;
       },
       typeinfo.TypeUnbound(_) => {
+        return true;
+      },
+      typeinfo.TypePending(_) => {
         return true;
       },
       typeinfo.TypeErased(_) => {

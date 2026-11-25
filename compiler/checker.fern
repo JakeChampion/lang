@@ -1441,6 +1441,9 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeUnbound(_) => {
       return "unknown(" + unknown_reason(t) + ")";
     },
+    typeinfo.TypePending(_) => {
+      return "unknown(" + unknown_reason(t) + ")";
+    },
     typeinfo.TypeErased(e) => {
       return "erased(" + e.name + ")";
     }
@@ -1733,6 +1736,9 @@ function type_eq_in(a: typeinfo.Type, b: typeinfo.Type, modes: boolean): boolean
     typeinfo.TypeUnbound(_) => {
       return false;
     },
+    typeinfo.TypePending(_) => {
+      return false;
+    },
     typeinfo.TypeNever(_) => {
       if let typeinfo.TypeNever(_) = b {
         return true;
@@ -1790,6 +1796,9 @@ pub function is_unknown(t: typeinfo.Type): boolean {
       return true;
     },
     typeinfo.TypeUnbound(_) => {
+      return true;
+    },
+    typeinfo.TypePending(_) => {
       return true;
     },
     _ => {
@@ -2005,6 +2014,9 @@ function downcast_operand_ok(t: typeinfo.Type): boolean {
     typeinfo.TypeUnbound(_) => {
       return true;
     },
+    typeinfo.TypePending(_) => {
+      return true;
+    },
     typeinfo.TypeNever(_) => {
       return true;
     },
@@ -2043,6 +2055,9 @@ function literal_match_type(t: typeinfo.Type): boolean {
       return false;
     },
     typeinfo.TypeUnbound(_) => {
+      return false;
+    },
+    typeinfo.TypePending(_) => {
       return false;
     },
     typeinfo.TypeErased(_) => {
@@ -2657,6 +2672,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
     typeinfo.TypeUnknown(_) => {},
     typeinfo.TypeVar(_) => {},
     typeinfo.TypeUnbound(_) => {},
+    typeinfo.TypePending(_) => {},
     _ => {
       out = out.append(dg_at("E024", "struct destructure needs a struct expression, got " + type_label(it), v.line, v.col));
     }
@@ -4877,6 +4893,9 @@ function callable_slot_open(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(_) = t {
     return true;
   }
+  if let typeinfo.TypePending(_) = t {
+    return true;
+  }
   return unbound_enum_argument(t);
 }
 
@@ -7055,6 +7074,9 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         typeinfo.TypeUnbound(_) => {
           return CheckResult { scope: s, ty: t };
         },
+        typeinfo.TypePending(_) => {
+          return CheckResult { scope: s, ty: t };
+        },
         _ => {}
       }
       if (is_unknown(t)) {
@@ -8595,6 +8617,9 @@ pub function type_label(t: typeinfo.Type): string {
       return "unknown";
     },
     typeinfo.TypeUnbound(_) => {
+      return "unknown";
+    },
+    typeinfo.TypePending(_) => {
       return "unknown";
     },
     typeinfo.TypeErased(e) => {
@@ -14824,6 +14849,9 @@ function display_unjudged(t: typeinfo.Type): boolean {
     typeinfo.TypeUnbound(_) => {
       return true;
     },
+    typeinfo.TypePending(_) => {
+      return true;
+    },
     typeinfo.TypeErased(_) => {
       return true;
     },
@@ -17316,6 +17344,7 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
     typeinfo.TypeUnknown(_) => {},
     typeinfo.TypeVar(_) => {},
     typeinfo.TypeUnbound(_) => {},
+    typeinfo.TypePending(_) => {},
     _ => {
       return [dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(t), line, col)];
     }
@@ -17488,6 +17517,7 @@ function cover_shape_diags(p: CoverPat, t: typeinfo.Type, s: Scope, line: i32, c
       typeinfo.TypeUnknown(_) => {},
       typeinfo.TypeVar(_) => {},
       typeinfo.TypeUnbound(_) => {},
+      typeinfo.TypePending(_) => {},
       _ => {
         return [dg_at("E035", "tuple pattern needs a tuple value, got " + type_label(t), line, col)];
       }
@@ -33039,6 +33069,9 @@ function spellable(t: typeinfo.Type): boolean {
     typeinfo.TypeUnbound(_) => {
       return false;
     },
+    typeinfo.TypePending(_) => {
+      return false;
+    },
     typeinfo.TypeErased(_) => {
       return false;
     },
@@ -37511,69 +37544,47 @@ struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: 
 
 struct LitRewrite { keys: util.NameIndex, tags: string[], cargs: LitArgSite[], ctags: string[], fkeys: string[], ftags: string[], pargs: LitArgSite[], ptypes: typeinfo.Type[] }
 
-const LIT_MARK: string = "literal local #";
+const PENDING_LOCAL: i32 = 0;
+
+const PENDING_STRUCT: i32 = 1;
+
+const PENDING_OPEN: i32 = 2;
 
 const LIT_WIDE: i32 = 0;
 
-function lit_marker(k: i32): typeinfo.Type {
-  return t_unknown(LIT_MARK + util.i32_to_string(k));
+function pending(kind: i32, id: i32, name: string, ids: i32[]): typeinfo.Type {
+  return typeinfo.TypePending { kind: kind, id: id, name: name, ids: ids };
 }
 
-function lit_id(t: typeinfo.Type): i32 {
-  if let typeinfo.TypeUnknown(u) = t {
-    let n = LIT_MARK.len();
-    if (u.reason.len() <= n || !util.str_range_eq(u.reason, 0, n, LIT_MARK)) {
-      return -1;
+// The local number of a placeholder of the given kind, or -1.
+function pending_id(t: typeinfo.Type, kind: i32): i32 {
+  if let typeinfo.TypePending(p) = t {
+    if (p.kind == kind) {
+      return p.id;
     }
-    let k = 0;
-    for i in n..u.reason.len() {
-      k = k * 10 + u.reason[i] as i32 - 48;
-    }
-    return k;
   }
   return -1;
 }
 
-const LIT_STRUCT_MARK: string = "literal struct #";
+function lit_marker(k: i32): typeinfo.Type {
+  return pending(PENDING_LOCAL, k, "", []);
+}
+
+function lit_id(t: typeinfo.Type): i32 {
+  return pending_id(t, PENDING_LOCAL);
+}
 
 function lit_struct_marker(name: string, ids: i32[]): typeinfo.Type {
-  let spelled = LIT_STRUCT_MARK + name + "|";
-  for i in 0..ids.len() {
-    if (i > 0) {
-      spelled += ",";
-    }
-    spelled += util.i32_to_string(ids[i]);
-  }
-  return t_unknown(spelled);
+  return pending(PENDING_STRUCT, -1, name, ids);
 }
 
 function lit_struct_of(t: typeinfo.Type): (string, i32[]) {
-  let none: i32[] = [];
-  if let typeinfo.TypeUnknown(u) = t {
-    let n = LIT_STRUCT_MARK.len();
-    if (u.reason.len() <= n || !util.str_range_eq(u.reason, 0, n, LIT_STRUCT_MARK)) {
-      return ("", none);
+  if let typeinfo.TypePending(p) = t {
+    if (p.kind == PENDING_STRUCT) {
+      return (p.name, p.ids);
     }
-    let bar = util.index_of_sub(u.reason, "|");
-    let ids: i32[] = [];
-    let k = 0;
-    let neg = false;
-    for i in bar + 1..=u.reason.len() {
-      if (i == u.reason.len() || u.reason[i] as i32 == 44) {
-        if (neg) {
-          k = -k;
-        }
-        ids = ids.append(k);
-        k = 0;
-        neg = false;
-      } else if (u.reason[i] as i32 == 45) {
-        neg = true;
-      } else {
-        k = k * 10 + u.reason[i] as i32 - 48;
-      }
-    }
-    return (slice_unchecked(u.reason, n, bar).to_owned(), ids);
   }
+  let none: i32[] = [];
   return ("", none);
 }
 
@@ -37630,8 +37641,6 @@ function lit_marked(t: typeinfo.Type): boolean {
 // An open enum local is an unannotated local whose type holds a generic
 // enum with no type arguments, such as `let e = Empty;`. Its first use at a
 // known type writes that type on the local.
-const LIT_OPEN_MARK: string = "open enum local #";
-
 // open_call_type is the type of a generic call that leaves a type parameter
 // unbound, such as `ordmap.new()`, with each unbound parameter open. It is
 // false when the call binds each parameter.
@@ -37668,22 +37677,11 @@ function open_call_type(e: ast.Expr, s: Scope): (typeinfo.Type, boolean) {
 }
 
 function lit_open_marker(k: i32): typeinfo.Type {
-  return t_unknown(LIT_OPEN_MARK + util.i32_to_string(k));
+  return pending(PENDING_OPEN, k, "", []);
 }
 
 function lit_open_id(t: typeinfo.Type): i32 {
-  let typeinfo.TypeUnknown(u) = t else {
-    return -1;
-  };
-  let n = LIT_OPEN_MARK.len();
-  if (u.reason.len() <= n || !util.str_range_eq(u.reason, 0, n, LIT_OPEN_MARK)) {
-    return -1;
-  }
-  let k = 0;
-  for i in n..u.reason.len() {
-    k = k * 10 + u.reason[i] as i32 - 48;
-  }
-  return k;
+  return pending_id(t, PENDING_OPEN);
 }
 
 function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
@@ -37900,7 +37898,27 @@ pub function unknown_reason(t: typeinfo.Type): string {
     }
     return "unbound " + b.param;
   }
+  if let typeinfo.TypePending(p) = t {
+    return pending_reason(p);
+  }
   return "";
+}
+
+function pending_reason(p: typeinfo.TypePending): string {
+  if (p.kind == PENDING_OPEN) {
+    return "open enum local #" + util.i32_to_string(p.id);
+  }
+  if (p.kind == PENDING_LOCAL) {
+    return "literal local #" + util.i32_to_string(p.id);
+  }
+  let out = "literal struct #" + p.name + "|";
+  for i in 0..p.ids.len() {
+    if (i > 0) {
+      out += ",";
+    }
+    out += util.i32_to_string(p.ids[i]);
+  }
+  return out;
 }
 
 function lit_open_fill(st: LitInfer, k: i32, want: typeinfo.Type): LitInfer {

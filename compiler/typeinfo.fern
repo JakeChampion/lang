@@ -100,6 +100,11 @@ pub struct TypeVar { name: string, declared: boolean }
 // and it is "" when the name is not known.
 pub struct TypeUnbound { param: string }
 
+// TypePending is a placeholder of the literal inference of the checker: an
+// unannotated local, an open enum local, or a struct literal, by `kind`. `id`
+// numbers a local, and `name` and `ids` give a struct and its field locals.
+pub struct TypePending { kind: i32, id: i32, name: string, ids: i32[] }
+
 pub struct TypeErased { name: string }
 
 pub struct TypeNever { tag: i32 }
@@ -108,7 +113,7 @@ pub struct TypeNever { tag: i32 }
 // as its decimal digits. It is a type argument, and no value has it.
 pub struct TypeConst { value: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeLanes | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeVar | TypeUnbound | TypeErased | TypeNever | TypeConst;
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeLanes | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeVar | TypeUnbound | TypePending | TypeErased | TypeNever | TypeConst;
 
 pub function t_i32(): Type {
   return TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
@@ -815,6 +820,9 @@ pub function spelling(t: Type): string {
       return "";
     },
     TypeUnbound(_) => {
+      return "";
+    },
+    TypePending(_) => {
       return "";
     },
     TypeErased(_) => {

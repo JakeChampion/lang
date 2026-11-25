@@ -19,6 +19,9 @@ func TestSelfHostTypeVar(t *testing.T) {
 		"not a variable spelling: unknown=yes open=no name= reason=unrecognised type name: widget label=unknown\n" +
 		"unbound: unknown=yes open=yes name= reason=unbound T label=unknown\n" +
 		"unbound lifted: unknown=yes open=yes name= reason=unbound lifted enum argument label=unknown\n" +
+		"pending local: unknown=yes open=no name= reason=literal local #4 label=unknown\n" +
+		"pending struct: unknown=yes open=no name= reason=literal struct #Point|2,-1 label=unknown\n" +
+		"pending open enum: unknown=yes open=no name= reason=open enum local #7 label=unknown\n" +
 		"unchecked: unknown=yes open=no name= reason=not yet checked label=unknown\n" +
 		"erased: unknown=no open=no name= reason= label=T\n" +
 		"i32: unknown=no open=no name= reason= label=i32\n"
