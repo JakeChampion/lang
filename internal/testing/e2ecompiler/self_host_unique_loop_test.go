@@ -100,6 +100,7 @@ struct Tally { xs: i64[], n: i32 }
   while (i < n) { let h: i64[] = hold(xs); xs = xs.with(i, 7i64); held = held + h[i]; i = i + 1; }
   return held + xs[0];
 }
+@noinline function pair(own xs: i64[], a: i64, b: i64): i64[] { return xs.append(a).append(b); }
 @noinline function exercise(): i32 {
   let base: u8[] = [1u8, 2u8, 3u8];
   let kept: u8[] = base;
@@ -154,6 +155,11 @@ struct Tally { xs: i64[], n: i32 }
   let tripled: i64[] = rescale(rs, 2, 2);
   if (kept_rs[0] != 1i64 || kept_rs[1] != 2i64 || tripled[0] != 9i64 || tripled[1] != 18i64) { return 22; }
   if (rescale([4i64], 3, 0)[0] != 4i64) { return 23; }
+  let ps: i64[] = [1i64];
+  let kept_ps: i64[] = ps;
+  let paired: i64[] = pair(ps, 2i64, 3i64);
+  if (kept_ps.len() != 1 || paired.len() != 3 || paired[1] != 2i64 || paired[2] != 3i64) { return 24; }
+  if (pair([], 4i64, 5i64)[1] != 5i64) { return 25; }
   return 0;
 }
 function main(): i32 {
@@ -175,10 +181,11 @@ var uniqueLoopLoad = regexp.MustCompile(`movq 8\(%r\w+,%r\w+,8\), %r\w+`)
 // stash, keeps a reference, so stash_loop tests the count after the call. A loop
 // over a borrowed array, or over a push onto one, keeps the push's own check,
 // which writes a sole borrowed array in place. A callee that can return the
-// array, as hold can, leaves the check after the call.
+// array, as hold can, leaves the check after the call. A push onto the result
+// of a push that took its receiver needs no check, as in pair.
 func TestSelfHostUniqueLoop(t *testing.T) {
 	runSemanticProgram(t, "unique-loop", uniqueLoopProgram,
-		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "lend_loop", "lend_deep", "rescale", "stash_loop", "keep_loop", "exercise"}, semInlineWants("ok\n"))
+		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "rounds", "lend_loop", "lend_deep", "rescale", "stash_loop", "keep_loop", "pair", "exercise"}, semInlineWants("ok\n"))
 
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -240,6 +247,9 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 	}
 	if head := condBranchBody(t, string(asm), "put_head"); strings.Contains(head, "__fern_bytes_owned") {
 		t.Errorf("put_head copies the array its first push wrote in place before its loop:\n%s", head)
+	}
+	if pair := condBranchBody(t, string(asm), "pair"); strings.Count(pair, "_uq") != 3 {
+		t.Errorf("pair has %d count-test labels, want the 3 of the first push: the second push takes the sole result of the first:\n%s", strings.Count(pair, "_uq"), pair)
 	}
 	kept := condBranchBody(t, string(asm), "grow_and_keep")
 	if strings.Contains(kept, "__fern_bytes_owned") {

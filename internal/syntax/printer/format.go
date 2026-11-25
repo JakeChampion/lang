@@ -1199,7 +1199,7 @@ func (f *formatter) formatValueBody(open int, stmts []ast.Stmt, tail ast.Expr) {
 	} else if len(stmts) > 0 {
 		last = stmts[len(stmts)-1].Pos().Line
 	}
-	f.formatBody(stmts, tail, f.spansLines(stmts) || f.keepListLines(open, last))
+	f.formatBody(stmts, tail, f.spansLines(stmts) || f.keepListLines(open, last) || isLetElseValue(tail))
 }
 
 func (f *formatter) formatBody(stmts []ast.Stmt, tail ast.Expr, lines bool) {
@@ -1222,26 +1222,76 @@ func (f *formatter) formatBody(stmts []ast.Stmt, tail ast.Expr, lines bool) {
 func (f *formatter) formatBodyLines(stmts []ast.Stmt, tail ast.Expr) {
 	depth := f.depth
 	f.b.WriteString("{\n")
-	f.formatStmtLines(stmts, depth+1, 0)
-	if tail != nil {
-		ln := firstLine(tail)
-		if len(stmts) > 0 {
-			f.b.WriteByte('\n')
-			if stmts[len(stmts)-1].Pos().Line != ln && f.blankBefore(ln) {
-				f.b.WriteByte('\n')
-			}
-		}
-		f.drainLeading(ln, depth+1)
-		f.indent(depth + 1)
-		f.depth = depth + 1
-		f.formatExpr(tail, 0)
-		f.depth = depth
-		f.emitTrailing(ln)
-		f.emitTrailing(lastLine(tail))
-	}
+	f.formatBodyContent(stmts, tail, depth+1, 0)
+	f.depth = depth
 	f.b.WriteByte('\n')
 	f.indent(depth)
 	f.b.WriteByte('}')
+}
+
+// formatBodyContent writes the statements and then the tail of a value body,
+// one on each line at depth, after the line after. A let-else that gives the
+// tail is a statement, and the rest of its block follows it.
+func (f *formatter) formatBodyContent(stmts []ast.Stmt, tail ast.Expr, depth, after int) {
+	f.formatStmtLines(stmts, depth, after)
+	if tail == nil {
+		return
+	}
+	ln := firstLine(tail)
+	if len(stmts) > 0 {
+		f.b.WriteByte('\n')
+		after = stmts[len(stmts)-1].Pos().Line
+	}
+	if after > 0 && after != ln && f.blankBefore(ln) {
+		f.b.WriteByte('\n')
+	}
+	f.drainLeading(ln, depth)
+	f.indent(depth)
+	f.depth = depth
+	if m, ok := tail.(*ast.MatchExpr); ok && isLetElseValue(m) {
+		f.formatLetElseValue(m, depth)
+		return
+	}
+	f.formatExpr(tail, 0)
+	f.emitTrailing(ln)
+	f.emitTrailing(lastLine(tail))
+}
+
+// formatLetElseValue writes a let-else whose rest ends in the value of the
+// branch: the let-else line, then the rest of the block.
+func (f *formatter) formatLetElseValue(m *ast.MatchExpr, depth int) {
+	f.b.WriteString("let ")
+	for i, arm := range m.Arms[:len(m.Arms)-1] {
+		if i > 0 {
+			f.b.WriteString(" | ")
+		}
+		f.formatExprArmPattern(arm)
+	}
+	f.b.WriteString(" = ")
+	f.formatExpr(m.Tag, precLowest)
+	f.b.WriteString(" else ")
+	els := m.Arms[len(m.Arms)-1].Body
+	if be, ok := els.(*ast.BlockExpr); ok {
+		f.formatBody(be.Stmts, be.Tail, true)
+	} else {
+		f.formatBody(nil, els, true)
+	}
+	f.b.WriteByte(';')
+	rest := m.Arms[0].Body
+	if be, ok := rest.(*ast.BlockExpr); ok {
+		if len(be.Stmts) > 0 || be.Tail != nil {
+			f.b.WriteByte('\n')
+			f.formatBodyContent(be.Stmts, be.Tail, depth, m.P.Line)
+		}
+		return
+	}
+	f.b.WriteByte('\n')
+	f.formatBodyContent(nil, rest, depth, m.P.Line)
+}
+
+func isLetElseValue(e ast.Expr) bool {
+	m, ok := e.(*ast.MatchExpr)
+	return ok && m.Origin == ast.OriginLetElse
 }
 
 func (f *formatter) spansLines(stmts []ast.Stmt) bool {

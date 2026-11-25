@@ -23,7 +23,8 @@ LINES = (
     re.compile(r"jnibind: thrown java: java\.lang\.NumberFormatException: .*fern.* then 7"),
     re.compile(r"jnibind: null x empty x parent parent/x has true lost true then true"),
     re.compile(r"jnibind: keystore roundtrip true fresh iv true refused true"),
-    re.compile(r"jnibind: done 7"),
+    re.compile(r"jnibind: signing chain [2-9] level \w+ same true again false wrong false good true forged false gone true"),
+    re.compile(r"jnibind: done 8"),
 )
 CRASH = re.compile(r"Fatal signal|UnsatisfiedLinkError|AndroidRuntime|fern: ")
 

@@ -70,7 +70,12 @@ lowered function it:
    body writes), then sends each arm of a boolean phi that only a branch
    reads to that branch's targets, on the arm's own comparison or to the side
    its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
-   caller brings its `&&` or `||` as such a phi), and prunes again;
+   caller brings its `&&` or `||` as such a phi), and prunes again; then
+   moves each pure integer computation in a loop whose operands do not
+   change in the loop to the one block that enters the loop, with the
+   constants that it reads (`ssa.hoisted_invariants`). Inner loops go first.
+   A loop with a second way in keeps its instructions. A division moves
+   only when its divisor is a constant other than 0 and -1;
 4. once the certifier has read that form, gives each side of a uniqueness
    test its own copy of the blocks that test the reuse token again, with
    each of those tests decided (`ssa.split_tokens`), gives each other reuse

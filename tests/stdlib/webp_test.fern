@@ -1,3 +1,4 @@
+import "std/hash/crc32";
 import "std/result";
 import "std/test";
 import "std/utf8";
@@ -90,9 +91,106 @@ function test_errors(): test.TestOutcome {
   return test.assert_eq(got.join(" | "), "webp: an animation needs one frame or more, and one duration for each frame | webp: an animation needs one frame or more, and one duration for each frame | webp: a frame is not a still WebP file | webp: a frame is not a still WebP file | webp: the width and the height must be from 1 to 16384");
 }
 
+// Lossless files that cwebp 1.3.2 wrote. Each one is decoded and its pixels
+// are compared with the pixels that dwebp 1.3.2 gives for it.
+// Two colors: color indexing with 8 pixels in each byte.
+function palette_2(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 54u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 42u8, 0u8, 0u8, 0u8, 47u8, 32u8, 0u8, 4u8, 0u8, 15u8, 48u8, 255u8, 243u8, 63u8, 255u8, 243u8, 31u8, 120u8, 48u8, 8u8, 0u8, 73u8, 121u8, 4u8, 146u8, 86u8, 34u8, 105u8, 5u8, 178u8, 206u8, 0u8, 17u8, 253u8, 39u8, 152u8, 164u8, 169u8, 182u8, 99u8, 220u8, 51u8, 22u8, 141u8, 159u8, 14u8];
+}
+
+// Four colors: color indexing with 4 pixels in each byte.
+function palette_4(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 82u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 70u8, 0u8, 0u8, 0u8, 47u8, 49u8, 192u8, 4u8, 16u8, 31u8, 32u8, 16u8, 72u8, 130u8, 216u8, 159u8, 98u8, 88u8, 33u8, 1u8, 97u8, 155u8, 245u8, 22u8, 201u8, 66u8, 1u8, 196u8, 36u8, 142u8, 252u8, 87u8, 28u8, 145u8, 8u8, 8u8, 138u8, 174u8, 91u8, 46u8, 208u8, 82u8, 226u8, 15u8, 138u8, 34u8, 73u8, 106u8, 46u8, 31u8, 89u8, 14u8, 194u8, 144u8, 133u8, 56u8, 100u8, 236u8, 151u8, 111u8, 68u8, 255u8, 23u8, 97u8, 67u8, 241u8, 160u8, 117u8, 32u8, 185u8, 80u8, 251u8, 78u8, 55u8];
+}
+
+// Ten colors: color indexing with 2 pixels in each byte.
+function palette_10(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 108u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 95u8, 0u8, 0u8, 0u8, 47u8, 22u8, 0u8, 3u8, 16u8, 79u8, 160u8, 144u8, 109u8, 4u8, 200u8, 223u8, 117u8, 14u8, 247u8, 66u8, 76u8, 198u8, 52u8, 9u8, 4u8, 8u8, 157u8, 244u8, 249u8, 236u8, 129u8, 144u8, 103u8, 184u8, 139u8, 131u8, 170u8, 216u8, 86u8, 34u8, 247u8, 229u8, 207u8, 10u8, 86u8, 160u8, 130u8, 21u8, 168u8, 64u8, 5u8, 42u8, 80u8, 193u8, 192u8, 12u8, 46u8, 9u8, 34u8, 250u8, 175u8, 176u8, 109u8, 27u8, 100u8, 204u8, 240u8, 198u8, 0u8, 228u8, 173u8, 235u8, 194u8, 92u8, 36u8, 93u8, 215u8, 69u8, 195u8, 6u8, 44u8, 221u8, 82u8, 222u8, 210u8, 220u8, 72u8, 12u8, 179u8, 218u8, 194u8, 14u8, 219u8, 109u8, 246u8, 95u8, 95u8, 254u8, 45u8, 0u8];
+}
+
+// 200 colors: color indexing with 1 pixel in each byte.
+function palette_200(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 162u8, 4u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 150u8, 4u8, 0u8, 0u8, 47u8, 72u8, 0u8, 11u8, 16u8, 63u8, 6u8, 73u8, 0u8, 192u8, 50u8, 82u8, 99u8, 204u8, 204u8, 218u8, 182u8, 247u8, 108u8, 243u8, 185u8, 251u8, 17u8, 222u8, 230u8, 182u8, 222u8, 173u8, 109u8, 127u8, 3u8, 142u8, 108u8, 219u8, 166u8, 173u8, 107u8, 243u8, 89u8, 223u8, 102u8, 250u8, 35u8, 163u8, 73u8, 191u8, 87u8, 191u8, 39u8, 202u8, 95u8, 100u8, 95u8, 91u8, 251u8, 188u8, 227u8, 218u8, 182u8, 173u8, 99u8, 249u8, 149u8, 109u8, 219u8, 238u8, 61u8, 234u8, 153u8, 221u8, 173u8, 175u8, 108u8, 219u8, 245u8, 227u8, 252u8, 39u8, 40u8, 0u8, 0u8, 24u8, 146u8, 206u8, 122u8, 219u8, 182u8, 109u8, 219u8, 205u8, 182u8, 109u8, 54u8, 163u8, 217u8, 182u8, 109u8, 219u8, 182u8, 109u8, 219u8, 63u8, 209u8, 98u8, 223u8, 118u8, 186u8, 115u8, 207u8, 87u8, 150u8, 186u8, 188u8, 244u8, 153u8, 78u8, 178u8, 164u8, 82u8, 27u8, 187u8, 175u8, 240u8, 29u8, 3u8, 42u8, 61u8, 114u8, 105u8, 75u8, 3u8, 20u8, 205u8, 195u8, 29u8, 94u8, 33u8, 134u8, 214u8, 190u8, 192u8, 132u8, 4u8, 87u8, 50u8, 206u8, 170u8, 119u8, 175u8, 83u8, 221u8, 11u8, 228u8, 111u8, 198u8, 98u8, 51u8, 114u8, 133u8, 200u8, 182u8, 242u8, 72u8, 68u8, 69u8, 107u8, 113u8, 226u8, 78u8, 115u8, 192u8, 252u8, 56u8, 111u8, 91u8, 203u8, 80u8, 100u8, 174u8, 148u8, 188u8, 248u8, 94u8, 158u8, 192u8, 199u8, 68u8, 44u8, 27u8, 11u8, 207u8, 212u8, 117u8, 102u8, 234u8, 182u8, 19u8, 145u8, 85u8, 220u8, 178u8, 62u8, 235u8, 20u8, 132u8, 113u8, 18u8, 153u8, 0u8, 136u8, 33u8, 248u8, 50u8, 21u8, 132u8, 150u8, 18u8, 38u8, 169u8, 149u8, 214u8, 249u8, 209u8, 92u8, 52u8, 152u8, 39u8, 122u8, 155u8, 1u8, 190u8, 59u8, 126u8, 169u8, 154u8, 159u8, 111u8, 124u8, 23u8, 209u8, 168u8, 219u8, 170u8, 57u8, 85u8, 27u8, 208u8, 205u8, 149u8, 231u8, 11u8, 177u8, 81u8, 149u8, 13u8, 98u8, 166u8, 250u8, 254u8, 237u8, 112u8, 195u8, 63u8, 33u8, 12u8, 132u8, 91u8, 155u8, 243u8, 171u8, 236u8, 181u8, 36u8, 5u8, 81u8, 191u8, 47u8, 131u8, 121u8, 222u8, 1u8, 163u8, 86u8, 255u8, 254u8, 113u8, 220u8, 48u8, 86u8, 247u8, 168u8, 176u8, 16u8, 59u8, 55u8, 122u8, 61u8, 25u8, 72u8, 5u8, 203u8, 145u8, 165u8, 92u8, 189u8, 96u8, 48u8, 12u8, 221u8, 212u8, 168u8, 3u8, 220u8, 211u8, 227u8, 219u8, 140u8, 150u8, 4u8, 176u8, 227u8, 196u8, 225u8, 226u8, 160u8, 55u8, 178u8, 199u8, 11u8, 84u8, 42u8, 113u8, 205u8, 240u8, 28u8, 91u8, 136u8, 18u8, 125u8, 197u8, 52u8, 254u8, 10u8, 112u8, 36u8, 127u8, 196u8, 102u8, 166u8, 209u8, 149u8, 31u8, 202u8, 88u8, 3u8, 43u8, 140u8, 245u8, 136u8, 17u8, 11u8, 213u8, 122u8, 247u8, 38u8, 92u8, 69u8, 160u8, 225u8, 78u8, 93u8, 136u8, 208u8, 33u8, 127u8, 47u8, 155u8, 161u8, 55u8, 181u8, 167u8, 188u8, 208u8, 48u8, 115u8, 147u8, 18u8, 76u8, 193u8, 187u8, 192u8, 9u8, 85u8, 253u8, 189u8, 210u8, 104u8, 203u8, 72u8, 188u8, 212u8, 126u8, 99u8, 227u8, 234u8, 228u8, 121u8, 105u8, 48u8, 100u8, 243u8, 21u8, 157u8, 162u8, 204u8, 21u8, 73u8, 22u8, 165u8, 157u8, 29u8, 153u8, 145u8, 71u8, 223u8, 160u8, 176u8, 240u8, 50u8, 162u8, 110u8, 49u8, 210u8, 30u8, 72u8, 202u8, 15u8, 39u8, 188u8, 22u8, 161u8, 65u8, 252u8, 85u8, 152u8, 170u8, 161u8, 223u8, 2u8, 82u8, 185u8, 100u8, 126u8, 55u8, 8u8, 100u8, 153u8, 30u8, 61u8, 72u8, 249u8, 226u8, 201u8, 45u8, 211u8, 57u8, 227u8, 38u8, 227u8, 222u8, 24u8, 69u8, 166u8, 244u8, 105u8, 6u8, 221u8, 137u8, 240u8, 61u8, 159u8, 68u8, 187u8, 223u8, 174u8, 134u8, 140u8, 163u8, 173u8, 31u8, 59u8, 146u8, 47u8, 182u8, 122u8, 245u8, 26u8, 45u8, 117u8, 46u8, 79u8, 178u8, 69u8, 208u8, 231u8, 80u8, 231u8, 187u8, 146u8, 233u8, 46u8, 76u8, 189u8, 214u8, 115u8, 128u8, 68u8, 83u8, 200u8, 227u8, 68u8, 11u8, 231u8, 246u8, 64u8, 131u8, 29u8, 2u8, 255u8, 129u8, 11u8, 54u8, 48u8, 204u8, 206u8, 36u8, 31u8, 44u8, 248u8, 9u8, 40u8, 193u8, 84u8, 153u8, 108u8, 85u8, 182u8, 41u8, 181u8, 207u8, 119u8, 74u8, 229u8, 12u8, 222u8, 200u8, 204u8, 164u8, 190u8, 146u8, 182u8, 103u8, 222u8, 135u8, 27u8, 60u8, 26u8, 69u8, 43u8, 21u8, 27u8, 220u8, 113u8, 155u8, 44u8, 44u8, 250u8, 71u8, 43u8, 21u8, 107u8, 146u8, 214u8, 143u8, 171u8, 115u8, 36u8, 91u8, 12u8, 122u8, 240u8, 212u8, 244u8, 53u8, 60u8, 174u8, 52u8, 152u8, 124u8, 146u8, 76u8, 159u8, 49u8, 43u8, 93u8, 162u8, 146u8, 170u8, 129u8, 25u8, 108u8, 246u8, 208u8, 78u8, 220u8, 240u8, 91u8, 183u8, 62u8, 219u8, 186u8, 50u8, 148u8, 35u8, 35u8, 103u8, 54u8, 114u8, 223u8, 77u8, 50u8, 16u8, 200u8, 45u8, 197u8, 120u8, 163u8, 5u8, 56u8, 55u8, 54u8, 255u8, 211u8, 149u8, 16u8, 101u8, 38u8, 127u8, 94u8, 182u8, 194u8, 104u8, 198u8, 240u8, 33u8, 58u8, 12u8, 34u8, 42u8, 126u8, 154u8, 46u8, 73u8, 13u8, 70u8, 95u8, 228u8, 42u8, 72u8, 236u8, 218u8, 161u8, 179u8, 165u8, 102u8, 213u8, 151u8, 111u8, 204u8, 111u8, 70u8, 65u8, 7u8, 39u8, 87u8, 90u8, 246u8, 135u8, 139u8, 179u8, 208u8, 237u8, 209u8, 254u8, 129u8, 232u8, 205u8, 196u8, 174u8, 200u8, 84u8, 170u8, 50u8, 233u8, 126u8, 74u8, 221u8, 179u8, 135u8, 210u8, 0u8, 107u8, 61u8, 176u8, 167u8, 197u8, 199u8, 50u8, 104u8, 253u8, 69u8, 176u8, 204u8, 210u8, 220u8, 81u8, 207u8, 218u8, 214u8, 240u8, 53u8, 178u8, 199u8, 223u8, 181u8, 89u8, 155u8, 1u8, 133u8, 92u8, 131u8, 168u8, 157u8, 224u8, 195u8, 208u8, 6u8, 28u8, 168u8, 55u8, 71u8, 201u8, 130u8, 14u8, 234u8, 138u8, 69u8, 185u8, 227u8, 224u8, 83u8, 143u8, 210u8, 21u8, 189u8, 240u8, 195u8, 195u8, 248u8, 115u8, 255u8, 173u8, 64u8, 253u8, 152u8, 106u8, 100u8, 32u8, 65u8, 146u8, 108u8, 211u8, 182u8, 108u8, 219u8, 182u8, 109u8, 219u8, 182u8, 109u8, 219u8, 182u8, 109u8, 219u8, 239u8, 219u8, 246u8, 212u8, 250u8, 159u8, 158u8, 64u8, 68u8, 255u8, 21u8, 180u8, 109u8, 195u8, 16u8, 136u8, 118u8, 140u8, 226u8, 153u8, 116u8, 149u8, 164u8, 195u8, 166u8, 225u8, 231u8, 246u8, 190u8, 234u8, 223u8, 187u8, 198u8, 167u8, 47u8, 86u8, 13u8, 236u8, 146u8, 111u8, 229u8, 59u8, 82u8, 67u8, 172u8, 151u8, 30u8, 44u8, 223u8, 94u8, 188u8, 111u8, 57u8, 46u8, 85u8, 116u8, 252u8, 232u8, 83u8, 255u8, 183u8, 83u8, 105u8, 163u8, 49u8, 252u8, 219u8, 43u8, 239u8, 47u8, 177u8, 69u8, 50u8, 185u8, 9u8, 249u8, 223u8, 215u8, 203u8, 94u8, 223u8, 69u8, 69u8, 116u8, 197u8, 155u8, 207u8, 156u8, 44u8, 183u8, 197u8, 76u8, 122u8, 9u8, 59u8, 163u8, 91u8, 243u8, 191u8, 254u8, 163u8, 172u8, 199u8, 45u8, 179u8, 61u8, 43u8, 213u8, 193u8, 69u8, 117u8, 167u8, 185u8, 184u8, 166u8, 1u8, 63u8, 211u8, 233u8, 214u8, 224u8, 98u8, 251u8, 231u8, 145u8, 194u8, 206u8, 40u8, 171u8, 32u8, 183u8, 255u8, 228u8, 174u8, 253u8, 51u8, 209u8, 68u8, 167u8, 208u8, 245u8, 67u8, 78u8, 218u8, 143u8, 175u8, 82u8, 226u8, 243u8, 18u8, 97u8, 107u8, 7u8, 190u8, 195u8, 87u8, 154u8, 194u8, 206u8, 88u8, 25u8, 160u8, 213u8, 211u8, 173u8, 124u8, 150u8, 247u8, 174u8, 238u8, 165u8, 173u8, 205u8, 248u8, 144u8, 110u8, 185u8, 145u8, 202u8, 202u8, 155u8, 157u8, 192u8, 63u8, 83u8, 55u8, 37u8, 98u8, 158u8, 194u8, 206u8, 168u8, 97u8, 113u8, 94u8, 80u8, 19u8, 157u8, 50u8, 113u8, 152u8, 62u8, 114u8, 157u8, 221u8, 187u8, 32u8, 42u8, 82u8, 171u8, 230u8, 124u8, 169u8, 183u8, 237u8, 63u8, 150u8, 145u8, 212u8, 160u8, 47u8, 236u8, 140u8, 30u8, 161u8, 159u8, 102u8, 93u8, 130u8, 126u8, 85u8, 100u8, 222u8, 143u8, 34u8, 54u8, 254u8, 103u8, 70u8, 193u8, 29u8, 209u8, 202u8, 136u8, 13u8, 90u8, 25u8, 177u8, 65u8, 43u8, 35u8, 54u8, 104u8, 101u8, 196u8, 6u8, 173u8, 140u8, 216u8, 160u8, 149u8, 17u8, 27u8, 180u8, 50u8, 98u8, 131u8, 86u8, 70u8, 108u8, 208u8, 202u8, 136u8, 13u8, 90u8, 25u8, 177u8, 65u8, 43u8, 35u8, 54u8, 104u8, 101u8, 196u8, 6u8, 173u8, 140u8, 216u8, 160u8, 149u8, 17u8, 27u8, 180u8, 50u8, 98u8, 131u8, 86u8, 70u8, 108u8, 208u8, 202u8, 136u8, 13u8, 90u8, 25u8, 177u8, 65u8, 43u8, 35u8, 54u8, 104u8, 101u8, 196u8, 6u8, 173u8, 140u8, 216u8, 160u8, 149u8, 17u8, 27u8, 180u8, 50u8, 98u8, 131u8, 86u8, 70u8, 108u8, 208u8, 202u8, 136u8, 13u8, 90u8, 25u8, 177u8, 65u8, 43u8, 35u8, 54u8, 104u8, 101u8, 196u8, 6u8, 173u8, 140u8, 216u8, 160u8, 149u8, 17u8, 27u8, 180u8, 50u8, 98u8, 131u8, 86u8, 70u8, 108u8, 208u8, 202u8, 136u8, 13u8, 90u8, 25u8, 177u8, 65u8, 43u8, 35u8, 54u8, 104u8, 101u8, 196u8, 6u8, 173u8, 140u8, 216u8, 160u8, 149u8, 1u8, 27u8, 70u8];
+}
+
+// Predictor and color transforms with a color cache.
+function predict_color_cache(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 64u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 52u8, 0u8, 0u8, 0u8, 47u8, 96u8, 0u8, 15u8, 0u8, 1u8, 32u8, 73u8, 240u8, 255u8, 122u8, 91u8, 68u8, 255u8, 83u8, 199u8, 64u8, 72u8, 144u8, 240u8, 127u8, 185u8, 209u8, 24u8, 3u8, 223u8, 255u8, 9u8, 144u8, 124u8, 59u8, 131u8, 218u8, 182u8, 109u8, 24u8, 183u8, 255u8, 47u8, 247u8, 154u8, 130u8, 10u8, 100u8, 76u8, 192u8, 163u8, 126u8, 206u8, 127u8, 179u8, 11u8];
+}
+
+// Subtract-green and predictor transforms.
+function subtract_green_predict(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 68u8, 1u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 55u8, 1u8, 0u8, 0u8, 47u8, 96u8, 0u8, 15u8, 0u8, 13u8, 117u8, 33u8, 162u8, 255u8, 1u8, 184u8, 141u8, 36u8, 57u8, 146u8, 226u8, 137u8, 255u8, 62u8, 31u8, 155u8, 105u8, 82u8, 47u8, 189u8, 34u8, 38u8, 77u8, 100u8, 253u8, 35u8, 123u8, 8u8, 72u8, 146u8, 252u8, 191u8, 57u8, 8u8, 7u8, 110u8, 219u8, 56u8, 146u8, 246u8, 138u8, 207u8, 215u8, 52u8, 51u8, 91u8, 254u8, 160u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 126u8, 255u8, 15u8, 240u8, 8u8, 241u8, 15u8, 175u8, 15u8, 132u8, 191u8, 120u8, 255u8, 222u8, 243u8, 163u8, 185u8, 245u8, 249u8, 111u8, 66u8, 63u8, 114u8, 52u8, 8u8, 44u8, 222u8, 70u8, 114u8, 113u8, 72u8, 43u8, 222u8, 135u8, 113u8, 181u8, 136u8, 42u8, 62u8, 198u8, 80u8, 240u8, 200u8, 41u8, 62u8, 7u8, 80u8, 50u8, 9u8, 41u8, 14u8, 246u8, 69u8, 151u8, 132u8, 226u8, 164u8, 94u8, 182u8, 89u8, 47u8, 142u8, 222u8, 13u8, 159u8, 221u8, 226u8, 44u8, 221u8, 50u8, 90u8, 44u8, 46u8, 198u8, 77u8, 167u8, 173u8, 226u8, 166u8, 219u8, 182u8, 90u8, 41u8, 174u8, 174u8, 3u8, 94u8, 243u8, 197u8, 93u8, 116u8, 196u8, 108u8, 184u8, 40u8, 88u8, 14u8, 185u8, 77u8, 22u8, 21u8, 197u8, 49u8, 187u8, 177u8, 98u8, 213u8, 111u8, 204u8, 185u8, 50u8, 201u8, 147u8, 115u8, 92u8, 212u8, 158u8, 96u8, 118u8, 63u8, 153u8, 49u8, 95u8, 223u8, 21u8, 203u8, 242u8, 61u8, 114u8, 206u8, 153u8, 43u8, 44u8, 12u8, 161u8, 74u8, 218u8, 137u8, 185u8, 196u8, 214u8, 153u8, 179u8, 165u8, 116u8, 103u8, 243u8, 236u8, 255u8, 7u8, 46u8, 48u8, 77u8, 169u8, 21u8, 74u8, 203u8, 218u8, 181u8, 90u8, 226u8, 190u8, 176u8, 109u8, 173u8, 53u8, 46u8, 75u8, 219u8, 247u8, 122u8, 35u8, 254u8, 3u8, 9u8, 161u8, 77u8, 70u8, 104u8, 146u8, 18u8, 90u8, 228u8, 132u8, 6u8, 73u8, 161u8, 76u8, 86u8, 40u8, 146u8, 22u8, 74u8, 228u8, 133u8, 2u8, 137u8, 225u8, 74u8, 102u8, 184u8, 144u8, 26u8, 142u8, 228u8, 134u8, 3u8, 201u8, 225u8, 131u8, 236u8, 16u8, 193u8, 244u8, 117u8, 40u8, 242u8, 88u8, 249u8, 71u8, 6u8, 0u8];
+}
+
+// An entropy image that selects 3 groups of codes.
+function meta_codes(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 214u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 202u8, 0u8, 0u8, 0u8, 47u8, 43u8, 193u8, 9u8, 0u8, 13u8, 117u8, 33u8, 162u8, 255u8, 193u8, 18u8, 144u8, 164u8, 200u8, 138u8, 136u8, 208u8, 140u8, 34u8, 73u8, 82u8, 148u8, 74u8, 90u8, 209u8, 250u8, 247u8, 3u8, 199u8, 52u8, 207u8, 51u8, 211u8, 182u8, 141u8, 249u8, 19u8, 219u8, 59u8, 50u8, 121u8, 43u8, 51u8, 109u8, 219u8, 12u8, 147u8, 175u8, 2u8, 31u8, 162u8, 32u8, 9u8, 180u8, 109u8, 219u8, 102u8, 79u8, 13u8, 10u8, 253u8, 2u8, 64u8, 145u8, 255u8, 255u8, 69u8, 68u8, 84u8, 1u8, 32u8, 8u8, 255u8, 225u8, 26u8, 162u8, 50u8, 113u8, 131u8, 9u8, 46u8, 149u8, 74u8, 165u8, 82u8, 169u8, 118u8, 191u8, 120u8, 151u8, 213u8, 238u8, 87u8, 138u8, 5u8, 34u8, 181u8, 86u8, 44u8, 16u8, 27u8, 138u8, 137u8, 216u8, 82u8, 12u8, 196u8, 166u8, 162u8, 35u8, 54u8, 21u8, 237u8, 191u8, 158u8, 36u8, 32u8, 5u8, 0u8, 27u8, 75u8, 88u8, 41u8, 46u8, 92u8, 202u8, 58u8, 33u8, 44u8, 42u8, 41u8, 117u8, 112u8, 105u8, 135u8, 150u8, 181u8, 194u8, 44u8, 3u8, 87u8, 208u8, 147u8, 75u8, 5u8, 37u8, 5u8, 151u8, 52u8, 237u8, 125u8, 235u8, 37u8, 75u8, 165u8, 36u8, 253u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 128u8, 146u8, 193u8, 140u8, 49u8, 198u8, 24u8, 99u8, 169u8, 135u8, 44u8, 101u8, 109u8, 43u8, 10u8, 74u8, 250u8, 253u8, 63u8, 193u8, 46u8, 191u8, 255u8, 39u8, 0u8];
+}
+
+// An image 3 pixels across and 257 down.
+function narrow(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 60u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 47u8, 0u8, 0u8, 0u8, 47u8, 2u8, 0u8, 64u8, 0u8, 1u8, 128u8, 32u8, 6u8, 252u8, 79u8, 27u8, 136u8, 232u8, 127u8, 248u8, 3u8, 128u8, 32u8, 252u8, 175u8, 27u8, 24u8, 248u8, 232u8, 127u8, 96u8, 7u8, 97u8, 182u8, 81u8, 17u8, 231u8, 207u8, 115u8, 4u8, 247u8, 154u8, 128u8, 9u8, 136u8, 64u8, 132u8, 200u8, 245u8, 233u8, 1u8, 0u8];
+}
+
+// One pixel.
+function single(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 28u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 76u8, 16u8, 0u8, 0u8, 0u8, 47u8, 0u8, 0u8, 0u8, 16u8, 69u8, 5u8, 250u8, 159u8, 4u8, 146u8, 182u8, 120u8, 219u8, 31u8, 7u8];
+}
+
+// A VP8X chunk and an ICC profile before the VP8L chunk.
+function extended(): u8[] {
+  return [82u8, 73u8, 70u8, 70u8, 108u8, 0u8, 0u8, 0u8, 87u8, 69u8, 66u8, 80u8, 86u8, 80u8, 56u8, 88u8, 10u8, 0u8, 0u8, 0u8, 48u8, 0u8, 0u8, 0u8, 49u8, 0u8, 0u8, 19u8, 0u8, 0u8, 73u8, 67u8, 67u8, 80u8, 13u8, 0u8, 0u8, 0u8, 69u8, 120u8, 105u8, 102u8, 0u8, 0u8, 97u8, 98u8, 99u8, 100u8, 101u8, 102u8, 103u8, 0u8, 86u8, 80u8, 56u8, 76u8, 56u8, 0u8, 0u8, 0u8, 47u8, 49u8, 192u8, 4u8, 16u8, 32u8, 18u8, 32u8, 97u8, 4u8, 255u8, 247u8, 184u8, 77u8, 163u8, 69u8, 44u8, 152u8, 236u8, 206u8, 31u8, 42u8, 44u8, 129u8, 64u8, 18u8, 201u8, 254u8, 40u8, 99u8, 29u8, 240u8, 95u8, 97u8, 218u8, 54u8, 76u8, 118u8, 123u8, 138u8, 149u8, 13u8, 240u8, 246u8, 223u8, 26u8, 12u8, 18u8, 15u8, 216u8, 246u8, 223u8, 58u8, 224u8, 63u8, 222u8];
+}
+
+// The width, the height and the CRC-32 of the pixels of a decoded file.
+function decoded(file: [u8]): string {
+  return match (webp.decode(file)) {
+    Ok(img) => img.width.to_string() + "x" + img.height.to_string() + " " + crc32.of(img.pixels).to_string(),
+    Err(e) => e.message(),
+  };
+}
+
+function test_decode_pillow(): test.TestOutcome {
+  let img = match (webp.decode(lossless())) {
+    Ok(i) => i,
+    Err(e) => {
+      return test.fail(e.message());
+    },
+  };
+  let want: u8[] = [200u8, 10u8, 0u8, 255u8, 200u8, 20u8, 0u8, 255u8, 200u8, 30u8, 0u8, 255u8, 200u8, 40u8, 0u8, 255u8, 200u8, 50u8, 0u8, 255u8, 200u8, 60u8, 0u8, 255u8];
+  return test.assert_eq(img.width.to_string() + "x" + img.height.to_string() + " " + (img.pixels == want).to_string(), "3x2 true");
+}
+
+function test_decode_transforms(): test.TestOutcome {
+  let got = [decoded(palette_2()), decoded(palette_4()), decoded(palette_10()), decoded(palette_200()), decoded(predict_color_cache()), decoded(subtract_green_predict())];
+  return test.assert_eq(got.join(" | "), "33x17 1041821461 | 50x20 803387393 | 23x13 1377855247 | 73x45 1384635341 | 97x61 3808768878 | 97x61 3808768878");
+}
+
+function test_decode_shapes(): test.TestOutcome {
+  let got = [decoded(meta_codes()), decoded(narrow()), decoded(single()), decoded(extended())];
+  return test.assert_eq(got.join(" | "), "300x40 1905554902 | 3x257 10626696 | 1x1 3057449933 | 50x20 803387393");
+}
+
+function prefix(b: [u8], n: i32): u8[] {
+  return slice(b, 0, n);
+}
+
+function test_decode_errors(): test.TestOutcome {
+  let animated = webp.animate(3, 2, [lossless()], [100]).unwrap_or([]);
+  let bad_signature = lossless().with(20, 0u8);
+  let bad_version = lossless().with(24, 32u8);
+  let got = [decoded(lossy()), decoded(lossy_alpha()), decoded(animated), decoded([1u8, 2u8, 3u8]), decoded(prefix(lossless(), 30)), decoded(prefix(palette_200(), 600)), decoded(bad_signature), decoded(bad_version)];
+  return test.assert_eq(got.join(" | "), "webp: only still lossless files can be decoded | webp: only still lossless files can be decoded | webp: only still lossless files can be decoded | webp: not a WebP file | webp: the data ends early | webp: the data ends early | webp: the header of the lossless image is not valid | webp: the header of the lossless image is not valid");
+}
+
 function main(): i32 {
   let r = test.new("std/webp");
   r = r.it("animation of lossy, alpha and lossless frames", test_animation);
   r = r.it("errors", test_errors);
+  r = r.it("decode a lossless file of Pillow", test_decode_pillow);
+  r = r.it("decode each transform", test_decode_transforms);
+  r = r.it("decode entropy images, narrow images and VP8X files", test_decode_shapes);
+  r = r.it("decode errors", test_decode_errors);
   return r.finish();
 }

@@ -436,7 +436,7 @@ function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32, f: Fmt)
       if (print_return_only([last], depth).len() == 0) {
         return ("", f);
       }
-      if (lm.body.len() == 1) {
+      if (lm.body.len() == 1 && !is_value_let_else(tail_expr(last))) {
         return print_expr_c(tail_expr(last), parent_prec, depth, f);
       }
       return print_value_block(lm.body, tail_expr(last), true, depth, f);
@@ -881,7 +881,7 @@ function arm_expr_value(body: ast.Stmt[], v: string, bare: boolean, depth: i32, 
   if (print_return_only([last], depth).len() == 0) {
     return ("", f);
   }
-  if (bare && body.len() == 1) {
+  if (bare && body.len() == 1 && !is_value_let_else(tail_expr(last))) {
     return print_expr_c(tail_expr(last), prec_lowest(), depth, f);
   }
   return print_value_block(body, tail_expr(last), true, depth, f);
@@ -896,7 +896,7 @@ function local_arm_value(body: ast.Stmt[], v: string, bare: boolean, depth: i32,
       if (print_expr(set.value, depth).len() == 0) {
         return ("", f);
       }
-      if (bare && body.len() == 1) {
+      if (bare && body.len() == 1 && !is_value_let_else(set.value)) {
         return print_expr_c(set.value, prec_lowest(), depth, f);
       }
       return print_value_block(body, set.value, true, depth, f);
@@ -924,7 +924,7 @@ function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean,
     first = ast.stmt_line(body[0]);
   }
   let (open, _, g) = take_span(f, first);
-  if (keep_list_lines(g, open, last)) {
+  if (keep_list_lines(g, open, last) || show_tail && is_value_let_else(tail)) {
     return print_value_block_lines(body, n, tail, show_tail, depth, g);
   }
   let out = "{ ";
@@ -946,28 +946,123 @@ function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean,
 }
 
 function print_value_block_lines(body: ast.Stmt[], n: i32, tail: ast.Expr, show_tail: boolean, depth: i32, f: Fmt): (string, Fmt) {
-  let out = "{\n";
-  let g = f;
+  let (content, g) = print_block_lines(body, n, tail, show_tail, 0, depth + 1, f);
+  return ("{\n" + content + indent_str(depth) + "}", g);
+}
+
+// print_block_lines prints the first n statements of body and then tail, one
+// on each line at depth, after the line prev. A let-else that gives the tail
+// is a statement, and the rest of its block follows it.
+function print_block_lines(body: ast.Stmt[], n: i32, tail: ast.Expr, show_tail: boolean, prev: i32, depth: i32, f: Fmt): (string, Fmt) {
+  let le = value_let_else(tail);
+  let stmts: ast.Stmt[] = [];
   for i in 0..n {
-    let ln = ast.stmt_line(body[i]);
-    if (i > 0 && ln > 0 && ln != ast.stmt_line(body[i - 1]) && g.blank_before(ln)) {
+    stmts = stmts.append(body[i]);
+  }
+  if (show_tail && le.stmts.len() > 0) {
+    stmts = stmts.append(le.stmts[0]);
+  }
+  let out = "";
+  let g = f;
+  let before = prev;
+  for i in 0..stmts.len() {
+    let ln = ast.stmt_line(stmts[i]);
+    if (before > 0 && ln > 0 && ln != before && g.blank_before(ln)) {
       out += "\n";
     }
+    before = ln;
     if (ln > 0) {
-      let (lead, g1) = drain_leading(g, ln, depth + 1);
+      let (lead, g1) = drain_leading(g, ln, depth);
       out += lead;
       g = g1;
     }
-    let (text, g2) = print_stmt(body[i], depth + 1, g);
+    let (text, g2) = print_stmt(stmts[i], depth, g);
     out += text;
     g = g2;
   }
-  if (show_tail) {
-    let (tv, g3) = print_value_tail(tail, n > 0 && first_line(tail) != ast.stmt_line(body[n - 1]), depth + 1, g);
-    out += tv;
-    g = g3;
+  if (!show_tail) {
+    return (out, g);
   }
-  return (out + indent_str(depth) + "}", g);
+  if (le.stmts.len() > 0) {
+    let (rest, g3) = print_let_else_rest(le.rest, le.v, before, depth, g);
+    return (out + rest, g3);
+  }
+  let (tv, g4) = print_value_tail(tail, before > 0 && first_line(tail) != before, depth, g);
+  return (out + tv, g4);
+}
+
+// print_let_else_rest prints the rest of the block of a value let-else: its
+// statements, then the value it gives to the local v.
+function print_let_else_rest(rest: ast.Stmt[], v: string, prev: i32, depth: i32, f: Fmt): (string, Fmt) {
+  if (rest.len() == 0) {
+    return ("", f);
+  }
+  let last = rest[rest.len() - 1];
+  if let Some(set) = assign_parts(last) {
+    if (print_expr(set.place, depth) == v) {
+      return print_block_lines(rest, rest.len() - 1, set.value, true, prev, depth, f);
+    }
+  }
+  if (parser.is_missing_tail(last)) {
+    return print_block_lines(rest, rest.len() - 1, last_tail_unknown(), false, prev, depth, f);
+  }
+  return print_block_lines(rest, rest.len(), last_tail_unknown(), false, prev, depth, f);
+}
+
+function last_tail_unknown(): ast.Expr {
+  return parser.e_unknown("block tail");
+}
+
+// The let-else of a value branch, without the rest of its block (`stmts` is
+// empty when e is not one), the rest of the block, and the value local.
+struct ValueLetElse { stmts: ast.Stmt[], rest: ast.Stmt[], v: string }
+
+function is_value_let_else(e: ast.Expr): boolean {
+  return value_let_else(e).stmts.len() > 0;
+}
+
+function value_let_else(e: ast.Expr): ValueLetElse {
+  let none = ValueLetElse { stmts: [], rest: [], v: "" };
+  let ast.ExprCall(c) = e else {
+    return none;
+  };
+  let ast.ExprLambda(lm) = c.callee else {
+    return none;
+  };
+  if (c.args.len() != 0 || lm.params.len() != 0 || lm.origin != parser.ORIGIN_IF_EXPR || lm.body.len() != 3) {
+    return none;
+  }
+  let v = value_local_name(lm.body[0], lm.body[2]);
+  if (v.len() == 0) {
+    return none;
+  }
+  if let ast.StmtMatch(m) = lm.body[1] {
+    if (m.origin != "let_else" || m.arms.len() < 2) {
+      return none;
+    }
+    if (m.sugar.len() > 0) {
+      return ValueLetElse { stmts: [ast.StmtMatch { ...m, sugar: m.sugar.with(0, ast.MatchArm { ...m.sugar[0], body: [] }) }], rest: m.sugar[0].body, v: v };
+    }
+    return ValueLetElse { stmts: [ast.StmtMatch { ...m, arms: m.arms.with(0, ast.MatchArm { ...m.arms[0], body: [] }) }], rest: m.arms[0].body, v: v };
+  }
+  let ast.StmtIf(f) = lm.body[1] else {
+    return none;
+  };
+  let sg = f.sugar;
+  if (sg.origin != "let_else" || sugar_written_arms(sg).len() < 2) {
+    return none;
+  }
+  let rest = sugar_written_arms(sg)[0].body;
+  if (sg.arms.len() > 0) {
+    sg = ast.MatchSugar { ...sg, arms: sg.arms.with(0, ast.MatchArm { ...sg.arms[0], body: [] }) };
+  } else if (sg.tup.len() > 0) {
+    sg = ast.MatchSugar { ...sg, tup: sg.tup.with(0, ast.TupArm { ...sg.tup[0], body: [] }) };
+  } else if (sg.strct.len() > 0) {
+    sg = ast.MatchSugar { ...sg, strct: sg.strct.with(0, ast.StructArm { ...sg.strct[0], body: [] }) };
+  } else {
+    sg = ast.MatchSugar { ...sg, lits: sg.lits.with(0, ast.LitArm { ...sg.lits[0], body: [] }) };
+  }
+  return ValueLetElse { stmts: [ast.StmtIf { ...f, sugar: sg }], rest: rest, v: v };
 }
 
 function print_value_tail(tail: ast.Expr, after_stmt: boolean, depth: i32, f: Fmt): (string, Fmt) {
@@ -3595,7 +3690,7 @@ function print_type_alias(a: parser.TypeAlias): string {
     }
     out += a.variants[i];
     if (i < a.variant_args.len() && a.variant_args[i].len() > 0) {
-      out = out + "[" + a.variant_args[i] + "]";
+      out = out + "[" + a.variant_args[i].join(", ") + "]";
     }
   }
   return out + ";\n";

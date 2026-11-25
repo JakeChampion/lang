@@ -1,0 +1,2 @@
+Sq.area is an associated function, not a method: its first parameter is not `self`, so call it as Sq.area(...)
+Turn.zero is an associated function, not a method: its first parameter is not `self`, so call it as Turn.zero(...)

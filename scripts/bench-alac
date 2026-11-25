@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""Compare native ALAC packet decode with the pinned Apple reference decoder."""
+
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import platform
+import random
+import shutil
+import statistics
+import subprocess
+import tempfile
+import urllib.request
+
+ROOT = Path(__file__).resolve().parents[1]
+CODEC = ["ALACDecoder.cpp", "ALACEncoder.cpp", "ALACBitUtilities.c", "EndianPortable.c",
+         "ag_dec.c", "ag_enc.c", "dp_dec.c", "dp_enc.c", "matrix_dec.c", "matrix_enc.c"]
+CASES = [
+    ("music1_16", 1, 16),
+    ("music2_16", 2, 16),
+    ("music2_24", 2, 24),
+    ("noise2_24", 2, 24),
+    ("music6_24", 6, 24),
+    ("music2_32", 2, 32),
+]
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def fetch(source_dir):
+    manifest = json.loads((ROOT / "scripts/audio-reference/alac-source.json").read_text())
+    for row in manifest["files"]:
+        path = source_dir / row["path"]
+        if path.exists():
+            data = path.read_bytes()
+        else:
+            url = "https://raw.githubusercontent.com/macosforge/alac/" + manifest["commit"] + "/" + row["path"]
+            data = urllib.request.urlopen(url, timeout=60).read()
+        digest = hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()
+        if digest != row["sha"]:
+            raise SystemExit("source hash mismatch: " + row["path"])
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+    return manifest["commit"]
+
+
+def pcm(name, channels, bits, frames):
+    rng = random.Random(14685)
+    width = (bits + 7) // 8
+    top = (1 << (bits - 1)) - 1
+    out = bytearray()
+    for frame in range(frames):
+        for channel in range(channels):
+            if name.startswith("noise"):
+                value = rng.randrange(-top - 1, top + 1)
+            else:
+                signal = (math.sin(frame * 0.031 + channel * 0.23) + math.sin(frame * 0.113 + channel * 0.07)) * 0.44
+                value = int(signal * top) + rng.randrange(-8, 9)
+                value = max(-top - 1, min(top, value))
+            out += (value & ((1 << (8 * width)) - 1)).to_bytes(width, "little")
+    return bytes(out)
+
+
+def fields(output):
+    return {key: int(value) for key, value in (line.split("=", 1) for line in output.splitlines() if "=" in line)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--compiler", default=os.environ.get("FERN"), required=not bool(os.environ.get("FERN")))
+    parser.add_argument("--source-dir", type=Path, help="a checkout of the pinned Apple sources")
+    parser.add_argument("--stdlib", type=Path, default=ROOT / "internal/stdlib", help="the standard library to build the Fern decoder with")
+    parser.add_argument("--rounds", type=int, default=64)
+    parser.add_argument("--trials", type=int, default=7)
+    parser.add_argument("--frames", type=int, default=262144)
+    parser.add_argument("--case", action="append", dest="cases")
+    parser.add_argument("--cpu", type=int)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    if not 1 <= args.rounds <= 100000 or args.trials < 3 or not 4096 <= args.frames <= 1048576:
+        parser.error("use 1 through 100000 rounds, at least three trials, and 4096 through 1048576 frames")
+    target = {("Linux", "x86_64"): "x86-64-linux", ("Linux", "aarch64"): "arm64-linux"}.get((platform.system(), platform.machine()))
+    if target is None:
+        parser.error("use a native Linux x86-64 or ARM64 host")
+    selected = [case for case in CASES if not args.cases or case[0] in args.cases]
+    if args.cases and len(selected) != len(set(args.cases)):
+        parser.error("unknown case")
+    affinity = sorted(os.sched_getaffinity(0))
+    cpu = args.cpu if args.cpu is not None else affinity[0]
+    if cpu not in affinity:
+        parser.error("CPU is outside the allowed affinity")
+    os.sched_setaffinity(0, {cpu})
+    compiler = Path(shutil.which(args.compiler) or args.compiler).resolve()
+    with tempfile.TemporaryDirectory(prefix="fern-alac-bench-") as directory:
+        temp = Path(directory)
+        source_dir = args.source_dir or temp / "alac"
+        commit = fetch(source_dir)
+        codec = source_dir / "codec"
+        reference = temp / "apple"
+        subprocess.run(["g++", "-O2", "-fwrapv", "-fno-strict-aliasing", "-w", "-I", str(codec),
+                        str(ROOT / "scripts/audio-reference/alac_bench.cpp"), *[str(codec / name) for name in CODEC],
+                        "-o", str(reference)], check=True)
+        fern = temp / "fern"
+        subprocess.run([str(compiler), "-stdlib", str(args.stdlib.resolve()), "-O", "-target", target,
+                        "-o", str(fern), str(ROOT / "bench/audio/alac_decode.fern")], check=True)
+        stdlib = args.stdlib.resolve()
+        sources = [ROOT / "scripts/bench-alac", ROOT / "scripts/audio-reference/alac_bench.cpp",
+                   ROOT / "bench/audio/alac_decode.fern", stdlib / "std/audio/alac.fern.md",
+                   *sorted((stdlib / "std/audio/alac").glob("*.fern.md"))]
+        result = {
+            "schema": 1,
+            "target": target,
+            "platform": platform.platform(),
+            "cpu_model": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
+                               if line.startswith("model name")), ""),
+            "cpu": cpu,
+            "rounds": args.rounds,
+            "trials": args.trials,
+            "frames_per_file": args.frames,
+            "packet_frames": 4096,
+            "git_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+            "compiler_sha256": sha(compiler),
+            "reference_commit": commit,
+            "reference_sha256": sha(reference),
+            "fern_sha256": sha(fern),
+            "stdlib": str(stdlib),
+            "source_sha256": {path.name if not path.is_relative_to(ROOT) else str(path.relative_to(ROOT)): sha(path) for path in sources},
+            "measurement": "decode of every packet into reusable output, four warmup rounds; file read, packet split, and decoder setup excluded; checksum pass after the timed region",
+            "output_storage": "Fern: interleaved signed 32-bit PCM in WAVE order. Apple: interleaved packed PCM in ALAC order",
+            "peak_rss": "Linux process VmHWM after decode, including code, packets and output",
+            "cases": {},
+        }
+        for name, channels, bits in selected:
+            raw = temp / (name + ".raw")
+            packets = temp / (name + ".alb")
+            raw.write_bytes(pcm(name, channels, bits, args.frames))
+            subprocess.run([str(reference), "encode", str(channels), str(bits), "48000", str(raw), str(packets)], check=True)
+            rows = {"fern": [], "apple": []}
+            for trial in range(args.trials):
+                order = ["fern", "apple"] if trial % 2 == 0 else ["apple", "fern"]
+                for side in order:
+                    command = [str(fern), str(packets), str(args.rounds)] if side == "fern" else \
+                        [str(reference), "decode", str(packets), str(args.rounds)]
+                    rows[side].append(fields(subprocess.run(command, check=True, capture_output=True, text=True, timeout=600).stdout))
+            checksums = {row["checksum"] for side in rows.values() for row in side}
+            if len(checksums) != 1:
+                raise SystemExit(name + ": checksums differ: " + str(checksums))
+            median = {side: statistics.median(row["wall_ns"] for row in side_rows) for side, side_rows in rows.items()}
+            samples = rows["fern"][0]["samples"]
+            case = {
+                "channels": channels,
+                "bits": bits,
+                "encoded_bytes": packets.stat().st_size,
+                "checksum": checksums.pop(),
+                "median_ns_per_sample": {side: value / samples for side, value in median.items()},
+                "fern_over_apple": median["fern"] / median["apple"],
+                "fern_allocs_per_packet": rows["fern"][0]["allocs"] / (args.rounds * math.ceil(args.frames / 4096)),
+                "fern_fresh_bytes": rows["fern"][0]["fresh_bytes"],
+                "peak_rss_kb": {side: max(row["peak_rss_kb"] for row in side_rows) for side, side_rows in rows.items()},
+                "trials": rows,
+            }
+            result["cases"][name] = case
+            print(f"{name}: fern {case['median_ns_per_sample']['fern']:.3f} ns/sample, apple {case['median_ns_per_sample']['apple']:.3f}"
+                  f" ns/sample, ratio {case['fern_over_apple']:.3f}, {case['fern_allocs_per_packet']:.2f} allocs/packet", flush=True)
+        text = json.dumps(result, indent=2) + "\n"
+        if args.output:
+            args.output.write_text(text)
+        else:
+            print(text)
+
+
+if __name__ == "__main__":
+    main()

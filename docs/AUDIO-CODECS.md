@@ -273,6 +273,10 @@ Apple's pinned ALAC decoder supplies exact PCM. FFmpeg supplies a second referen
 The reference adapters explicitly reorder surround channels to the documented WAVE speaker order.
 Source provenance and licenses are in `licenses/alac/NOTICE.txt`.
 
+`scripts/bench-alac` compares packet decode with Apple's pinned decoder on the same packets.
+The [2026-11-25 report](benchmarks/alac-decode-2026-11-25/README.md) measures x86-64.
+Fern takes 0.61–0.85 times the time of Apple's decoder on its six inputs.
+
 The reference build verifies pinned Git blob hashes before compilation:
 
 ```sh
@@ -1117,7 +1121,7 @@ Each line names the issue that owns the work.
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
 - AAC: HE-AAC/SBR/PS, protected ADTS verification, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: decode timeline gaps, composition offsets, and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
-- ALAC: CPU, allocation and memory measurements against the references, and ARM64 Android qualification ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
+- ALAC: native ARM64 and Android measurements, and ARM64 Android qualification ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
 - Encoders: MP3, AAC, and Vorbis have no encoder, the Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
 - Conformance: independent corpora and malformed-stream qualification for each decoder ([#14520](https://github.com/JakeChampion/lang/issues/14520)).
 - Performance: reference baselines ([#14515](https://github.com/JakeChampion/lang/issues/14515)) and the measured CPU and allocation gaps ([#14516](https://github.com/JakeChampion/lang/issues/14516), [#16437](https://github.com/JakeChampion/lang/issues/16437)).

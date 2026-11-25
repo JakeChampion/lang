@@ -103,6 +103,13 @@ move inside one array. Each read sees the writes before it, as in the loop.
 The offsets of both shapes are values from before the loop or constants. The
 pass computes a constant of the body before the call.
 
+When the two offsets of a move are constants, `ssabounds.grouped_accesses`
+puts one probe in the body in place of the two checks. The probe checks the
+indices `lo` and `lo + span`. These can be the write index and the read
+index of the move. The pass then removes the probe with the loop, because
+the kernel checks both ranges. `std/deflate/zlib` slides its window with such a
+loop, `w.with(i, w[i + WSIZE])`.
+
 Each shape becomes a call to `__fern_arr_fill_u8`, `_u16`, `_u32` or `_u64`,
 or to `__fern_arr_move_u8`, `_u16`, `_u32` or `_u64`, by the size of the
 element. The kernel checks the complete range once. When the receiver is

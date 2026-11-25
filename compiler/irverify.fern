@@ -108,6 +108,24 @@ pub function elem_width_ok(kt: i32, w: i32): boolean {
   return kt == ir.K_ALLOC_U8 && (w == 0 || w == 1);
 }
 
+function bit_count_kind(kt: i32): boolean {
+  return kt == ir.K_CLZ || kt == ir.K_CTZ || kt == ir.K_POPCOUNT || kt == ir.K_BSWAP;
+}
+
+// The backends read an integer arithmetic or compare op as 64 bits, as the
+// pointer width, or else as 32 bits. Only 0 and 32 name the 32-bit form.
+// The backends have a bit-count op only for 32 and 64 bits.
+// The result is the widths that the op can have, or "" when `w` is one of them.
+function int_width_refusal(kt: i32, w: i32): string {
+  if (bit_count_kind(kt)) {
+    return if (w == 32 || w == 64) { "" } else { "32 or 64" };
+  }
+  if (kt >= ir.K_ADD && kt <= ir.K_GE_U || kt == ir.K_MULHI_U || kt == ir.K_MULHI_S) {
+    return if (w == 0 || w == 32 || w == 64 || w == ir.width_ptr()) { "" } else { "0, 32, 64 or the pointer width" };
+  }
+  return "";
+}
+
 pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i32, sigs: NameIndex): Problem[] {
   let out: Problem[] = [];
 
@@ -139,6 +157,13 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
         fn_name: fn_name, op: i, kind: ir.kind_name(kt),
         msg: "element width " + util.i32_to_string(op.width)
           + " is not 8, 16, 32, 64 or the pointer width",
+      });
+    }
+    let widths = int_width_refusal(kt, op.width);
+    if (widths != "") {
+      out = out.append(Problem {
+        fn_name: fn_name, op: i, kind: ir.kind_name(kt),
+        msg: "width " + util.i32_to_string(op.width) + " is not " + widths,
       });
     }
 
