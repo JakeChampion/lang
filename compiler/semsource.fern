@@ -9871,7 +9871,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, opt
     rewrite = rewrite.append(usable);
     inlinable = inlinable.append(usable && d >= 0 && inlinable_decl(mod.funcs[d]) && !lowered.has(names[i]) && optbisect.allowed_by(sw, "inline", names[i]));
     uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, late));
-    unnamed = unnamed.append(uncalled[i] && spliceable_body(p, names[i], i, mod));
+    unnamed = unnamed.append(uncalled[i]);
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i += 1;
   }
@@ -10055,7 +10055,7 @@ function unnamed(all: Produced[], names: string[], spliced: boolean[], mod: pars
   let out: boolean[] = [];
   let late = util.name_index(late_named(all));
   for i in 0..all.len() {
-    let candidate = i < spliced.len() && spliced[i] && outside_uncalled(all[i], names[i], i, mod, late) && spliceable_body(all[i], names[i], i, mod);
+    let candidate = i < spliced.len() && spliced[i] && outside_uncalled(all[i], names[i], i, mod, late);
     if (candidate) {
       candidates = candidates.append(names[i]);
       at = at.append(i);
@@ -10126,17 +10126,6 @@ function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module,
   }
   let fd = mod.funcs[i];
   return fd.receiver_type.len() > 0 && fd.import_iface == "" && !parser.decl_named_outside(mod, fd) && !rooted_method(fd, mod);
-}
-
-// A method's body joins the once set only when it is one block. A branch in
-// the spliced body puts the caller's store-back after a join, and the plan
-// takes an element out of its slot only within the block that reads it
-// (#13990).
-function spliceable_body(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
-  if (i >= mod.funcs.len() || mod.funcs[i].receiver_type.len() == 0) {
-    return true;
-  }
-  return p.func.graph.blocks.len() == 1;
 }
 
 function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
