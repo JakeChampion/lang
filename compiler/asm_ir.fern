@@ -7344,7 +7344,7 @@ function ssa_integer_unary(ins: ssa.SInst): boolean {
   let to = ssa.cast_target(ins);
   return k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP
     || to == "u32" || to == "i32" || to == "u16" || to == "i16"
-    || ins.str.starts_with("rotr:");
+    || ins.ir_kind == ir.K_ROTR;
 }
 
 function ssa_fixed_mask(ins: ssa.SInst, imm: ssa.Imms, no_spills: boolean): i32 {
@@ -8758,14 +8758,14 @@ function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.Emit
 
 function ssa_unary_known(ins: ssa.SInst): boolean {
   let k = ins.ir_kind;
-  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins.str)) {
+  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins)) {
     return true;
   }
   let to = ssa.cast_target(ins);
   if (to == "u8" || to == "u16" || to == "i16" || to == "u32" || to == "i32") {
     return true;
   }
-  return ssa.rotr_count(ins.str) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "%rax") != "";
+  return ssa.rotr_count(ins) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "%rax") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -8817,11 +8817,10 @@ function ssa_unary_asm(ins: ssa.SInst, lb: string, d: string): string {
   if (f != "") {
     return f;
   }
-  let what = ins.str;
-  if (what == "load_i32") {
+  if (ins.ir_kind == ir.K_LOAD_I32) {
     return "    movslq (" + d + "), " + d + "\n";
   }
-  if (what == "load_u16") {
+  if (ins.ir_kind == ir.K_LOAD) {
     return "    movzwl (" + d + "), " + ssa_r32(d) + "\n";
   }
   let k = ins.ir_kind;
@@ -8829,9 +8828,9 @@ function ssa_unary_asm(ins: ssa.SInst, lb: string, d: string): string {
   if (k == ir.K_NOT) {
     return "    testq " + d + ", " + d + "\n    setz " + ssa_r8(d) + "\n    movzbq " + ssa_r8(d) + ", " + d + "\n";
   }
-  if (what.starts_with("rotr:")) {
-    let n = util.i32_to_string(ssa.rotr_count(what));
-    if (ssa.rotr_width(what) == 64) {
+  if (ins.ir_kind == ir.K_ROTR) {
+    let n = util.i32_to_string(ssa.rotr_count(ins));
+    if (ssa.rotr_width(ins) == 64) {
       return "    rorq $" + n + ", " + d + "\n";
     }
     return "    rorl $" + n + ", " + ssa_r32(d) + "\n";
@@ -8861,10 +8860,9 @@ function ssa_unary_asm(ins: ssa.SInst, lb: string, d: string): string {
 }
 
 function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
-  let what = ins.str;
-  if (what.starts_with("rotr:")) {
-    let n = util.i32_to_string(ssa.rotr_count(what));
-    if (ssa.rotr_width(what) == 64) {
+  if (ins.ir_kind == ir.K_ROTR) {
+    let n = util.i32_to_string(ssa.rotr_count(ins));
+    if (ssa.rotr_width(ins) == 64) {
       return "    rorxq $" + n + ", " + src + ", " + d + "\n";
     }
     if (src[0] == b'%') {
@@ -8872,10 +8870,10 @@ function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
     }
     return "    rorxl $" + n + ", " + src + ", " + ssa_r32(d) + "\n";
   }
-  if (what == "load_i32") {
+  if (ins.ir_kind == ir.K_LOAD_I32) {
     return "    movslq (" + src + "), " + d + "\n";
   }
-  if (what == "load_u16") {
+  if (ins.ir_kind == ir.K_LOAD) {
     return "    movzwl (" + src + "), " + ssa_r32(d) + "\n";
   }
   let k = ins.ir_kind;
@@ -11874,7 +11872,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     let src = "";
     if (ssa_in_x(reg_of, ins.args[0]) && ssa_reg(reg_of[ins.args[0]]) != d) {
       src = ssa_reg(reg_of[ins.args[0]]);
-    } else if (reg_of[ins.args[0]] < 0 && ins.str.starts_with("rotr:")) {
+    } else if (reg_of[ins.args[0]] < 0 && ins.ir_kind == ir.K_ROTR) {
       src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
     }
     let from = "";

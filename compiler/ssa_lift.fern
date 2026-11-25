@@ -363,7 +363,7 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   }
   let unary_load = unary_load_name(k, op);
   if (unary_load != "") {
-    return lift_pop_push(lv, 1, 10, 0, unary_load);
+    return lift_pop_push_kind(lv, 1, ssa.UNARY, 0, unary_load, op.kind_tag);
   }
   if (k == "store_i64" || k == "store_ptr" || k == "store_i32") {
     let stored = lift_store(lv, 41, 0);
