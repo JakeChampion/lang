@@ -160,6 +160,17 @@ pub function zeros(n: i32): f32[] {
   return output;
 }
 
+// An array of `n` zeros that reuses `values` when it has that length.
+pub function cleared(own values: f32[], n: i32): f32[] {
+  if (values.len() != n) {
+    return zeros(n);
+  }
+  for i in 0..n {
+    values = values.with(i, 0.0f32);
+  }
+  return values;
+}
+
 pub function ldexp_q2(own value: f32, own exponent: i32): f32 {
   while (true) {
     let e = if (exponent < 120) { exponent } else { 120 };

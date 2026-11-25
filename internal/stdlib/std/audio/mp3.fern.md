@@ -37,6 +37,7 @@ It does not expose tag contents or build a seek index.
 The raw budget includes codec delay and padding. This bounds work even when metadata declares a short result.
 
 The frame APIs retain at most 511 reservoir bytes, 576 overlap values, and 960 synthesis values.
+After the first MPEG-1 frame they also keep 3,264 synthesis lines, 1,152 spectral values and 128 transform values, so the next frame does not allocate them again.
 They still allocate bounded scratch arrays. They do not promise zero allocations.
 
 The implementation derives from the scalar [minimp3 reference](https://github.com/lieff/minimp3/tree/ea99364f61c14656440e8d77e9c233ccf3124633).
@@ -61,14 +62,14 @@ import "std/f64";
 
 pub const DECODER_DELAY: i32 = 529;
 
-pub struct Decoder { reservoir: u8[], overlap: f32[], qmf: f32[], sample_rate: i32, channels: i32, version: i32, free_bytes: i32 }
+pub struct Decoder { reservoir: u8[], overlap: f32[], qmf: f32[], lines: f32[], spectrum: f32[], transform: f32[], sample_rate: i32, channels: i32, version: i32, free_bytes: i32 }
 
 pub struct Frame { sample_rate: i32, channels: i32, frames: i32, bytes_read: i32, needs_history: boolean, samples: f32[] }
 
 pub struct Decoded { sample_rate: i32, channels: i32, samples: f32[] }
 
 pub function decoder(): Decoder {
-  return Decoder { reservoir: [], overlap: spectral.zeros(576), qmf: spectral.zeros(960), sample_rate: 0, channels: 0, version: 0, free_bytes: 0 };
+  return Decoder { reservoir: [], overlap: spectral.zeros(576), qmf: spectral.zeros(960), lines: [], spectrum: [], transform: [], sample_rate: 0, channels: 0, version: 0, free_bytes: 0 };
 }
 
 pub function (own d: Decoder) reset(): Decoder {
@@ -174,7 +175,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
   }
   let side = frame_side(input, at, h, side_start, main_start)?;
   let free_bytes = framing.extent(h, d.free_bytes);
-  let Decoder { reservoir, overlap, qmf, sample_rate: _, channels: _, version: _, free_bytes: _ } = d;
+  let Decoder { reservoir, overlap, qmf, lines, spectrum, transform, sample_rate: _, channels: _, version: _, free_bytes: _ } = d;
   let main: u8[] = [];
   let start = if (reservoir.len() > side.begin) { reservoir.len() - side.begin } else { 0 };
   for i in start..reservoir.len() {
@@ -184,7 +185,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
     main = main.append(input[i]);
   }
   if (reservoir.len() < side.begin) {
-    let state = Decoder { reservoir: keep_reservoir(main, 0), overlap: overlap, qmf: qmf, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
+    let state = Decoder { reservoir: keep_reservoir(main, 0), overlap: overlap, qmf: qmf, lines: lines, spectrum: spectrum, transform: transform, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
     return Ok((state, Frame { sample_rate: h.sample_rate, channels: h.channels, frames: 0, bytes_read: h.bytes, needs_history: true, samples: output }));
   }
   let part_sum = 0;
@@ -198,14 +199,15 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
   let pos0 = pcm.zeros(40);
   let pos1 = pcm.zeros(40);
   let granules = if (h.version == 1) { 2 } else { 1 };
-  let lines: f32[] = [];
-  let transform: f32[] = [];
   if (granules == 2) {
-    lines = synthesis.frame_lines(qmf);
-    transform = spectral.zeros(128);
+    lines = synthesis.frame_lines_into(lines, qmf);
+    if (transform.len() != 128) {
+      transform = spectral.zeros(128);
+    }
   }
   for granule in 0..granules {
-    let samples = spectral.zeros(1152);
+    let samples = spectral.cleared(spectrum, 1152);
+    spectrum = [];
     for ch in 0..h.channels {
       let g = side.granules[granule * h.channels + ch];
       let end = b.pos + g.part;
@@ -244,8 +246,9 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       qmf = next;
       output = values;
     } else {
-      let (next, values, scratch) = synthesis.granule_at(lines, granule * 18 * 64, samples, h.channels, output, granule * 576 * h.channels, transform);
+      let (next, values, scratch, spent) = synthesis.granule_at(lines, granule * 18 * 64, samples, h.channels, output, granule * 576 * h.channels, transform);
       transform = scratch;
+      spectrum = spent;
       lines = next;
       output = values;
     }
@@ -258,7 +261,7 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       return Err(pcm.Sample);
     }
   }
-  let state = Decoder { reservoir: keep_reservoir(main, b.pos), overlap: overlap, qmf: qmf, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
+  let state = Decoder { reservoir: keep_reservoir(main, b.pos), overlap: overlap, qmf: qmf, lines: lines, spectrum: spectrum, transform: transform, sample_rate: h.sample_rate, channels: h.channels, version: h.version, free_bytes: free_bytes };
   return Ok((state, Frame { sample_rate: h.sample_rate, channels: h.channels, frames: h.frames, bytes_read: h.bytes, needs_history: false, samples: output }));
 }
 
