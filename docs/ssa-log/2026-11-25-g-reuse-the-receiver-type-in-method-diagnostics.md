@@ -1,8 +1,8 @@
-# Check the receiver once in field-call diagnostics
+# Reuse the receiver type in method diagnostics
 
 Part of #11534 and #8171.
 
-For a call such as `make().method(arg)`, the checker used to infer the type of `make()` twice during diagnostics. It now keeps the first result for the method checks. Argument checks still run between the receiver and method checks. Qualified variants and associated functions still return from their own diagnostic paths.
+For a call such as `make().method(arg)`, the receiver checks infer the type of `make()`. The method checks previously repeated this step. They now use the type from the receiver checks. Argument checks still run between the receiver and method checks. Qualified variants and associated functions still return from their own diagnostic paths.
 
 Two stage-2 compilers built the same sources from `23878d9486` for x86-64 Linux. Both runs used Callgrind with `FERN_RC_CERTIFY=1` and `FERN_RC_CERTIFY_MEMO=0`.
 
