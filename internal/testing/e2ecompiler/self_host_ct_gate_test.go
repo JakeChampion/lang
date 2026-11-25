@@ -879,6 +879,7 @@ func ctCompile(t *testing.T, runner []string, cli, stdlib, target string) map[st
 		}
 		bin := filepath.Join(dir, c.name)
 		cmd := runX86_64Bin(runner, cli, "-target", target, "-o", bin, src, stdlib)
+		cmd.Env = ctBuildEnv()
 		if msg, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("self-host CLI -target %s %s: %v\n%s", target, c.name, err, msg)
 		}
@@ -888,6 +889,12 @@ func ctCompile(t *testing.T, runner []string, cli, stdlib, target string) map[st
 		bins[c.name] = bin
 	}
 	return bins
+}
+
+// valgrind decodes no SHA extension instruction on x86-64, so a gate binary
+// takes the SHA rounds of std/crypto there.
+func ctBuildEnv() []string {
+	return append(childEnv(), "FERN_DEBUG_NO_SHA_EXT=1")
 }
 
 func exitOf(t *testing.T, cmd *exec.Cmd) (int, string) {

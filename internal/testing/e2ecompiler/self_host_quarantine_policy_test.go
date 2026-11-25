@@ -102,16 +102,15 @@ const redzoneLastByteSrc = `function main(): i32 {
 }
 `
 
-// A write to the last byte of the block, and a 13-byte block written at
-// byte 13, inside the 8-byte rounding of its size. Neither reaches the
-// redzone, and the census balances.
+// A write to the last byte of a 64-byte block and of a 13-byte block. Neither
+// reaches the redzone, and the census balances.
 const redzoneInBoundsSrc = `function main(): i32 {
   unsafe {
     let p: usize = __alloc(64);
     __store_u8(p + 63, 7);
     __free(p, 64);
     let q: usize = __alloc(13);
-    __store_u8(q + 13, 7);
+    __store_u8(q + 12, 7);
     __free(q, 13);
   }
   print("survived");
@@ -149,6 +148,19 @@ const redzoneRoundedSrc = `function main(): i32 {
   unsafe {
     let q: usize = __alloc(13);
     __store_u8(q + 16, 7);
+    __free(q, 13);
+  }
+  print("survived");
+  return 0;
+}
+`
+
+// A 13-byte block written at byte OFFSET, inside the 8-byte rounding of its
+// size. The raw free checks the bytes of the last word past the request.
+const redzoneRoundingSrc = `function main(): i32 {
+  unsafe {
+    let q: usize = __alloc(13);
+    __store_u8(q + OFFSET, 7);
     __free(q, 13);
   }
   print("survived");
@@ -367,7 +379,10 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 			t.Run("redzone", func(t *testing.T) {
 				const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
 				past := strings.Replace(redzoneSlackSrc, "OFFSET", "3008", 1)
-				for name, src := range map[string]string{"past-the-end": redzoneWriteSrc, "last-redzone-byte": redzoneLastByteSrc, "past-the-rounded-size": redzoneRoundedSrc, "past-the-request": past} {
+				srcs := map[string]string{"past-the-end": redzoneWriteSrc, "last-redzone-byte": redzoneLastByteSrc, "past-the-rounded-size": redzoneRoundedSrc, "past-the-request": past}
+				srcs["first-rounding-byte"] = strings.Replace(redzoneRoundingSrc, "OFFSET", "13", 1)
+				srcs["last-rounding-byte"] = strings.Replace(redzoneRoundingSrc, "OFFSET", "15", 1)
+				for name, src := range srcs {
 					r := quarantineBuild(t, cli, qemu, target, src, []string{"-sanitize"})
 					if r.code != 124 || !strings.Contains(r.stderr, report) || strings.Contains(r.stdout, "survived") {
 						t.Fatalf("%s: exit %d, want 124 with the heap-buffer-overflow report\n%s%s", name, r.code, r.stdout, r.stderr)

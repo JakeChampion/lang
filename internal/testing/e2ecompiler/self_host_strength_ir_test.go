@@ -1,8 +1,6 @@
 package e2ecompiler
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -93,38 +91,6 @@ func TestSelfHostStrengthShiftImmediateShape(t *testing.T) {
 				if matchShape(asm, u) {
 					t.Errorf("%s still emits %q for `x * 8`; the strength rewrite\n"+
 						"or the constant-shift-count selection is not firing:\n%s", tc.backend, u, asm)
-				}
-			}
-		})
-	}
-}
-
-// A constant `and` with all ones or with zero leaves no `and` in the code.
-func TestSelfHostAndIdentityShape(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	src := filepath.Join(t.TempDir(), "and_identity.fern")
-	if err := os.WriteFile(src, []byte(`@noinline function f(a: u64, b: u64): u64 {
-  let m = 0u64 - (a >> 63u64);
-  return (0xffffffffffffffffu64 & m) + (0x0000000000000000u64 & m) + (b & 0xffffffffffffffffu64);
-}
-@noinline function g(a: i32, b: i32): i32 { return (a & -1) + (-1 & b) + (a & 0); }
-function main(): i32 { return (f(1u64 << 63u64, 5u64) as i32) + g(3, 4); }
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		t.Run(target, func(t *testing.T) {
-			asm, err := os.ReadFile(cli.emit(t, src, target))
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, fn := range []string{"__fn_f", "__fn_g"} {
-				body := asmFunction(string(asm), fn+":\n")
-				if body == "" {
-					t.Fatalf("%s: no %s in the emitted code", target, fn)
-				}
-				if matchShape(body, `(?m)^\s+and[a-z]*\s`) {
-					t.Errorf("%s: %s keeps an `and` with a constant operand:\n%s", target, fn, body)
 				}
 			}
 		})

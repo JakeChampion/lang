@@ -133,6 +133,9 @@ pub struct EmitState {
   profile: i32,
   // The bit of each register that the SSA allocator does not use.
   ssa_deny: i64,
+  // False when x86-64 SHA-256 and SHA-1 take std/crypto's rounds in place of
+  // the SHA extensions, which valgrind cannot decode.
+  sha_ext: boolean,
   cover: boolean,
   symbols: boolean,
   optimize: boolean,
@@ -689,6 +692,7 @@ pub function new_state(): EmitState {
     backtrace: false,
     profile: rtprofile.mode(),
     ssa_deny: ssa_deny_env(),
+    sha_ext: !util.debug_flag("FERN_DEBUG_NO_SHA_EXT", "FERN_NO_SHA_EXT"),
     cover: false,
     symbols: false,
     optimize: false,

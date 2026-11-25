@@ -597,6 +597,24 @@ function pick(name: string): Case {
         let b18: ssa.SBlock = block(18, [16, 17], [], br(1));
         return Case { f: func(1, 35, [b0, b1, b19, b20, b2, b3, b4, b5, b6, b7, b8, b9, b21, b10, b11, b12, b13, b14, b15, b16, b17, b18]), modes: [rccertify.value_mode()], returns_unit: true };
     }
+    if (name == "concat-onto-its-parameter" || name == "concat-onto-its-parameter-unreleased") {
+        // v5 is a push onto the borrowed v0. Where v5 is v0, a concat gives
+        // v0 or a new box (v8). Where it is not, a concat gives v5 or a new
+        // box (v10), and v5 is released where v10 is new. The join v13 is
+        // retained where it is still v0. Without the release of v5, v5 keeps
+        // its unit where v10 is new.
+        let release: ssa.SInst[] = [call(12, "__fern_rc_dec", [5])];
+        if (name == "concat-onto-its-parameter-unreleased") { release = []; }
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1), const_int(2, 1), const_int(3, 8), const_int(4, 7), inst(50, 5, [0, 4], 0, "arr_push_u32"), inst(9, 6, [5, 0], 0, "eq")], brif(6, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [inst(11, 8, [2, 3, 4, 5], 0, "__fern_arr_concat")], br(5));
+        let b2: ssa.SBlock = block(2, [0], [inst(11, 10, [2, 3, 4, 5], 1, "__fern_arr_concat"), inst(9, 11, [10, 5], 0, "ne")], brif(11, 3, 4));
+        let b3: ssa.SBlock = block(3, [2], release, br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [], br(5));
+        let b5: ssa.SBlock = block(5, [1, 4], [inst(8, 13, [8, 10], 0, ""), inst(9, 14, [13, 0], 0, "eq")], brif(14, 6, 7));
+        let b6: ssa.SBlock = block(6, [5], [call(15, "__fern_rc_inc", [13])], br(7));
+        let b7: ssa.SBlock = block(7, [5, 6], [], ret(13));
+        return Case { f: func(2, 16, [b0, b1, b2, b3, b4, b5, b6, b7]), modes: [borrow, value], returns_unit: true };
+    }
     if (name == "loop-pushes-onto-its-parameter" || name == "loop-pushes-onto-its-parameter-unretained") {
         // The loop carries v5, which starts as the borrowed v0. A test
         // against v0 selects the push: a copy where v5 is v0, and an owned
@@ -636,6 +654,19 @@ function pick(name: string): Case {
         let b9: ssa.SBlock = block(9, [8], back, br(10));
         let b10: ssa.SBlock = block(10, [8, 9], [], ret(11));
         return Case { f: func(2, 14, [b0, b1, b3, b4, b2, b5, b6, b7, b8, b9, b10]), modes: [borrow, value], returns_unit: true };
+    }
+    if (name == "element-taken-through-a-second-constant" || name == "element-taken-through-a-second-constant-other-slot") {
+        // v2 is element 1 of the counted v0. Where v0 is unique, a store of
+        // null clears that slot, so v2 takes its unit. The store writes the
+        // index as a second constant v4. Where v0 is shared, v2 is retained.
+        // A store into slot 2 leaves v2 with no unit where v0 is unique.
+        let slot: i32 = 1;
+        if (name == "element-taken-through-a-second-constant-other-slot") { slot = 2; }
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 1), inst(42, 2, [0, 1], 0, "rc"), call(3, "__fern_rc_is_unique", [0])], brif(3, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [const_int(4, slot), const_int(5, 0), inst(43, 0 - 1, [0, 4, 5], 0, "")], br(3));
+        let b2: ssa.SBlock = block(2, [0], [call(6, "__fern_rc_inc", [2])], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [call(7, "__fern_rc_dec", [0])], ret(2));
+        return Case { f: func(1, 8, [b0, b1, b2, b3]), modes: [counted], returns_unit: true };
     }
     if (name == "push-onto-a-field-clears-its-slot" || name == "push-onto-a-field-keeps-its-slot") {
         // A push onto the field v11 of the borrowed v0, retained and released
@@ -961,6 +992,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"take-for-the-load-read-after", nil, 0},
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0},
 		{"retained-on-one-arm-released-on-another", nil, 0},
+		{"element-taken-through-a-second-constant", nil, 0},
+		{"element-taken-through-a-second-constant-other-slot", nil, 1},
 		{"push-onto-a-field-clears-its-slot", nil, 0},
 		{"push-onto-a-field-keeps-its-slot", nil, 1},
 		{"retained-on-one-arm-released-on-the-other-side", []string{"leaked where it dies of v0", "spent without a unit of v0"}, 0},
@@ -993,6 +1026,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"unique-test-of-a-literal-phi-feeds-a-reuse-unreleased", []string{"leaked where it dies of v5"}, 1},
 		{"loop-takes-a-field-under-each-arms-token", nil, 0},
 		{"loop-takes-a-field-under-each-arms-token-unretained", nil, 1},
+		{"concat-onto-its-parameter", nil, 0},
+		{"concat-onto-its-parameter-unreleased", []string{"leaked where it dies of v5"}, 0},
 		{"loop-pushes-onto-its-parameter", nil, 0},
 		{"loop-pushes-onto-its-parameter-unretained", nil, 1},
 		{"push-joins-its-parameter", nil, 0},

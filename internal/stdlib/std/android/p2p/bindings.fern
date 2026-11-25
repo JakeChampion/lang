@@ -856,272 +856,57 @@ pub function (c: ClassLoaderClass) load_class(e: usize, self: ClassLoader, a0: s
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, broadcast_receiver: BroadcastReceiverClass, intent: IntentClass, intent_filter: IntentFilterClass, looper: LooperClass, parcelable: ParcelableClass, wifi_p2p_manager: WifiP2pManagerClass, wifi_p2p_manager_channel: WifiP2pManager_ChannelClass, wifi_p2p_manager_channel_listener: WifiP2pManager_ChannelListenerClass, wifi_p2p_manager_action_listener: WifiP2pManager_ActionListenerClass, wifi_p2p_config: WifiP2pConfigClass, wifi_p2p_device_list: WifiP2pDeviceListClass, wifi_p2p_device: WifiP2pDeviceClass, wifi_p2p_info: WifiP2pInfoClass, inet_address: InetAddressClass, collection: CollectionClass, class: ClassClass, class_loader: ClassLoaderClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let broadcast_receiver = match (broadcast_receiver_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      return Err(err);
-    },
-  };
-  let intent_filter = match (intent_filter_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let looper = match (looper_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      return Err(err);
-    },
-  };
-  let parcelable = match (parcelable_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_manager = match (wifi_p2p_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_manager_channel = match (wifi_p2p_manager_channel_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_manager_channel_listener = match (wifi_p2p_manager_channel_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_manager_action_listener = match (wifi_p2p_manager_action_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_config = match (wifi_p2p_config_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_device_list = match (wifi_p2p_device_list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      wifi_p2p_config.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_device = match (wifi_p2p_device_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      wifi_p2p_config.release(e);
-      wifi_p2p_device_list.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_p2p_info = match (wifi_p2p_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      wifi_p2p_config.release(e);
-      wifi_p2p_device_list.release(e);
-      wifi_p2p_device.release(e);
-      return Err(err);
-    },
-  };
-  let inet_address = match (inet_address_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      wifi_p2p_config.release(e);
-      wifi_p2p_device_list.release(e);
-      wifi_p2p_device.release(e);
-      wifi_p2p_info.release(e);
-      return Err(err);
-    },
-  };
-  let collection = match (collection_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      wifi_p2p_config.release(e);
-      wifi_p2p_device_list.release(e);
-      wifi_p2p_device.release(e);
-      wifi_p2p_info.release(e);
-      inet_address.release(e);
-      return Err(err);
-    },
-  };
-  let class = match (class_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      wifi_p2p_config.release(e);
-      wifi_p2p_device_list.release(e);
-      wifi_p2p_device.release(e);
-      wifi_p2p_info.release(e);
-      inet_address.release(e);
-      collection.release(e);
-      return Err(err);
-    },
-  };
-  let class_loader = match (class_loader_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      broadcast_receiver.release(e);
-      intent.release(e);
-      intent_filter.release(e);
-      looper.release(e);
-      parcelable.release(e);
-      wifi_p2p_manager.release(e);
-      wifi_p2p_manager_channel.release(e);
-      wifi_p2p_manager_channel_listener.release(e);
-      wifi_p2p_manager_action_listener.release(e);
-      wifi_p2p_config.release(e);
-      wifi_p2p_device_list.release(e);
-      wifi_p2p_device.release(e);
-      wifi_p2p_info.release(e);
-      inet_address.release(e);
-      collection.release(e);
-      class.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let broadcast_receiver = deleted_on_error(e, broadcast_receiver_class(e), made)?;
+  made = made.append(broadcast_receiver.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let intent_filter = deleted_on_error(e, intent_filter_class(e), made)?;
+  made = made.append(intent_filter.class);
+  let looper = deleted_on_error(e, looper_class(e), made)?;
+  made = made.append(looper.class);
+  let parcelable = deleted_on_error(e, parcelable_class(e), made)?;
+  made = made.append(parcelable.class);
+  let wifi_p2p_manager = deleted_on_error(e, wifi_p2p_manager_class(e), made)?;
+  made = made.append(wifi_p2p_manager.class);
+  let wifi_p2p_manager_channel = deleted_on_error(e, wifi_p2p_manager_channel_class(e), made)?;
+  made = made.append(wifi_p2p_manager_channel.class);
+  let wifi_p2p_manager_channel_listener = deleted_on_error(e, wifi_p2p_manager_channel_listener_class(e), made)?;
+  made = made.append(wifi_p2p_manager_channel_listener.class);
+  let wifi_p2p_manager_action_listener = deleted_on_error(e, wifi_p2p_manager_action_listener_class(e), made)?;
+  made = made.append(wifi_p2p_manager_action_listener.class);
+  let wifi_p2p_config = deleted_on_error(e, wifi_p2p_config_class(e), made)?;
+  made = made.append(wifi_p2p_config.class);
+  let wifi_p2p_device_list = deleted_on_error(e, wifi_p2p_device_list_class(e), made)?;
+  made = made.append(wifi_p2p_device_list.class);
+  let wifi_p2p_device = deleted_on_error(e, wifi_p2p_device_class(e), made)?;
+  made = made.append(wifi_p2p_device.class);
+  let wifi_p2p_info = deleted_on_error(e, wifi_p2p_info_class(e), made)?;
+  made = made.append(wifi_p2p_info.class);
+  let inet_address = deleted_on_error(e, inet_address_class(e), made)?;
+  made = made.append(inet_address.class);
+  let collection = deleted_on_error(e, collection_class(e), made)?;
+  made = made.append(collection.class);
+  let class = deleted_on_error(e, class_class(e), made)?;
+  made = made.append(class.class);
+  let class_loader = deleted_on_error(e, class_loader_class(e), made)?;
   return Ok(Classes { context: context, broadcast_receiver: broadcast_receiver, intent: intent, intent_filter: intent_filter, looper: looper, parcelable: parcelable, wifi_p2p_manager: wifi_p2p_manager, wifi_p2p_manager_channel: wifi_p2p_manager_channel, wifi_p2p_manager_channel_listener: wifi_p2p_manager_channel_listener, wifi_p2p_manager_action_listener: wifi_p2p_manager_action_listener, wifi_p2p_config: wifi_p2p_config, wifi_p2p_device_list: wifi_p2p_device_list, wifi_p2p_device: wifi_p2p_device, wifi_p2p_info: wifi_p2p_info, inet_address: inet_address, collection: collection, class: class, class_loader: class_loader });
 }
 

@@ -4965,7 +4965,7 @@ function constant_value(defs: SInst[], v: i32): Option[i64] {
 function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
   if (ins.kind_tag == UNARY && ins.args.len() == 1) {
     if let Some(a) = constant_value(defs, ins.args[0]) {
-      return folded_cast(ins.str, a);
+      return folded_cast(ins, a);
     }
     return None;
   }
@@ -4974,11 +4974,12 @@ function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
   }
   if let Some(a) = constant_value(defs, ins.args[0]) {
     if let Some(b) = constant_value(defs, ins.args[1]) {
+      let k = ins.ir_kind;
       if (ins.imm == 64) {
-        return folded_word(ins.str, a, b);
+        return folded_word(k, a, b);
       }
-      if (non_negative_i32(a) && non_negative_i32(b) && !(ins.str.starts_with("sh") && b > 31i64)) {
-        if let Some(c) = folded_word(ins.str, a, b) {
+      if (non_negative_i32(a) && non_negative_i32(b) && !((k == ir.K_SHL || k == ir.K_SHR_S || k == ir.K_SHR_U) && b > 31i64)) {
+        if let Some(c) = folded_word(k, a, b) {
           if (non_negative_i32(c)) {
             return Some(c);
           }
@@ -4993,54 +4994,55 @@ function non_negative_i32(c: i64): boolean {
   return c >= 0i64 && c <= 2147483647i64;
 }
 
-function folded_word(op: string, a: i64, b: i64): Option[i64] {
-  if (op == "add") {
+function folded_word(k: i32, a: i64, b: i64): Option[i64] {
+  if (k == ir.K_ADD) {
     return Some(a + b);
   }
-  if (op == "sub") {
+  if (k == ir.K_SUB) {
     return Some(a - b);
   }
-  if (op == "mul") {
+  if (k == ir.K_MUL) {
     return Some(a * b);
   }
-  if (op == "and") {
+  if (k == ir.K_AND) {
     return Some(a & b);
   }
-  if (op == "or") {
+  if (k == ir.K_OR) {
     return Some(a | b);
   }
-  if (op == "xor") {
+  if (k == ir.K_XOR) {
     return Some(a ^ b);
   }
   if (b < 0i64 || b > 63i64) {
     return None;
   }
-  if (op == "shl") {
+  if (k == ir.K_SHL) {
     return Some(a << b);
   }
-  if (op == "shr_s") {
+  if (k == ir.K_SHR_S) {
     return Some(a >> b);
   }
-  if (op == "shr_u" && a >= 0i64) {
+  if (k == ir.K_SHR_U && a >= 0i64) {
     return Some(a >> b);
   }
   return None;
 }
 
-function folded_cast(op: string, a: i64): Option[i64] {
-  if (op == "int_cast:i32") {
+function folded_cast(ins: SInst, a: i64): Option[i64] {
+  let to = cast_target(ins);
+  if (to == "i32") {
     return Some(a << 32i64 >> 32i64);
   }
-  if (op == "int_cast:u32" || op == "u32_wrap") {
+  if (to == "u32" || ins.ir_kind == ir.K_U32_WRAP) {
     return Some(a & 4294967295i64);
   }
-  if (op == "int_cast:u16") {
+  if (to == "u16") {
     return Some(a & 65535i64);
   }
-  if (op == "int_cast:i16") {
+  if (to == "i16") {
     return Some(a << 48i64 >> 48i64);
   }
-  if (op == "int_cast:u8") {
+  if (to == "u8") {
     return Some(a & 255i64);
   }
   return None;
@@ -8733,7 +8735,7 @@ function drops(f: SFunc, facts: i32[], ins: SInst): boolean {
 function has_extension(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && (ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16")) {
+      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && (cast_target(ins) == "u8" || cast_target(ins) == "u16" || cast_target(ins) == "i16")) {
         return true;
       }
     }
@@ -8742,14 +8744,14 @@ function has_extension(f: SFunc): boolean {
 }
 
 function signed_extension(ins: SInst): boolean {
-  return ins.kind_tag == UNARY && ins.args.len() == 1 && ins.imm == 0 && (int_resize(ins.ir_kind) || ins.str == "int_cast:i32");
+  return ins.kind_tag == UNARY && ins.args.len() == 1 && ins.imm == 0 && (int_resize(ins.ir_kind) || cast_target(ins) == "i32");
 }
 
 function unsigned_extension(ins: SInst): boolean {
   if (ins.kind_tag != UNARY || ins.args.len() != 1) {
     return false;
   }
-  return ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32" || ins.imm != 0 && int_resize(ins.ir_kind);
+  return ins.ir_kind == ir.K_U32_WRAP || cast_target(ins) == "u32" || ins.imm != 0 && int_resize(ins.ir_kind);
 }
 
 function holds_result(ins: SInst, held: i32): boolean {
@@ -8759,7 +8761,7 @@ function holds_result(ins: SInst, held: i32): boolean {
   if (unsigned_extension(ins)) {
     return (held & EXT_U32) != 0;
   }
-  return ins.kind_tag == UNARY && ins.str == "int_cast:u8" && held == EXT_BYTE;
+  return ins.kind_tag == UNARY && cast_target(ins) == "u8" && held == EXT_BYTE;
 }
 
 function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: SInst): i32 {
@@ -8908,13 +8910,13 @@ function unary_facts(ins: SInst, held: i32): i32 {
     }
     return EXT_U32;
   }
-  if (ins.str == "int_cast:u8" || ins.ir_kind == ir.K_CTZ || ins.ir_kind == ir.K_CLZ || ins.ir_kind == ir.K_POPCOUNT) {
+  if (cast_target(ins) == "u8" || ins.ir_kind == ir.K_CTZ || ins.ir_kind == ir.K_CLZ || ins.ir_kind == ir.K_POPCOUNT) {
     return EXT_BYTE;
   }
-  if (ins.str == "int_cast:u16") {
+  if (cast_target(ins) == "u16") {
     return EXT_I32 | EXT_U32;
   }
-  return if (ins.str == "int_cast:i16") { EXT_I32 } else { 0 };
+  return if (cast_target(ins) == "i16") { EXT_I32 } else { 0 };
 }
 
 // What a load or a byte mask leaves in its register, or 0.
@@ -9277,7 +9279,7 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
 }
 
 function low_wrap(ins: SInst): boolean {
-  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32" || ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16");
+  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_U32_WRAP || cast_target(ins) == "u32" || cast_target(ins) == "u8" || cast_target(ins) == "u16" || cast_target(ins) == "i16");
 }
 
 function low_half_binary(kind: i32): boolean {
@@ -9312,10 +9314,10 @@ function demand_bits(n: i32): i32 {
 }
 
 function low_wrap_bits(ins: SInst): i32 {
-  if (ins.str == "int_cast:u8") {
+  if (cast_target(ins) == "u8") {
     return 8;
   }
-  if (ins.str == "int_cast:u16" || ins.str == "int_cast:i16") {
+  if (cast_target(ins) == "u16" || cast_target(ins) == "i16") {
     return 16;
   }
   return 32;
@@ -9759,8 +9761,8 @@ function low_byte_source(v: i32, defs: SInst[]): i32 {
 }
 
 function low_byte_cast(ins: SInst): boolean {
-  let what = ins.str;
-  return int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16";
+  let to = cast_target(ins);
+  return int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP || to == "u32" || to == "i32" || to == "u16" || to == "i16";
 }
 
 // The position of the byte append that reads the result of the append at
@@ -10627,7 +10629,7 @@ function zero_extends_u32(ins: SInst): boolean {
   if (ins.kind_tag != UNARY || ins.args.len() != 1) {
     return false;
   }
-  if (ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32") {
+  if (ins.ir_kind == ir.K_U32_WRAP || cast_target(ins) == "u32") {
     return true;
   }
   return int_resize(ins.ir_kind) && ins.imm == 1;

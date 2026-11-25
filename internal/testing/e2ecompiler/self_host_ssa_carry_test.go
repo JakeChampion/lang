@@ -600,4 +600,7 @@ func TestSelfHostSSABorrowTakesImmediate(t *testing.T) {
 	if regexp.MustCompile(`(?m)^\s+movq \$-1, %r\w+$`).MatchString(fn) {
 		t.Errorf("add_sub_p loads -1 into a register:\n%s", fn)
 	}
+	if regexp.MustCompile(`(?m)^\s+btq `).MatchString(fn) {
+		t.Errorf("the borrow chain of add_sub_p leaves the flags:\n%s", fn)
+	}
 }

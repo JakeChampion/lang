@@ -1059,296 +1059,59 @@ pub function (c: R_drawableClass) release(e: usize): void {
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, class_loader: ClassLoaderClass, class: ClassClass, service: ServiceClass, service_info: ServiceInfoClass, intent: IntentClass, package_manager: PackageManagerClass, pending_intent: PendingIntentClass, notification_manager: NotificationManagerClass, notification_channel: NotificationChannelClass, notification: NotificationClass, notification_builder: Notification_BuilderClass, notification_action_builder: Notification_Action_BuilderClass, notification_media_style: Notification_MediaStyleClass, power_manager: PowerManagerClass, power_manager_wake_lock: PowerManager_WakeLockClass, wifi_manager: WifiManagerClass, wifi_manager_wifi_lock: WifiManager_WifiLockClass, r_drawable: R_drawableClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let class_loader = match (class_loader_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let class = match (class_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      return Err(err);
-    },
-  };
-  let service = match (service_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      return Err(err);
-    },
-  };
-  let service_info = match (service_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      return Err(err);
-    },
-  };
-  let package_manager = match (package_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let pending_intent = match (pending_intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      return Err(err);
-    },
-  };
-  let notification_manager = match (notification_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      return Err(err);
-    },
-  };
-  let notification_channel = match (notification_channel_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      return Err(err);
-    },
-  };
-  let notification = match (notification_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      return Err(err);
-    },
-  };
-  let notification_builder = match (notification_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      return Err(err);
-    },
-  };
-  let notification_action_builder = match (notification_action_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      notification_builder.release(e);
-      return Err(err);
-    },
-  };
-  let notification_media_style = match (notification_media_style_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      notification_builder.release(e);
-      notification_action_builder.release(e);
-      return Err(err);
-    },
-  };
-  let power_manager = match (power_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      notification_builder.release(e);
-      notification_action_builder.release(e);
-      notification_media_style.release(e);
-      return Err(err);
-    },
-  };
-  let power_manager_wake_lock = match (power_manager_wake_lock_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      notification_builder.release(e);
-      notification_action_builder.release(e);
-      notification_media_style.release(e);
-      power_manager.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_manager = match (wifi_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      notification_builder.release(e);
-      notification_action_builder.release(e);
-      notification_media_style.release(e);
-      power_manager.release(e);
-      power_manager_wake_lock.release(e);
-      return Err(err);
-    },
-  };
-  let wifi_manager_wifi_lock = match (wifi_manager_wifi_lock_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      notification_builder.release(e);
-      notification_action_builder.release(e);
-      notification_media_style.release(e);
-      power_manager.release(e);
-      power_manager_wake_lock.release(e);
-      wifi_manager.release(e);
-      return Err(err);
-    },
-  };
-  let r_drawable = match (r_drawable_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      service.release(e);
-      service_info.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      pending_intent.release(e);
-      notification_manager.release(e);
-      notification_channel.release(e);
-      notification.release(e);
-      notification_builder.release(e);
-      notification_action_builder.release(e);
-      notification_media_style.release(e);
-      power_manager.release(e);
-      power_manager_wake_lock.release(e);
-      wifi_manager.release(e);
-      wifi_manager_wifi_lock.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let class_loader = deleted_on_error(e, class_loader_class(e), made)?;
+  made = made.append(class_loader.class);
+  let class = deleted_on_error(e, class_class(e), made)?;
+  made = made.append(class.class);
+  let service = deleted_on_error(e, service_class(e), made)?;
+  made = made.append(service.class);
+  let service_info = deleted_on_error(e, service_info_class(e), made)?;
+  made = made.append(service_info.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let package_manager = deleted_on_error(e, package_manager_class(e), made)?;
+  made = made.append(package_manager.class);
+  let pending_intent = deleted_on_error(e, pending_intent_class(e), made)?;
+  made = made.append(pending_intent.class);
+  let notification_manager = deleted_on_error(e, notification_manager_class(e), made)?;
+  made = made.append(notification_manager.class);
+  let notification_channel = deleted_on_error(e, notification_channel_class(e), made)?;
+  made = made.append(notification_channel.class);
+  let notification = deleted_on_error(e, notification_class(e), made)?;
+  made = made.append(notification.class);
+  let notification_builder = deleted_on_error(e, notification_builder_class(e), made)?;
+  made = made.append(notification_builder.class);
+  let notification_action_builder = deleted_on_error(e, notification_action_builder_class(e), made)?;
+  made = made.append(notification_action_builder.class);
+  let notification_media_style = deleted_on_error(e, notification_media_style_class(e), made)?;
+  made = made.append(notification_media_style.class);
+  let power_manager = deleted_on_error(e, power_manager_class(e), made)?;
+  made = made.append(power_manager.class);
+  let power_manager_wake_lock = deleted_on_error(e, power_manager_wake_lock_class(e), made)?;
+  made = made.append(power_manager_wake_lock.class);
+  let wifi_manager = deleted_on_error(e, wifi_manager_class(e), made)?;
+  made = made.append(wifi_manager.class);
+  let wifi_manager_wifi_lock = deleted_on_error(e, wifi_manager_wifi_lock_class(e), made)?;
+  made = made.append(wifi_manager_wifi_lock.class);
+  let r_drawable = deleted_on_error(e, r_drawable_class(e), made)?;
   return Ok(Classes { context: context, class_loader: class_loader, class: class, service: service, service_info: service_info, intent: intent, package_manager: package_manager, pending_intent: pending_intent, notification_manager: notification_manager, notification_channel: notification_channel, notification: notification, notification_builder: notification_builder, notification_action_builder: notification_action_builder, notification_media_style: notification_media_style, power_manager: power_manager, power_manager_wake_lock: power_manager_wake_lock, wifi_manager: wifi_manager, wifi_manager_wifi_lock: wifi_manager_wifi_lock, r_drawable: r_drawable });
 }
 

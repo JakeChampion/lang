@@ -5053,6 +5053,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    memory.copy\n    i32.const 0\n");
   } else if (o.kind_tag == ir.K_MEMSET) {
     parts = parts.append("    memory.fill\n    i32.const 0\n");
+  } else if (o.kind_tag == ir.K_FREE && cx.san) {
+    parts = parts.append("    call $__fern_san_raw_free\n    i32.const 0\n");
   } else if (o.kind_tag == ir.K_FREE) {
     parts = parts.append("    call $__fern_raw_free\n    i32.const 0\n");
   } else if (ir.is_device_kind(o.kind_tag)) {
@@ -9245,7 +9247,8 @@ function alloc_body_name(h: WasmHeap): string {
 }
 
 // Under -sanitize each block carries a redzone: the bytes of its size class
-// past the request and the 16 bytes after the class hold the poison pattern
+// from the word that holds the end of the request and the 16 bytes after the
+// class hold the poison pattern
 // from its allocation to its release. A block grows in place only inside its
 // class, so the end of the class does not move. $__fern_san_class gives the bytes of the class of a
 // request, as the allocator rounds it. The census counts the request alone.
@@ -9270,7 +9273,7 @@ function san_redzone_funcs(h: WasmHeap, flc: string): string {
   }
   o = o + "    (i64.store (i32.add (local.get $p) (local.get $c)) (i64.const " + san_poison64() + "))\n";
   o = o + "    (i64.store (i32.add (i32.add (local.get $p) (local.get $c)) (i32.const 8)) (i64.const " + san_poison64() + "))\n";
-  o += "    (call $__fern_san_fill (i32.add (local.get $p) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))) (i32.sub (local.get $c) (i32.and (i32.add (local.get $n) (i32.const 7)) (i32.const -8))))\n";
+  o += "    (call $__fern_san_fill (i32.add (local.get $p) (i32.and (local.get $n) (i32.const -8))) (i32.sub (local.get $c) (i32.and (local.get $n) (i32.const -8))))\n";
   o += "    (local.set $l (i32.add (i32.add (local.get $p) (local.get $c)) (i32.const 16)))\n";
   o += "    (i32.store (local.get $l) (global.get $__fern_san_live))\n";
   o += "    (i32.store (i32.add (local.get $l) (i32.const 4)) (i32.const 0))\n";
@@ -9287,6 +9290,13 @@ function san_redzone_funcs(h: WasmHeap, flc: string): string {
   o = o + "      (i64.store (local.get $p) (i64.const " + san_poison64() + "))\n";
   o += "      (local.set $p (i32.add (local.get $p) (i32.const 8)))\n";
   o += "      (br $sf))))\n";
+  // A raw release of `$n` bytes: the bytes of the last word past the request
+  // hold the poison from the allocation, so a byte that lost it was written
+  // past the end of the block.
+  o += "  (func $__fern_san_raw_free (param $p i32) (param $n i32)\n";
+  o += "    (if (i32.and (i32.ne (local.get $p) (i32.const 0)) (i32.ne (i32.and (local.get $n) (i32.const 7)) (i32.const 0))) (then\n";
+  o = o + "      (if (i64.ne (i64.const 0) (i64.and (i64.xor (i64.load (i32.add (local.get $p) (i32.and (local.get $n) (i32.const -8)))) (i64.const " + san_poison64() + ")) (i64.shl (i64.const -1) (i64.extend_i32_u (i32.shl (i32.and (local.get $n) (i32.const 7)) (i32.const 3)))))) (then (call $__fern_san_hbo)))))\n";
+  o += "    (call $__fern_raw_free (local.get $p) (local.get $n)))\n";
   o += "  (func $__fern_raw_alloc_san (param $n i32) (result i32)\n";
   o += "    (local $p i32)\n";
   o += "    (local.set $p (call $__fern_alloc (local.get $n)))\n";

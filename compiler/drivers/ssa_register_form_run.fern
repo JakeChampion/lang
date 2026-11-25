@@ -114,7 +114,7 @@ function counted_nulls(): ssa.SFunc {
 }
 
 function wide(v: i32, args: i32[], str: string): ssa.SInst {
-  return ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: v, args: args, imm: 64, str: str };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(ssa.BINARY, str), kind_tag: ssa.BINARY, result: v, args: args, imm: 64, str: str };
 }
 
 // Operations of constants: 32-bit ones in range and out of it, 64-bit ones,

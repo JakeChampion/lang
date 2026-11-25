@@ -381,51 +381,31 @@ pub function (c: MediaFormatClass) set_integer(e: usize, self: MediaFormat, a0: 
 // The struct of IDs of each class of this module.
 pub struct Classes { media_codec_list: MediaCodecListClass, media_codec_info: MediaCodecInfoClass, media_codec_info_codec_capabilities: MediaCodecInfo_CodecCapabilitiesClass, media_codec_info_codec_profile_level: MediaCodecInfo_CodecProfileLevelClass, media_format: MediaFormatClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let media_codec_list = match (media_codec_list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let media_codec_info = match (media_codec_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_codec_list.release(e);
-      return Err(err);
-    },
-  };
-  let media_codec_info_codec_capabilities = match (media_codec_info_codec_capabilities_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_codec_list.release(e);
-      media_codec_info.release(e);
-      return Err(err);
-    },
-  };
-  let media_codec_info_codec_profile_level = match (media_codec_info_codec_profile_level_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_codec_list.release(e);
-      media_codec_info.release(e);
-      media_codec_info_codec_capabilities.release(e);
-      return Err(err);
-    },
-  };
-  let media_format = match (media_format_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      media_codec_list.release(e);
-      media_codec_info.release(e);
-      media_codec_info_codec_capabilities.release(e);
-      media_codec_info_codec_profile_level.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let media_codec_list = deleted_on_error(e, media_codec_list_class(e), made)?;
+  made = made.append(media_codec_list.class);
+  let media_codec_info = deleted_on_error(e, media_codec_info_class(e), made)?;
+  made = made.append(media_codec_info.class);
+  let media_codec_info_codec_capabilities = deleted_on_error(e, media_codec_info_codec_capabilities_class(e), made)?;
+  made = made.append(media_codec_info_codec_capabilities.class);
+  let media_codec_info_codec_profile_level = deleted_on_error(e, media_codec_info_codec_profile_level_class(e), made)?;
+  made = made.append(media_codec_info_codec_profile_level.class);
+  let media_format = deleted_on_error(e, media_format_class(e), made)?;
   return Ok(Classes { media_codec_list: media_codec_list, media_codec_info: media_codec_info, media_codec_info_codec_capabilities: media_codec_info_codec_capabilities, media_codec_info_codec_profile_level: media_codec_info_codec_profile_level, media_format: media_format });
 }
 

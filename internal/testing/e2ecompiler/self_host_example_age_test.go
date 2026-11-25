@@ -815,7 +815,9 @@ func ageGateBinary(t *testing.T, runner []string, cli, stdlib, target string) st
 		t.Fatal(err)
 	}
 	bin := filepath.Join(t.TempDir(), "age")
-	if msg, err := runX86_64Bin(runner, cli, "-target", target, "-o", bin, src, stdlib).CombinedOutput(); err != nil {
+	build := runX86_64Bin(runner, cli, "-target", target, "-o", bin, src, stdlib)
+	build.Env = ctBuildEnv()
+	if msg, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("self-host CLI -target %s age: %v\n%s", target, err, msg)
 	}
 	if err := os.Chmod(bin, 0o755); err != nil {

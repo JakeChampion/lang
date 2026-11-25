@@ -104,6 +104,21 @@ function main(): i32 { return page(1) - 4000 + odd(1) - 4090 + ((wide(1i64) % 10
 	})
 }
 
+func TestSelfHostAndIdentityFoldsArm64(t *testing.T) {
+	runArm64ShapeCases(t, []shapeCase{
+		{
+			name: "and",
+			src:  andIdentitySrc,
+			want: 15,
+			lacks: map[string][]string{
+				"ones64": {`\n    and `},
+				"ones32": {`\n    and `},
+				"zero64": {`\n    and `},
+			},
+		},
+	})
+}
+
 func TestSelfHostI64ConstantTakesMovzFormArm64(t *testing.T) {
 	runArm64ShapeCases(t, []shapeCase{
 		{

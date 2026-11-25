@@ -17,7 +17,7 @@ The result is the text of one Fern module. For a class such as `android/content/
 
 The module also has a struct `Classes` with the struct of IDs of each class. `classes` makes it, and its `release` deletes each reference. An app makes it one time and gives it to the functions that call Java.
 
-Each lookup of `intent_class` and of `classes` can fail, so each one is a branch. These functions have an `allow` comment of the linter for their complexity.
+Each lookup of `intent_class` and of `classes` can fail, so each one is a branch. These functions have an `allow` comment of the linter for their complexity. `classes` gives each lookup to one function, which deletes the classes made before a lookup that fails. Thus `classes` has one branch for each class, and one line of text for each class.
 
 The members of a class are in the order of their names, so the module does not change with the order of the JAR. A function has the name of its Java member in snake case. A constructor has the name `new`. Two methods of a request can have one name. Each function then also has the types of its parameters, as in `put_extra_string_int`.
 
@@ -877,7 +877,8 @@ function class_text(classes: classfile.Class[], r: Request, bound: string[]): Re
 
 // The struct `Classes`, which holds the struct of IDs of each class, the
 // function that makes it, and its `release`. When a class of the module
-// gives an error, the function releases the classes that it made before.
+// gives an error, the function deletes the classes that it made before.
+// `e` and `made` are names of the function, so no class takes them.
 function all_classes(bound: string[]): string {
   let names: string[] = [];
   let fields = "";
@@ -886,24 +887,22 @@ function all_classes(bound: string[]): string {
   let releases = "";
   for class in bound {
     let t = type_name(class);
-    let name = free_name(snake(t), names);
-    let undo = "";
-    for made in names {
-      undo += "      " + made + ".release(e);\n";
-    }
-    makes += "  let " + name + " = match (" + snake(t) + "_class(e)) {\n    Ok(c) => c,\n    Err(err) => {\n" + undo + "      return Err(err);\n    },\n  };\n";
+    let name = free_name(snake(t), names.append("e").append("made"));
     if (names.len() > 0) {
+      makes += "  made = made.append(" + names[names.len() - 1] + ".class);\n";
       fields += ", ";
       values += ", ";
     }
+    makes += "  let " + name + " = deleted_on_error(e, " + snake(t) + "_class(e), made)?;\n";
     fields += name + ": " + t + "Class";
     values += name + ": " + name;
     releases += "  c." + name + ".release(e);\n";
     names = names.append(name);
   }
   let out = "// The struct of IDs of each class of this module.\npub struct Classes { " + fields + " }\n\n";
+  out += "// `r`, after the deletion of the classes `made` if `r` is an error.\nfunction deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {\n  if let Err(_) = r {\n    for class in made {\n      jni.delete_global_ref(e, class);\n    }\n  }\n  return r;\n}\n\n";
   out += "// Makes the struct of IDs of each class. Call it one time, and call\n// `release` when the app does not call Java again. One lookup for each\n// class, and each one can fail.\n// fern-lint: allow cyclomatic-complexity\n";
-  out += "pub function classes(e: usize): Result[Classes, jni.JavaError] {\n" + makes + "  return Ok(Classes { " + values + " });\n}\n\n";
+  out += "pub function classes(e: usize): Result[Classes, jni.JavaError] {\n  let made: usize[] = [];\n" + makes + "  return Ok(Classes { " + values + " });\n}\n\n";
   return out + "// Deletes the reference to each class. Do not use `c` after this call.\npub function (c: Classes) release(e: usize): void {\n" + releases + "}\n\n";
 }
 

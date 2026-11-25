@@ -503,13 +503,9 @@ function wanted(w_in: Walk, c: string): (Walk, boolean) {
   }
   let g = w.opts.grep;
   if (g.authors.len() + g.committers.len() + g.body.len() > 0) {
-    let got = store.read(w.g.store, c);
-    w = Walk { ...w, g: walk.Graph { ...w.g, store: got.store } };
-    let body: u8[] = match (got.object) {
-      Ok(o) => o.body,
-      Err(_) => [],
-    };
-    if (!commit_match(g, body)) {
+    let (g2, kept) = walk.commit(w.g, c);
+    w = Walk { ...w, g: g2 };
+    if (!commit_match(g, kept.body)) {
       return (w, false);
     }
   }

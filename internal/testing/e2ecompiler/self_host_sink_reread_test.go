@@ -607,3 +607,124 @@ function main(): i32 {
 func TestSelfHostRebuiltAfterJoinTakesTheRead(t *testing.T) {
 	runRereadProgram(t, "rebuilt_after_join.fern", rebuiltAfterJoinProg)
 }
+
+// A spliced call chain takes a payload out of an array element and updates
+// four nested records of it. The payload lives past the block that stores
+// the element back, and the last update spends it. So that block reads the
+// element again, and the plan reuses the box of the element and of each
+// record (#14440).
+const splicedChainTakesTheElementProg = `import "std/array";
+import "std/result";
+
+struct P { key: u8[], seq: u64, suite: i32 }
+struct Conn { write: P, other: u8[], quic: boolean }
+struct Server { conn: Conn, state: i32, names: u8[] }
+struct Session { server: Server, tag: u8[] }
+enum Tls { Plain, Secured(Session) }
+struct Conns { tls: Tls[], socks: i32[], out: u8[] }
+struct Sealed { record: u8[], next: P }
+struct Wrote { conn: Conn, bytes: u8[] }
+struct SStep { server: Server, output: u8[] }
+struct Step { session: Session, output: u8[] }
+
+@noinline
+function seal_in_place(p: P, own buf: u8[]): u8[] {
+  return buf.with(0, p.key[0]);
+}
+
+function advanced(p: P): P {
+  return P { ...p, seq: p.seq + 1u64 };
+}
+
+function seal(p: P, own buf: u8[]): u8[] {
+  if (p.suite == 1) {
+    return seal_in_place(p, buf);
+  }
+  return seal_in_place(p, buf.with(1, 7u8));
+}
+
+function seal_framed(p: P, own buf: u8[]): Result[Sealed, i32] {
+  if (p.seq == 0xffffffffffffffffu64) {
+    return Err(1);
+  }
+  let r = seal(p, buf);
+  return Ok(Sealed { record: r, next: advanced(p) });
+}
+
+function cwrite(c: Conn, own buf: u8[]): Result[Wrote, i32] {
+  if (c.quic) {
+    return Err(2);
+  }
+  match (seal_framed(c.write, buf)) {
+    Ok(s) => {
+      return Ok(Wrote { conn: Conn { ...c, write: s.next }, bytes: s.record });
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+function swrite(s: Server, own buf: u8[]): Result[SStep, i32] {
+  if (s.state != 1) {
+    return Err(3);
+  }
+  let w = cwrite(s.conn, buf)?;
+  return Ok(SStep { server: Server { ...s, conn: w.conn }, output: w.bytes });
+}
+
+function sess_write(s: Session, own buf: u8[]): Result[Step, i32] {
+  let st = swrite(s.server, buf)?;
+  return Ok(Step { session: Session { ...s, server: st.server }, output: st.output });
+}
+
+@noinline
+function send_out(own c: Conns, at: i32, own framed: u8[]): Conns {
+  match (c.tls[at]) {
+    Secured(sess) => {
+      c = Conns { ...c, tls: c.tls.with(at, Plain) };
+      match (sess_write(sess, framed)) {
+        Ok(step) => {
+          return Conns { ...c, tls: c.tls.with(at, Secured(step.session)), out: step.output };
+        },
+        Err(_) => {
+          return c;
+        }
+      }
+    },
+    _ => {}
+  }
+  return c;
+}
+
+function main(): i32 {
+  let p = P { key: [9u8, 8u8], seq: 0u64, suite: 1 };
+  let sess = Session { server: Server { conn: Conn { write: p, other: [1u8], quic: false }, state: 1, names: [2u8] }, tag: [3u8] };
+  let c = Conns { tls: [Plain, Secured(sess)], socks: [1, 2], out: [] };
+  let before = __heap_alloc_count();
+  for r in 0..1000 {
+    let framed: u8[] = [0u8, 0u8, 0u8];
+    c = send_out(c, 1, framed);
+  }
+  let n = __heap_alloc_count() - before;
+  let seq: u64 = 0u64;
+  match (c.tls[1]) {
+    Secured(s) => { seq = s.server.conn.write.seq; },
+    _ => {}
+  }
+  if (seq != 1000u64 || c.out[0] != 9u8) {
+    return 1;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  if (n > 1100 as i64) {
+    return 2;
+  }
+  return 0;
+}
+`
+
+func TestSelfHostSplicedChainTakesTheElement(t *testing.T) {
+	runRereadProgram(t, "spliced_chain_takes_the_element.fern", splicedChainTakesTheElementProg)
+}

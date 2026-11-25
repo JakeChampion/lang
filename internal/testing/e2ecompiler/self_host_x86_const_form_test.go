@@ -171,3 +171,35 @@ function main(): i32 {
 		},
 	})
 }
+
+// A constant `and` with all ones or with zero folds. A 32-bit mask of a u32 sum stays.
+const andIdentitySrc = `@noinline function ones64(x: u64): u64 { return 0xffffffffffffffffu64 & x; }
+@noinline function ones32(a: i32, b: i32): i32 { return (a + b) & -1i32; }
+@noinline function zero64(x: u64, y: u64): u64 { return x + (0u64 & y); }
+@noinline function low32(a: u32, b: u32): u64 { return ((a + b) & 0xffffffffu32) as u64; }
+function main(): i32 {
+    let r: i32 = 0;
+    if (ones64(18446744073709551615u64) == 18446744073709551615u64) { r = r + 1; }
+    if (ones32(2000000000, 2000000000) == 0 - 294967296) { r = r + 2; }
+    if (zero64(5u64, 18446744073709551615u64) == 5u64) { r = r + 4; }
+    if (low32(4000000000u32, 4000000000u32) == 3705032704u64) { r = r + 8; }
+    return r;
+}`
+
+func TestSelfHostAndIdentityFoldsX86_64(t *testing.T) {
+	runX86ShapeCases(t, []shapeCase{
+		{
+			name: "and",
+			src:  andIdentitySrc,
+			want: 15,
+			has: map[string][]string{
+				"low32": {`\n    andq %r[a-z0-9]+, %r[a-z0-9]+\n`},
+			},
+			lacks: map[string][]string{
+				"ones64": {`and`, `\$-1`},
+				"ones32": {`and`, `\$-1`},
+				"zero64": {`and`, `\$0,`},
+			},
+		},
+	})
+}

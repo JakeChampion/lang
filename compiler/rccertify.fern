@@ -1176,7 +1176,9 @@ function call_origin(w: Walk, ins: ssa.SInst): i32 {
       return org_none();
     }
     if (s.result == rcsigs.result_marked()) {
-      if (ins.imm == 1) {
+      // An unmarked call that returns its operand or a new box holds a
+      // unit only where the box is new (`kept_or_same_twin`).
+      if (ins.imm == 1 || ins.imm == 0 && s.effect == rcsigs.effect_kept_or_same()) {
         return org_fresh();
       }
       if (ins.imm == 3) {
@@ -1529,7 +1531,10 @@ function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, l
   }
   let base = w.root[ld.args[0]];
   for k in st.by_base[base] {
-    if (st.zero[k] || !same_slot(w, st, k, ld) || stores_back(w, st, k, ld)) {
+    if (!same_slot(w, st, k, ld) || stores_back(w, st, k, ld)) {
+      continue;
+    }
+    if (st.zero[k] && !spent_before(w, bi, pos, st.block[k], st.at[k], w.root[ld.result])) {
       continue;
     }
     if (st.block[k] == bi) {
@@ -2058,7 +2063,7 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   if (st.kind_tag == ssa.ST_AT) {
     return ld.kind_tag == ssa.LD_AT && ld.imm == st.imm;
   }
-  return ld.kind_tag == ssa.ARR_AT && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
+  return ld.kind_tag == ssa.ARR_AT && ld.args.len() >= 2 && st.args.len() >= 3 && index_key(w, ld.args[1]) == index_key(w, st.args[1]);
 }
 
 function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i32, st: ssa.SInst): i32 {
@@ -2084,7 +2089,7 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
   let avoided = !after0[lb];
   for li in 0..stop {
     let ld = w.f.blocks[lb].insts[li];
-    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
+    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st) && !spent_before(w, lb, li, sb, si, w.root[ld.result])) {
       pick = Picked { ...pick, any: nearer(w, dom, sb, pick.any, ld.result) };
       if (!avoided) {
         after = reached_avoiding(w, sb, lb);
@@ -2096,6 +2101,24 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
     }
   }
   return pick;
+}
+
+// Whether the code between the load at (lb, li) and the store at (sb, si)
+// spends `root`. Then null in the slot is the `None` of a niche option that
+// overwrites the slot, and not a take of the load.
+function spent_before(w: Walk, lb: i32, li: i32, sb: i32, si: i32, root: i32): boolean {
+  let t = Touch { touched: __alloc_bool(w.f.nvals) };
+  let insts = w.f.blocks[lb].insts;
+  let end = if (lb == sb) { si } else { insts.len() };
+  for k in li + 1..end {
+    t = touch_inst(t, w, insts[k]);
+  }
+  if (lb != sb) {
+    for k in 0..si {
+      t = touch_inst(t, w, w.f.blocks[sb].insts[k]);
+    }
+  }
+  return t.touched[root];
 }
 
 function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
@@ -2794,8 +2817,10 @@ function apply_effect(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, effe
 function apply_call(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): Progress {
   let s = w.sigs.lookup(ins.str);
   if (s.known) {
+    let before = kept_operand_state(p, w, ins, s);
     p = apply_sig(p, w, ins, block, s);
-    return define(p, w, ins.result, block);
+    p = define(p, w, ins.result, block);
+    return kept_or_same_twin(p, w, ins, s, before);
   }
   let a = w.abis.lookup(ins.str);
   if (!a.known) {
@@ -2865,6 +2890,54 @@ function apply_named_op(own p: Progress, w: Walk, ins: ssa.SInst, block: i32): P
     p = push_twin(p, w, ins, s, operand, block);
   }
   return p;
+}
+
+// The state of the operand of an unmarked call that returns its operand or a
+// new box (effect_kept_or_same), before the call. -2 for any other call.
+function kept_operand_state(p: Progress, w: Walk, ins: ssa.SInst, s: rcsigs.Sig): i32 {
+  if (s.effect != rcsigs.effect_kept_or_same() || s.result != rcsigs.result_marked() || ins.imm != 0 && ins.imm != 1 || s.arg < 0 || s.arg >= ins.args.len() || ins.args[s.arg] < 0 || w.derived[ins.args[s.arg]]) {
+    return -2;
+  }
+  let k = w.idx[w.root[ins.args[s.arg]]];
+  if (k < 0) {
+    return absent();
+  }
+  return p.state[k];
+}
+
+// The lowering leaves such a call unmarked where the operand may be a box
+// that the frame does not hold. The result is the operand's box, which holds
+// no unit of the frame, or a new box with its fresh unit, as for a push
+// (`push_twin`). Where no key names the box, the result is unproved.
+function kept_or_same_twin(own p: Progress, w: Walk, ins: ssa.SInst, s: rcsigs.Sig, before: i32): Progress {
+  if (before == -2 || ins.result < 0) {
+    return p;
+  }
+  let kr = w.idx[w.root[ins.result]];
+  if (kr < 0) {
+    return p;
+  }
+  // A marked result holds its fresh unit, and a test against the operand
+  // decides the rest. Where the operand is not the box of a key, neither is
+  // the result.
+  if (ins.imm == 1) {
+    if (is_twin(before) && twin_same(before) == no_side() && box_key(p, w, twin_key(before)) && p.state[kr] >= 0 && p.state[kr] <= cap()) {
+      return Progress { ...p, state: p.state.with(kr, twin(twin_key(before), no_side(), p.state[kr])) };
+    }
+    return p;
+  }
+  let r = w.root[ins.args[s.arg]];
+  let target = -1;
+  if (is_twin(before) && twin_apart(before) == no_side() && box_key(p, w, twin_key(before))) {
+    target = twin_key(before);
+  } else if (box_key(p, w, r) && r != w.root[ins.result]) {
+    target = r;
+  }
+  if (target < 0) {
+    return Progress { ...p, state: p.state.with(kr, maybe()) };
+  }
+  p = keyed(p, target);
+  return Progress { ...p, state: p.state.with(kr, twin(target, 0, 1)) };
 }
 
 // A push grows its array in place and returns it, or returns a new box.
@@ -3516,6 +3589,14 @@ function twin_on_edge(own p: Progress, w: Walk, x: i32, y: i32, equal: boolean):
   return Progress { ...p, state: p.state.with(kx, twin(o, same, no_side())) };
 }
 
+// `c` units on the one side of the twin `s`.
+function on_side_of(s: i32, c: i32): i32 {
+  if (twin_same(s) == no_side()) {
+    return twin(twin_key(s), no_side(), c);
+  }
+  return twin(twin_key(s), c, no_side());
+}
+
 function took_operand(own p: Progress, w: Walk, result: i32, operand: i32): Progress {
   let d = def_in(w, result);
   if (d.kind_tag != ssa.CALL || result < 0 || operand < 0) {
@@ -3527,10 +3608,18 @@ function took_operand(own p: Progress, w: Walk, result: i32, operand: i32): Prog
   }
   let kr = w.idx[w.root[result]];
   let ko = w.idx[w.root[operand]];
-  if (kr < 0 || ko < 0 || kr == ko || p.state[kr] != 1) {
+  if (kr < 0 || ko < 0 || kr == ko || flat(p.state[kr]) != 1) {
     return p;
   }
-  return Progress { ...p, state: p.state.with(kr, p.state[ko]).with(ko, 0) };
+  let held = p.state[ko];
+  if (is_twin(p.state[kr])) {
+    // A result that is not the box of another key keeps that.
+    if (flat(held) < 0) {
+      return p;
+    }
+    held = on_side_of(p.state[kr], flat(held));
+  }
+  return Progress { ...p, state: p.state.with(kr, held).with(ko, 0) };
 }
 
 function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {

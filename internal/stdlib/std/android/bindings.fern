@@ -1621,591 +1621,79 @@ pub function (c: Build_VERSIONClass) sdk_int(e: usize): Result[i32, jni.JavaErro
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass, window: WindowClass, view: ViewClass, view_on_apply_window_insets_listener: View_OnApplyWindowInsetsListenerClass, window_insets: WindowInsetsClass, window_insets_type: WindowInsets_TypeClass, insets: InsetsClass, on_back_invoked_dispatcher: OnBackInvokedDispatcherClass, on_back_invoked_callback: OnBackInvokedCallbackClass, window_manager: WindowManagerClass, window_manager_layout_params: WindowManager_LayoutParamsClass, display: DisplayClass, display_mode: Display_ModeClass, picture_in_picture_params_builder: PictureInPictureParams_BuilderClass, rational: RationalClass, input_device: InputDeviceClass, system: SystemClass, build_version: Build_VERSIONClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let activity = match (activity_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let file = match (file_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      return Err(err);
-    },
-  };
-  let package_manager = match (package_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let key_character_map = match (key_character_map_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      return Err(err);
-    },
-  };
-  let settings_system = match (settings_system_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      return Err(err);
-    },
-  };
-  let audio_manager = match (audio_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      return Err(err);
-    },
-  };
-  let time_zone = match (time_zone_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      return Err(err);
-    },
-  };
-  let resources = match (resources_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      return Err(err);
-    },
-  };
-  let configuration = match (configuration_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      return Err(err);
-    },
-  };
-  let locale_list = match (locale_list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      return Err(err);
-    },
-  };
-  let window = match (window_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      return Err(err);
-    },
-  };
-  let view = match (view_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      return Err(err);
-    },
-  };
-  let view_on_apply_window_insets_listener = match (view_on_apply_window_insets_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      return Err(err);
-    },
-  };
-  let window_insets = match (window_insets_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      return Err(err);
-    },
-  };
-  let window_insets_type = match (window_insets_type_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      return Err(err);
-    },
-  };
-  let insets = match (insets_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      return Err(err);
-    },
-  };
-  let on_back_invoked_dispatcher = match (on_back_invoked_dispatcher_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      return Err(err);
-    },
-  };
-  let on_back_invoked_callback = match (on_back_invoked_callback_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      return Err(err);
-    },
-  };
-  let window_manager = match (window_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      return Err(err);
-    },
-  };
-  let window_manager_layout_params = match (window_manager_layout_params_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      return Err(err);
-    },
-  };
-  let display = match (display_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      window_manager_layout_params.release(e);
-      return Err(err);
-    },
-  };
-  let display_mode = match (display_mode_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      window_manager_layout_params.release(e);
-      display.release(e);
-      return Err(err);
-    },
-  };
-  let picture_in_picture_params_builder = match (picture_in_picture_params_builder_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      window_manager_layout_params.release(e);
-      display.release(e);
-      display_mode.release(e);
-      return Err(err);
-    },
-  };
-  let rational = match (rational_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      window_manager_layout_params.release(e);
-      display.release(e);
-      display_mode.release(e);
-      picture_in_picture_params_builder.release(e);
-      return Err(err);
-    },
-  };
-  let input_device = match (input_device_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      window_manager_layout_params.release(e);
-      display.release(e);
-      display_mode.release(e);
-      picture_in_picture_params_builder.release(e);
-      rational.release(e);
-      return Err(err);
-    },
-  };
-  let system = match (system_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      window_manager_layout_params.release(e);
-      display.release(e);
-      display_mode.release(e);
-      picture_in_picture_params_builder.release(e);
-      rational.release(e);
-      input_device.release(e);
-      return Err(err);
-    },
-  };
-  let build_version = match (build_version_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      activity.release(e);
-      file.release(e);
-      intent.release(e);
-      package_manager.release(e);
-      key_character_map.release(e);
-      settings_system.release(e);
-      audio_manager.release(e);
-      time_zone.release(e);
-      resources.release(e);
-      configuration.release(e);
-      locale_list.release(e);
-      window.release(e);
-      view.release(e);
-      view_on_apply_window_insets_listener.release(e);
-      window_insets.release(e);
-      window_insets_type.release(e);
-      insets.release(e);
-      on_back_invoked_dispatcher.release(e);
-      on_back_invoked_callback.release(e);
-      window_manager.release(e);
-      window_manager_layout_params.release(e);
-      display.release(e);
-      display_mode.release(e);
-      picture_in_picture_params_builder.release(e);
-      rational.release(e);
-      input_device.release(e);
-      system.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let activity = deleted_on_error(e, activity_class(e), made)?;
+  made = made.append(activity.class);
+  let file = deleted_on_error(e, file_class(e), made)?;
+  made = made.append(file.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let package_manager = deleted_on_error(e, package_manager_class(e), made)?;
+  made = made.append(package_manager.class);
+  let key_character_map = deleted_on_error(e, key_character_map_class(e), made)?;
+  made = made.append(key_character_map.class);
+  let settings_system = deleted_on_error(e, settings_system_class(e), made)?;
+  made = made.append(settings_system.class);
+  let audio_manager = deleted_on_error(e, audio_manager_class(e), made)?;
+  made = made.append(audio_manager.class);
+  let time_zone = deleted_on_error(e, time_zone_class(e), made)?;
+  made = made.append(time_zone.class);
+  let resources = deleted_on_error(e, resources_class(e), made)?;
+  made = made.append(resources.class);
+  let configuration = deleted_on_error(e, configuration_class(e), made)?;
+  made = made.append(configuration.class);
+  let locale_list = deleted_on_error(e, locale_list_class(e), made)?;
+  made = made.append(locale_list.class);
+  let window = deleted_on_error(e, window_class(e), made)?;
+  made = made.append(window.class);
+  let view = deleted_on_error(e, view_class(e), made)?;
+  made = made.append(view.class);
+  let view_on_apply_window_insets_listener = deleted_on_error(e, view_on_apply_window_insets_listener_class(e), made)?;
+  made = made.append(view_on_apply_window_insets_listener.class);
+  let window_insets = deleted_on_error(e, window_insets_class(e), made)?;
+  made = made.append(window_insets.class);
+  let window_insets_type = deleted_on_error(e, window_insets_type_class(e), made)?;
+  made = made.append(window_insets_type.class);
+  let insets = deleted_on_error(e, insets_class(e), made)?;
+  made = made.append(insets.class);
+  let on_back_invoked_dispatcher = deleted_on_error(e, on_back_invoked_dispatcher_class(e), made)?;
+  made = made.append(on_back_invoked_dispatcher.class);
+  let on_back_invoked_callback = deleted_on_error(e, on_back_invoked_callback_class(e), made)?;
+  made = made.append(on_back_invoked_callback.class);
+  let window_manager = deleted_on_error(e, window_manager_class(e), made)?;
+  made = made.append(window_manager.class);
+  let window_manager_layout_params = deleted_on_error(e, window_manager_layout_params_class(e), made)?;
+  made = made.append(window_manager_layout_params.class);
+  let display = deleted_on_error(e, display_class(e), made)?;
+  made = made.append(display.class);
+  let display_mode = deleted_on_error(e, display_mode_class(e), made)?;
+  made = made.append(display_mode.class);
+  let picture_in_picture_params_builder = deleted_on_error(e, picture_in_picture_params_builder_class(e), made)?;
+  made = made.append(picture_in_picture_params_builder.class);
+  let rational = deleted_on_error(e, rational_class(e), made)?;
+  made = made.append(rational.class);
+  let input_device = deleted_on_error(e, input_device_class(e), made)?;
+  made = made.append(input_device.class);
+  let system = deleted_on_error(e, system_class(e), made)?;
+  made = made.append(system.class);
+  let build_version = deleted_on_error(e, build_version_class(e), made)?;
   return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list, window: window, view: view, view_on_apply_window_insets_listener: view_on_apply_window_insets_listener, window_insets: window_insets, window_insets_type: window_insets_type, insets: insets, on_back_invoked_dispatcher: on_back_invoked_dispatcher, on_back_invoked_callback: on_back_invoked_callback, window_manager: window_manager, window_manager_layout_params: window_manager_layout_params, display: display, display_mode: display_mode, picture_in_picture_params_builder: picture_in_picture_params_builder, rational: rational, input_device: input_device, system: system, build_version: build_version });
 }
 

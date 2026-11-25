@@ -345,7 +345,8 @@ function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // Under -sanitize each block carries a redzone: the words of its size class
-// past the request and the two words after the class hold the poison pattern
+// from the word that holds the end of the request and the two words after
+// the class hold the poison pattern
 // from its allocation to its release. A block grows in place only inside its
 // class, so the end of the class does not move.
 function san_redzone_on(s: asmcore.EmitState): boolean {
@@ -362,15 +363,16 @@ function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
 
 // The allocation side of the redzone: %rdi is the request in bytes. The
 // block takes its class and six words more. The two words after the class
-// and the words of the class past the request get the poison. The four words
-// after them link the block into __fern_san_live: the next and the previous
-// link, the words of the class and the words of the request.
+// and the words of the class from the word that holds the end of the request
+// get the poison. The four words after them link the block into
+// __fern_san_live: the next and the previous link, the words of the class and
+// the words of the request.
 function san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    pushq %rsi\n    leaq 7(%rdi), %rsi\n    shrq $3, %rsi\n    pushq %rsi\n    call __fern_san_class\n    pushq %rsi\n    leaq 48(,%rsi,8), %rdi\n");
+  s = s.write("    pushq %rsi\n    pushq %rdi\n    leaq 7(%rdi), %rsi\n    shrq $3, %rsi\n    call __fern_san_class\n    pushq %rsi\n    leaq 48(,%rsi,8), %rdi\n");
   s = s.write("    call __fern_alloc_inner\n    popq %rsi\n    pushq %rdx\n    pushq %rcx\n    movabs $" + rc_poison64() + ", %rdx\n");
-  s = s.write("    movq %rdx, (%rax,%rsi,8)\n    movq %rdx, 8(%rax,%rsi,8)\n    movq 16(%rsp), %rcx\n");
+  s = s.write("    movq %rdx, (%rax,%rsi,8)\n    movq %rdx, 8(%rax,%rsi,8)\n    movq 16(%rsp), %rcx\n    shrq $3, %rcx\n");
   s = s.write(".Lsan_slack_fill:\n    cmpq %rsi, %rcx\n    jae .Lsan_slack_filled\n    movq %rdx, (%rax,%rcx,8)\n    incq %rcx\n    jmp .Lsan_slack_fill\n.Lsan_slack_filled:\n");
-  s = s.write("    leaq 16(%rax,%rsi,8), %rcx\n    movq %rsi, 16(%rcx)\n    movq 16(%rsp), %rdx\n    movq %rdx, 24(%rcx)\n");
+  s = s.write("    leaq 16(%rax,%rsi,8), %rcx\n    movq %rsi, 16(%rcx)\n    movq 16(%rsp), %rdx\n    addq $7, %rdx\n    shrq $3, %rdx\n    movq %rdx, 24(%rcx)\n");
   s = s.write("    movq __fern_san_live(%rip), %rdx\n    movq %rdx, (%rcx)\n    movq $0, 8(%rcx)\n    testq %rdx, %rdx\n    jz .Lsan_live_first\n    movq %rcx, 8(%rdx)\n");
   s = s.write(".Lsan_live_first:\n    movq %rcx, __fern_san_live(%rip)\n");
   return s.write("    popq %rcx\n    popq %rdx\n    addq $8, %rsp\n    popq %rsi\n");
@@ -393,6 +395,15 @@ function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lsan_unlink:\n    testq %rax, %rax\n    jz .Lsan_unlink_first\n    movq %rcx, (%rax)\n    jmp .Lsan_unlink_back\n");
   s = s.write(".Lsan_unlink_first:\n    movq %rcx, __fern_san_live(%rip)\n.Lsan_unlink_back:\n    testq %rcx, %rcx\n    jz .Lsan_unlink_done\n    movq %rax, 8(%rcx)\n");
   return s.write(".Lsan_unlink_done:\n    popq %rax\n    popq %rcx\n    addq $6, %rsi\n    popq %r8\n.Lquar_redzone_ok:\n");
+}
+
+// A raw release: %rdi is the block and %rsi the request in bytes. The bytes
+// of the last word past the request hold the poison from the allocation, so
+// a byte that lost it was written past the end of the block.
+function san_rounding_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    testq $7, %rsi\n    jz .Lrawfree_round_ok\n    pushq %rax\n    pushq %rcx\n    pushq %rdx\n    movq %rsi, %rcx\n    andq $-8, %rcx\n    movq (%rdi,%rcx), %rax\n");
+  s = s.write("    movabs $" + rc_poison64() + ", %rdx\n    xorq %rdx, %rax\n    movl %esi, %ecx\n    andl $7, %ecx\n    shll $3, %ecx\n    movq $-1, %rdx\n    shlq %cl, %rdx\n    testq %rdx, %rax\n");
+  return s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n    jnz __fern_san_abort_hbo\n.Lrawfree_round_ok:\n");
 }
 
 // The name of each shape id, its length and the words of its box
@@ -4964,6 +4975,9 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jb .Lrawfree_bad\n");
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
   s = s.write("    jae .Lrawfree_bad\n");
+  if (san_redzone_on(s)) {
+    s = san_rounding_check(s);
+  }
   s = s.write("    addq $7, %rsi\n");
   s = s.write("    andq $-8, %rsi\n");
   s = s.write("    cmpq $8, %rsi\n");
@@ -13178,7 +13192,8 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
   if (o.kind_tag == ir.K_PTR_WIDTH) {
     s = s.write("    pushq $8\n");
   } else if (ir.is_sha_hw_op(o.kind_tag)) {
-    s = s.write("    pushq $1\n");
+    let on = s.sha_ext || o.kind_tag == ir.K_SHA1X8_HW;
+    s = s.write(if (on) { "    pushq $1\n" } else { "    pushq $0\n" });
   } else if (o.kind_tag == ir.K_MEMCPY) {
     s = s.write(ir_memcpy_asm()).need("memcpy");
   } else if (o.kind_tag == ir.K_MEMSET) {
