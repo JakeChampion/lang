@@ -13443,6 +13443,8 @@ function a64_sha256_blocks(s: asmcore.EmitState): string {
     + a64_aes_view("x0", "x3", "x5", ".Lsha_st") + "    str x3, [x29, #32]\n"
     + "    mov x0, #32\n    cmp x5, #32\n    b.hs .Lsha_stok\n    mov x0, #0\n.Lsha_stok:\n"
     + a64_aes_alloc("40") + "    ldr x4, [x0]\n    cbz x4, .Lsha_ret\n"
+    + "    b .Lsha_load\n.Lsha_preallocated:\n" + rt_frame_of(s, 96) + "    mov x29, sp\n"
+    + "    mov x3, #64\n    stp x2, x3, [x29, #16]\n    stp x1, x0, [x29, #32]\n.Lsha_load:\n"
     + "    ldr x3, [x29, #32]\n    ld1 {v0.16b}, [x3]\n    add x3, x3, #16\n    ld1 {v1.16b}, [x3]\n"
     + a64_sha256_load_k() + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n    add x10, x29, #48\n    add x11, x29, #64\n";
   o += ".Lsha_loop:\n    cmp x4, #64\n    b.lo .Lsha_done\n";
@@ -13454,7 +13456,18 @@ function a64_sha256_blocks(s: asmcore.EmitState): string {
     + "    ld1 {v2.16b}, [x10]\n    ld1 {v3.16b}, [x11]\n    add v0.4s, v0.4s, v2.4s\n    add v1.4s, v1.4s, v3.4s\n"
     + "    sub x4, x4, #64\n    b .Lsha_loop\n";
   return o + ".Lsha_done:\n    ldr x0, [x29, #40]\n    add x3, x0, #8\n    st1 {v0.16b}, [x3]\n    add x3, x3, #16\n    st1 {v1.16b}, [x3]\n"
-    + ".Lsha_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 96) + "    ret\n    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n";
+    + ".Lsha_ret:\n    ldr x0, [x29, #40]\n" + rt_unframe_of(s, 96) + "    ret\n    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n" + a64_sha256_digest_block(s);
+}
+
+function a64_sha256_digest_block(s: asmcore.EmitState): string {
+  return "    .global __fern_sha256_hw_digest_block\n    .type __fern_sha256_hw_digest_block, %function\n__fern_sha256_hw_digest_block:\n"
+    + rt_frame_of(s, 256) + "    mov x29, sp\n    str x0, [x29, #96]\n"
+    + a64_aes_view("x1", "x9", "x10", ".Lsd_state")
+    + "    cmp x10, #32\n    b.ne .Lsd_bad\n    str x9, [x29, #32]\n    ldr x14, [x29, #96]\n    ldr x15, [x14]\n    cmp x15, #64\n    b.ne .Lsd_bad\n"
+    + a64_aes_gcm_own(".Lsd") + "    add x0, x29, #128\n    ldr x1, [x29, #32]\n    ldr x2, [x29, #96]\n    add x2, x2, #8\n    bl .Lsha_preallocated\n"
+    + "    rev32 v0.16b, v0.16b\n    rev32 v1.16b, v1.16b\n    ldr x0, [x29, #96]\n    stur q0, [x0, #8]\n    stur q1, [x0, #24]\n"
+    + "    movi v0.16b, #0\n    stur q0, [x29, #136]\n    stur q0, [x29, #152]\n" + rt_unframe_of(s, 256) + "    ret\n.Lsd_bad:\n    b __fern_slice_abort\n"
+    + "    .size __fern_sha256_hw_digest_block, .-__fern_sha256_hw_digest_block\n";
 }
 
 function a64_sha1_blocks(s: asmcore.EmitState): string {

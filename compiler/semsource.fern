@@ -3781,6 +3781,15 @@ function free_call(e: ast.Expr, name: string, c: ast.ExprCall, s: State, stateme
   if (lane_memory_call(name, c)) {
     return lane_memory(name, c, s);
   }
+  // Recognize the bootstrap-compatible body only in the real std/crypto module.
+  if (name == "crypto____pbkdf2_hw_block") {
+    for fd in s.funcs {
+      if (fd.name == name && fd.stdlib == "std/crypto") {
+        name = "__sha256_hw_digest_block";
+        break;
+      }
+    }
+  }
   let at = ssasem.find_contract(s.contracts, name);
   if (at < 0) {
     return variant_call(e, name, c, s, expected);
@@ -8667,6 +8676,7 @@ function aes_gcm_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__aes_gcm_seal_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
     ssasem.Contract { name: "__aes_gcm_open_into", params: aes_gcm_into_params(), modes: aes_gcm_into_modes(), result: bytes },
     ssasem.Contract { name: "__sha256_hw", params: [], modes: [], result: typeinfo.t_bool() },
+    ssasem.Contract { name: "__sha256_hw_digest_block", params: [bytes, view], modes: [ssaunits.counted_mode(), b], result: bytes },
     ssasem.Contract { name: "__sha256_hw_blocks", params: [view, view], modes: [b, b], result: bytes },
     ssasem.Contract { name: "__sha1_hw", params: [], modes: [], result: typeinfo.t_bool() },
     ssasem.Contract { name: "__sha1_hw_blocks", params: [view, view], modes: [b, b], result: bytes },

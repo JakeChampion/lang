@@ -18,6 +18,12 @@ func registerAESGCM(i *Interp) {
 	for _, name := range []string{"__sha256_hw", "__sha1_hw", "__sha1x8_hw", "__sha256x8_hw"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Bool(false), nil }}
 	}
+	i.Builtins["__sha256_hw_digest_block"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if _, err := byteViews("__sha256_hw_digest_block", args, 2); err != nil {
+			return nil, err
+		}
+		return args[0], nil
+	}}
 	for _, name := range []string{"__sha256_hw_blocks", "__sha1_hw_blocks", "__sha1x8_hw_blocks", "__sha256x8_hw_blocks"} {
 		i.Builtins[name] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 			if _, err := byteViews(name, args, 2); err != nil {

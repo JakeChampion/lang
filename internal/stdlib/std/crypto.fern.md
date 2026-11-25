@@ -3680,16 +3680,23 @@ function __pbkdf2_start(words: [u8], own tail: u8[]): Sha256 {
   };
 }
 
+// The pinned bootstrap compiler uses the allocating bulk kernel here.
+// Native code generation replaces this standard-library helper with a
+// single compression that writes the result directly into the owned block.
+function __pbkdf2_hw_block(own block: u8[], words: [u8]): u8[] {
+  let out = __sha256_hw_blocks(words, block);
+  for i in 0..8 {
+    block = __put_be32(block, 4 * i, __get_le32(out, 4 * i));
+  }
+  erase(out);
+  return block;
+}
+
 // After the 64-byte pad, each 32-byte digest needs one more block.
 // Replace its first 32 bytes with the next digest and keep the padding.
 function __pbkdf2_digest_block(words: [u8], own block: u8[]): u8[] {
   if (__sha256_hw()) {
-    let out = __sha256_hw_blocks(words, block);
-    for i in 0..8 {
-      block = __put_be32(block, 4 * i, __get_le32(out, 4 * i));
-    }
-    erase(out);
-    return block;
+    return __pbkdf2_hw_block(block, words);
   }
   let st = __sha256_soft_blocks(__pbkdf2_start(words, []), block, 0, 1);
   block = __put_be32(block, 0, st.h0);

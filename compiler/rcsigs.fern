@@ -255,7 +255,7 @@ pub function op_table(): OpTable {
   rows = add(rows, handing_ops(), sig(0, effect_move(), result_none()));
   rows = add(rows, sealing_ops(), sig(4, effect_move(), result_fresh()));
   rows = add(rows, ["chacha20_xor_into"], sig(2, effect_move(), result_fresh()));
-  rows = add(rows, ["poly1305_blocks"], sig(0, effect_move(), result_fresh()));
+  rows = add(rows, ["poly1305_blocks", "sha256_hw_digest_block"], sig(0, effect_move(), result_fresh()));
   rows = add(rows, ["chacha20_poly1305_seal_into", "chacha20_poly1305_open_into"], sig(2, effect_move(), result_fresh()));
   rows = add(rows, ["mont_mul"], inert(result_fresh()));
   rows = add(rows, ["scrypt_block_mix"], sig(0, effect_move(), result_fresh()));
