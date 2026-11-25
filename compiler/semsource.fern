@@ -1911,6 +1911,20 @@ function method_owner(t: typeinfo.Type): string {
   return owner;
 }
 
+// The contract key of method `name` on struct `member`. A struct with no method
+// of that name takes the method of a union that holds it.
+function member_method_key(member: string, name: string, s: State): string {
+  for u in s.scope.unions.unions {
+    if (util.has_str(u.variants, member)) {
+      let key = u.name + "." + name;
+      if (ssasem.find_contract(s.contracts, key) >= 0) {
+        return key;
+      }
+    }
+  }
+  return member + "." + name;
+}
+
 function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
   if (verb == "") {
     return "";
@@ -2969,6 +2983,10 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   }
   let key = owner + "." + fa.field;
   let at = ssasem.find_contract(s.contracts, key);
+  if (at < 0 && struct_name(s.values[recv]) != "") {
+    key = member_method_key(owner, fa.field, s);
+    at = ssasem.find_contract(s.contracts, key);
+  }
   if (missing_string_display(at, owner, c, fa)) {
     return primitive_method(c, fa, recv, s, statement);
   }

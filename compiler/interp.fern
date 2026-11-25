@@ -1162,14 +1162,49 @@ function (f: Funcs) named(name: string): i32[] {
     return f.iterator_decls;
   }
   let out: i32[] = [];
-  let i = f.runtime_names.chain(name);
+  let i = f.first_named(name);
+  while (i >= 0) {
+    out = out.append(i);
+    i = f.after_named(name, i);
+  }
+  return out;
+}
+
+// The first position of `named(name)`, or -1. With `after_named`, a walk of
+// the positions that builds no array.
+function (f: Funcs) first_named(name: string): i32 {
+  if (name == "__iterator") {
+    return f.iterator_after(-1);
+  }
+  return f.named_from(name, f.runtime_names.chain(name));
+}
+
+// The position of `named(name)` that follows `at`, or -1.
+function (f: Funcs) after_named(name: string, at: i32): i32 {
+  if (name == "__iterator") {
+    return f.iterator_after(at);
+  }
+  return f.named_from(name, f.runtime_names.next[at]);
+}
+
+function (f: Funcs) named_from(name: string, start: i32): i32 {
+  let i = start;
   while (i >= 0) {
     if (f.runtime_names.names[i] == name) {
-      out = out.append(i);
+      return i;
     }
     i = f.runtime_names.next[i];
   }
-  return out;
+  return -1;
+}
+
+function (f: Funcs) iterator_after(at: i32): i32 {
+  for i in f.iterator_decls {
+    if (i > at) {
+      return i;
+    }
+  }
+  return -1;
 }
 
 pub function new_env(heap: interpheap.Heap): Env {
@@ -6118,7 +6153,7 @@ function method_target_index(name: string, recv: Value, env: Env): i32 {
   if let VType(tv) = recv {
     return assoc_index(env.funcs, tv.name, name);
   }
-  return receiver_method_index(env.funcs, env.funcs.named(name), value_type_name(recv));
+  return receiver_method_index(env.funcs, name, value_type_name(recv));
 }
 
 function free_target_index(name: string, env: Env): i32 {
@@ -6932,11 +6967,13 @@ function value_type_name(v: Value): string {
   }
 }
 
-function receiver_method_index(funcs: Funcs, candidates: i32[], recv_type: string): i32 {
-  for at in candidates {
+function receiver_method_index(funcs: Funcs, name: string, recv_type: string): i32 {
+  let at = funcs.first_named(name);
+  while (at >= 0) {
     if (funcs.receivers[at] == recv_type && funcs.decls[at].receiver_name.len() > 0) {
       return at;
     }
+    at = funcs.after_named(name, at);
   }
   return -1;
 }
@@ -7277,43 +7314,60 @@ function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: stri
   return call_declared_method(heap, recv, recv_static, name, args, type_args, funcs, aliases, type_decls);
 }
 
+// The declaration that a call of method `name` on `recv` runs, or -1. A
+// method of the receiver's own type wins over a method of the enum that holds
+// the variant. An array receiver takes the first method of an array type.
+function method_target(funcs: Funcs, name: string, recv: Value, recv_type: string, aliases: parser.TypeAlias[]): i32 {
+  let first_array = -1;
+  let fallback = -1;
+  let at = funcs.first_named(name);
+  while (at >= 0) {
+    if (funcs.decls[at].receiver_name.len() > 0) {
+      if (funcs.receivers[at] == recv_type) {
+        if (first_array >= 0) {
+          return first_array;
+        }
+        return at;
+      }
+      let array_hit = recv_type == "Array" && is_array_recv_type(funcs.decls[at].receiver_type);
+      if (array_hit && first_array < 0) {
+        first_array = at;
+      }
+      if (fallback < 0 && (array_hit || variant_of_enum(recv, funcs.receivers[at], aliases))) {
+        fallback = at;
+      }
+    }
+    at = funcs.after_named(name, at);
+  }
+  return fallback;
+}
+
 function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
-  let candidates = funcs.named(name);
-  let own_method = receiver_method_index(funcs, candidates, recv_type) >= 0;
-  for at in candidates {
+  let at = method_target(funcs, name, recv, recv_type, aliases);
+  if (at >= 0) {
     let fd = funcs.decls[at];
-    let receiver_base = funcs.receivers[at];
-    let rt_match = receiver_base == recv_type;
-    if (!rt_match && !own_method && variant_of_enum(recv, receiver_base, aliases)) {
-      rt_match = true;
+    if (args.len() != fd.params.len()) {
+      return v_err("arity mismatch calling method `" + name + "`");
     }
-    if (!rt_match && recv_type == "Array" && is_array_recv_type(fd.receiver_type)) {
-      rt_match = true;
+    let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[at], cells: funcs.cells[at] };
+    env = bind_tyargs(env, fd, true, recv, args, type_args, "");
+    let receiver_args = funcs.receiver_args[at];
+    if (receiver_args.len() > 0) {
+      env = bind_receiver_consts(env, fd.receiver_type, recv_static, receiver_args);
     }
-    if (fd.receiver_name.len() > 0 && rt_match) {
-      if (args.len() != fd.params.len()) {
-        return v_err("arity mismatch calling method `" + name + "`");
-      }
-      let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[at], cells: funcs.cells[at] };
-      env = bind_tyargs(env, fd, true, recv, args, type_args, "");
-      let receiver_args = funcs.receiver_args[at];
-      if (receiver_args.len() > 0) {
-        env = bind_receiver_consts(env, fd.receiver_type, recv_static, receiver_args);
-      }
-      env = env.bind(fd.receiver_name, recv);
-      for j in 0..fd.params.len() {
-        env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-      }
-      let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
-      if (step.sig != 1) {
-        return v_void();
-      }
-      return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
+    env = env.bind(fd.receiver_name, recv);
+    for j in 0..fd.params.len() {
+      env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
     }
+    let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
+    if (step.sig != 1) {
+      return v_void();
+    }
+    return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
   }
   if (name == "to_string" && args.len() == 0) {
     match (recv) {
@@ -10662,7 +10716,7 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, own env: Env): StepResult 
 }
 
 function receiver_has_method(funcs: Funcs, recv: Value, name: string): boolean {
-  return receiver_method_index(funcs, funcs.named(name), value_type_name(recv)) >= 0;
+  return receiver_method_index(funcs, name, value_type_name(recv)) >= 0;
 }
 
 function body_binds(body: ast.Stmt[]): boolean {

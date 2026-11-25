@@ -245,18 +245,42 @@ function ts_any_root(method: string): string {
   return ts_qualified_root("*", method);
 }
 
-function ts_widened(names: string[], open: util.NameIndex, fd: parser.FuncDecl): string[] {
+function ts_widened(names: string[], open: util.NameIndex, members: TsMembers, fd: parser.FuncDecl): string[] {
   let out = names;
   for n in names {
     let bar = util.index_of_sub(n, "|");
     if (bar > 0) {
       let tag = slice_unchecked(n, 0, bar).to_owned();
+      let method = slice_unchecked(n, bar + 1, n.len()).to_owned();
       if (open.has(tag) || util.has_str(fd.type_params, tag) || util.has_str(fd.all_type_params, tag) || tag.starts_with("impl ")) {
-        out = out.append(slice_unchecked(n, bar + 1, n.len()).to_owned());
+        out = out.append(method);
+      }
+      let i = members.types.chain(tag);
+      while (i >= 0) {
+        if (members.types.names[i] == tag) {
+          out = out.append(ts_qualified_root(members.unions[i], method));
+        }
+        i = members.types.next[i];
       }
     }
   }
   return out;
+}
+
+// Each member type of a union alias, with the alias that holds it. A method
+// call on a member can reach a method of the alias.
+struct TsMembers { types: util.NameIndex, unions: string[] }
+
+function ts_alias_members(mod: parser.Module): TsMembers {
+  let types: string[] = [];
+  let unions: string[] = [];
+  for al in mod.aliases {
+    for v in al.variants {
+      types = types.append(canonical_tag(util.base_type_name(v)));
+      unions = unions.append(al.name);
+    }
+  }
+  return TsMembers { types: util.name_index(types), unions: unions };
 }
 
 function ts_open_tags(mod: parser.Module): util.NameIndex {
@@ -628,6 +652,7 @@ struct TsGrown { rs: util.NameIndex, pending: i32[] }
 // each key wakes the functions that wait on it.
 function ts_grow(mod: parser.Module, rs0: util.NameIndex, pending0: i32[]): TsGrown {
   let open = ts_open_tags(mod);
+  let members = ts_alias_members(mod);
   let rs = rs0;
   let woken = util.filled_i32(mod.funcs.len(), 0);
   let queue: i32[] = [];
@@ -650,7 +675,7 @@ function ts_grow(mod: parser.Module, rs0: util.NameIndex, pending0: i32[]): TsGr
   while (qi < queue.len()) {
     let fd = mod.funcs[queue[qi]];
     qi += 1;
-    for name in ts_widened(ts_func_names(fd, []), open, fd) {
+    for name in ts_widened(ts_func_names(fd, []), open, members, fd) {
       if (rs.has(name)) {
         continue;
       }
