@@ -148,18 +148,15 @@ function short_blocks(own samples: f32[], own overlap: f32[], base: i32, ov_at: 
   for block in 0..count {
     let at = base + block * 18;
     let ov = ov_at + block * 9;
-    let tmp: f32[] = [];
-    for i in 0..18 {
-      tmp = tmp.append(samples[at + i]);
-    }
+    // The three windows read the block before the first store writes it.
+    let a = short_values(samples, at, overlap[ov + 6], overlap[ov + 7], overlap[ov + 8]);
+    let b = short_values(samples, at + 1, a.o0, a.o1, a.o2);
+    let c = short_values(samples, at + 2, b.o0, b.o1, b.o2);
     for i in 0..6 {
       samples = samples.with(at + i, overlap[ov + i]);
     }
-    let a = short_values(tmp, 0, overlap[ov + 6], overlap[ov + 7], overlap[ov + 8]);
     samples = store_short(samples, at + 6, a);
-    let b = short_values(tmp, 1, a.o0, a.o1, a.o2);
     samples = store_short(samples, at + 12, b);
-    let c = short_values(tmp, 2, b.o0, b.o1, b.o2);
     overlap = store_short(overlap, ov, c).with(ov + 6, c.o0).with(ov + 7, c.o1).with(ov + 8, c.o2);
   }
   return (samples, overlap);
@@ -410,13 +407,16 @@ function granule_columns(own qmf: f32[], own samples: f32[], channels: i32, colu
 }
 
 // Seed 15 history columns followed by space for two MPEG-1 granules.
-pub function frame_lines(history: [f32]): f32[] {
-  let lines: f32[] = [];
-  for sample in history {
-    lines = lines.append(sample);
+pub const FRAME_LINES: i32 = 960 + 36 * 64;
+
+// The caller keeps `lines` between frames. Only the history is copied, because `synth`
+// writes each new line before it reads it. An array of another length is replaced.
+pub function frame_lines_into(own lines: f32[], history: [f32]): f32[] {
+  if (lines.len() != FRAME_LINES) {
+    lines = spectral.zeros(FRAME_LINES);
   }
-  for _ in 0..36 * 64 {
-    lines = lines.append(0.0f32);
+  for i in 0..960 {
+    lines = lines.with(i, history[i]);
   }
   return lines;
 }
@@ -432,7 +432,8 @@ pub function frame_history(own history: f32[], lines: [f32], channels: i32): f32
 
 // The caller seeds the first 960 lines with history once per Layer III frame.
 // Adjacent granules share the trailing 15 columns directly.
-pub function granule_at(own lines: f32[], offset: i32, own samples: f32[], channels: i32, own output: f32[], out_at: i32, own transform: f32[]): (f32[], f32[], f32[]) {
+// It gives back the spectrum, which the transform overwrote, for the next granule.
+pub function granule_at(own lines: f32[], offset: i32, own samples: f32[], channels: i32, own output: f32[], out_at: i32, own transform: f32[]): (f32[], f32[], f32[], f32[]) {
   for ch in 0..channels {
     let (four, scratch) = dct32x4_into(samples, ch * 576, 4, transform);
     let (tail, next) = dct32_tail_into(four, ch * 576, scratch);
@@ -445,7 +446,7 @@ pub function granule_at(own lines: f32[], offset: i32, own samples: f32[], chann
     lines = next;
     output = pcm;
   }
-  return (lines, output, transform);
+  return (lines, output, transform, samples);
 }
 
 function synthesize(own qmf: f32[], samples: [f32], channels: i32, columns: i32, own output: f32[], out_at: i32, own lines: f32[]): (f32[], f32[], f32[]) {
