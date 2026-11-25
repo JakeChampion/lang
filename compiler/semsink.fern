@@ -838,7 +838,7 @@ function read_above(rd: Reads, bi: i32, v: i32): boolean {
   if (child_grown_in(rd, bi, v, 0) && child_spent_between(rd, bi, v, 0)) {
     return false;
   }
-  if (child_kept_across(rd, bi, v)) {
+  if (child_kept_across(rd, bi, v) || twin_kept_across(rd, bi, v)) {
     return false;
   }
   return rd.strict.len() == 0 || !read_above_for(rd, rd.strict, bi, v, v);
@@ -852,6 +852,26 @@ function child_kept_across(rd: Reads, bi: i32, v: i32): boolean {
     if (rd.at[c] != bi && ssalive.live_in_has(rd.flow, bi, c) && !read_above(rd, bi, c)) {
       return true;
     }
+  }
+  return false;
+}
+
+// twin_kept_across says another block's read of the field slot that v or
+// one of its ancestors reads is live into bi. A new read in bi is then a
+// second holder of that slot, and the plan cannot take the twin out of it.
+function twin_kept_across(rd: Reads, bi: i32, v: i32): boolean {
+  let a = v;
+  for depth in 0..9 {
+    if (a < 0 || a >= rd.at.len() || rd.at[a] < 0) {
+      return false;
+    }
+    let p = rd.first[rd.par[a]];
+    for u in rd.kids[p] {
+      if (!typeinfo.is_array(rd.types[p]) && u != a && rd.first[u] != rd.first[a] && rd.field[u] == rd.field[a] && rd.at[u] != bi && rd.at[u] != rd.at[a] && ssalive.live_in_has(rd.flow, bi, u)) {
+        return true;
+      }
+    }
+    a = rd.par[a];
   }
   return false;
 }
