@@ -1718,6 +1718,10 @@ pub function op_opt_set_payload(): Op {
   return op0(K_OPT_SET_PAYLOAD);
 }
 
+pub function op_opt_set_payload_w(width: i32, is_i64: boolean): Op {
+  return Op { source: 0, decl: -1, kind_tag: K_OPT_SET_PAYLOAD, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
+}
+
 pub function op_print_str(): Op {
   return op0(K_PRINT_STR);
 }

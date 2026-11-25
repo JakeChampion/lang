@@ -1557,8 +1557,6 @@ function wiped_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   return false;
 }
 
-// The payload store of an option takes one 32-bit value, so a wide or a
-// float payload keeps its bits.
 function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
   if (e.layout != semrecords.layout_option()) {
@@ -1577,7 +1575,7 @@ function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
   r = reserve(r, child + 1);
   for tag in 0..e.variants.len() {
     let fields = e.variants[tag].fields;
-    if (fields.len() == 1 && (ssasem.counted(f, fields[0].ty) || narrow_scalar(fields[0].ty))) {
+    if (fields.len() == 1 && (ssasem.counted(f, fields[0].ty) || ssasem.is_scalar(fields[0].ty))) {
       r = emit(r, ir.op_load_local(slot));
       r = emit(r, ir.op_opt_tag());
       r = emit(r, ir.op_const_i32(tag));
@@ -1588,6 +1586,9 @@ function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
         r = emit(r, ir.op_opt_payload());
         r = emit(r, ir.op_store_local(child));
         r = wipe_child(r, child, fields[0].ty, child + 1, f);
+      } else if (wide_or_float(fields[0].ty)) {
+        r = emit(r, ir.op_const_i64(0));
+        r = emit(r, ir.op_opt_set_payload_w(64, true));
       } else {
         r = emit(r, ir.op_const_i32(0));
         r = emit(r, ir.op_opt_set_payload());
@@ -1596,10 +1597,6 @@ function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
     }
   }
   return r;
-}
-
-function narrow_scalar(t: typeinfo.Type): boolean {
-  return ssasem.is_scalar(t) && !wide_or_float(t);
 }
 
 function wipe_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irtables.LowerState {
