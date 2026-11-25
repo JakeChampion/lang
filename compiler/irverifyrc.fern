@@ -546,6 +546,155 @@ function site_problems(fn_name: string, call: i32, s: Site): irverify.Problem[] 
   return out;
 }
 
+// A held token: the donor's own local carries the box from its gate to the
+// reuse call, and a move into the token local clears it there. These are the
+// states of the donor's local on the paths into an op.
+const H_NULL: i32 = 1;
+
+const H_GATED: i32 = 2;
+
+const H_OTHER: i32 = 4;
+
+const H_CHANGED: i32 = 8;
+
+struct Held { ok: boolean, why: string, donor: i32, problems: irverify.Problem[] }
+
+function held_skip(why: string): Held {
+  let none: irverify.Problem[] = [];
+  return Held { ok: false, why: why, donor: -1, problems: none };
+}
+
+// The donor of `load D; store X; const 0; store D; load X` at tok_at, or -1.
+function held_donor(ops: ir.Op[], tok_at: i32): i32 {
+  if (tok_at < 4) {
+    return -1;
+  }
+  let x = ops[tok_at].i32_imm;
+  let d = ops[tok_at - 4].i32_imm;
+  if (ops[tok_at - 4].kind_tag != ir.K_LOAD_LOCAL || d == x
+    || ops[tok_at - 3].kind_tag != ir.K_STORE_LOCAL || ops[tok_at - 3].i32_imm != x
+    || ops[tok_at - 2].kind_tag != ir.K_CONST_I32 || ops[tok_at - 2].i32_imm != 0
+    || ops[tok_at - 1].kind_tag != ir.K_STORE_LOCAL || ops[tok_at - 1].i32_imm != d) {
+    return -1;
+  }
+  return d;
+}
+
+// The gate of donor d at the if at i: `load d; is_unique; if`, with a decline
+// arm that ends with `const 0; store d`.
+function hold_gate(ops: ir.Op[], i: i32, d: i32): IfSpan {
+  let none = IfSpan { ok: false, if_at: 0, else_at: -1, end_at: -1 };
+  if (ops[i].kind_tag != ir.K_IF || i < 2 || !is_is_unique(ops[i - 1]) || ops[i - 2].i32_imm != d) {
+    return none;
+  }
+  if (ops[i - 2].kind_tag != ir.K_LOAD_LOCAL && ops[i - 2].kind_tag != ir.K_TEE_LOCAL) {
+    return none;
+  }
+  let span = match_if_forwards(ops, i);
+  if (!span.ok || span.else_at < 0 || span.end_at - 2 <= span.else_at) {
+    return none;
+  }
+  let z = span.end_at;
+  if (ops[z - 1].kind_tag != ir.K_STORE_LOCAL || ops[z - 1].i32_imm != d
+    || ops[z - 2].kind_tag != ir.K_CONST_I32 || ops[z - 2].i32_imm != 0) {
+    return none;
+  }
+  return span;
+}
+
+function held_step(ops: ir.Op[], i: i32, d: i32, s: i32, sigs: rcsigs.Table): i32 {
+  let k = ops[i].kind_tag;
+  if ((k == ir.K_STORE_LOCAL || k == ir.K_TEE_LOCAL) && ops[i].i32_imm == d) {
+    if (i >= 1 && ops[i - 1].kind_tag == ir.K_CONST_I32 && ops[i - 1].i32_imm == 0) {
+      return H_NULL;
+    }
+    return H_OTHER;
+  }
+  if ((s & H_GATED) != 0 && changes_count_of(ops, i, [d], sigs)) {
+    return s - H_GATED | H_CHANGED;
+  }
+  return s;
+}
+
+struct HeldFlow { into: i32[], work: i32[] }
+
+function held_merge(f: HeldFlow, j: i32, v: i32): HeldFlow {
+  if (j >= f.into.len() || (f.into[j] | v) == f.into[j]) {
+    return f;
+  }
+  return HeldFlow { into: f.into.with(j, f.into[j] | v), work: f.work.append(j) };
+}
+
+function held_check(fn_name: string, ops: ir.Op[], call: i32, tok_at: i32, d: i32, sigs: rcsigs.Table, flow: Flow): Held {
+  let zeros: i32[] = [];
+  for z in 0..ops.len() {
+    zeros = zeros.append(0);
+  }
+  let f = held_merge(HeldFlow { into: zeros, work: [] }, 0, H_OTHER);
+  let gates: i32[] = [];
+  let change = -1;
+  let at = 0;
+  while (at < f.work.len()) {
+    let i = f.work[at];
+    at += 1;
+    let s = f.into[i];
+    let gate = hold_gate(ops, i, d);
+    if (gate.ok) {
+      if (util.index_of_i32(gates, i) < 0) {
+        gates = gates.append(i);
+      }
+      f = held_merge(f, i + 1, H_GATED);
+      f = held_merge(f, flow.other[i], s);
+      continue;
+    }
+    let out = held_step(ops, i, d, s, sigs);
+    if ((out & H_CHANGED) != 0 && (s & H_CHANGED) == 0 && change < 0) {
+      change = i;
+    }
+    f = held_merge(f, flow.next[i], out);
+    if (flow.other[i] < ops.len()) {
+      f = held_merge(f, flow.other[i], out);
+    }
+  }
+  let s = f.into[tok_at - 4];
+  if ((s & H_OTHER) != 0) {
+    return held_skip("a path brings the held token from no uniqueness gate");
+  }
+  if ((s & (H_GATED | H_CHANGED)) == 0) {
+    return held_skip("no uniqueness gate reaches the held token");
+  }
+  let out: irverify.Problem[] = [];
+  for g in gates {
+    let span = match_if_forwards(ops, g);
+    let dec = sole_decline(ops, span.else_at + 1, span.end_at - 2);
+    if (!dec.ok) {
+      return held_skip("decline arm releases more than one local");
+    }
+    if (dec.found && dec.slot != d) {
+      out = out.append(irverify.Problem {
+        fn_name: fn_name,
+        op: call,
+        kind: "call_direct",
+        msg: "reuse site's decline arm releases local " + util.i32_to_string(dec.slot)
+          + ", but the uniqueness gate at op " + util.i32_to_string(g - 1)
+          + " tested the held donor local " + util.i32_to_string(d)
+          + ": the tested donor leaks on the decline path",
+      });
+    }
+  }
+  if ((s & H_CHANGED) != 0) {
+    out = out.append(irverify.Problem {
+      fn_name: fn_name,
+      op: call,
+      kind: "call_direct",
+      msg: "reuse site's held donor local " + util.i32_to_string(d)
+        + " goes to " + ops[change].str + " at op " + util.i32_to_string(change)
+        + ", after its uniqueness gate and before the reuse call: the count that the gate tested is not the count at the reuse",
+    });
+  }
+  return Held { ok: true, why: "", donor: d, problems: out };
+}
+
 // from is the op after which the donor still holds the claimed box: the call,
 // or the op before the site's clear of the donor.
 struct Claim { at: i32, donor: i32, from: i32 }
@@ -672,11 +821,32 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[], sigs: rcsigs.Table): Rc
   let r = rc_result_new();
   let claims: Claim[] = [];
   let k_calld = ir.K_CALL_DIRECT;
+  let flow = Flow { next: [], other: [] };
   for i in 0..ops.len() {
     if (is_reuse_alloc(ops[i], k_calld)) {
       r = RcResult { ...r, sites: r.sites + 1 };
       let s = read_site(ops, i);
-      if (s.ok) {
+      let tok_at = token_arg_slot(ops, i);
+      let d = -1;
+      if (!s.ok && tok_at >= 0) {
+        d = held_donor(ops, tok_at);
+      }
+      if (d >= 0) {
+        if (flow.next.len() == 0) {
+          flow = flow_graph(ops);
+        }
+        let h = held_check(fn_name, ops, i, tok_at, d, sigs, flow);
+        if (h.ok) {
+          let acc = r.problems;
+          for p in h.problems {
+            acc = acc.append(p);
+          }
+          r = RcResult { ...r, checked: r.checked + 1, problems: acc };
+          claims = claims.append(claim_of(ops, i, d));
+        } else {
+          r = RcResult { ...r, skips: r.skips.append(h.why) };
+        }
+      } else if (s.ok) {
         let ps = site_problems(fn_name, i, s);
         let cs = count_problems(fn_name, ops, i, s, sigs);
         let acc = r.problems;
@@ -693,12 +863,9 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[], sigs: rcsigs.Table): Rc
       }
     }
   }
-  let dp = double_claim_problems(fn_name, ops, claims);
-  let k = 0;
   let all = r.problems;
-  while (k < dp.len()) {
-    all = all.append(dp[k]);
-    k += 1;
+  for p in double_claim_problems(fn_name, ops, claims) {
+    all = all.append(p);
   }
   return RcResult { ...r, problems: all };
 }
