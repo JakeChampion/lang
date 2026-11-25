@@ -454,6 +454,14 @@ code point, and a combining class block has the index of the class in
 `_ccc_value_table`. The two tables use 18.6 KB, and the range tables that
 they replace used 11.5 KB.
 
+The three sets of the normalization quick checks are staged tables of bits
+too: `_nfd_no` (a character that decomposes), `_nfc_no` (a character that
+decomposes and does not compose again) and `_nfc_maybe` (a character that
+is the second of a composite pair). `decomposition`, `decomposition_step`
+and `composition` read `_nfd_no` or `_nfc_maybe` first. Thus a character
+that does not decompose or compose gets no search. The three tables use
+5.0 KB, and the range tables that they replace used 2.9 KB.
+
 ## Extras (not in the original 15)
 
 These landed in the chunks above but weren't on the original
