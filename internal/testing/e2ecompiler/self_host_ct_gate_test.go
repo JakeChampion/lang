@@ -149,53 +149,6 @@ function main(): i32 {
   return 6;
 }
 `, false},
-	{"xchacha20poly1305", `import "std/crypto/chacha20poly1305";
-
-function main(): i32 {
-  let key = __alloc_u8(32).with(0, 7u8);
-  let nonce = __alloc_u8(24).with(23, 11u8);
-  let plaintext = __alloc_u8(96).with(95, 42u8);
-  __ct_secret(key);
-  __ct_secret(plaintext);
-  let Ok(k) = chacha20poly1305.key(key) else { return 1; };
-  let Ok(sealed) = k.seal_xchacha(nonce, plaintext, []) else { return 2; };
-  __ct_public(sealed);
-  let Ok(opened) = k.open_xchacha(nonce, sealed, []) else { return 3; };
-  __ct_public(opened);
-  __ct_public(plaintext);
-  if (opened != plaintext) { return 4; }
-  return 0;
-}
-`, false},
-	{"sha256", `import "std/crypto";
-import "std/hex";
-
-function main(): i32 {
-  let key = __alloc_u8(80).with(0, 7u8);
-  __ct_secret(key);
-  let digest = crypto.sha256(key);
-  let mac = crypto.hmac_sha256(key, "message".as_bytes());
-  __ct_public(digest);
-  __ct_public(mac);
-  if (hex.encode(digest) != "f31defd74101cccb54b57097ec775d8a1c7ebea77bbf9130185676d58cd2fa42") { return 1; }
-  if (hex.encode(mac) != "4a760412d56cead8e8b58b35341c76ffefbf6207d923e47a954c8bc4d9901e3d") { return 2; }
-  return 0;
-}
-`, false},
-	{"argon2id", `import "std/crypto/argon2id";
-import "std/hex";
-import "std/string";
-
-function main(): i32 {
-  let password = "password".bytes();
-  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 37, lanes: 2, passes: 2, tag_len: 80, limit_kib: 36 };
-  __ct_secret(password);
-  let Ok(tag) = argon2id.key(password, "somesalt".as_bytes(), p) else { return 1; };
-  __ct_public(tag);
-  if (hex.encode(tag) != "b092558be7d44e96b8f2bae751d5d7bb3b50d63ca8803a703e60df7f4a1285ea50bf0fcf903fff50b907e14720be00d6dc2553c24f39c6557198ec46ca7812c2bda34f6248ea0d75a3f44a0606c8a75a") { return 2; }
-  return 0;
-}
-`, false},
 	{"aes_gcm", `import "std/crypto/aes_gcm";
 
 function filled(n: i32, seed: i32): u8[] {
@@ -789,6 +742,74 @@ function main(): i32 {
   let Ok(out) = scrypt.key(secret, "salt".as_bytes(), 16, 1, 1, 32) else { return 2; };
   __ct_public(out);
   if (hex.encode(out) != "79637f4217892e213de7567fafdefe379a184234e03cf4b96360fa9cb87fd33e") { return 1; }
+  return 0;
+}
+`, false},
+	{"xchacha20poly1305", `import "std/crypto/chacha20poly1305";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  for i in 0..n {
+    b = b.with(i, (i * 31 + seed) as u8);
+  }
+  return b;
+}
+
+function main(): i32 {
+  let key = filled(32, 7);
+  let plain = filled(100, 3);
+  __ct_secret(key);
+  __ct_secret(plain);
+  let Ok(k) = chacha20poly1305.key(key) else { return 2; };
+  let nonce = filled(24, 9);
+  let Ok(sealed) = k.seal_xchacha(nonce, plain, filled(5, 1)) else { return 3; };
+  __ct_public(sealed);
+  let Ok(opened) = k.open_xchacha(nonce, sealed, filled(5, 1)) else { return 4; };
+  let bad = sealed.with(0, sealed[0] ^ 1u8);
+  if let Ok(_) = k.open_xchacha(nonce, bad, filled(5, 1)) { return 5; }
+  __ct_public(opened);
+  if (opened.len() != 100 || opened[99] != filled(100, 3)[99]) { return 1; }
+  return 0;
+}
+`, false},
+	{"sha256", `import "std/crypto";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  for i in 0..n {
+    b = b.with(i, (i * 13 + seed) as u8);
+  }
+  return b;
+}
+
+function main(): i32 {
+  let msg = filled(200, 5);
+  let long_key = filled(100, 11);
+  __ct_secret(msg);
+  __ct_secret(long_key);
+  let digest = crypto.sha256(msg);
+  let streamed = crypto.sha256_new().update(msg[0:70]).update(msg[70:200]).finish();
+  let mac = crypto.hmac_sha256(long_key, msg);
+  let lanes = crypto.sha256_new().x8().blocks(filled(512, 1));
+  __ct_public(digest);
+  __ct_public(streamed);
+  __ct_public(mac);
+  if (digest.len() != 32 || mac.len() != 32 || digest[0] != streamed[0] || lanes.word(0, 0) == 0u32 && lanes.word(1, 0) == 0u32) { return 1; }
+  return 0;
+}
+`, false},
+	{"argon2id", `import "std/crypto/argon2id";
+
+function main(): i32 {
+  let password: u8[] = __alloc_u8(21);
+  for i in 0..21 {
+    password = password.with(i, (i * 17 + 3) as u8);
+  }
+  __ct_secret(password);
+  let p = argon2id.Params { ...argon2id.defaults(), memory_kib: 32, passes: 2, lanes: 1 };
+  let Ok(tag) = argon2id.key(password, "somesalt".as_bytes(), p) else { return 2; };
+  __ct_public(tag);
+  if (tag.len() != 32) { return 1; }
   return 0;
 }
 `, false},

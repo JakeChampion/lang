@@ -4,6 +4,8 @@ This module implements Argon2id version 19 from RFC 9106. The default parameters
 
 `key` accepts a password, a salt and parameters. `derive` also accepts the optional secret and associated data. Store the public parameters and salt with the tag. Lanes run sequentially and produce the same tag as parallel execution.
 
+The constant-time gate runs Argon2id with a secret password. The first half of the first pass takes its references from a counter, which is public. The rest takes each reference from the data, as RFC 9106 specifies, so the reference is the one value that the module makes public. That is the side channel that Argon2id accepts by design.
+
 `memory_kib` is the requested matrix size. `limit_kib` bounds the matrix and four scratch blocks before allocation. It also bounds the output length. The caller supplies input storage, and BLAKE2b uses additional fixed-size buffers.
 
 ## Executable example
@@ -219,17 +221,31 @@ function reference(j: u64, pass: i32, slice: i32, lane: i32, index: i32, segment
     other = lane;
   }
   let span = if (pass == 0) { slice * segment } else { 3 * segment };
-  // Only the final block number is public. Compute the lane adjustment
-  // without branching on the password-dependent lane.
-  let diff = other ^ lane;
-  let same = ((diff | 0 - diff) as u32 >> 31u32) as i32 - 1;
-  let across = if (index == 0) { -1 } else { 0 };
-  span += index - 1 & same | across & ~same;
+  if (other == lane) {
+    span += index - 1;
+  } else if (index == 0) {
+    span -= 1;
+  }
   let low = j & 0xffffffffu64;
   let relative = span - 1 - (span as u64 * (low * low >> 32u64) >> 32u64) as i32;
   let start = if (pass == 0) { 0 } else { (slice + 1) % 4 * segment };
   let width = 4 * segment;
   return other * width + (start + relative) % width;
+}
+
+// The word of the previous block that selects the reference of Argon2d.
+// RFC 9106 section 3.4 takes this address from the data by design, so the
+// word is public, as the ROMix index of scrypt is.
+function __public_word(j: u64, own seen: u8[]): (u64, u8[]) {
+  for b in 0..8 {
+    seen = seen.with(b, (j >> (8 * b) as u64 & 255u64) as u8);
+  }
+  __ct_public(seen);
+  let out = 0u64;
+  for b in 0..8 {
+    out |= seen[b] as u64 << (8 * b) as u64;
+  }
+  return (out, seen);
 }
 
 function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i32, p: Params): i64[] {
@@ -244,7 +260,7 @@ function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i
     m = m.with(input, pass as i64).with(input + 1, lane as i64).with(input + 2, slice as i64).with(input + 3, blocks as i64).with(input + 4, p.passes as i64).with(input + 5, 2i64).with(input + 6, 0i64);
   }
   let first = if (pass == 0 && slice == 0) { 2 } else { 0 };
-  let public_index = __alloc_u8(4);
+  let seen = __alloc_u8(8);
   for i in first..segment {
     let pos = slice * segment + i;
     let prev = lane * width + (pos + width - 1) % width;
@@ -256,16 +272,12 @@ function fill_segment(own m: i64[], pass: i32, slice: i32, lane: i32, segment: i
         m = compress(m, zero, addr, addr, tmp, false);
       }
       j = m[addr + i % 128] as u64;
+    } else {
+      let (word, held) = __public_word(j, seen);
+      j = word;
+      seen = held;
     }
     let ref_block = reference(j, pass, slice, lane, i, segment, p.lanes);
-    if (!independent) {
-      // RFC 9106 section 3.4.1 takes this address from the previous block.
-      for byte in 0..4 {
-        public_index = public_index.with(byte, (ref_block >> 8 * byte) as u8);
-      }
-      __ct_public(public_index);
-      ref_block = binary.read_u32_le(public_index, 0).unwrap_or(0u32) as i32;
-    }
     m = compress(m, prev * 128, ref_block * 128, (lane * width + pos) * 128, tmp, pass != 0);
   }
   return m;

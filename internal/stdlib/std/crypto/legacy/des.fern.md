@@ -1,6 +1,6 @@
 # The DES and Triple DES block ciphers in CBC mode
 
-This module implements the DES block cipher of FIPS 46-3 and Triple DES (TDEA, NIST SP 800-67) with three keys, and the CBC mode of NIST SP 800-38A. It is for old formats that still use them, such as encrypted PEM files with `DES-CBC` or `DES-EDE3-CBC`. DES is not secure, and Triple DES is deprecated: new designs do not use them.
+This module implements the DES block cipher of FIPS 46-3 and Triple DES (TDEA, NIST SP 800-67) with three keys, and the CBC mode of NIST SP 800-38A. It is for old formats that still use them, such as encrypted PEM files with `DES-CBC` or `DES-EDE3-CBC`. DES is not secure, and Triple DES is deprecated: new designs do not use them. The module is under `std/crypto/legacy` for that reason. Use `std/crypto/aes_gcm` or `std/crypto/chacha20poly1305` for new data.
 
 ## Model
 
