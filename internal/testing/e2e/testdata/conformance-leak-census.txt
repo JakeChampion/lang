@@ -28,6 +28,7 @@ a_deep_type_argument_that_does_not_grow_is_accepted  0
 a_drop_frees_a_node_that_both_fields_hold            0
 a_float_array_or_a_tuple_element_takes_the_type_of_its_first_use 0
 a_float_literal_array_takes_the_width_of_its_first_use 0
+a_function_in_a_block_can_call_an_outer_recursive_function_that_captures 0
 a_function_named_like_a_safe_intrinsic_shadows_it    0
 a_function_named_like_an_intrinsic_is_a_plain_call   0
 a_function_type_argument_binds_through_its_array     0

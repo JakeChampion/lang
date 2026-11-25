@@ -57,8 +57,8 @@ pub function subst_fcall_one(stmt: ast.Stmt, fname: string, lname: string, capar
 // The statements with each call of fname as subst_fcall_one gives it, and
 // with value in place of each other read of fname. The names in shadowed
 // are bound before the first statement.
-pub function subst_fn(stmts: ast.Stmt[], fname: string, lname: string, capargs: ast.Expr[], value: ast.Expr, shadowed: string[]): ast.Stmt[] {
-  let plain = context(fname, lname, capargs, []);
+pub function subst_fn(stmts: ast.Stmt[], fname: string, lname: string, capargs: ast.Expr[], bindings: ast.TypedBinding[], value: ast.Expr, shadowed: string[]): ast.Stmt[] {
+  let plain = context(fname, lname, capargs, bindings);
   let (out, _) = body(stmts, shadow(Context { ...plain, value: Some(value) }, shadowed));
   return out;
 }

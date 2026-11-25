@@ -1,0 +1,36 @@
+// A local function in an inner block calls an outer local function that
+// calls itself and captures a local. The lift of the outer function gives
+// the call a capture argument that the inner function must also capture.
+function main(): i32 {
+  let step = 2;
+  function down(n: i32): i32 {
+    if (n <= 0) {
+      return 0;
+    }
+    return 1 + down(n - step);
+  }
+  function up(n: i32): i32 {
+    return down(n) + 100;
+  }
+  if (step == 2) {
+    function twice(n: i32): i32 {
+      return down(n) * 2;
+    }
+    print(f"{twice(7)}");
+  } else {
+    function up(n: i32): i32 {
+      return 1 + down(n - 1);
+    }
+    print(f"{up(7)}");
+  }
+  if (step == 3) {
+    print("unreachable");
+  } else {
+    function up(n: i32): i32 {
+      return 1 + down(n - 1);
+    }
+    print(f"{up(7)}");
+  }
+  print(f"{down(9)} {up(9)}");
+  return 0;
+}
