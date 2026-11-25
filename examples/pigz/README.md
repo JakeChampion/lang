@@ -151,6 +151,12 @@ job is two times as large as the job before it, up to 8 MiB. A worker is
 a process, and its start takes about 3 ms of kernel time. A large job makes
 that time a small part of the job.
 
+When the input is a regular file, its size is known. Then a job is at most
+the rest of the input divided by 2n, in whole blocks, and at least the size
+of a first job. So the last jobs are small, and no process waits at the end
+for one large job. The standard input and a symbolic link keep the jobs
+above.
+
 Up to n jobs run at a time. The parent starts a job when any job ends
 (`worker.wait_any`). It writes the output of each job in order. At most
 2n jobs are between the next job to write and the last job that started.

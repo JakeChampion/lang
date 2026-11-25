@@ -10,6 +10,47 @@ import "./zopfli";
 
 pub const DICT: i32 = 32768;
 
+// The input bytes of the first jobs of parallel_compress: whole blocks,
+// about 1 MiB, so that a small input still runs on each process.
+pub function job_size(block: i32): i32 {
+  if (block >= 1048576) {
+    return block;
+  }
+  return 1048576 / block * block;
+}
+
+// The largest job that `grown` makes.
+pub const MAX_JOB: i32 = 8388608;
+
+// The size of the job after a job of `size` bytes. Each job is a process,
+// whose start costs about 3 ms of kernel time, so the jobs after the first
+// ones double up to MAX_JOB. The output does not depend on the size.
+pub function grown(size: i32): i32 {
+  if (size > MAX_JOB / 2) {
+    return size;
+  }
+  return size * 2;
+}
+
+// The size of the next job when `left` bytes of the input are still to
+// read, or `size` when that is not known (`left` is -1). Each job takes at
+// most half of a fair share of the rest, so the last jobs are small and no
+// process waits at the end for one large job. A job stays whole blocks.
+pub function fitted(size: i32, block: i32, procs: i32, left: i64): i32 {
+  if (left <= 0i64) {
+    return size;
+  }
+  let share = left / ((2 * procs) as i64);
+  if (share >= size as i64) {
+    return size;
+  }
+  let least = job_size(block);
+  if (share <= least as i64) {
+    return least;
+  }
+  return share as i32 / block * block;
+}
+
 pub struct Settings {
   level: i32,
   strategy: i32,
