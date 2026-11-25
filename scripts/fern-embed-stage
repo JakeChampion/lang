@@ -19,3 +19,10 @@ if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
   version="$version-dirty"
 fi
 printf '%s\n' "$version" > "$out/VERSION"
+
+# DIGEST names the cache directory that `fern` unpacks this tree into. The
+# build computes it, so that `fern` does not hash the tree at each start.
+sha256=(sha256sum)
+command -v sha256sum > /dev/null || sha256=(shasum -a 256)
+digest="$(cd "$out" && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 "${sha256[@]}" -- | "${sha256[@]}" | cut -c1-16)"
+printf '%s' "$digest" > "$out/DIGEST"
