@@ -7,7 +7,7 @@ import "std/bigint";
 import "std/crypto";
 import "std/crypto/aes";
 import "std/crypto/chacha20poly1305";
-import "std/crypto/des";
+import "std/crypto/legacy/des";
 import "std/crypto/ed25519";
 import "std/crypto/rsa";
 import "std/crypto/sha2";

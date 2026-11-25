@@ -23,7 +23,7 @@ const cryptoEraseSrc = `import "std/crypto";
 import "std/hex";
 import "std/crypto/aes_gcm";
 import "std/crypto/aes";
-import "std/crypto/des";
+import "std/crypto/legacy/des";
 import "std/hex";
 import "std/result";
 import "std/crypto/chacha20poly1305";
