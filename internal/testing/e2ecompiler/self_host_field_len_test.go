@@ -10,8 +10,24 @@ import (
 
 // Each Z holds a head of 32768 elements, through a `with` write and a store
 // back. Each caller of `pick` gives it at least 256 elements, through a phi
-// of two lengths.
+// of two lengths. `zeros` gives back as many elements as its parameter, and
+// `like` as many as the length of its parameter.
 const fieldLenProg = `struct Z { head: u16[], n: i32 }
+@noinline function zeros(n: i32): i32[] {
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, 0);
+  }
+  return out;
+}
+@noinline function like(xs: i32[]): i32[] {
+  return zeros(xs.len());
+}
+@noinline function sized(x: i32): i32 {
+  let a = zeros(64);
+  let b = like(a);
+  return a[x & 63] + b[x & 31];
+}
 function make(): Z {
   return Z { head: __alloc_u16(32768), n: 0 };
 }
@@ -31,14 +47,25 @@ function main(): i32 {
   }
   let t = if (args().len() > 5) { __alloc_i32(300) } else { __alloc_i32(256) };
   t = t.with(3, 9);
-  print((z.head[7919 & 32767] as i32 + z.n + pick(t, 259)).to_string());
+  print((z.head[7919 & 32767] as i32 + z.n + pick(t, 259) + sized(1000)).to_string());
   return 0;
 }
 `
 
 // One W holds a head of 16 elements, so `step` keeps its check, and the run
 // aborts. One caller gives `pick` 100 elements, so `pick` keeps its check.
+// `zeros` gives `sized` 32 elements, below the mask.
 const fieldLenShortProg = `struct W { head: u16[] }
+@noinline function zeros(n: i32): i32[] {
+  let out = __alloc_i32(n);
+  for i in 0..n {
+    out = out.with(i, 0);
+  }
+  return out;
+}
+@noinline function sized(x: i32): i32 {
+  return zeros(32)[x & 63];
+}
 @noinline function step(w: W, x: i32): i32 {
   return w.head[x & 32767] as i32;
 }
@@ -48,7 +75,7 @@ const fieldLenShortProg = `struct W { head: u16[] }
 function main(): i32 {
   let long = W { head: __alloc_u16(32768) };
   let short = W { head: __alloc_u16(16) };
-  print((step(long, 40000) + pick(__alloc_i32(256), 3) + pick(__alloc_i32(100), 3)).to_string());
+  print((step(long, 40000) + pick(__alloc_i32(256), 3) + pick(__alloc_i32(100), 3) + sized(5)).to_string());
   print(step(short, 1000).to_string());
   return 0;
 }
@@ -63,8 +90,8 @@ func TestSelfHostFieldLength(t *testing.T) {
 		wantOut   string
 		wantAbort bool
 	}{
-		{"filled", fieldLenProg, map[string]bool{"step": false, "pick": false}, "1010\n", false},
-		{"short", fieldLenShortProg, map[string]bool{"step": true, "pick": true}, "0\n", true},
+		{"filled", fieldLenProg, map[string]bool{"step": false, "pick": false, "sized": false}, "1010\n", false},
+		{"short", fieldLenShortProg, map[string]bool{"step": true, "pick": true, "sized": true}, "0\n", true},
 	}
 	for _, c := range cases {
 		src := filepath.Join(dir, c.name+".fern")
