@@ -135,8 +135,8 @@ func (a Array) Len() int {
 
 // At is a.Elems()[k], and keeps a box of bytes narrow.
 func (a Array) At(k int) Value {
-	if a.b.bytes != nil {
-		return Number(a.b.bytes[a.off+k])
+	if view, ok := a.Bytes(); ok {
+		return Number(view[k])
 	}
 	return a.Elems()[k]
 }

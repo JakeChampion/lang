@@ -69,6 +69,16 @@ func TestByteBoxMatchesValues(t *testing.T) {
 			want: 7009,
 		},
 		{
+			name: "view keeps its bytes after the array is shortened",
+			src: `function main(): i32 {
+				let a = __alloc_u8(4).with(3, 42u8);
+				let view: [u8] = a[2:4];
+				unsafe { __arr_set_len(a, 1); }
+				return view[1] as i32;
+			}`,
+			want: 42,
+		},
+		{
 			name: "append widens and keeps the bytes",
 			src: `function main(): i32 {
 				let a: u8[] = __alloc_u8(2).with(1, 5u8);
