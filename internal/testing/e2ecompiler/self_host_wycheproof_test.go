@@ -13,9 +13,25 @@ import (
 // P-256 arithmetic and takes about 25 minutes on its 484 vectors, so the
 // std test gate, which runs every suite under the oracle too, leaves it out.
 func TestSelfHostWycheproofEcdsaP256(t *testing.T) {
+	runNativeVectorSuite(t, "tests/stdlib/wycheproof_ecdsa_p256_test.fern")
+}
+
+// The ML-DSA-65 vector suites run natively alone, for the same reason: the
+// oracle takes about a minute on the 7 cases of tests/stdlib/mldsa_test.fern.
+func TestSelfHostMlDsaVectors(t *testing.T) {
+	for _, suite := range []string{"wycheproof_mldsa65", "acvp_mldsa65"} {
+		t.Run(suite, func(t *testing.T) {
+			runNativeVectorSuite(t, "tests/stdlib/"+suite+"_test.fern")
+		})
+	}
+}
+
+// runNativeVectorSuite builds the std/test program at path for x86-64 and
+// arm64 Linux, and each build must pass all of its tests.
+func runNativeVectorSuite(t *testing.T, path string) {
 	cli := buildSelfHostCLI(t)
 	_, qemu := arm64Tooling(t)
-	src := langSrcAbs(t, "tests/stdlib/wycheproof_ecdsa_p256_test.fern")
+	src := langSrcAbs(t, path)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			bin := filepath.Join(t.TempDir(), "suite")

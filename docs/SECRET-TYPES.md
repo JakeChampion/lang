@@ -44,6 +44,7 @@ These records of `std/crypto` have the attribute:
 | `ed25519` | `PrivateKey` |
 | `chacha20poly1305` | `Key` |
 | `hpke` | `Context`, `HybridKey`, `HybridP256Key`, `P256Key`, `Encapsulation` |
+| `mldsa` | `KeyPair` |
 | `mlkem768` | `KeyPair`, `Encapsulation` |
 | `rsa` | `PrivateKey` |
 

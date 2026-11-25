@@ -2187,6 +2187,7 @@ TestSelfHostMismatchIRArm64 2
 TestSelfHostMismatchIRWasm 2
 TestSelfHostMissingModuleMember 4
 TestSelfHostMitigationsReport 5
+TestSelfHostMlDsaVectors 20
 TestSelfHostMixedStructReleaseArm64 4
 TestSelfHostMixedStructReleaseWasm 4
 TestSelfHostMixedStructReleaseX86_64 4

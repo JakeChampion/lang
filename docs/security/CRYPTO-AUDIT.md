@@ -23,6 +23,7 @@ No module defines a cipher, a hash or a signature scheme of its own.
 | `std/crypto/ecdsa`, `std/crypto/p256` | ECDSA over P-256 and P-384 with SHA-2, ECDH | `ecdsa`, `p256` | a flipped bit, another message, another key, another digest and malformed keys are refused |
 | `std/crypto/rsa` | RSASSA-PKCS1-v1_5 and RSASSA-PSS verification, RSAES-OAEP encryption and decryption | `rsa` | malformed keys, invalid signatures and OAEP decoding failures |
 | `std/crypto/mlkem768` | ML-KEM-768 (FIPS 203) | `mlkem768` | implicit rejection of a changed ciphertext, modulus and hash checks on the keys |
+| `std/crypto/mldsa` | ML-DSA-65 (FIPS 204) | `mldsa`, `wycheproof_mldsa65`, `acvp_mldsa65` | a changed message, context, signature or key is refused, and a private key with s1 or s2 out of range is refused |
 | `std/crypto/hpke` | HPKE base mode with X-Wing, MLKEM768-P256 or DHKEM(P-256), HKDF-SHA256 and ChaCha20-Poly1305 | `hpke` | invalid public keys, lengths and ciphertexts |
 | `std/tls` | TLS 1.3 and client-side TLS 1.2 | the `tls_*` suites | the record, handshake and certificate suites refuse malformed and unauthenticated input |
 
@@ -32,7 +33,7 @@ The random source is `random_bytes`, which reads the kernel's entropy service an
 
 ## Wycheproof
 
-The five `tests/stdlib/wycheproof_*_test.fern` suites run the Wycheproof `testvectors_v1` files for AES-GCM, ChaCha20-Poly1305, X25519, Ed25519 and ECDSA over P-256 with SHA-256.
+Five `tests/stdlib/wycheproof_*_test.fern` suites run the Wycheproof `testvectors_v1` files for AES-GCM, ChaCha20-Poly1305, X25519, Ed25519 and ECDSA over P-256 with SHA-256.
 `scripts/gen-wycheproof.py` writes them from the JSON files, and the header of each suite names its source and vector count.
 The module must accept every valid vector and refuse every invalid vector. An acceptable vector runs for its verdict alone.
 A module refuses a key, nonce or tag size it does not take. The AEAD suites check that a valid vector of such a size answers an error.
@@ -49,6 +50,16 @@ The oracle interprets the P-256 arithmetic and takes about 25 minutes on the ECD
 | `wycheproof_ed25519` | 210 | 111 |
 | `wycheproof_ecdsa_p256` | 484 | 113 |
 
+## ML-DSA-65
+
+`std/crypto/mldsa` has two vector suites, which `scripts/gen-mldsa-vectors.py` writes:
+
+- `wycheproof_mldsa65` runs the 393 vectors of the Wycheproof files `mldsa_65_sign_seed_test.json`, `mldsa_65_sign_noseed_test.json` and `mldsa_65_verify_test.json`.
+- `acvp_mldsa65` runs the ML-DSA-65 cases of the NIST ACVP-Server files for keyGen, sigGen and sigVer, with no pre-hash. It takes 5 cases of each sigGen group.
+
+A signing vector compares the SHA3-256 of the signature, which keeps the suites small.
+The oracle takes about a minute on `tests/stdlib/mldsa_test.fern`, so `TestSelfHostMlDsaVectors` runs the two vector suites natively on both targets alone.
+
 ## Constant time
 
 A verdict that depends on a secret is computed without a branch and then declassified.
@@ -57,7 +68,9 @@ The AEAD open folds the tag difference into one byte, marks that byte public wit
 
 `__ct_secret(b)` tells Valgrind's memcheck that the bytes of `b` are undefined, and `__ct_public(b)` that they are defined again.
 Memcheck then reports every branch and every address that depends on a secret byte.
-`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, the TLS key share, Ed25519, ECDSA, P-256 ECDH, HPKE on the X-Wing path, HOTP-SHA256, XChaCha20-Poly1305, and RSA private-key construction with RSA-OAEP decryption.
+`TestSelfHostCtGateX86_64` and `TestSelfHostCtGateArm64` run a program per primitive under memcheck. They require a clean run for AES-GCM, ChaCha20-Poly1305, X25519, ML-KEM-768, ML-DSA-65, the TLS key share, Ed25519, ECDSA and P-256 ECDH.
+
+They also require a clean run for HPKE on the X-Wing path, HOTP-SHA256, XChaCha20-Poly1305, and RSA private-key construction with RSA-OAEP decryption.
 The gate also checks equal-length matching and mismatching inputs to `consteq`, multi-block PBKDF2-HMAC-SHA256 and HKDF-SHA256/SHA384 outputs, and scrypt with a secret password. In ROMix the implementation marks the password-dependent lookup index public before reading its table.
 
 The gate checks SHA-256 of a secret message, in one call and in parts.
@@ -72,5 +85,5 @@ Memcheck must report the control programs that branch or index on a secret, whic
 - `crypto.erase` wipes an owned array the caller passes. The key records of `std/crypto` are `@secret`, and their drop zeroes the arrays that they hold alone ([SECRET-TYPES.md](../SECRET-TYPES.md)). A copy the compiler made is not wiped.
 - The primitives zero the key material they copy. HMAC zeroes its two pad blocks and a hashed long key. HKDF and PBKDF2 zero each output block and each message that carries one. ChaCha20-Poly1305 zeroes the one-time Poly1305 key. X25519 zeroes the clamped scalar of `public_key`. Ed25519 zeroes the nonce hash and the nonce scalar of a signature, and the limb array of each reduction. The ECDSA signer zeroes each nonce, and the key, the value and every message of its HMAC-DRBG. `TestSelfHostPrimitivesEraseKeyMaterial` scans the arena after each primitive for the copy it used to leave.
 - The limb arithmetic of P-256, the generic Weierstrass curves and ML-KEM allocates an array for each intermediate product. A product of a secret is not zeroed. In the release build they stay in their released blocks until the allocator reuses them. Under `-harden` the allocator zeroes each block at its release ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)).
-- The Wycheproof suites cover the five primitives above. RSA, ML-KEM-768, the hashes and the key derivation functions check their standards' vectors and the listed negative cases alone.
+- The Wycheproof suites cover the five primitives above and ML-DSA-65. RSA, ML-KEM-768, the hashes and the key derivation functions check their standards' vectors and the listed negative cases alone.
 - TLS trusts the root store it is given. Revocation checking is not implemented.
