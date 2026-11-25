@@ -8826,11 +8826,13 @@ function san_shape_table(s: asmcore.EmitState): asmcore.EmitState {
 // After a leak verdict: each block still in __fern_san_live is counted under
 // the shape id in its header, and each shape that leaked gets a line with its
 // number of blocks and bytes. A header whose number of words is not that of
-// its shape counts as a block with no shape.
+// its shape counts as a block with no shape. The two redzone words before the
+// link of each block are checked first, as a release checks them.
 function san_census(s: asmcore.EmitState): asmcore.EmitState {
   let n = mov_imm64("x12", asmcore.san_shape_count(s) as i64);
   s = s.write("    stp x19, x20, [sp, #-32]!\n    str x21, [sp, #16]\n    adrp x19, __fern_san_live\n    add x19, x19, :lo12:__fern_san_live\n    ldr x19, [x19]\n");
-  s = s.write(".Lsan_cen_walk:\n    cbz x19, .Lsan_cen_print\n    ldr x9, [x19, #16]\n    add x9, x9, #2\n    lsl x9, x9, #3\n    sub x20, x19, x9\n");
+  s = s.write(".Lsan_cen_walk:\n    cbz x19, .Lsan_cen_print\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
+  s = s.write("    ldp x9, x11, [x19, #-16]\n    cmp x9, x10\n    b.ne __fern_san_abort_hbo\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    ldr x9, [x19, #16]\n    add x9, x9, #2\n    lsl x9, x9, #3\n    sub x20, x19, x9\n");
   s = s.write("    ldr w9, [x20, #4]\n    lsr w10, w9, #16\n    and w11, w9, #0xffff\n" + n + "    cmp x10, x12\n    b.hi .Lsan_cen_none\n");
   s = s.write("    adrp x12, .Lsan_shapes\n    add x12, x12, :lo12:.Lsan_shapes\n    mov x13, #24\n    madd x13, x10, x13, x12\n    ldr x14, [x13, #16]\n    cmp x14, x11\n    b.eq .Lsan_cen_have\n");
   s = s.write(".Lsan_cen_none:\n    mov x10, #0\n.Lsan_cen_have:\n    adrp x12, __fern_san_census\n    add x12, x12, :lo12:__fern_san_census\n    add x12, x12, x10, lsl #4\n");

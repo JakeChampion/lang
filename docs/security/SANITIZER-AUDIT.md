@@ -32,7 +32,8 @@ The suites that pin the detectors run on both native targets and under the sanit
 ## What the detectors do not see
 
 - A raw read after free. `__load_*` through a dangling raw pointer touches no count, so the quarantine never sees it. The quarantine fills the payload with the poison pattern, so the read returns the pattern and not the bytes the block held ([QUARANTINE.md](QUARANTINE.md)).
-- A write more than 16 bytes past a block, or a write past a block that is never released. The redzone after each block is 16 bytes, and the release of the block reads it. A write beyond it lands in the next block's header or payload. The next release or increment of that block then reports an over-release or nothing at all.
+- A write more than 16 bytes past a block. The redzone after each block is 16 bytes, and the release of the block reads it. A write beyond it lands in the next block's header or payload. The next release or increment of that block then reports an over-release or nothing at all.
+- On wasm, a write past a block that is never released. On the native targets, the leak census at exit reads the redzone after the class of each live block. A write in the class past the request of a live block is not seen, because a string grows into those words.
 - An uninitialised raw read. `__alloc` does not zero its block, and the sanitizer has no shadow memory to tell a written byte from an unwritten one.
 - A misaligned ordinary raw access. The native targets accept a misaligned `__load_*` and `__store_*`. Under `-sanitize` on a hosted target, each `__atomic_*` builtin checks that its address is a multiple of 8. A misaligned address reports `fern-sanitizer: misaligned atomic` with exit 124 (`TestSelfHostSanitizeMisalignedAtomic`). A kernel image has no check, because the report needs a host.
 - A reference cycle. The census reports it as live bytes without attribution.
