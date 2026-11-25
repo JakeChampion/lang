@@ -1117,8 +1117,8 @@ function chain_goes_to(own r: irtables.LowerState, slot: i32, d: i32, frees: boo
 // with no child that is freed here. A shared child gives back its count.
 // Each path leaves: to the loop with the next node, or to the stack. A node
 // that waits on the stack is not freed here (`frees`).
-function chain_last_child(own r: irtables.LowerState, d: i32, frees: boolean, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  let leaves = childless_shapes(t, f);
+function chain_last_child(own r: irtables.LowerState, d: i32, frees: boolean, t: typeinfo.Type, f: ssasem.Func, secret: boolean): irtables.LowerState {
+  let leaves = chain_leaves(t, f, secret);
   r = emit(r, ir.op_load_local(CHAIN_NEXT));
   r = emit(r, aligned_unique_of(t, f));
   r = emit(r, ir.op_if(0));
@@ -1149,13 +1149,13 @@ function chain_ends(own r: irtables.LowerState, d: i32, frees: boolean, t: typei
 // The node has two or more waiting children. It goes on the stack as a cell
 // with each of them in place, and `tail` keeps the cell below. The last child
 // is then the next node.
-function chain_many_children(own r: irtables.LowerState, d: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+function chain_many_children(own r: irtables.LowerState, d: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func, secret: boolean): irtables.LowerState {
   r = emit(r, ir.op_load_local(CHAIN_NODE));
   r = emit(r, ir.op_load_local(CHAIN_PENDING));
   r = emit(r, ir.op_struct_set(tail, 0));
   r = emit(r, ir.op_load_local(CHAIN_NODE));
   r = emit(r, ir.op_store_local(CHAIN_PENDING));
-  return chain_last_child(r, d, false, t, f);
+  return chain_last_child(r, d, false, t, f, secret);
 }
 
 // The two children of the node: the field `waits` in CHAIN_FIELD and the
@@ -1165,8 +1165,8 @@ function chain_many_children(own r: irtables.LowerState, d: i32, tail: i32, t: t
 // the cell for the certifier. The last child is then the next node. In each
 // other case, at most one child is the next node, and the stack does not
 // change.
-function chain_two_children(own r: irtables.LowerState, d: i32, waits: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
-  let leaves = childless_shapes(t, f);
+function chain_two_children(own r: irtables.LowerState, d: i32, waits: i32, tail: i32, t: typeinfo.Type, f: ssasem.Func, secret: boolean): irtables.LowerState {
+  let leaves = chain_leaves(t, f, secret);
   let extra = if (leaves.len() > 0) { 1 } else { 0 };
   r = emit(r, ir.op_block(0));
   r = emit(r, ir.op_load_local(CHAIN_FIELD));
@@ -1212,13 +1212,13 @@ function chain_two_children(own r: irtables.LowerState, d: i32, waits: i32, tail
   r = release(r, CHAIN_FIELD, t, f);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
-  return chain_last_child(r, d, true, t, f);
+  return chain_last_child(r, d, true, t, f, secret);
 }
 
 // The array in CHAIN_FIELD holds the next nodes. When the array has one
 // count, each element but the last drops here, and the last element is the
 // last child of the node.
-function chain_tail_array(own r: irtables.LowerState, d: i32, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+function chain_tail_array(own r: irtables.LowerState, d: i32, elem: typeinfo.Type, array: typeinfo.Type, f: ssasem.Func, secret: boolean): irtables.LowerState {
   r = reserve(r, 9);
   r = emit(r, ir.op_load_local(CHAIN_FIELD));
   r = emit(r, aligned_unique());
@@ -1244,7 +1244,7 @@ function chain_tail_array(own r: irtables.LowerState, d: i32, elem: typeinfo.Typ
   r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(8));
-  r = drop_value(r, 8, elem, 9, f);
+  r = drop_chain_child(r, 8, elem, elem, 9, f, secret);
   r = emit(r, ir.op_load_local(6));
   r = emit(r, ir.op_const_i32(1));
   r = emit(r, ir.op_bin("add", 0, false));
@@ -1257,23 +1257,45 @@ function chain_tail_array(own r: irtables.LowerState, d: i32, elem: typeinfo.Typ
   r = emit(r, ir.counted(ir.op_arr_get_nc(ir.width_ptr())));
   r = emit(r, ir.op_store_local(CHAIN_NEXT));
   r = release(r, CHAIN_FIELD, array, f);
-  r = chain_last_child(r, d + 2, true, elem, f);
+  r = chain_last_child(r, d + 2, true, elem, f, secret);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
   return release(r, CHAIN_FIELD, array, f);
 }
 
+// A node that the chain frees with no visit. A `@secret` chain visits each
+// node, so that it zeroes the scalars.
+function chain_leaves(t: typeinfo.Type, f: ssasem.Func, secret: boolean): string[] {
+  return if (secret) { [] } else { childless_shapes(t, f) };
+}
+
+// A child of a node that is not the next node. Its scratch slots start above
+// the slots of the chain.
+function drop_chain_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, chain: typeinfo.Type, scratch: i32, f: ssasem.Func, secret: boolean): irtables.LowerState {
+  if (secret) {
+    return drop_secret_child(r, slot, t, CHAIN_CELL + 1, f, [chain]);
+  }
+  return drop_value(r, slot, t, scratch, f);
+}
+
 // The fields of a node of variant `v`. Each path of a variant that links its
 // next node leaves from here. Another variant goes on to the code after it.
-function drop_chain_fields(own r: irtables.LowerState, d: i32, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+function drop_chain_fields(own r: irtables.LowerState, d: i32, v: semrecords.Variant, t: typeinfo.Type, f: ssasem.Func, secret: boolean): irtables.LowerState {
   let tail = self_tail_field(v, t);
   let waits = waiting_fields(v, t);
   for i in 0..v.fields.len() {
+    if (secret && ssasem.is_scalar(v.fields[i].ty)) {
+      r = emit(r, ir.op_load_local(CHAIN_NODE));
+      r = emit(r, zero(v.fields[i].ty));
+      r = field_store(r, v.fields, i);
+    }
     if (ssasem.counted(f, v.fields[i].ty) && i != tail && !holds(waits, i)) {
       r = emit(r, ir.op_load_local(CHAIN_NODE));
       r = emit(r, ir.counted(ir.op_struct_get(i, 0)));
       r = emit(r, ir.op_store_local(CHAIN_FIELD));
-      if (semtypes.equal(v.fields[i].ty, t)) {
+      if (secret) {
+        r = drop_chain_child(r, CHAIN_FIELD, v.fields[i].ty, t, 6, f, true);
+      } else if (semtypes.equal(v.fields[i].ty, t)) {
         // A call of the release helper here makes two calls for each level, and the return predictor holds few levels.
         r = drop_value_inline(r, CHAIN_FIELD, t, 6, f);
       } else {
@@ -1288,21 +1310,21 @@ function drop_chain_fields(own r: irtables.LowerState, d: i32, v: semrecords.Var
     r = emit(r, ir.op_load_local(CHAIN_NODE));
     r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
     r = emit(r, ir.op_store_local(CHAIN_FIELD));
-    return chain_tail_array(r, d, t, v.fields[tail].ty, f);
+    return chain_tail_array(r, d, t, v.fields[tail].ty, f, secret);
   }
   r = emit(r, ir.op_load_local(CHAIN_NODE));
   r = emit(r, ir.counted(ir.op_struct_get(tail, 0)));
   r = emit(r, ir.op_store_local(CHAIN_NEXT));
   if (waits.len() == 0) {
-    return chain_last_child(r, d, true, t, f);
+    return chain_last_child(r, d, true, t, f, secret);
   }
   if (waits.len() > 1) {
-    return chain_many_children(r, d, tail, t, f);
+    return chain_many_children(r, d, tail, t, f, secret);
   }
   r = emit(r, ir.op_load_local(CHAIN_NODE));
   r = emit(r, ir.counted(ir.op_struct_get(waits[0], 0)));
   r = emit(r, ir.op_store_local(CHAIN_FIELD));
-  return chain_two_children(r, d, waits[0], tail, t, f);
+  return chain_two_children(r, d, waits[0], tail, t, f, secret);
 }
 
 // Each variant that can wait on the stack keeps its waiting children and its
@@ -1445,7 +1467,9 @@ function popped(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): i
 // node, with no call. A node with more such children waits on a stack that
 // the nodes themselves hold. When no child is the next node, the loop takes
 // the next node from the top of the stack.
-function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+// A `@secret` chain (`secret`) also takes each node that holds only scalars,
+// and zeroes the scalars of each node before it frees the node.
+function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Func, secret: boolean): irtables.LowerState {
   let e = f.enums[semrecords.find_enum(f.enums, t)];
   let stack = chain_waits(t, f);
   r = reserve(r, CHAIN_CELL + 1);
@@ -1459,13 +1483,13 @@ function drop_variant_chain(own r: irtables.LowerState, t: typeinfo.Type, f: ssa
   r = emit(r, ir.op_loop(0));
   r = emit(r, ir.op_block(0));
   for v in e.variants {
-    if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f)) {
+    if (!semrecords.inhabited(v) || !fields_have_children(v.fields, f) && !(secret && v.fields.len() > 0)) {
       continue;
     }
     r = emit(r, ir.op_load_local(CHAIN_NODE));
     r = variant_test(r, f, t, v.name);
     r = emit(r, ir.op_if(0));
-    r = drop_chain_fields(r, 1, v, t, f);
+    r = drop_chain_fields(r, 1, v, t, f, secret);
     let tail = self_tail_field(v, t);
     if (tail < 0 || !semtypes.equal(v.fields[tail].ty, t)) {
       r = free_node(r, t, f);
@@ -1579,17 +1603,112 @@ function drop_secret_fields(own r: irtables.LowerState, slot: i32, fields: semre
 // numeric array, the bytes of a string, and the scalars and the children of
 // an array of boxes, a record, a tuple or an enum. A child with a finalizer
 // runs it before the walk zeroes its fields. `path` holds the types that the
-// walk is inside, so a recursive type is dropped as usual at its second level.
+// walk is inside. A named type that is already on it goes to its wipe helper,
+// which calls itself for each deeper level.
 function drop_secret_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
   let shift = ssasem.elem_shift(t);
   if (shift >= 0) {
     r = wipe_sole(r, slot, shift);
   } else if (ssasem.is_string(t)) {
     r = wipe_sole_string(r, slot);
-  } else if (walks(t, f) && !on_path(t, path)) {
+  } else if (walks(t, f) && named(t) != "" && on_path(t, path)) {
+    return mark_release(helper(r, slot, wipe_helper_name(t)), ir.box_release);
+  } else if (walks(t, f)) {
     return drop_secret_box(r, slot, t, scratch, f, path.append(t));
   }
   return drop_value(r, slot, t, scratch, f);
+}
+
+// The release of a value of a recursive type that a `@secret` record holds.
+// It wipes each level that no other value holds.
+pub function wipe_helper_name(t: typeinfo.Type): string {
+  return release_helper_name(t) + "$wipe";
+}
+
+pub function wipe_drop_name(t: typeinfo.Type): string {
+  return drop_helper_name(t) + "$wipe";
+}
+
+// An enum that links its next node wipes each node in the loop of the chain
+// drop of `wipe_drop_name`, so a long list needs no call for each node.
+function wipe_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let r: irtables.LowerState = irtables.LowerState {
+    ...empty(""), ok: true,
+    n_params: 1, n_locals: 1, name: wipe_helper_name(t),
+  };
+  if (wipes_chain(t, f)) {
+    r = emit(r, ir.op_load_local(0));
+    r = emit(r, aligned_unique_of(t, f));
+    r = emit(r, ir.op_if(0));
+    r = helper(r, 0, wipe_drop_name(t));
+    r = emit(r, ir.op_end());
+    r = mark_release(release(r, 0, t, f), ir.box_release);
+  } else {
+    r = drop_secret_box(r, 0, t, 1, f, [t]);
+  }
+  r = emit(r, ir.op_const_i32(0));
+  return emit(r, ir.op_return());
+}
+
+function wipe_chain_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  let r: irtables.LowerState = irtables.LowerState {
+    ...empty(""), ok: true,
+    n_params: 1, n_locals: 1, name: wipe_drop_name(t),
+  };
+  r = drop_variant_chain(r, t, f, true);
+  r = emit(r, ir.op_const_i32(0));
+  return emit(r, ir.op_return());
+}
+
+function wipes_chain(t: typeinfo.Type, f: ssasem.Func): boolean {
+  return typeinfo.union_name(t) != "" && self_tail_enum(t, f);
+}
+
+// The wipe helpers that the rows call, and the helpers that those call in
+// turn. Only the drop of a `@secret` record calls one.
+function wipe_rows(own out: Fresh, f: ssasem.Func, done: util.NameIndex): Fresh {
+  let call = ir.op_call_direct("", 1).kind_tag;
+  let scanned = 0;
+  while (scanned < out.rows.len()) {
+    let from = scanned;
+    scanned = out.rows.len();
+    for k in from..scanned {
+      for op in out.rows[k].ops {
+        if (op.kind_tag == call && op.str.ends_with("$wipe") && !done.has(op.str) && !util.has_str(row_names_of(out.rows), op.str)) {
+          if let Some(t) = wiped_type(f, op.str) {
+            let row = if (op.str == wipe_drop_name(t)) { wipe_chain_helper(t, f) } else { wipe_helper(t, f) };
+            out = Fresh { ...out, rows: out.rows.append(row) };
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// The walk names a wipe helper only for a record or an enum of `f`, and only
+// an enum has a chain.
+function wiped_type(f: ssasem.Func, name: string): Option[typeinfo.Type] {
+  for rec in f.records.list {
+    if (wipe_helper_name(rec.ty) == name) {
+      return Some(rec.ty);
+    }
+  }
+  for e in f.enums {
+    if (wipe_helper_name(e.ty) == name || wipe_drop_name(e.ty) == name) {
+      return Some(e.ty);
+    }
+  }
+  return None;
+}
+
+function holds_secret(f: ssasem.Func): boolean {
+  for rec in f.records.list {
+    if (ssasem.secret_record(rec.ty, f)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function on_path(t: typeinfo.Type, path: typeinfo.Type[]): boolean {
@@ -2665,7 +2784,7 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
   }
   if let typeinfo.TypeUnion(_) = t {
     if (self_tail_enum(t, f)) {
-      r = drop_variant_chain(r, t, f);
+      r = drop_variant_chain(r, t, f, false);
     } else {
       r = drop_variant_fields(r, 0, t, 1, f);
     }
@@ -2789,6 +2908,9 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   }
   for t in routed_keyed_maps(sc.maps, f) {
     out = Fresh { ...out, rows: append_keyed_closures(out.rows, t, done, contracts) };
+  }
+  if (holds_secret(f)) {
+    out = wipe_rows(out, f, done);
   }
   out = send_rows(out, f, done);
   return Fresh { ...out, seen: grown };
