@@ -438,13 +438,21 @@ wider design — Unicode-correct defaults with `ascii`-named fast paths,
 a distinct `char` type, and normalization/segmentation — tracked as
 epic #5626.
 
-**Page index**: the mark, combining class, decomposition, decomposition
-step and composition tables each have a page index (`_mark_index` and the
-others). A page is 128 code points. Entry `p` is the first row whose last
-code point is not below page `p`, so `_rows` gives the few rows that can
-hold a code point and the binary search starts there. The rows above
-U+1FFFF are one span. The five indexes add 9 KB. A table gets an index when
-a caller reads it for each character of a text, as `std/shape` does.
+**Page index**: the decomposition, decomposition step and composition
+tables each have a page index (`_decomp_index` and the others), with pages
+of 128 code points. Entry `p` is the first row whose last code point is not
+below page `p`. Thus `_rows` gives the few rows that can hold a code point,
+and the binary search starts there. The rows above U+1FFFF are one span. A
+table gets an index when a caller reads it for each character of a text, as
+`std/shape` does.
+
+**Staged tables**: `is_mark` and the combining class read a table in three
+stages, with no search. The index gives a chunk for each 4096 code points,
+the chunk gives a block for each page, and the block gives the value. Equal
+chunks and blocks are stored one time. A mark block has one bit for each
+code point, and a combining class block has the index of the class in
+`_ccc_value_table`. The two tables use 18.6 KB, and the range tables that
+they replace used 11.5 KB.
 
 ## Extras (not in the original 15)
 

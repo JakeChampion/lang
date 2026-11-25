@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -669,6 +670,108 @@ func emitIndexed(b *strings.Builder, name, index, table string, rowChars, hiFiel
 	return len(x)
 }
 
+// A staged table holds a value for each code point in three stages, as
+// _staged and _staged_bit of the generated module read it. The index has two
+// digits for each superpage of 4096 code points: the number of its chunk of
+// pages. A chunk has two digits for each of its 32 pages: the number of the
+// block of that page. Chunks and blocks that are the same are stored one
+// time. A block of values has one digit, from 0 to 63, for each code point
+// of its page. A block of bits has one digit, from 0 to 15, for each four
+// code points, with the first in the low bit. The index stops after the last
+// superpage with a value that is not 0, and each code point above it has the
+// value 0.
+type staged struct {
+	index, chunks, blocks string
+	bits                  bool
+}
+
+const (
+	superShift = 12
+	chunkPages = 1 << (superShift - pageShift)
+)
+
+func stageTable(name string, bits bool, value func(rune) int) staged {
+	supers := 0
+	for cp := rune(0); cp <= unicode.MaxRune; cp++ {
+		if value(cp) != 0 {
+			supers = int(cp)>>superShift + 1
+		}
+	}
+	var x, y, t strings.Builder
+	blocks, chunks := map[string]int{}, map[string]int{}
+	id := func(seen map[string]int, out *strings.Builder, s string) int {
+		n, ok := seen[s]
+		if !ok {
+			n = len(seen)
+			seen[s] = n
+			out.WriteString(s)
+		}
+		if n >= 1<<12 {
+			panic(fmt.Sprintf("unicodegen: %s: more than 4096 blocks or chunks", name))
+		}
+		return n
+	}
+	digits := func(b *strings.Builder, n int) {
+		b.WriteByte(enc6(n >> 6))
+		b.WriteByte(enc6(n & 63))
+	}
+	for sp := 0; sp < supers; sp++ {
+		var chunk strings.Builder
+		for p := sp * chunkPages; p < (sp+1)*chunkPages; p++ {
+			var blk strings.Builder
+			for k := 0; k < 1<<pageShift; k++ {
+				v := value(rune(p<<pageShift + k))
+				if v < 0 || v >= 64 || bits && v > 1 {
+					panic(fmt.Sprintf("unicodegen: %s: value %d of U+%04X does not fit", name, v, p<<pageShift+k))
+				}
+				switch {
+				case !bits:
+					blk.WriteByte(enc6(v))
+				case k%4 == 3:
+					d := 0
+					for j := 0; j < 4; j++ {
+						d |= value(rune(p<<pageShift+k-3+j)) << j
+					}
+					blk.WriteByte(enc6(d))
+				}
+			}
+			digits(&chunk, id(blocks, &t, blk.String()))
+		}
+		digits(&x, id(chunks, &y, chunk.String()))
+	}
+	st := staged{index: x.String(), chunks: y.String(), blocks: t.String(), bits: bits}
+	for cp := rune(0); cp <= unicode.MaxRune; cp++ {
+		if got, want := st.at(int(cp)), value(cp); got != want {
+			panic(fmt.Sprintf("unicodegen: %s(U+%04X) = %d, want %d", name, cp, got, want))
+		}
+	}
+	return st
+}
+
+// at mirrors _staged and _staged_bit of the generated module.
+func (st staged) at(cp int) int {
+	sp := cp >> superShift
+	if sp >= len(st.index)/2 {
+		return 0
+	}
+	two := func(t string, i int) int { return dec6(t[i])<<6 | dec6(t[i+1]) }
+	b := two(st.chunks, two(st.index, 2*sp)*2*chunkPages+2*(cp>>pageShift&(chunkPages-1)))
+	k := cp & (1<<pageShift - 1)
+	if st.bits {
+		return dec6(st.blocks[b<<(pageShift-2)+k>>2]) >> (k & 3) & 1
+	}
+	return dec6(st.blocks[b<<pageShift+k])
+}
+
+// emitStaged writes the blocks, the chunks and the index of st as the
+// tables of name.
+func emitStaged(b *strings.Builder, name string, st staged) int {
+	emitTable(b, name+"_table", st.blocks)
+	emitTable(b, name+"_pages", st.chunks)
+	emitTable(b, name+"_index", st.index)
+	return len(st.blocks) + len(st.chunks) + len(st.index)
+}
+
 func inRanges(t string, cp int) bool {
 	lo, hi := 0, len(t)/rangeChars-1
 	for lo <= hi {
@@ -793,7 +896,6 @@ type primary struct {
 }
 
 const (
-	cccChars     = 3 * fieldChars
 	decompChars  = 5 * fieldChars
 	composeChars = 3 * fieldChars
 )
@@ -977,14 +1079,37 @@ func mustHex(s string) int64 {
 	return v
 }
 
-func encodeCCC(rs []cccRun) string {
-	var b strings.Builder
+// A cccTable gives each code point the index of its combining class in
+// values, which has two digits for each class.
+type cccTable struct {
+	staged
+	values string
+}
+
+func encodeCCC(rs []cccRun) cccTable {
+	class := map[rune]int{}
+	classes := []int{0}
 	for _, r := range rs {
-		encField(&b, int(r.lo))
-		encField(&b, int(r.hi))
-		encField(&b, r.ccc)
+		for cp := r.lo; cp <= r.hi; cp++ {
+			class[cp] = r.ccc
+		}
+		if !slices.Contains(classes, r.ccc) {
+			classes = append(classes, r.ccc)
+		}
 	}
-	return b.String()
+	slices.Sort(classes)
+	if len(classes) > 64 {
+		panic(fmt.Sprintf("unicodegen: %d combining classes do not fit one digit", len(classes)))
+	}
+	at := map[int]int{}
+	var v strings.Builder
+	for i, c := range classes {
+		at[c] = i
+		v.WriteByte(enc6(c >> 6))
+		v.WriteByte(enc6(c & 63))
+	}
+	st := stageTable("ccc", false, func(cp rune) int { return at[class[cp]] })
+	return cccTable{staged: st, values: v.String()}
 }
 
 func encodeDecomp(ds []decomp) string {
@@ -1008,7 +1133,7 @@ func encodeCompose(ps []primary) string {
 	return b.String()
 }
 
-func verifyNorm(cccT, decompT, composeT string, cccs []cccRun, decomps []decomp, prims []primary) {
+func verifyNorm(cccT cccTable, decompT, composeT string, cccs []cccRun, decomps []decomp, prims []primary) {
 	classOf := func(cp rune) int {
 		for _, r := range cccs {
 			if cp >= r.lo && cp <= r.hi {
@@ -1043,21 +1168,9 @@ func verifyNorm(cccT, decompT, composeT string, cccs []cccRun, decomps []decomp,
 	}
 }
 
-func decodeCCC(t string, cp int) int {
-	lo, hi := 0, len(t)/cccChars-1
-	for lo <= hi {
-		mid := lo + (hi-lo)/2
-		base := mid * cccChars
-		switch {
-		case cp < decField(t, base):
-			hi = mid - 1
-		case cp > decField(t, base+fieldChars):
-			lo = mid + 1
-		default:
-			return decField(t, base+2*fieldChars)
-		}
-	}
-	return 0
+func decodeCCC(t cccTable, cp int) int {
+	k := t.at(cp)
+	return dec6(t.values[2*k])<<6 | dec6(t.values[2*k+1])
 }
 
 func decodeDecomp(t string, cp int) ([4]rune, bool) {
@@ -1575,8 +1688,10 @@ func graphemeScanner(signature, setup, empty, boundary, finish string) string {
 func generate() (string, genStats) {
 	caseT, runs, classes := tables()
 	stats := genStats{runs: len(runs), tableBytes: len(caseT)}
-	for _, c := range classes {
-		stats.tableBytes += len(c.table)
+	for name, c := range classes {
+		if name != "mark" {
+			stats.tableBytes += len(c.table)
+		}
 	}
 
 	cccs, decomps, prims := parseNormData()
@@ -1604,7 +1719,7 @@ func generate() (string, genStats) {
 	}
 	nfcMaybe := coalesce(func(r rune) bool { return combinesLeft[r] })
 
-	stats.tableBytes += len(cccT) + len(decompT) + len(stepT) + len(composeT) +
+	stats.tableBytes += len(cccT.values) + len(decompT) + len(stepT) + len(composeT) +
 		len(encodeRanges(nfcNo)) + len(encodeRanges(nfcMaybe)) + len(encodeRanges(nfdNo))
 
 	gcbs, extPict, gcbVersion := parseGCBData()
@@ -1642,12 +1757,18 @@ import "std/utf8" as utf8;
 		c := classes[name]
 		emitTable(&b, "_"+name+"_ranges", c.table)
 	}
-	stats.tableBytes += emitIndexed(&b, "_mark_ranges", "_mark_index", classes["mark"].table, rangeChars, 1)
+	stats.tableBytes += emitStaged(&b, "_mark", stageTable("mark", true, func(r rune) int {
+		if unicode.IsMark(r) {
+			return 1
+		}
+		return 0
+	}))
 	emitTable(&b, "_full_upper_table", encodeFull(fullUpper))
 	emitTable(&b, "_full_lower_table", encodeFull(fullLower))
 	emitTable(&b, "_fold_table", encodeFull(foldExceptions))
 
-	stats.tableBytes += emitIndexed(&b, "_ccc_ranges", "_ccc_index", cccT, 3*fieldChars, 1)
+	stats.tableBytes += emitStaged(&b, "_ccc", cccT.staged)
+	emitTable(&b, "_ccc_value_table", cccT.values)
 	stats.tableBytes += emitIndexed(&b, "_decomp_table", "_decomp_index", decompT, 5*fieldChars, 0)
 	stats.tableBytes += emitIndexed(&b, "_decomp_step_table", "_decomp_step_index", stepT, 3*fieldChars, 0)
 	stats.tableBytes += emitIndexed(&b, "_compose_table", "_compose_index", composeT, 3*fieldChars, 0)
@@ -1680,6 +1801,30 @@ function _fld2(t: string, i: i32): i32 {
     let v = (t[i] as i32 << 8) | t[i + 1] as i32;
     let w = v - 0x3030 - (((v + 0x2323) >> 7) & 0x0101);
     return (w & 63) | ((w >> 2) & 0xfc0);
+}
+
+// The block of cp in the staged table of the index x and the chunks y. Entry
+// s of x is the chunk of the superpage s of 4096 code points, and entry p of
+// a chunk is the block of its page p of 128 code points.
+function _staged_block(x: string, y: string, cp: i32): i32 {
+    return _fld2(y, _fld2(x, 2 * (cp >> 12)) * 64 + ((cp >> 6) & 62));
+}
+
+// The value of cp in the staged table of x, y and the blocks t, where a
+// block has one digit for each code point. Each code point above the
+// superpages of x has the value 0.
+function _staged(x: string, y: string, t: string, cp: i32): i32 {
+    if (cp >> 12 >= x.len() / 2) { return 0; }
+    let c = t[_staged_block(x, y, cp) * 128 + (cp & 127)] as i32;
+    return c - 48 - ((c + 35) >> 7);
+}
+
+// The bit of cp in the staged table of x, y and the blocks t, where a block
+// has one digit for each four code points.
+function _staged_bit(x: string, y: string, t: string, cp: i32): boolean {
+    if (cp >> 12 >= x.len() / 2) { return false; }
+    let c = t[_staged_block(x, y, cp) * 32 + ((cp >> 2) & 31)] as i32;
+    return (((c - 48) >> (cp & 3)) & 1) != 0;
 }
 
 // The first and the last row that can hold cp in a table of n rows with the
@@ -2134,10 +2279,7 @@ pub function (c: char) is_lower(): boolean {
 
 // A mark: of the general category Mn, Mc or Me.
 pub function (c: char) is_mark(): boolean {
-    if ((c as i32) < 768) { return false; }
-    let t = _mark_ranges();
-    let (lo, hi) = _rows(_mark_index(), t.len() / 8, c as i32);
-    return _in_rows(t, lo, hi, c as i32);
+    return _staged_bit(_mark_index(), _mark_pages(), _mark_table(), c as i32);
 }
 
 function _all_cp(s: string, kind: i32): boolean {
@@ -2179,18 +2321,7 @@ pub function (s: string) is_digits(): boolean {
 }
 
 function _ccc_of(cp: char): i32 {
-    let n = cp as i32;
-    if (n < 768) { return 0; }
-    let t = _ccc_ranges();
-    let (lo, hi) = _rows(_ccc_index(), t.len() / 12, n);
-    while (lo <= hi) {
-        let mid = lo + (hi - lo) / 2;
-        let base = mid * 12;
-        if (n < _fld(t, base)) { hi = mid - 1; }
-        else if (n > _fld(t, base + 4)) { lo = mid + 1; }
-        else { return _fld(t, base + 8); }
-    }
-    return 0;
+    return _fld2(_ccc_value_table(), 2 * _staged(_ccc_index(), _ccc_pages(), _ccc_table(), cp as i32));
 }
 
 function _decomp_append(out: char[], cp: char): char[] {
