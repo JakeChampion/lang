@@ -64,3 +64,31 @@ func TestSelfHostInterpBinary(t *testing.T) {
 		t.Fatalf("x86-64 output:\n%s\nwant:\n%s", native, interpBinaryWant)
 	}
 }
+
+// Each binary operator on each kind of value it takes, the match on a range
+// included. The interpreter and an x86-64 build print the pinned output.
+func TestSelfHostInterpBinaryEachOperator(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src, err := filepath.Abs(filepath.Join("testdata", "interp_binary", "each_operator.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "interp_binary", "each_operator.out"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib).CombinedOutput()
+	if err != nil {
+		t.Fatalf("interp: %v\n%s", err, out)
+	}
+	if string(out) != string(want) {
+		t.Fatalf("interp output:\n%s\nwant:\n%s", out, want)
+	}
+	native, err := runX86_64Bin(cli.runner, cli.x86Binary(t, src)).Output()
+	if err != nil {
+		t.Fatalf("x86-64: %v", err)
+	}
+	if string(native) != string(want) {
+		t.Fatalf("x86-64 output:\n%s\nwant:\n%s", native, want)
+	}
+}
