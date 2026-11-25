@@ -7023,6 +7023,15 @@ function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "prctl_query") {
     return Lowered { found: true, r: emit(r, ir.op_prctl_query()) };
   }
+  if (ins.str == "secret_map") {
+    return Lowered { found: true, r: emit(r, ir.op_secret_map()) };
+  }
+  if (ins.str == "secret_lock") {
+    return Lowered { found: true, r: emit(r, ir.op_secret_lock()) };
+  }
+  if (ins.str == "secret_unmap") {
+    return Lowered { found: true, r: emit(r, ir.op_secret_unmap()) };
+  }
   if (ins.str == "uname_field") {
     return Lowered { found: true, r: emit(r, ir.op_uname_field()) };
   }

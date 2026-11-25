@@ -527,3 +527,6 @@ sha256x8_hw=577
 sha256x8_hw_blocks=578
 sha256_hw_digest_block=579
 storage_bytes=580
+secret_map=581
+secret_lock=582
+secret_unmap=583

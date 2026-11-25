@@ -3886,6 +3886,9 @@ function call_host_native(heap: interpheap.Heap, name: string, cap: string, args
   if (cap == "tty") {
     return call_host_tty(heap, name, args);
   }
+  if (util.has_str(["secret_map", "secret_lock", "secret_unmap"], name)) {
+    return call_secret_pages(heap, name, args);
+  }
   if (util.has_str(["proc", "rlimit", "sched", "subprocess"], cap)) {
     return call_host_proc(name, args);
   }
@@ -3976,6 +3979,35 @@ function call_host_system(heap: interpheap.Heap, name: string, args: Value[]): V
     "sysctl" => call_host_sysctl(heap, arg_i32s(args, 0)),
     _ => v_err("undefined function: " + name),
   };
+}
+
+// The interpreter serves secret pages from its own heap, as the Go oracle
+// does. It cannot lock them, so secret_lock answers ENOSYS.
+function call_secret_pages(heap: interpheap.Heap, name: string, args: Value[]): Value {
+  if (name == "secret_lock") {
+    return v_int64(0i64 - 38i64);
+  }
+  let addr = arg_i64(args, 0);
+  if (name == "secret_map") {
+    if (addr <= 0i64 || addr > 2147483647i64) {
+      return v_int64(0i64 - 22i64);
+    }
+    unsafe {
+      let fresh = __alloc(addr as i32);
+      __memset(fresh, 0, addr as i32);
+      interpheap.raw_record(heap, fresh as i64, addr as i32);
+      return v_int64(fresh as i64);
+    }
+  }
+  let size = arg_i64(args, 1);
+  if (interpheap.raw_release(heap, addr) != 1) {
+    return v_abort(aborts.free_range(), "secret_unmap: address " + util.i64_to_string(addr) + " is not a live secret block");
+  }
+  unsafe {
+    __memset(addr as usize, 0, size as i32);
+    __free(addr as usize, size as i32);
+  }
+  return v_int64(0i64);
 }
 
 function call_host_sysctl(heap: interpheap.Heap, mib: i32[]): Value {
