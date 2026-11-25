@@ -24,10 +24,10 @@ function fixture(row: i32): ssasem.Func {
   let layout = semrecords.layout_option();
   if (row == 8) { layout = semrecords.layout_variant(); }
   let enums = [semrecords.Enum { ty: whole, variants: variants, layout: layout, views: false, nests_func: false }];
-  let constant = ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 7, str: "" };
+  let constant = ssa.SInst { ir_kind: 0, kind_tag: 1, result: 0, args: [], imm: 7, str: "" };
   if (row == 6) { constant = ssa.SInst { ...constant, kind_tag: 5, str: "payload" }; }
   let fallback = constant;
-  let cons = ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "Some" };
+  let cons = ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "Some" };
   if (row == 9 || row == 10) {
     cons = ssa.SInst { ...cons, kind_tag: ssa.BINARY, args: [0, 0], str: "+?" };
   }
@@ -41,18 +41,18 @@ function fixture(row: i32): ssasem.Func {
   let values = [payload, whole, flag, payload, payload];
   let calls: ssasem.Contract[] = [];
   if (row == 1) {
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: 5, args: [1], imm: 0, str: "observe" });
+    insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: 5, args: [1], imm: 0, str: "observe" });
     values = values.append(word);
     calls = [ssasem.Contract { name: "observe", params: [whole], modes: [0], result: word }];
   }
   if (row == 2) {
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.array_new(), result: 5, args: [1], imm: 0, str: "" });
+    insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.array_new(), result: 5, args: [1], imm: 0, str: "" });
     values = values.append(typeinfo.TypeArray { elem: whole, view: false });
   }
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.variant_is(), result: 2, args: [1], imm: 0, str: "Some" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_is(), result: 2, args: [1], imm: 0, str: "Some" });
   let blocks = [ssa.SBlock { id: 0, preds: [], insts: insts,
     term: ssa.STerm { kind_tag: 3, cond: 2, target: 0, t: 1, f: 2, value: 0 } },
-    ssa.SBlock { id: 1, preds: [0], insts: [ssa.SInst { kind_tag: ssasem.variant_get(), result: 3, args: [1], imm: 0, str: "Some" }],
+    ssa.SBlock { id: 1, preds: [0], insts: [ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_get(), result: 3, args: [1], imm: 0, str: "Some" }],
       term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 3 } },
     ssa.SBlock { id: 2, preds: [0], insts: [ssa.SInst { ...fallback, result: 4 }],
       term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 4 } }];
