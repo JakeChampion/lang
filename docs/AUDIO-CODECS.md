@@ -18,7 +18,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | MP3 | Yes | No | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
 | MP1 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer I raw streams, all six sample rates and four channel modes, with protected-frame CRC checks. |
 | MP2 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
-| AAC-LC | Yes | No | Raw access units and unprotected ADTS, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
+| AAC-LC | Yes | No | Raw access units and ADTS with or without CRC protection, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
 | MP4/M4A | AAC-LC, ALAC | No | Self-contained audio tracks, sample tables, decoder configuration, track selection, and edit-list trimming. Byte-view playback and indexed packet reads from seekable files. |
 | Vorbis | Yes | No | Version one, one through eight channels, both floor types, all residue types, and standard block sizes. Incremental Ogg files and borrowed readers apply initial and final sample boundaries. |
 | ALAC | Yes | No | Version zero, 16/20/24/32-bit integer PCM, one through eight channels, raw and compressed packets, and standard layouts. CAF and M4A supply file playback. Compressed stereo requires at most 32 predictor bits. |
@@ -414,8 +414,8 @@ Packet errors consume the decoder. The caller can create a new one from its reta
 `Decoder.reset` clears overlap and noise state while retaining transform storage.
 
 HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames return `Unsupported`.
-Protected ADTS frame decode also returns `Unsupported` until CRC verification is implemented.
-Header inspection still exposes protection and raw-block counts.
+Protected ADTS frames verify the header CRC and the CRC of each raw data block. A mismatch returns `Checksum`.
+FDK AAC writes the protected test frames and their CRCs (`scripts/gen-aac-crc-vectors.py`).
 These remaining AAC tasks stay open under [#14517](https://github.com/JakeChampion/lang/issues/14517).
 
 The AAC implementation derives from pinned Symphonia source under MPL-2.0.
@@ -1124,7 +1124,7 @@ Each line names the issue that owns the work.
 
 - MPEG Layers I and II: decoder CPU performance ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
-- AAC: HE-AAC/SBR/PS, protected ADTS verification, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
+- AAC: HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: decode timeline gaps, composition offsets, and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
 - ALAC: native ARM64 and Android measurements, and ARM64 Android qualification ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
 - Encoders: MP3, AAC, and Vorbis have no encoder, the Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).

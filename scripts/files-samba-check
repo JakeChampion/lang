@@ -9,7 +9,8 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 fern=${1:-$root/bin/fern}
-port=${FILES_SMB_PORT:-44450}
+# Below the Linux ephemeral range, so a client socket cannot hold the port.
+port=${FILES_SMB_PORT:-24450}
 user=fernfiles
 password=live-check-1
 

@@ -96,7 +96,7 @@ Current seccomp tests do not establish complete namespace, quota, or build-scrip
 
 | Target | Current baseline | Security evidence limit |
 |---|---|---|
-| Linux x86-64 | x86-64-v3 plus AES-NI | Native tests can establish process behavior on this host only |
+| Linux x86-64 | x86-64-v3 plus AES-NI and the SHA extensions | Native tests can establish process behavior on this host only |
 | Linux AArch64 | ARMv8.2-A plus crypto extensions and LSE | QEMU establishes emulated behavior only |
 | Other shipped targets | Darwin, WASI, Android, and freestanding variants | Preserve their current contracts outside this program |
 

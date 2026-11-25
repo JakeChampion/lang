@@ -361,7 +361,7 @@ function stream_allocations(bytes: [u8], drop_scratch: boolean): (i64, i32) {
     let at = 0;
     while (at < bytes.len()) {
       if (drop_scratch) {
-        state = mp3.Decoder { ...state, lines: [], spectrum: [], transform: [] };
+        state = mp3.Decoder { ...state, main: [], lines: [], spectrum: [], transform: [] };
       }
       let (next, result) = state.decode_frame_into(bytes, at, buffer, pcm.default_limits());
       state = next;
@@ -378,7 +378,7 @@ function stream_allocations(bytes: [u8], drop_scratch: boolean): (i64, i32) {
   return (__heap_alloc_count() - before, decoded);
 }
 
-// An MPEG-1 frame keeps its synthesis lines, spectrum and transform arrays in the decoder.
+// An MPEG-1 frame keeps its main data, synthesis lines, spectrum and transform arrays in the decoder.
 function steady_state(): test.TestOutcome {
   let v = mp3_vectors.cases()[7];
   let Ok(bytes) = hex.decode(v.bytes) else {
@@ -397,7 +397,7 @@ function steady_state(): test.TestOutcome {
     return test.fail("stream frame");
   }
   // Interpreters return zero for the allocator counters.
-  if (dropped != 0i64 && dropped - kept < 3i64 * (decoded as i64)) {
+  if (dropped != 0i64 && dropped - kept < 4i64 * (decoded as i64)) {
     return test.fail("kept " + kept.to_string() + " and dropped " + dropped.to_string() + " allocations");
   }
   return test.pass();

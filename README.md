@@ -113,7 +113,7 @@ diagnostic, without source context, notes, fixes or colour.
 | `arm64-android` | static position-independent ELF | as `arm64-linux` |
 | `x86-64-android` | static position-independent ELF | as `x86-64-linux` |
 | `arm64-darwin` | static Mach-O, signed | Apple Silicon, latest macOS |
-| `x86-64-linux` | static ELF | x86-64-v3 with AES-NI (Haswell, 2013) |
+| `x86-64-linux` | static ELF | x86-64-v3 with AES-NI and the SHA extensions (Intel Ice Lake, AMD Zen) |
 | `wasm32-wasi` | WASI Preview 2 component | `wasmtime run` |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component | `wasmtime serve` |
 | `arm64-freestanding`, `x86-64-freestanding` | assembly for an embedder, entered through `-export` | no host capabilities |

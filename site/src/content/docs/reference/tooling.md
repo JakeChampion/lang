@@ -33,7 +33,7 @@ any flag that has no value: `-cover=false`, `-g=true`.
 | `arm64-linux` | Static ELF. ARMv8.2-A with the crypto extensions. |
 | `arm64-android` | Static position-independent ELF for Android. |
 | `arm64-darwin` | Static, signed Mach-O for Apple Silicon (latest macOS). |
-| `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI (Haswell, 2013, with AVX2). |
+| `x86-64-linux` | Static ELF. x86-64-v3 with AES-NI and the SHA extensions (Intel Ice Lake, AMD Zen). |
 | `x86-64-android` | Static position-independent ELF for Android emulators and x86-64 devices. |
 | `wasm32-wasi` | WASI Preview 2 component; run with `wasmtime run`. |
 | `wasm32-wasi-http` | `wasi:http/incoming-handler` component; run with `wasmtime serve`. |
@@ -104,6 +104,7 @@ an empty value.
 | --- | --- |
 | `FERN_DEBUG_SSA_ALLOC` | Dump register allocation for the named native function, or for every function with `*`. |
 | `FERN_DEBUG_SSA_DENY` | Exclude registers selected by the numeric mask from native register allocation. |
+| `FERN_DEBUG_NO_SHA_EXT` | On x86-64, run SHA-256 and SHA-1 on the rounds of std/crypto and not on the SHA extensions. The constant-time gate uses it, because valgrind cannot decode the SHA extensions. |
 | `FERN_DEBUG_SEM_INLINE`, `FERN_DEBUG_SEM_REUSE` | Set to zero or an empty value to disable semantic inlining or reuse of previously lowered rows. Both passes run by default. |
 | `FERN_DEBUG_NO_SEM_REACH`, `FERN_DEBUG_NO_SCALE_KERNEL`, `FERN_DEBUG_NO_PRODUCT_KERNEL`, `FERN_DEBUG_NO_ARRAY_FUSION` | Disable the named pass when enabled. |
 | `FERN_DEBUG_NO_RANGE_PROOFS` | Keep each bounds check that the compiler can prove unnecessary. The word loads, loop versions and quotient rewrites that use the same proofs are also off. |

@@ -1,6 +1,6 @@
 # Workers
 
-Status: [reference] shipped: `std/worker` with `spawn`, `join`, `poll` and `parallel`, the
+Status: [reference] shipped: `std/worker` with `spawn`, `join`, `poll`, `wait_any` and `parallel`, the
 `send` parameter mode and `E100`. A worker is a process on native Linux,
 Android and macOS, and `std/sim` implements the scheduler seam. Every other engine runs a worker
 inline. Real threads are not shipped.
@@ -42,6 +42,7 @@ function main(): i32 {
 | `spawn[T](send body: () => T): Worker[T]` | Runs `body` as a worker. The captures of `body` and its result cross the boundary, so both are send-safe (`E100`). |
 | `(own w: Worker[T]) join(): T` | Returns the result and consumes the worker. A second `join` is `E051`. |
 | `(own w: Worker[T]) poll(): Polled[T]` | Does not wait. Returns `Finished` with the result of a finished worker, or `Running` with the worker, which the caller polls or joins later. An event loop, such as an Android app, polls on its timeouts. A worker on a scheduler is joined. |
+| `wait_any(own ws: Worker[T][]): Waited[T]` | Waits until one of the workers finishes. Returns its index in the list, its result, and the other workers in their order. A process worker wakes the call when it ends, through the exit signal of a child, so the call does not poll. The list must not be empty. |
 | `@must_consume struct Worker[T]` | A program joins every worker it spawns (`E067`). No worker runs detached. |
 | `spawn_on[T](s: dyn Scheduler, send body: () => T): Worker[T]` | Runs `body` as a worker of scheduler `s`. `std/sim` is a scheduler. |
 | `trait Scheduler` | `admit(run)` starts a worker thunk and returns its index. `finish(index)` runs the workers until that one has its result. |
@@ -370,7 +371,7 @@ degrade until a thread primitive ships that wasmtime implements (R5).
   kernel at its join.
 
 - `tests/stdlib/worker_test.fern`: the module through `std/test`, `poll`
-  included. A forked worker has not finished at the first poll, and an
+  and `wait_any` included. A forked worker has not finished at the first poll, and an
   event loop holds a worker in its state across polls.
 - `tests/android/worker`: on the emulator, the loop thread of a
   NativeActivity app polls two workers, and one of them resolves a name

@@ -4183,7 +4183,10 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
 
 // `stores` says the target stores an immediate to memory with one instruction.
 // `zero_stores` says it stores only a zero so.
-pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[], stores: boolean, zero_stores: boolean): Imms {
+// With `flag_carries`, a carry that stays in the flags does not take its
+// operands out of the immediates, because it emits no instruction that reads them.
+pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[], stores: boolean, zero_stores: boolean, flag_carries: boolean): Imms {
+  let roles: i32[] = if (flag_carries) { carry_roles(f, use_counts(f)) } else { [] };
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -4206,6 +4209,9 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[],
   }
   for blk in f.blocks {
     for ins in blk.insts {
+      if (flag_carry(roles, ins)) {
+        continue;
+      }
       for a in 0..ins.args.len() {
         let v = ins.args[a];
         if (v >= 0 && v < is_imm.len() && is_imm[v] && ins.kind_tag != PHI && !((stores || zero_stores && value[v] == 0i64) && stored_value(ins, a)) && !imm_use(ins, a, konst, value[v], right, left)) {
@@ -4959,7 +4965,7 @@ function constant_value(defs: SInst[], v: i32): Option[i64] {
 function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
   if (ins.kind_tag == UNARY && ins.args.len() == 1) {
     if let Some(a) = constant_value(defs, ins.args[0]) {
-      return folded_cast(ins.str, a);
+      return folded_cast(ins, a);
     }
     return None;
   }
@@ -4968,11 +4974,12 @@ function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
   }
   if let Some(a) = constant_value(defs, ins.args[0]) {
     if let Some(b) = constant_value(defs, ins.args[1]) {
+      let k = ins.ir_kind;
       if (ins.imm == 64) {
-        return folded_word(ins.str, a, b);
+        return folded_word(k, a, b);
       }
-      if (non_negative_i32(a) && non_negative_i32(b) && !(ins.str.starts_with("sh") && b > 31i64)) {
-        if let Some(c) = folded_word(ins.str, a, b) {
+      if (non_negative_i32(a) && non_negative_i32(b) && !((k == ir.K_SHL || k == ir.K_SHR_S || k == ir.K_SHR_U) && b > 31i64)) {
+        if let Some(c) = folded_word(k, a, b) {
           if (non_negative_i32(c)) {
             return Some(c);
           }
@@ -4987,54 +4994,55 @@ function non_negative_i32(c: i64): boolean {
   return c >= 0i64 && c <= 2147483647i64;
 }
 
-function folded_word(op: string, a: i64, b: i64): Option[i64] {
-  if (op == "add") {
+function folded_word(k: i32, a: i64, b: i64): Option[i64] {
+  if (k == ir.K_ADD) {
     return Some(a + b);
   }
-  if (op == "sub") {
+  if (k == ir.K_SUB) {
     return Some(a - b);
   }
-  if (op == "mul") {
+  if (k == ir.K_MUL) {
     return Some(a * b);
   }
-  if (op == "and") {
+  if (k == ir.K_AND) {
     return Some(a & b);
   }
-  if (op == "or") {
+  if (k == ir.K_OR) {
     return Some(a | b);
   }
-  if (op == "xor") {
+  if (k == ir.K_XOR) {
     return Some(a ^ b);
   }
   if (b < 0i64 || b > 63i64) {
     return None;
   }
-  if (op == "shl") {
+  if (k == ir.K_SHL) {
     return Some(a << b);
   }
-  if (op == "shr_s") {
+  if (k == ir.K_SHR_S) {
     return Some(a >> b);
   }
-  if (op == "shr_u" && a >= 0i64) {
+  if (k == ir.K_SHR_U && a >= 0i64) {
     return Some(a >> b);
   }
   return None;
 }
 
-function folded_cast(op: string, a: i64): Option[i64] {
-  if (op == "int_cast:i32") {
+function folded_cast(ins: SInst, a: i64): Option[i64] {
+  let to = cast_target(ins);
+  if (to == "i32") {
     return Some(a << 32i64 >> 32i64);
   }
-  if (op == "int_cast:u32" || op == "u32_wrap") {
+  if (to == "u32" || ins.ir_kind == ir.K_U32_WRAP) {
     return Some(a & 4294967295i64);
   }
-  if (op == "int_cast:u16") {
+  if (to == "u16") {
     return Some(a & 65535i64);
   }
-  if (op == "int_cast:i16") {
+  if (to == "i16") {
     return Some(a << 48i64 >> 48i64);
   }
-  if (op == "int_cast:u8") {
+  if (to == "u8") {
     return Some(a & 255i64);
   }
   return None;
@@ -8711,7 +8719,7 @@ function drops(f: SFunc, facts: i32[], ins: SInst): boolean {
 function has_extension(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && (ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16")) {
+      if (signed_extension(ins) || unsigned_extension(ins) || ins.kind_tag == UNARY && (cast_target(ins) == "u8" || cast_target(ins) == "u16" || cast_target(ins) == "i16")) {
         return true;
       }
     }
@@ -8720,14 +8728,14 @@ function has_extension(f: SFunc): boolean {
 }
 
 function signed_extension(ins: SInst): boolean {
-  return ins.kind_tag == UNARY && ins.args.len() == 1 && ins.imm == 0 && (int_resize(ins.ir_kind) || ins.str == "int_cast:i32");
+  return ins.kind_tag == UNARY && ins.args.len() == 1 && ins.imm == 0 && (int_resize(ins.ir_kind) || cast_target(ins) == "i32");
 }
 
 function unsigned_extension(ins: SInst): boolean {
   if (ins.kind_tag != UNARY || ins.args.len() != 1) {
     return false;
   }
-  return ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32" || ins.imm != 0 && int_resize(ins.ir_kind);
+  return ins.ir_kind == ir.K_U32_WRAP || cast_target(ins) == "u32" || ins.imm != 0 && int_resize(ins.ir_kind);
 }
 
 function holds_result(ins: SInst, held: i32): boolean {
@@ -8737,7 +8745,7 @@ function holds_result(ins: SInst, held: i32): boolean {
   if (unsigned_extension(ins)) {
     return (held & EXT_U32) != 0;
   }
-  return ins.kind_tag == UNARY && ins.str == "int_cast:u8" && held == EXT_BYTE;
+  return ins.kind_tag == UNARY && cast_target(ins) == "u8" && held == EXT_BYTE;
 }
 
 function ext_transfer(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: SInst): i32 {
@@ -8886,13 +8894,13 @@ function unary_facts(ins: SInst, held: i32): i32 {
     }
     return EXT_U32;
   }
-  if (ins.str == "int_cast:u8" || ins.ir_kind == ir.K_CTZ || ins.ir_kind == ir.K_CLZ || ins.ir_kind == ir.K_POPCOUNT) {
+  if (cast_target(ins) == "u8" || ins.ir_kind == ir.K_CTZ || ins.ir_kind == ir.K_CLZ || ins.ir_kind == ir.K_POPCOUNT) {
     return EXT_BYTE;
   }
-  if (ins.str == "int_cast:u16") {
+  if (cast_target(ins) == "u16") {
     return EXT_I32 | EXT_U32;
   }
-  return if (ins.str == "int_cast:i16") { EXT_I32 } else { 0 };
+  return if (cast_target(ins) == "i16") { EXT_I32 } else { 0 };
 }
 
 // What a load or a byte mask leaves in its register, or 0.
@@ -9255,7 +9263,7 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
 }
 
 function low_wrap(ins: SInst): boolean {
-  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32" || ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16");
+  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_U32_WRAP || cast_target(ins) == "u32" || cast_target(ins) == "u8" || cast_target(ins) == "u16" || cast_target(ins) == "i16");
 }
 
 function low_half_binary(kind: i32): boolean {
@@ -9290,10 +9298,10 @@ function demand_bits(n: i32): i32 {
 }
 
 function low_wrap_bits(ins: SInst): i32 {
-  if (ins.str == "int_cast:u8") {
+  if (cast_target(ins) == "u8") {
     return 8;
   }
-  if (ins.str == "int_cast:u16" || ins.str == "int_cast:i16") {
+  if (cast_target(ins) == "u16" || cast_target(ins) == "i16") {
     return 16;
   }
   return 32;
@@ -9737,8 +9745,8 @@ function low_byte_source(v: i32, defs: SInst[]): i32 {
 }
 
 function low_byte_cast(ins: SInst): boolean {
-  let what = ins.str;
-  return int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16";
+  let to = cast_target(ins);
+  return int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP || to == "u32" || to == "i32" || to == "u16" || to == "i16";
 }
 
 // The position of the byte append that reads the result of the append at
@@ -9991,7 +9999,7 @@ function gather_carries(f: SFunc): SFunc {
   let nblocks: SBlock[] = [];
   for blk in f.blocks {
     if (block_has_carry(blk)) {
-      nblocks = nblocks.append(SBlock { ...blk, insts: chained(carries_after_sums(consts_first(blk.insts)), uses) });
+      nblocks = nblocks.append(SBlock { ...blk, insts: consts_to_chains(chained(carries_after_sums(consts_first(blk.insts)), uses), uses, f.nvals) });
     } else {
       nblocks = nblocks.append(blk);
     }
@@ -10037,6 +10045,100 @@ function consts_first(a: SInst[]): SInst[] {
     }
   }
   return out;
+}
+
+// Each constant operand of a carry goes down again, to the start of the
+// chain that first reads it. A chain starts at a HEAD, or at an instruction
+// outside a chain that follows another one.
+function consts_to_chains(a: SInst[], uses: i32[], nvals: i32): SInst[] {
+  let roles = block_carry_roles(a, uses, __alloc_i32(nvals));
+  let lead = first_body_inst(a);
+  let anchor = util.minus_ones(a.len());
+  let moves = false;
+  for i in lead..a.len() {
+    let c = a[i];
+    if (!is_const_inst(c) || !carry_read(a, c.result)) {
+      continue;
+    }
+    let r = first_reader(a, i + 1, c.result);
+    if (r < 0) {
+      continue;
+    }
+    while (r > i + 1 && !chain_start(a, roles, r, lead)) {
+      r -= 1;
+    }
+    if (chain_start(a, roles, r, lead) && !only_consts(a, i + 1, r)) {
+      anchor = anchor.with(i, r);
+      moves = true;
+    }
+  }
+  if (!moves) {
+    return a;
+  }
+  let first = util.minus_ones(a.len());
+  let next = util.minus_ones(a.len());
+  let j = a.len() - 1;
+  while (j >= lead) {
+    if (anchor[j] >= 0) {
+      next = next.with(j, first[anchor[j]]);
+      first = first.with(anchor[j], j);
+    }
+    j -= 1;
+  }
+  let out: SInst[] = [];
+  for k in 0..a.len() {
+    let m = first[k];
+    while (m >= 0) {
+      out = out.append(a[m]);
+      m = next[m];
+    }
+    if (anchor[k] < 0) {
+      out = out.append(a[k]);
+    }
+  }
+  return out;
+}
+
+function first_reader(a: SInst[], from: i32, v: i32): i32 {
+  for k in from..a.len() {
+    if (listed(a[k].args, v)) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+function is_const_inst(ins: SInst): boolean {
+  return ins.kind_tag == CONST_INT || ins.kind_tag == CONST_I64;
+}
+
+function only_consts(a: SInst[], from: i32, to: i32): boolean {
+  for k in from..to {
+    if (!is_const_inst(a[k])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function carry_read(a: SInst[], v: i32): boolean {
+  for ins in a {
+    if (ins.kind_tag == CARRY && listed(ins.args, v)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function chain_start(a: SInst[], roles: i32[], r: i32, lead: i32): boolean {
+  if (is_const_inst(a[r])) {
+    return false;
+  }
+  let role = carry_role(roles, a[r]);
+  if (role == CARRY_HEAD) {
+    return true;
+  }
+  return role == 0 && (r == lead || carry_role(roles, a[r - 1]) == 0);
 }
 
 function first_body_inst(a: SInst[]): i32 {
@@ -10462,7 +10564,7 @@ function zero_extends_u32(ins: SInst): boolean {
   if (ins.kind_tag != UNARY || ins.args.len() != 1) {
     return false;
   }
-  if (ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32") {
+  if (ins.ir_kind == ir.K_U32_WRAP || cast_target(ins) == "u32") {
     return true;
   }
   return int_resize(ins.ir_kind) && ins.imm == 1;
@@ -10509,6 +10611,27 @@ function const_value(defs: SInst[], v: i32): i64 {
     return util.lit_to_i64(d.str);
   }
   return 0i64 - 1i64;
+}
+
+// The width that a lifted op such as `clz:64` or `i32_to_f64:32` gives after
+// its name: 32, 64, or 0 for another width or none.
+pub function op_width(ins: SInst): i32 {
+  if (ins.str.ends_with(":64")) {
+    return 64;
+  }
+  if (ins.str.ends_with(":32")) {
+    return 32;
+  }
+  return 0;
+}
+
+// The target type of an `int_cast` op, `u8` for `int_cast:u8`, or "" for
+// another op.
+pub function cast_target(ins: SInst): string {
+  if (ins.ir_kind != ir.K_INT_CAST || !ins.str.starts_with("int_cast:")) {
+    return "";
+  }
+  return slice_unchecked(ins.str, 9, ins.str.len()).to_owned();
 }
 
 pub function rotr_width(what: string): i32 {

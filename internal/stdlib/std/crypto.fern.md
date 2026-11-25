@@ -3496,7 +3496,7 @@ pub function (h: Sha1x8) word(w: i32, lane: i32): u32 {
 
 `Sha256x8` holds eight SHA-256 states, one for each lane. A step absorbs one block into each lane. A search that tries many messages with the same prefix uses it: the prefix makes one `Sha256`, and `x8` copies its chaining value into the eight lanes.
 
-The state has the layout of `Sha1x8`, with eight words for each lane: word `w` of lane `k` is at byte `4 * (8 * w + k)`. A group of 512 bytes holds one block for each lane, and the block of lane `k` starts at byte `64 * k`. On x86-64 one call of the kernel runs the eight lanes in the 32-bit lanes of the AVX2 registers. On arm64 the kernel runs the lanes one after another on the SHA-256 instructions. Other engines run each lane through the block function of `Sha256`.
+The state has the layout of `Sha1x8`, with eight words for each lane: word `w` of lane `k` is at byte `4 * (8 * w + k)`. A group of 512 bytes holds one block for each lane, and the block of lane `k` starts at byte `64 * k`. On x86-64 and arm64 the kernel runs the lanes one after another on the SHA-256 instructions. Other engines run each lane through the block function of `Sha256`.
 
 ```fern
 <<sha256 on eight lanes>>=

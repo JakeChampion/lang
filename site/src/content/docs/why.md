@@ -112,9 +112,10 @@ audit.
   index into an array.
 - **A narrow platform set.** Linux on arm64 and x86-64, Android and
   macOS on arm64, and WebAssembly. No Windows, no Intel Mac, no 32-bit.
-  The CPU baselines are recent — x86-64-v3 (Haswell, 2013) and ARMv8.2-A
-  with the crypto extensions — because binaries pick instructions at
-  build time with no fallback.
+  The CPU baselines are recent — x86-64-v3 with AES-NI and the SHA
+  extensions (Intel Ice Lake, AMD Zen) and ARMv8.2-A with the crypto
+  extensions — because binaries pick instructions at build time with no
+  fallback.
 - **WebAssembly reaches less of the host.** Spawning processes, the
   working directory, terminals, raw syscalls and calls through a C
   function pointer are native-only; the wasm targets reject them at build

@@ -143,14 +143,18 @@ two parts:
   compressed length. So the zip entry of `-11 -K -p 1` has a compressed
   length of zero, and the port writes the same bytes.
 
-The output does not depend on the count of processes above 1. As in
-pigz, the compression is a queue of jobs. A job is about 1 MiB of whole
-blocks, and a `std/worker` worker compresses it. Up to n jobs run at a
-time.
+The output does not depend on the count of processes above 1, or on the
+size of the jobs. As in pigz, the compression is a queue of jobs, and a
+`std/worker` worker compresses each job. The first n jobs are about 1 MiB
+of whole blocks, so a small input still runs on each process. Each later
+job is two times as large as the job before it, up to 8 MiB. A worker is
+a process, and its start takes about 3 ms of kernel time. A large job makes
+that time a small part of the job.
 
-The parent reads the input and writes the output of each job in
-order. After it writes the output of a job, it starts the next job. So the
-other jobs do not wait for the slowest one.
+Up to n jobs run at a time. The parent starts a job when any job ends
+(`worker.wait_any`). It writes the output of each job in order. At most
+2n jobs are between the next job to write and the last job that started.
+So a slow job does not stop the other processes.
 
 On macOS and on wasm32-wasi, `std/worker` runs the workers inline
 (#15584).

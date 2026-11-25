@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -154,6 +155,24 @@ struct W3 { a: u64, b: u64, c: u64 }
     let k3: u64 = ((a3 ^ ALL) & 0xffffffff00000001u64 | ((a3 ^ ALL) | 0xffffffff00000001u64) & d3) >> 63u64;
     return d0 * 3u64 + d1 * 5u64 + d2 * 7u64 + d3 * 11u64 + k3 * 13u64;
 }
+@noinline function add_sub_p(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, b2: u64, b3: u64): u64 {
+    let s0: u64 = a0 + b0;
+    let c0: u64 = (a0 & b0 | (a0 | b0) & (s0 ^ ALL)) >> 63u64;
+    let s1: u64 = a1 + b1 + c0;
+    let c1: u64 = (a1 & b1 | (a1 | b1) & (s1 ^ ALL)) >> 63u64;
+    let s2: u64 = a2 + b2 + c1;
+    let c2: u64 = (a2 & b2 | (a2 | b2) & (s2 ^ ALL)) >> 63u64;
+    let s3: u64 = a3 + b3 + c2;
+    let d0: u64 = s0 - 0xffffffffffffffffu64;
+    let k0: u64 = ((s0 ^ ALL) & 0xffffffffffffffffu64 | ((s0 ^ ALL) | 0xffffffffffffffffu64) & d0) >> 63u64;
+    let d1: u64 = s1 - 0x00000000ffffffffu64 - k0;
+    let k1: u64 = ((s1 ^ ALL) & 0x00000000ffffffffu64 | ((s1 ^ ALL) | 0x00000000ffffffffu64) & d1) >> 63u64;
+    let d2: u64 = s2 - 0x0000000000000000u64 - k1;
+    let k2: u64 = ((s2 ^ ALL) & 0x0000000000000000u64 | ((s2 ^ ALL) | 0x0000000000000000u64) & d2) >> 63u64;
+    let d3: u64 = s3 - 0xffffffff00000001u64 - k2;
+    let k3: u64 = ((s3 ^ ALL) & 0xffffffff00000001u64 | ((s3 ^ ALL) | 0xffffffff00000001u64) & d3) >> 63u64;
+    return d0 * 3u64 + d1 * 5u64 + d2 * 7u64 + d3 * 11u64 + k3 * 13u64;
+}
 @noinline function add_k(a0: u64, a1: u64): u64 {
     let s0: u64 = a0 + 0xffffffff00000001u64;
     let c0: u64 = (a0 & 0xffffffff00000001u64 | (a0 | 0xffffffff00000001u64) & (s0 ^ ALL)) >> 63u64;
@@ -295,7 +314,7 @@ function main(): i32 {
                 let r2 = add3_sum(p, q);
                 let r3 = sub3(p, q);
                 acc = acc * 131u64 + r.a + 3u64 * r.b + 5u64 * r.c + 7u64 * r2.a + 11u64 * r2.b + 13u64 * r2.c + 17u64 * r3.a + 19u64 * r3.b + 23u64 * r3.c;
-                acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h);
+                acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h) + 5u64 * add_sub_p(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
                 acc = acc ^ sub4(x, y, h, y - x, y, h, x + 1u64, ALL - y) ^ add4_spilled(x, h, x ^ y, y - x, y, ALL - h, x + 1u64, ALL - y);
                 acc = acc * 41u64 + mul_rows(x, y, h, x ^ y, y - h, ALL - x);
             }
@@ -512,5 +531,66 @@ func TestSelfHostSSASpilledSumWritesDyingOperand(t *testing.T) {
 	}
 	if inPlace == 0 {
 		t.Errorf("mul_rows spills no sum, so the shape is not exercised:\n%s", fn)
+	}
+}
+
+// A constant that only a borrow chain at the end reads is loaded at that chain, not at entry.
+func TestSelfHostSSACarryConstantsStayAtTheirChain(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_add_sub_p")
+	if fn == "" {
+		t.Fatal("no __fn_add_sub_p in the listing")
+	}
+	adc := strings.Index(fn, "adcq")
+	k := strings.Index(fn, "$0xffffffff00000001")
+	if adc < 0 || k < 0 {
+		t.Fatalf("add_sub_p has no adcq or no load of 0xffffffff00000001:\n%s", fn)
+	}
+	if k < adc {
+		t.Errorf("add_sub_p loads 0xffffffff00000001 before its add chain:\n%s", fn)
+	}
+	if strings.Contains(fn, "movabsq $0xffffffffffffffff") {
+		t.Errorf("add_sub_p loads -1 with movabsq:\n%s", fn)
+	}
+}
+
+// A borrow chain on x86-64 subtracts a constant that fits 32 bits as an immediate.
+func TestSelfHostSSABorrowTakesImmediate(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_add_sub_p")
+	if fn == "" {
+		t.Fatal("no __fn_add_sub_p in the listing")
+	}
+	if !regexp.MustCompile(`(?m)^\s+subq \$-1, %r\w+$`).MatchString(fn) {
+		t.Errorf("add_sub_p does not subtract -1 as an immediate:\n%s", fn)
+	}
+	if regexp.MustCompile(`(?m)^\s+movq \$-1, %r\w+$`).MatchString(fn) {
+		t.Errorf("add_sub_p loads -1 into a register:\n%s", fn)
 	}
 }

@@ -96,8 +96,15 @@ a re-read never holds a parent longer than the plan already does. An
 ancestor of the parent counts too (`ancestor_spent_past`). It does not
 re-read a value while a read off its first read lives into the block and is
 not read again there (`child_kept_across`). The plan holds that old read
-across the new one, and an update of it then copies. A `length` does not
-spend.
+across the new one, and an update of it then copies. It does not re-read a
+record that another block updates (`updated_elsewhere`): that block can
+take the first read only when no block reads the slot again. A `length`
+does not spend. A child that lives out of the block can still let a
+re-read occur (`child_held_out`). This is so when a block below spends
+that child, because the plan then takes it. A spliced chain needs this:
+its payload lives past the block that stores the element back. A
+projection that the block only measures gives the plan nothing to take.
+So its parent is not read again for it (`used_through`).
 `semcse.fern` then merges a block's repeated reads of one slot of one value,
 which the re-reads at a block's head most often make, so the slot has one
 holder for the plan to hold or take where its box is consumed. Last,
@@ -619,7 +626,12 @@ token hold a plain count. A null constant and a borrow are not free. Any other d
 than a finding. A call that returns its operand or a fresh box
 (`__fern_arr_concat`, `rcsigs.effect_kept_or_same`) leaves the operand its
 unit and gives the result a fresh one. On the edge where a test finds the two
-are one box, the result takes the operand's units and the fresh unit goes. A
+are one box, the result takes the operand's units and the fresh unit goes.
+Where the operand is not the box of a key, the result is not that box either.
+The lowering leaves such a call unmarked where the operand may be a box that
+the frame does not hold (`concat_borrowed`). The result of an unmarked call
+is then a twin of the operand's box, as for a push, and it is unproved where
+no key names the box (`kept_or_same_twin`). A
 push (`arr_push`) also grows its array in place or returns a new box. A push
 onto a box, or onto a value that a test found to be that box, gives a twin
 of that box. A store of null can clear the slot that the box was read from.

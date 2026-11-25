@@ -412,6 +412,14 @@ function test_decode_lossy_errors(): test.TestOutcome {
   return test.assert_eq(got.join(" | "), "webp: the data ends early | webp: the data ends early | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the header of the image is not valid | webp: the data ends early");
 }
 
+// The 3 by 2 file of Pillow with a frame of 4096 by 4096 pixels in its
+// header. Its partitions end in the first row of macroblocks, so the decode
+// must stop there and not decode the rest of the frame.
+function test_decode_lossy_short_large_frame(): test.TestOutcome {
+  let large = lossy().with(26, 0u8).with(27, 16u8).with(28, 0u8).with(29, 16u8);
+  return test.assert_eq(decoded(large), "webp: the data ends early");
+}
+
 function test_decode_lossy_animation(): test.TestOutcome {
   let made = webp.animate(3, 2, [lossy(), lossy_alpha(), lossless()], [100, 250, 70000]).unwrap_or([]);
   let got = [animated(lossy_animation()), animated(made)];
@@ -434,6 +442,7 @@ function main(): i32 {
   r = r.it("decode the pixels of a lossy file of Pillow", test_decode_lossy_pixels);
   r = r.it("decode lossy files with alpha", test_decode_lossy_alpha);
   r = r.it("lossy decode errors", test_decode_lossy_errors);
+  r = r.it("a short lossy file with a large frame", test_decode_lossy_short_large_frame);
   r = r.it("decode animations with lossy frames", test_decode_lossy_animation);
   return r.finish();
 }
