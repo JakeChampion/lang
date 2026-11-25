@@ -7592,13 +7592,6 @@ function arr_set_len(own r: irtables.LowerState, ins: ssa.SInst): irtables.Lower
   return emit(r, ir.op_const_i32(0));
 }
 
-function word_bytes(name: string): i32 {
-  if (name == ssabytes.word_name(8)) {
-    return 8;
-  }
-  return 4;
-}
-
 function checked_alloc_length(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerState {
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -7619,8 +7612,8 @@ function raw_memory_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "__bytes_data") {
     return Lowered { found: true, r: emit(r, ssabytes.read_data(ins.args[0])) };
   }
-  if (ins.str == ssabytes.word_name(4) || ins.str == ssabytes.word_name(8)) {
-    return Lowered { found: true, r: emit(r, ssabytes.read_word(ins.args[0], word_bytes(ins.str))) };
+  if (ssabytes.word_bytes(ins.str) > 0) {
+    return Lowered { found: true, r: emit(r, ssabytes.read_word(ins.args[0], ssabytes.word_bytes(ins.str))) };
   }
   if (ins.str == ssabytes.swap_name(4)) {
     return Lowered { found: true, r: emit(r, ir.op_bswap(32)) };

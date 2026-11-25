@@ -535,6 +535,97 @@ pub function wit_transcode_export_section(buf: i32[]): i32[] {
   return out;
 }
 
+struct WasmSection { id: i32, start: i32, end: i32 }
+
+// The sections of a wasm binary, or None when a section runs past the end.
+function wasm_sections(b: i32[]): Option[WasmSection[]] {
+  let out: WasmSection[] = [];
+  let pos = 8;
+  while (pos < b.len()) {
+    let id = b[pos];
+    let size = 0;
+    let p = -1;
+    for k in 0..5 {
+      let at = pos + 1 + k;
+      if (p < 0 && at < b.len()) {
+        size = size | (b[at] & 127) << 7 * k;
+        if ((b[at] & 128) == 0) {
+          p = at + 1;
+        }
+      }
+    }
+    if (p < 0 || size < 0 || size > b.len() - p) {
+      return None;
+    }
+    out = out.append(WasmSection { id: id, start: p, end: p + size });
+    pos = p + size;
+  }
+  return Some(out);
+}
+
+function has_wasm_magic(b: i32[], version: i32[]): boolean {
+  if (b.len() < 8) {
+    return false;
+  }
+  let want = [0, 97, 115, 109, version[0], version[1], version[2], version[3]];
+  for i in 0..8 {
+    if (b[i] != want[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function world_component(c: i32[]): Result[i32[], string] {
+  let Some(secs) = wasm_sections(c) else {
+    return Err("the component is truncated");
+  };
+  let types: WasmSection[] = [];
+  for s in secs {
+    if (s.id == 7) {
+      types = types.append(s);
+    }
+  }
+  if (types.len() != 1) {
+    return Err(f"the component has {types.len()} type sections, and a world has one: a WIT package with more than one world or interface is not a world");
+  }
+  return Ok(c);
+}
+
+// The component-type payload of one world in a wasm file. A component is
+// itself the payload. `wasm-tools component embed` puts the payload in a custom
+// section of a core module, with a name that starts with "component-type".
+pub function wit_world_payload(file: i32[]): Result[i32[], string] {
+  if (has_wasm_magic(file, [13, 0, 1, 0])) {
+    return world_component(file);
+  }
+  if (!has_wasm_magic(file, [1, 0, 0, 0])) {
+    return Err("it is not a wasm module or component");
+  }
+  let Some(secs) = wasm_sections(file) else {
+    return Err("the module is truncated");
+  };
+  for s in secs {
+    if (s.id == 0 && s.start < s.end) {
+      let n = file[s.start];
+      if (n < 128 && s.start + 1 + n <= s.end) {
+        let nr = wit_read_name(file, s.start);
+        if (nr.s.starts_with("component-type")) {
+          let payload: i32[] = [];
+          for j in nr.next..s.end {
+            payload = payload.append(file[j]);
+          }
+          if (!has_wasm_magic(payload, [13, 0, 1, 0])) {
+            return Err("its component-type section does not hold a component");
+          }
+          return world_component(payload);
+        }
+      }
+    }
+  }
+  return Err("the module has no component-type custom section");
+}
+
 pub function wit_section_body(payload: i32[], want_id: i32): i32[] {
   let pos = 8;
   let found: i32[] = [];
