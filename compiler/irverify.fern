@@ -215,9 +215,6 @@ function width_refusal(kt: i32, w: i32): string {
   if (kt >= ir.K_INT_EXTEND && kt <= ir.K_F64_TO_I64) {
     return conv_width_refusal(kt, w);
   }
-  if (ir.is_lane_kind(kt)) {
-    return lane_width_refusal(kt, w);
-  }
   let mem = mem_width_refusal(kt, w);
   if (mem != "") {
     return mem;
@@ -277,7 +274,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
       if (lw != "" || li != "") {
         out = out.append(Problem {
           fn_name: fn_name, op: i, kind: ir.kind_name(kt),
-          msg: if (lw != "") { "lane width " + util.i32_to_string(op.width) + " is not " + lw } else { li },
+          msg: if (lw != "") { "width " + util.i32_to_string(op.width) + " is not " + lw } else { li },
         });
       }
     }
