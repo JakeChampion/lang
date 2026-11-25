@@ -1,0 +1,16 @@
+name: Oracle verdict save
+description: >
+  Save the Go oracle's verdicts that oracle-verdict-cache restored, together
+  with the verdicts that the job added, under the key that oracle-verdict-cache
+  set. Use it as the last step of the job, with `if: always()`, so that a job
+  that fails or times out also keeps the verdicts that it computed. Nothing
+  happens when oracle-verdict-cache did not run in the job.
+runs:
+  using: composite
+  steps:
+    - name: Save the oracle verdicts
+      if: env.ORACLE_VERDICT_KEY != ''
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/selfhost-unicache/*.verdict
+        key: ${{ env.ORACLE_VERDICT_KEY }}
