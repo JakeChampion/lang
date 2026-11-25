@@ -6691,7 +6691,7 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		{"a-destructured-element-is-taken-past-a-later-sibling-read", 2, semTupleDestructureTakeSource},
 		{"a-field-is-taken-past-a-sibling-read-in-a-later-block", 4, semSpreadTwoWithsSource},
 		{"a-grow-through-two-records-of-a-borrowed-parameter", 208, semNestedFieldGrowSource},
-		{"a-record-field-handed-to-a-callee-that-grows-it", 209, semHandedFieldGrowSource},
+		{"a-record-field-handed-to-a-callee-that-grows-it", 208, semHandedFieldGrowSource},
 	} {
 		t.Run(prog.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")

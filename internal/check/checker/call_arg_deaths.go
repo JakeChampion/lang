@@ -76,8 +76,13 @@ func (o IdentOrder) IsLast(id *ast.Ident) bool {
 	if o.Idx[id] == o.last[id.Name] {
 		return true
 	}
+	return o.isLastAmong(id, o.byName[id.Name])
+}
+
+// isLastAmong reports whether no run reaches an identifier of mentions after id.
+func (o IdentOrder) isLastAmong(id *ast.Ident, mentions []*ast.Ident) bool {
 	node := -2
-	for _, later := range o.byName[id.Name] {
+	for _, later := range mentions {
 		if o.Idx[later] <= o.Idx[id] {
 			continue
 		}
@@ -563,11 +568,39 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 	var fieldSelections map[string]int
 	var fieldReads map[[2]string]int
 	var replacingBases map[[2]string]int
+	countSelections := func() {
+		if fieldSelections != nil {
+			return
+		}
+		fieldSelections = map[string]int{}
+		fieldReads = map[[2]string]int{}
+		replacingBases = map[[2]string]int{}
+		ast.Walk(body, func(m ast.Node) bool {
+			if sl, ok := m.(*ast.StructLit); ok {
+				if base, ok := sl.Base.(*ast.Ident); ok {
+					for _, f := range sl.Fields {
+						replacingBases[[2]string{base.Name, f.Name}]++
+					}
+				}
+			}
+			if field, ok := m.(*ast.FieldAccess); ok {
+				if root, ok := field.Target.(*ast.Ident); ok {
+					fieldSelections[root.Name]++
+					fieldReads[[2]string{root.Name, field.Field}]++
+				}
+			}
+			return true
+		})
+	}
 	// A name that only matches on a fresh call bind: the match takes the
 	// result, so the payload is owned.
 	freshBound, staleBound := matchBinds(info, body)
 	payloadOwned := func(name string) bool {
 		return freshBound[name] && !staleBound[name] && !isParam[name] && declCount[name] == 0
+	}
+	// An own parameter holds its fields as a fresh local does.
+	unpackHolder := func(name string) bool {
+		return freshInitLocal[name] && declCount[name] == 1 || ownParam[name] && declCount[name] == 0 || payloadOwned(name)
 	}
 	rebinds := matchPayloadRebinds(info, body, occurrences, escaping)
 	payloadOf := func(value *ast.Ident, target string) bool {
@@ -583,32 +616,70 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			return false
 		}
 		hid, isID := fa.Target.(*ast.Ident)
-		// An own parameter holds its fields as a fresh local does.
-		if !isID || !(freshInitLocal[hid.Name] && declCount[hid.Name] == 1) && !(ownParam[hid.Name] && declCount[hid.Name] == 0) && !payloadOwned(hid.Name) {
+		if !isID || !unpackHolder(hid.Name) {
 			return false
 		}
-		if fieldSelections == nil {
-			fieldSelections = map[string]int{}
-			fieldReads = map[[2]string]int{}
-			replacingBases = map[[2]string]int{}
-			ast.Walk(body, func(m ast.Node) bool {
-				if sl, ok := m.(*ast.StructLit); ok {
-					if base, ok := sl.Base.(*ast.Ident); ok {
-						for _, f := range sl.Fields {
-							replacingBases[[2]string{base.Name, f.Name}]++
-						}
-					}
+		countSelections()
+		return fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name]+replacingBases[[2]string{hid.Name, fa.Field}] == occurrences[hid.Name]
+	}
+	// A literal `T { ...q.f, g: v }` takes q.f as an unpack does. Each
+	// mention of q selects a field. In the literal, a read of q.f reads a
+	// field that the literal replaces or is a scalar copy. Each other read of
+	// q.f is a scalar copy, and no run reads q.f after the literal.
+	pathSpread := func(sl *ast.StructLit) bool {
+		path, isField := sl.Base.(*ast.FieldAccess)
+		if !isField {
+			return false
+		}
+		q, isID := path.Target.(*ast.Ident)
+		if !isID || escaping[q.Name] || !unpackHolder(q.Name) {
+			return false
+		}
+		countSelections()
+		if fieldSelections[q.Name] != occurrences[q.Name] {
+			return false
+		}
+		parentOf := map[*ast.FieldAccess]*ast.FieldAccess{}
+		var paths []*ast.FieldAccess
+		ast.Walk(body, func(m ast.Node) bool {
+			if x, ok := m.(*ast.FieldAccess); ok {
+				if p, ok := x.Target.(*ast.FieldAccess); ok {
+					parentOf[p] = x
 				}
-				if field, ok := m.(*ast.FieldAccess); ok {
-					if root, ok := field.Target.(*ast.Ident); ok {
-						fieldSelections[root.Name]++
-						fieldReads[[2]string{root.Name, field.Field}]++
-					}
+				if id, ok := x.Target.(*ast.Ident); ok && id.Name == q.Name && x.Field == path.Field {
+					paths = append(paths, x)
+				}
+			}
+			return true
+		})
+		replaced := map[string]bool{}
+		inLit := map[*ast.FieldAccess]bool{}
+		for _, f := range sl.Fields {
+			replaced[f.Name] = true
+			ast.Walk(f.Value, func(m ast.Node) bool {
+				if x, ok := m.(*ast.FieldAccess); ok {
+					inLit[x] = true
 				}
 				return true
 			})
 		}
-		return fieldReads[[2]string{hid.Name, fa.Field}] == 1 && fieldSelections[hid.Name]+replacingBases[[2]string{hid.Name, fa.Field}] == occurrences[hid.Name]
+		last := q
+		var mentions []*ast.Ident
+		for _, p := range paths {
+			id := p.Target.(*ast.Ident)
+			mentions = append(mentions, id)
+			if p == path {
+				continue
+			}
+			x := parentOf[p]
+			if x == nil || !scalar[x] && !(inLit[p] && replaced[x.Field]) {
+				return false
+			}
+			if inLit[p] && identAfter(id, last) {
+				last = id
+			}
+		}
+		return order.isLastAmong(last, mentions)
 	}
 	// An assignment that stores a value another name can hold ends the
 	// freshness of its target. An unpack can read a holder that an earlier
@@ -811,6 +882,14 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			return true
 		case *ast.Return:
 			if fn.ReturnOwn {
+				for _, part := range argParts(&ast.Call{Args: []ast.Expr{x.Value}}) {
+					moveSite(x, part)
+				}
+			}
+			return true
+		case *ast.Assign:
+			// An own parameter takes the value that replaces it.
+			if id, ok := x.Target.(*ast.Ident); ok && x.Value != nil && ownParam[id.Name] && declCount[id.Name] == 0 {
 				for _, part := range argParts(&ast.Call{Args: []ast.Expr{x.Value}}) {
 					moveSite(x, part)
 				}
@@ -1100,7 +1179,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathDead(info, bf, c, q, fa.Field, order, fieldOf, updates) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field)-len(replacedPathRoots(c, q.Name, fa.Field)) != 1 || !fieldPathDead(info, bf, c, q, fa.Field, order, fieldOf, updates) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -1153,7 +1232,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 		return true
 	})
 	unadmitted := map[string]bool{}
-	moveAdmitted := moveAdmission(info, scalar, body, isParam, ownParam, declCount, occurrences, order, admitted, unpack, payloadOwned)
+	moveAdmitted := moveAdmission(info, scalar, body, isParam, ownParam, declCount, occurrences, order, admitted, unpack, payloadOwned, pathSpread)
 	for _, dies := range out {
 		for name := range dies {
 			if !isParam[name] && !moveAdmitted[name] {
@@ -1369,8 +1448,9 @@ func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, fi
 	}
 	inner := frames[len(frames)-1]
 	later := false
+	replaced := replacedPathRoots(holder, q.Name, field)
 	ast.Walk(inner.stmts[inner.idx], func(m ast.Node) bool {
-		if id, ok := m.(*ast.Ident); ok && order.Idx[id] > order.Idx[q] && readsPath(id) {
+		if id, ok := m.(*ast.Ident); ok && order.Idx[id] > order.Idx[q] && !replaced[id] && readsPath(id) {
 			later = true
 		}
 		return !later
@@ -1379,6 +1459,28 @@ func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, fi
 		return !later
 	}
 	return !later && !liveFromReads(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name), reads)
+}
+
+// replacedPathRoots gives the roots of the reads in n that a literal with base
+// q.field replaces: `S { ...q.field, f: g(q.field.f) }` takes q.field.f once,
+// through its base.
+func replacedPathRoots(n ast.Node, q, field string) map[*ast.Ident]bool {
+	out := map[*ast.Ident]bool{}
+	for read, sl := range replacedReads(n) {
+		base, ok := sl.Base.(*ast.FieldAccess)
+		if !ok || base.Field != field {
+			continue
+		}
+		if id, ok := base.Target.(*ast.Ident); !ok || id.Name != q {
+			continue
+		}
+		if mid, ok := read.Target.(*ast.FieldAccess); ok {
+			if id, ok := mid.Target.(*ast.Ident); ok {
+				out[id] = true
+			}
+		}
+	}
+	return out
 }
 
 // UpdateBases maps the base of each update literal `S { ...q, f: v }` to the
@@ -1661,9 +1763,9 @@ func freshLocalReplacement(info *Info, bf *bodyFrames, holder ast.Node, value as
 // outside a loop and given only owned values after that. Its initializer is
 // an alias `let a = b` that takes an owned b at its last use, or a struct
 // literal. The literal sets only owned values or values that hold no handle,
-// and its base is such a b. An owned value is a fresh value, an unpack, an
+// and its base is such a b, or a field path that pathSpread admits. An owned value is a fresh value, an unpack, an
 // owned name, or a self-update `T { ...a, f: v }`.
-func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isParam, ownParam map[string]bool, declCount, occurrences map[string]int, order IdentOrder, admitted func(string) bool, unpack func(ast.Expr) bool, payloadOwned func(string) bool) map[string]bool {
+func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isParam, ownParam map[string]bool, declCount, occurrences map[string]int, order IdentOrder, admitted func(string) bool, unpack func(ast.Expr) bool, payloadOwned func(string) bool, pathSpread func(*ast.StructLit) bool) map[string]bool {
 	looped := loopedDecls(body)
 	aliasOf := map[string]*ast.Ident{}
 	litOf := map[string]*ast.StructLit{}
@@ -1683,7 +1785,7 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 			if ok && order.IsLast(src) {
 				aliasOf[x.Name] = src
 			}
-			if isLit && (sl.Base == nil || aliasOf[x.Name] != nil) {
+			if isLit && (sl.Base == nil || aliasOf[x.Name] != nil || pathSpread(sl)) {
 				litOf[x.Name] = sl
 			}
 		case *ast.Assign:

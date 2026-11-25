@@ -76,6 +76,7 @@ var stdModuleReach = map[string]string{
 	"std/mock_platform": "config,env,fs,host,ktls,log,mmio,mmsg,namelookup,now,pollable,privileged,random,reactor,tcp,unix,uring,userid,vsock",
 	"std/net":           "log,mmio,mmsg,now,pollable,privileged,reactor,tcp,unix,uring,vsock",
 	"std/ndarray":       "",
+	"std/noise":         "random",
 	"std/num":           "",
 	"std/option":        "",
 	"std/opus":          "",

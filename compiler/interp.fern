@@ -1103,15 +1103,17 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 // `iterator_decls` keeps every declaration spelled `__iterator` in source order.
 // `receivers` holds the runtime_receiver_name of each declaration, `cells`
 // its body_needs_cells, and `cleanups` the actions for a try exit.
+// `receiver_refs` holds the parsed receiver type of each declaration.
 // `receiver_args` holds the receiver argument names to check for const bindings.
 // `plain` is true for a function with no receiver whose name no builtin takes.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, qualifiers: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
+pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, qualifiers: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], receiver_refs: parser.TypeRef[], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let names: string[] = [];
   let iterator_decls: i32[] = [];
   let receivers: string[] = [];
   let receiver_args: string[][] = [];
+  let receiver_refs: parser.TypeRef[] = [];
   let cleanups: ast.Stmt[][] = [];
   let cells: boolean[] = [];
   let plain: boolean[] = [];
@@ -1131,12 +1133,14 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
     }
     names = names.append(name);
     receivers = receivers.append(receiver);
-    receiver_args = receiver_args.append(receiver_arg_names(fd));
+    let receiver_ref = parser.parse_type_ref(fd.receiver_type);
+    receiver_args = receiver_args.append(receiver_arg_names(fd, receiver_ref));
+    receiver_refs = receiver_refs.append(receiver_ref);
     cells = cells.append(body_needs_cells(fd.body));
     cleanups = cleanups.append(deferlower.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), qualifiers: qualifiers, iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, cells: cells, cleanups: cleanups, plain: plain };
+  return Funcs { decls: decls, runtime_names: util.name_index(names), qualifiers: qualifiers, iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, receiver_refs: receiver_refs, cells: cells, cleanups: cleanups, plain: plain };
 }
 
 // The part of a function name before its first dot, or "" for a name with no
@@ -1286,7 +1290,7 @@ function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
   while (at >= 0) {
     let fd = funcs.decls[at];
     if (fd.name == name) {
-      if let Some(rt) = matched_method_result(fd, recv_ty) {
+      if let Some(rt) = matched_method_result(fd, funcs.receiver_refs[at], recv_ty) {
         if (seen && rt != found) {
           return "";
         }
@@ -1301,16 +1305,12 @@ function method_ret_type(funcs: Funcs, recv_ty: string, name: string): string {
 
 // Match the static receiver and substitute its arguments into the result
 // using the same parsed types. An empty result can itself be a match.
-function matched_method_result(fd: parser.FuncDecl, recv_ty: string): Option[string] {
-  if (parser.plain_type_spelling(fd.receiver_type)) {
-    return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
-  }
-  if (!generic_head_may_match(fd.receiver_type, recv_ty)) {
-    return None;
-  }
-  let d = parser.parse_type_ref(fd.receiver_type);
+function matched_method_result(fd: parser.FuncDecl, d: parser.TypeRef, recv_ty: string): Option[string] {
   if (d.args.len() == 0) {
     return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
+  }
+  if (d.base.len() > 0 && !generic_spelling_of(recv_ty, d.base)) {
+    return None;
   }
   let r = parser.parse_type_ref(recv_ty);
   if (d.base != r.base || d.args.len() != r.args.len()) {
@@ -1325,24 +1325,11 @@ function matched_method_result(fd: parser.FuncDecl, recv_ty: string): Option[str
   return Some(parser.subst_ty(fd.ret_type, vars, cts));
 }
 
-// False when `decl` is a named generic `B[...]` and `actual` does not start
-// with `B[`, so that no parse can give them the same base.
-function generic_head_may_match(decl: string, actual: string): boolean {
-  let n = decl.len();
-  for i in 0..decl.len() {
-    let c = decl[i];
-    if (c == b'[') {
-      n = i;
-      break;
-    }
-    if (!(c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.')) {
-      return true;
-    }
-  }
-  if (n == 0 || n == decl.len()) {
-    return true;
-  }
-  return actual.len() > n && actual[n] == b'[' && slice_unchecked(actual, 0, n) == slice_unchecked(decl, 0, n);
+// Reports a spelling that starts `base[`, the only shape whose parsed base is
+// `base` with type arguments.
+function generic_spelling_of(spelling: string, base: string): boolean {
+  let n = base.len();
+  return spelling.len() > n && spelling[n] == b'[' && spelling.starts_with(base);
 }
 
 function (e: Env) binds_name(name: string): boolean {
@@ -1377,14 +1364,20 @@ function func_ret_type(funcs: Funcs, name: string, targs: string[]): string {
 }
 
 function (e: Env) lookup(name: string): Value {
+  return deref_cell(e.slot_named(name));
+}
+
+// The slot of `name`, a cell included. It hands no part of `e` to a callee,
+// so the walk borrows each scope.
+function (e: Env) slot_named(name: string): Value {
   let i = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
-      return deref_cell(e.values[i]);
+      return e.values[i];
     }
     i -= 1;
   }
-  return match (e.outer) { Some(parent) => parent.lookup(name), None => v_err("undefined identifier: " + name) };
+  return match (e.outer) { Some(parent) => parent.slot_named(name), None => v_err("undefined identifier: " + name) };
 }
 
 function deref_cell(v: Value): Value {
@@ -6895,10 +6888,10 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
 }
 
 // A receiver method can bind its simple type arguments to constants at a call.
-function receiver_arg_names(fd: parser.FuncDecl): string[] {
+function receiver_arg_names(fd: parser.FuncDecl, receiver: parser.TypeRef): string[] {
   let names: string[] = [];
   if (fd.receiver_name.len() > 0) {
-    for a in parser.parse_type_ref(fd.receiver_type).args {
+    for a in receiver.args {
       if (a.args.len() == 0) {
         names = names.append(a.base);
       }

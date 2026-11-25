@@ -202,6 +202,21 @@ struct W3 { a: u64, b: u64, c: u64 }
     let c: u64 = (x & y | (x | y) & (s ^ ALL)) >> 63u64;
     return (5u64 + z + c) ^ s;
 }
+@noinline function wide_k(x: u64): u64 {
+    let lo: u64 = x * 0xffffffff00000001u64;
+    let hi: u64 = __mulhi_u64(x, 0xffffffff00000001u64);
+    return lo ^ hi;
+}
+@noinline function wide_small(x: u64): u64 {
+    let lo: u64 = x * 10u64;
+    let hi: u64 = __mulhi_u64(10u64, x);
+    return lo ^ hi;
+}
+@noinline function wide_xy(x: u64, y: u64): u64 {
+    let lo: u64 = x * y;
+    let hi: u64 = __mulhi_u64(y, x);
+    return lo ^ hi;
+}
 function main(): i32 {
     let edges: u64[] = [0u64, 1u64, 2u64, 0x7fffffffffffffffu64, 0x8000000000000000u64, 0xfffffffffffffffeu64, 0xffffffffffffffffu64, 0x123456789abcdef0u64, 0xedcba98765432110u64];
     let acc: u64 = 0u64;
@@ -213,6 +228,7 @@ function main(): i32 {
             r = r + 128u64 * wide_in(x, y, 0x8000000000000001u64) + 256u64 * wide_in(x, y, 3u64);
             acc = acc * 1000003u64 + r;
             acc = acc ^ add4(x, y, x ^ y, y - x, y, x, x + 1u64, ALL - y);
+            acc = acc * 7u64 + wide_k(x) + 3u64 * wide_small(y) + 5u64 * wide_xy(x, y);
             for h in [0u64, x ^ y, ALL] {
                 acc = acc * 31u64 + add_carried(x, y, h) + 3u64 * add_carried_left(x, y, h) + 5u64 * sub_borrowed(x, y, h);
                 acc = acc * 41u64 + carried_imm(x, y) + 3u64 * borrowed_imm(x, y) + 5u64 * linked_imm(x, y, h);
@@ -316,6 +332,36 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 		}
 		if fn := functionListing(string(asm), "__fn_wide_in"); !c.shift.MatchString(fn) || c.flags.MatchString(fn) {
 			t.Errorf("%s: wide_in's incoming carry may exceed 1, so it should keep the formula:\n%s", c.target, fn)
+		}
+	}
+}
+
+// A product and its high half with the same operands make one mulq, also when
+// each names its own literal of the same value.
+func TestSelfHostSSAProductHalvesShareOneMultiply(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mulq := regexp.MustCompile(`(?m)^\s+mulq `)
+	imulq := regexp.MustCompile(`(?m)^\s+imulq `)
+	for _, name := range []string{"wide_k", "wide_small", "wide_xy"} {
+		fn := functionListing(string(asm), "__fn_"+name)
+		if fn == "" {
+			t.Fatalf("no __fn_%s in the listing", name)
+		}
+		if n := len(mulq.FindAllString(fn, -1)); n != 1 || imulq.MatchString(fn) {
+			t.Errorf("%s has %d mulq, want one mulq and no imulq:\n%s", name, n, fn)
 		}
 	}
 }

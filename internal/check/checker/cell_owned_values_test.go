@@ -22,3 +22,21 @@ func TestOwnedValueCellConstruction(t *testing.T) {
 		wantE051(t, name, src)
 	}
 }
+
+func TestOwnCellParamKeepsSetLoan(t *testing.T) {
+	const prefix = `struct H { fd: i32 } function (own h: H) close(): i32 { return h.fd; } function eat(own c: Cell[H]): void {} `
+	for name, src := range map[string]string{
+		"owned payload":     `function f(own s: Cell[H], own h: H): void { s.set(h); eat(s); }`,
+		"fresh payload":     `function f(own s: Cell[H]): void { s.set(H { fd: 2 }); eat(s); }`,
+		"borrowed snapshot": `function f(own s: Cell[H], h: H): i32 { s.set(h); return s.get().fd; }`,
+	} {
+		wantOK(t, name, prefix+src)
+	}
+	for name, src := range map[string]string{
+		"moved":       `function f(own s: Cell[H], h: H): void { s.set(h); eat(s); }`,
+		"in a branch": `function f(own s: Cell[H], h: H): void { if (h.fd > 0) { s.set(h); } eat(s); }`,
+		"own result":  `function f(own s: Cell[H], h: H): own Cell[H] { s.set(h); return s; }`,
+	} {
+		wantE051(t, name, prefix+src)
+	}
+}
