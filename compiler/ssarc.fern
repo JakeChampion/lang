@@ -1519,14 +1519,17 @@ function drop_record_fields(own r: irtables.LowerState, slot: i32, fields: semre
 }
 
 // Zeroes the secret storage of the child in `slot` when no other value holds
-// the child: the elements of a numeric array, and the scalars and the
-// children of a record, a tuple or an enum. A record or an enum with a
-// finalizer keeps its fields, because the finalizer reads them later. The loads here borrow, so
-// they are not marked counted.
+// the child: the elements of a numeric array, the bytes of a string, and the
+// scalars and the children of a record, a tuple or an enum. A record or an
+// enum with a finalizer keeps its fields, because the finalizer reads them
+// later. The loads here borrow, so they are not marked counted.
 function wipe_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
   let shift = ssasem.elem_shift(t);
   if (shift >= 0) {
     return wipe_sole(r, slot, shift);
+  }
+  if (ssasem.is_string(t)) {
+    return wipe_sole_string(r, slot);
   }
   let plain = ssasem.box_shape(t) && ssasem.finalizer_of(f, t) == "";
   let record = plain && typeinfo.is_record(t) && !ssasem.secret_record(t, f);
@@ -1651,6 +1654,34 @@ function wipe_sole(own r: irtables.LowerState, slot: i32, shift: i32): irtables.
   r = emit(r, ir.op_bin("shl", 0, false));
   r = emit(r, ir.op_memset());
   r = emit(r, ir.op_drop());
+  return emit(r, ir.op_end());
+}
+
+// Zeroes the bytes of the string in `slot` when no other value holds it and
+// its bytes follow its two-word box in the same block. A literal is never
+// unique, and the bytes of a view or a mapped file are in another block, so
+// they keep their bytes.
+function wipe_sole_string(own r: irtables.LowerState, slot: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, aligned_unique());
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_str_data());
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_ptr_width());
+  r = emit(r, ir.op_const_i32(2));
+  r = emit(r, ir.op_bin("mul", 0, false));
+  r = emit(r, ir.op_raw_addr());
+  r = emit(r, ir.op_bin("eq", ir.width_ptr(), false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_str_data());
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_str_len());
+  r = emit(r, ir.op_memset());
+  r = emit(r, ir.op_drop());
+  r = emit(r, ir.op_end());
   return emit(r, ir.op_end());
 }
 
