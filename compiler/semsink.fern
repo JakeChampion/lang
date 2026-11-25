@@ -14,9 +14,7 @@ struct Reads { dom: ssadeps.Dom, par: i32[], at: i32[], flow: ssalive.Flow, pos:
 struct PhiEdit { block: i32, phi: i32, slot: i32, value: i32 }
 
 pub function sink(f: ssasem.Func): Sunk {
-  let ru = reuse(f);
-  let sk = sink_rereads(ru.s.f, ru.reads, false, ssadeps.unchecked());
-  return Sunk { f: sk.f, reread: ru.s.reread + sk.reread };
+  return sink_rereads(f, false, ssadeps.unchecked());
 }
 
 // sink_to_uses moves a counted record or tuple field read down to the
@@ -241,22 +239,30 @@ function spends_any(ins: ssa.SInst, up: i32[]): boolean {
   return spends(ins) && touches(ins.args, up) || util.index_of_i32(up, ssasem.update_base(ins)) >= 0;
 }
 
-// sink_past_lent re-reads a projection below a call that only borrows its
-// parent. It runs once ownership inference has settled the callees' modes,
-// which `sink` runs before: a record or variant parameter declared
-// borrowed that a callee consumes is counted by then. facts describe the
-// graph of f when they are checked.
+// sink_past_lent merges a repeated read into a dominating read (`reuse`),
+// then re-reads a projection below a call that only borrows its parent. It
+// runs once ownership inference has settled the callees' modes, which
+// `sink` runs before: a record or variant parameter declared borrowed that a
+// callee consumes is counted by then. facts describe the graph of f when
+// they are checked.
 pub function sink_past_lent(f: ssasem.Func, facts: ssadeps.Facts): Sunk {
-  let moved = moves_past_lent(f);
+  let ru = reuse(f, facts);
+  if (ru.reread > 0) {
+    facts = ssadeps.unchecked();
+    // A merge can undo a re-read of `sink`.
+    let again = sink_rereads(ru.f, false, facts);
+    ru = Sunk { f: again.f, reread: ru.reread + again.reread };
+  }
+  let moved = moves_past_lent(ru.f);
   if (moved.reread > 0) {
     facts = ssadeps.unchecked();
   }
-  let sk = sink_rereads(moved.f, None, true, facts);
+  let sk = sink_rereads(moved.f, true, facts);
   if (sk.reread > 0) {
     facts = ssadeps.unchecked();
   }
   let late = semlatehold.reread_before_spends(sk.f, facts);
-  return Sunk { f: late.f, reread: moved.reread + sk.reread + late.reread };
+  return Sunk { f: late.f, reread: ru.reread + moved.reread + sk.reread + late.reread };
 }
 
 // moves_past_lent moves a record or tuple field read down to its first use
@@ -365,17 +371,15 @@ function moved_down(insts: ssa.SInst[], i: i32, to: i32): ssa.SInst[] {
   return out;
 }
 
-struct Reused { s: Sunk, reads: Option[Reads] }
-
-function reuse(f: ssasem.Func): Reused {
+function reuse(f: ssasem.Func, facts: ssadeps.Facts): Sunk {
   let g = f.graph;
   let at = projection_blocks(g, f.values);
   if (at.len() == 0 || !repeated_across(g, f.values, at)) {
-    return Reused { s: Sunk { f: f, reread: 0 }, reads: None };
+    return Sunk { f: f, reread: 0 };
   }
-  let rd = reads_of(f, at, false, ssadeps.unchecked());
+  let rd = reads_of(f, at, true, facts);
   if (!rd.flow.ok) {
-    return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
+    return Sunk { f: f, reread: 0 };
   }
   let reads = counted_reads(g, f.values);
   let slots = semcse.read_slots(reads);
@@ -390,9 +394,9 @@ function reuse(f: ssasem.Func): Reused {
     }
   }
   if (n == 0) {
-    return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
+    return Sunk { f: f, reread: 0 };
   }
-  return Reused { s: Sunk { f: semcse.replaced(f, same), reread: n }, reads: None };
+  return Sunk { f: semcse.replaced(f, same), reread: n };
 }
 
 function counted_reads(g: ssa.SFunc, values: typeinfo.Type[]): ssa.SInst[] {
@@ -421,17 +425,19 @@ function earlier_read(rd: Reads, reads: ssa.SInst[], slots: semcse.Slots, r: ssa
   return -1;
 }
 
+// The plan takes such a read past the live children of its twin only when it
+// owns their parent (`ssaunits.twin_holds`), and it never owns a read.
 function field_kept_apart(rd: Reads, r: ssa.SInst, bi: i32): boolean {
-  return r.kind_tag == ssasem.record_get() && !ssalive.live_out_has(rd.flow, bi, r.result);
+  return r.kind_tag == ssasem.record_get() && rd.field[r.args[0]] < 0 && !ssalive.live_out_has(rd.flow, bi, r.result);
 }
 
-function sink_rereads(f: ssasem.Func, known: Option[Reads], lent: boolean, facts: ssadeps.Facts): Sunk {
+function sink_rereads(f: ssasem.Func, lent: boolean, facts: ssadeps.Facts): Sunk {
   let g = f.graph;
   let at = crossing_projections(g, f.values);
   if (at.len() == 0) {
     return Sunk { f: f, reread: 0 };
   }
-  let rd = reads_at(f, at, known, lent, facts);
+  let rd = reads_of(f, at, lent, facts);
   if (!rd.flow.ok) {
     return Sunk { f: f, reread: 0 };
   }
@@ -469,17 +475,6 @@ function projection(kind: i32): boolean {
 }
 
 struct Tree { par: i32[], parent: boolean[], kids: i32[][], first: i32[], field: i32[] }
-
-function reads_at(f: ssasem.Func, at: i32[], known: Option[Reads], lent: boolean, facts: ssadeps.Facts): Reads {
-  match (known) {
-    Some(k) => {
-      return Reads { ...k, at: at };
-    },
-    None => {
-      return reads_of(f, at, lent, facts);
-    }
-  }
-}
 
 // reads_of with lent leaves a call's record or variant argument unspent
 // when its callee's contract borrows it, and keeps the spends of every
