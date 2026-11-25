@@ -768,6 +768,90 @@ function main(): i32 {
 }
 `
 
+// secretDeepFinalizedSrc holds a record with a finalizer inside a nested
+// record, a tuple, an array, an enum and a recursive enum.
+const secretDeepFinalizedSrc = `import "core/mem";
+
+struct Res { a: u64, b: u64, words: u64[] }
+
+impl mem.Drop for Res {
+  @noinline function drop(self: Self): void {
+    print("res " + (self.a == self.b && self.words[5] == self.a).to_string());
+  }
+}
+
+struct Outer { res: Res, tag: u64 }
+
+enum Holder { Has(Res, u64), Nothing }
+
+enum Chain { Link(Res, Chain), End }
+
+@secret
+struct Key { outer: Outer, pair: (Res, u64), list: Res[], holder: Holder, chain: Chain, n: i32 }
+
+struct Plain { outer: Outer, pair: (Res, u64), list: Res[], holder: Holder, chain: Chain, n: i32 }
+
+@noinline
+function words(v: u64): u64[] {
+  return [v, v, v, v, v, v];
+}
+
+@noinline
+function res(v: u64): Res {
+  return Res { a: v, b: v, words: words(v) };
+}
+
+@noinline
+function key(v: u64): i32 {
+  let k = Key { outer: Outer { res: res(v), tag: v }, pair: (res(v), v), list: [res(v), res(v)], holder: Has(res(v), v), chain: Link(res(v), End), n: 1 };
+  return k.n;
+}
+
+@noinline
+function plain(v: u64): i32 {
+  let k = Plain { outer: Outer { res: res(v), tag: v }, pair: (res(v), v), list: [res(v), res(v)], holder: Has(res(v), v), chain: Link(res(v), End), n: 1 };
+  return k.n;
+}
+
+@noinline
+function shared(v: u64): Outer {
+  let o = Outer { res: res(v), tag: v };
+  let k = Key { outer: o, pair: (res(v), v), list: [], holder: Nothing, chain: End, n: 1 };
+  let n = k.n;
+  return o;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 3..10 {
+      for k in 0..12 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size {
+          if (__load_i64(p + ((i * 8) as usize)) == 4702111234474983745) { found += 8; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word);
+  } else if (mode == "shared") {
+    let o = shared(word);
+    print((o.tag == word && o.res.words[5] == word).to_string());
+  } else {
+    let n = plain(word);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
@@ -954,6 +1038,32 @@ func TestSelfHostSecretRecordWipesItsFinalizedFields(t *testing.T) {
 			}
 			if got := run("shared"); strings.Join(got[:len(got)-1], " ") != "part true res true true" {
 				t.Fatalf("shared printed %q; the record that the caller still holds must keep its fields, and its finalizer must run once", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsDeepFinalizedValues(t *testing.T) {
+	want := "res true res true res true res true res true res true"
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretDeepFinalizedSrc)
+			plain := run("plain")
+			if got := strings.Join(plain[:len(plain)-1], " "); got != want {
+				t.Fatalf("plain printed %q, want %q", plain, want)
+			}
+			if got := secretCount(t, "plain", plain); got < 112 {
+				t.Fatalf("plain read %d secret bytes back, want at least 112; the raw allocations no longer observe the released boxes", got)
+			}
+			secret := run("secret")
+			if got := strings.Join(secret[:len(secret)-1], " "); got != want {
+				t.Fatalf("secret printed %q, want each finalizer to run once and see whole fields", secret)
+			}
+			if got := secretCount(t, "secret", secret); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its nested finalized values back, want 0", got)
+			}
+			if got := run("shared"); strings.Join(got[:len(got)-1], " ") != "res true res true true" {
+				t.Fatalf("shared printed %q; the record that the caller still holds must keep its fields, and each finalizer must run once", got)
 			}
 		})
 	}
