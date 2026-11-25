@@ -296,10 +296,14 @@ jobs:
           - { leg: x86-64-few-registers, shard: 1, count: 2 }
           - { leg: arm64-tls, shard: 0, count: 1 }
           - { leg: crypto-wasm, shard: 0, count: 1 }
-          - { leg: wasm, shard: 0, count: 4 }
-          - { leg: wasm, shard: 1, count: 4 }
-          - { leg: wasm, shard: 2, count: 4 }
-          - { leg: wasm, shard: 3, count: 4 }
+          # Seven shards keep a run with no cached oracle verdicts under the 33-minute timeout.
+          - { leg: wasm, shard: 0, count: 7 }
+          - { leg: wasm, shard: 1, count: 7 }
+          - { leg: wasm, shard: 2, count: 7 }
+          - { leg: wasm, shard: 3, count: 7 }
+          - { leg: wasm, shard: 4, count: 7 }
+          - { leg: wasm, shard: 5, count: 7 }
+          - { leg: wasm, shard: 6, count: 7 }
     # .github/stdtest-weights.txt sets which cases each shard runs.
     env:
       FERN_STDTEST_SHARD: "${{ matrix.shard }}/${{ matrix.count }}"
