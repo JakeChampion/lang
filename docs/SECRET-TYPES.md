@@ -15,7 +15,7 @@ The rule applies again to a record or a tuple inside it.
 
 The drop also does the same for an enum value that the record holds alone, such as an `Option`.
 It zeroes the scalars of the variant, and the numeric arrays that the variant holds alone.
-The 64-bit integer or float payload of an `Option` or a `Result` is also a scalar of its variant.
+The drop zeroes a scalar payload of an `Option` or a `Result` of each width, also a 64-bit integer or a float.
 
 This holds in each build, not only under `-harden`.
 
@@ -39,7 +39,7 @@ These records of `std/crypto` have the attribute:
 |---|---|
 | `aes` | `Cipher` |
 | `aes_gcm` | `Key` |
-| `des` | `Cipher` |
+| `legacy/des` | `Cipher` |
 | `ecdsa` | `PrivateKey` |
 | `ed25519` | `PrivateKey` |
 | `chacha20poly1305` | `Key` |

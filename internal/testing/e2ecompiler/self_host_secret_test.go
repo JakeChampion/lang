@@ -229,7 +229,7 @@ function main(): i32 {
 
 // A record of a `@secret` struct also zeroes the fields of an enum value
 // that it holds alone: the scalars and the numeric arrays of a variant, and
-// the payload of an `Option` that is an array or a 32-bit scalar. A field of
+// the payload of an `Option`, which can be an array or any scalar. A field of
 // the record that is `None` points to a static box, and a byte of that
 // address can be 65, so the scan counts a byte only when the other byte of
 // its pair is also 65. The control is the same record without the
@@ -240,9 +240,9 @@ const secretEnumSrc = `import "std/option";
 enum Part { Words(u64, u64, u64[]), Small(i32, u64), Empty }
 
 @secret
-struct Key { part: Part, other: Part, spare: Option[u64[]], small: Option[i32], none: Option[u64[]], n: i32 }
+struct Key { part: Part, other: Part, spare: Option[u64[]], small: Option[i32], none: Option[u64[]], wide: Option[u64], real: Option[f64], n: i32 }
 
-struct Plain { part: Part, other: Part, spare: Option[u64[]], small: Option[i32], none: Option[u64[]], n: i32 }
+struct Plain { part: Part, other: Part, spare: Option[u64[]], small: Option[i32], none: Option[u64[]], wide: Option[u64], real: Option[f64], n: i32 }
 
 @noinline
 function words(v: u64): u64[] {
@@ -269,6 +269,16 @@ function few(v: u64): Option[i32] {
   return if (v > 0u64) { Some(1094795585) } else { None };
 }
 
+@noinline
+function wide(v: u64): Option[u64] {
+  return Some(v);
+}
+
+@noinline
+function real(v: u64): Option[f64] {
+  return Some(f64_from_bits(v as i64));
+}
+
 function weigh(p: Part): u64 {
   return match (p) {
     Words(a, b, ws) => a + b + ws[5],
@@ -277,22 +287,33 @@ function weigh(p: Part): u64 {
   };
 }
 
+// The record goes to a call, so it stays a box that holds its two options.
+@noinline
+function key_words(k: Key): u64 {
+  return k.wide.unwrap_or(0u64) + (k.real.unwrap_or(0.0) as u64);
+}
+
+@noinline
+function plain_words(k: Plain): u64 {
+  return k.wide.unwrap_or(0u64) + (k.real.unwrap_or(0.0) as u64);
+}
+
 @noinline
 function key(v: u64): u64 {
-  let k = Key { part: part(v), other: small(v), spare: spare(v), small: few(v), none: None, n: 1 };
-  return weigh(k.part) + weigh(k.other) + k.spare.map((ws: u64[]): u64 => ws[5]).unwrap_or(0u64) + (k.small.unwrap_or(0) as u64);
+  let k = Key { part: part(v), other: small(v), spare: spare(v), small: few(v), none: None, wide: wide(v), real: real(v), n: 1 };
+  return weigh(k.part) + weigh(k.other) + k.spare.map((ws: u64[]): u64 => ws[5]).unwrap_or(0u64) + (k.small.unwrap_or(0) as u64) + key_words(k);
 }
 
 @noinline
 function plain(v: u64): u64 {
-  let k = Plain { part: part(v), other: small(v), spare: spare(v), small: few(v), none: None, n: 1 };
-  return weigh(k.part) + weigh(k.other) + k.spare.map((ws: u64[]): u64 => ws[5]).unwrap_or(0u64) + (k.small.unwrap_or(0) as u64);
+  let k = Plain { part: part(v), other: small(v), spare: spare(v), small: few(v), none: None, wide: wide(v), real: real(v), n: 1 };
+  return weigh(k.part) + weigh(k.other) + k.spare.map((ws: u64[]): u64 => ws[5]).unwrap_or(0u64) + (k.small.unwrap_or(0) as u64) + plain_words(k);
 }
 
 @noinline
 function shared(v: u64): Part {
   let p = part(v);
-  let k = Key { part: p, other: Empty, spare: None, small: None, none: None, n: 1 };
+  let k = Key { part: p, other: Empty, spare: None, small: None, none: None, wide: None, real: None, n: 1 };
   let n = k.n;
   return p;
 }
@@ -300,7 +321,7 @@ function shared(v: u64): Part {
 function stale(): i32 {
   unsafe {
     let found: i32 = 0;
-    for size in 2..10 {
+    for size in 2..24 {
       for k in 0..8 {
         let p: usize = __alloc(size * 8);
         for i in 0..size * 8 {
@@ -511,8 +532,8 @@ func TestSelfHostSecretRecordWipesItsEnums(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
 			run := secretRun(t, target, secretEnumSrc)
-			if got := secretCount(t, "plain", run("plain")); got != 128 {
-				t.Fatalf("plain read %d secret bytes back, want 128; the raw allocations no longer observe the released boxes", got)
+			if got := secretCount(t, "plain", run("plain")); got != 148 {
+				t.Fatalf("plain read %d secret bytes back, want 148; the raw allocations no longer observe the released boxes", got)
 			}
 			if got := secretCount(t, "secret", run("secret")); got != 0 {
 				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its enum values back, want 0", got)

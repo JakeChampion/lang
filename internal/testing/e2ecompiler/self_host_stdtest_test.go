@@ -359,7 +359,11 @@ type selfHostStdTestCase struct {
 
 func selfHostStdTestShard(t *testing.T, cases []selfHostStdTestCase) []selfHostStdTestCase {
 	t.Helper()
-	selected, err := corpus.ShardBy(cases, os.Getenv("FERN_STDTEST_SHARD"), func(tc selfHostStdTestCase) string { return tc.name })
+	weights, err := corpus.ReadWeights(langSrcAbs(t, ".github/stdtest-weights.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := corpus.ShardByWeight(cases, os.Getenv("FERN_STDTEST_SHARD"), func(tc selfHostStdTestCase) string { return tc.name }, weights)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -823,6 +827,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"wycheproof_x25519", langSrcAbs(t, "tests/stdlib/wycheproof_x25519_test.fern"), ""},
 		{"wycheproof_ed25519", langSrcAbs(t, "tests/stdlib/wycheproof_ed25519_test.fern"), ""},
 		{"rsa", langSrcAbs(t, "tests/stdlib/rsa_test.fern"), ""},
+		{"crypto_stream", langSrcAbs(t, "tests/stdlib/crypto_stream_test.fern"), ""},
 		{"argon2id", langSrcAbs(t, "tests/stdlib/argon2id_test.fern"), ""},
 		{"scrypt", langSrcAbs(t, "tests/stdlib/scrypt_test.fern"), ""},
 		{"tls_client", langSrcAbs(t, "tests/stdlib/tls_client_test.fern"), ""},

@@ -96,12 +96,8 @@ a re-read never holds a parent longer than the plan already does. An
 ancestor of the parent counts too (`ancestor_spent_past`). It does not
 re-read a value while a read off its first read lives into the block and is
 not read again there (`child_kept_across`). The plan holds that old read
-across the new one, and an update of it then copies. Before
-that, it merges a repeated read into a read of the same slot in a block that
-dominates it, when a read off the first is spent or is live out of the
-repeat's block. A `length` does not spend. A record field read used only in
-its own block stays apart, because the plan can take it there
-(`twin_holds`).
+across the new one, and an update of it then copies. A `length` does not
+spend.
 `semcse.fern` then merges a block's repeated reads of one slot of one value,
 which the re-reads at a block's head most often make, so the slot has one
 holder for the plan to hold or take where its box is consumed. Last,
@@ -110,8 +106,18 @@ builtin that reads only its operands. `ssasem`'s guard check
 treats two reads of one slot of one box (an array's at one index) as one
 value, so a test of the first read settles the re-read.
 
-After ownership inference, `semsink.sink_past_lent` re-reads a projection
-below a call that only borrows its parent. It then runs `semlatehold.fern`.
+After ownership inference, `semsink.sink_past_lent` first merges a repeated
+read into an earlier read of the same slot in a dominant block (`reuse`).
+It merges when a read off the earlier read is spent or is live out of the
+repeat's block. A call spends only the arguments that its callee's inferred
+modes count. A record field read that only its own block uses stays apart
+(`field_kept_apart`), unless its parent is a read. The plan takes such a
+read past the live reads off its twin only for a parent that it owns
+(`twin_holds`).
+
+A merge can undo a re-read, so the re-reads of `semsink.sink` run again on
+a function that `reuse` changed. The pass then re-reads a projection below a
+call that only borrows its parent. It then runs `semlatehold.fern`.
 That pass finds a read off a value that a later call consumes. The read is
 used past the call, and the call is in a lower block. The pass reads the
 value again just before the call, and the uses that the call dominates take

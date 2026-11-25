@@ -237,8 +237,8 @@ function join_result_types(a: typeinfo.Type, b: typeinfo.Type): typeinfo.Type {
 }
 
 pub function unbound_enum_argument(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeUnknown(u) = t {
-    return u.reason.starts_with("unbound ");
+  if let typeinfo.TypeUnbound(_) = t {
+    return true;
   }
   return false;
 }
@@ -489,6 +489,10 @@ function t_unknown(reason: string): typeinfo.Type {
 
 function t_var(name: string, declared: boolean): typeinfo.Type {
   return typeinfo.TypeVar { name: name, declared: declared };
+}
+
+function t_unbound(param: string): typeinfo.Type {
+  return typeinfo.TypeUnbound { param: param };
 }
 
 function cell_elem_type(t: typeinfo.Type): typeinfo.Type {
@@ -1434,6 +1438,12 @@ pub function type_debug(t: typeinfo.Type): string {
     typeinfo.TypeVar(_) => {
       return "unknown(" + unknown_reason(t) + ")";
     },
+    typeinfo.TypeUnbound(_) => {
+      return "unknown(" + unknown_reason(t) + ")";
+    },
+    typeinfo.TypePending(_) => {
+      return "unknown(" + unknown_reason(t) + ")";
+    },
     typeinfo.TypeErased(e) => {
       return "erased(" + e.name + ")";
     }
@@ -1723,6 +1733,12 @@ function type_eq_in(a: typeinfo.Type, b: typeinfo.Type, modes: boolean): boolean
     typeinfo.TypeVar(_) => {
       return false;
     },
+    typeinfo.TypeUnbound(_) => {
+      return false;
+    },
+    typeinfo.TypePending(_) => {
+      return false;
+    },
     typeinfo.TypeNever(_) => {
       if let typeinfo.TypeNever(_) = b {
         return true;
@@ -1777,6 +1793,12 @@ pub function is_unknown(t: typeinfo.Type): boolean {
       return true;
     },
     typeinfo.TypeVar(_) => {
+      return true;
+    },
+    typeinfo.TypeUnbound(_) => {
+      return true;
+    },
+    typeinfo.TypePending(_) => {
       return true;
     },
     _ => {
@@ -1989,6 +2011,12 @@ function downcast_operand_ok(t: typeinfo.Type): boolean {
     typeinfo.TypeVar(_) => {
       return true;
     },
+    typeinfo.TypeUnbound(_) => {
+      return true;
+    },
+    typeinfo.TypePending(_) => {
+      return true;
+    },
     typeinfo.TypeNever(_) => {
       return true;
     },
@@ -2024,6 +2052,12 @@ function literal_match_type(t: typeinfo.Type): boolean {
       return false;
     },
     typeinfo.TypeVar(_) => {
+      return false;
+    },
+    typeinfo.TypeUnbound(_) => {
+      return false;
+    },
+    typeinfo.TypePending(_) => {
       return false;
     },
     typeinfo.TypeErased(_) => {
@@ -2637,6 +2671,8 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
     },
     typeinfo.TypeUnknown(_) => {},
     typeinfo.TypeVar(_) => {},
+    typeinfo.TypeUnbound(_) => {},
+    typeinfo.TypePending(_) => {},
     _ => {
       out = out.append(dg_at("E024", "struct destructure needs a struct expression, got " + type_label(it), v.line, v.col));
     }
@@ -3663,7 +3699,7 @@ function variant_pattern_payload_type(s: Scope, name: string, whole: typeinfo.Ty
         return u.args[arg];
       }
       if (index == 0 && bare == "Some" && u.args.len() == 0) {
-        return t_unknown("unbound T");
+        return t_unbound("T");
       }
       return t_unknown("unresolved generic pattern payload");
     }
@@ -3686,7 +3722,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   let args = u.args;
   if (args.len() == 0) {
     for tp in us.type_params {
-      args = args.append(t_unknown("unbound " + tp));
+      args = args.append(t_unbound(tp));
     }
   }
   if (us.type_params.len() == 0 || us.type_params.len() != args.len()) {
@@ -3720,7 +3756,7 @@ function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.Ex
   }
   let args: typeinfo.Type[] = [];
   for tp in us.type_params {
-    args = args.append(t_unknown("unbound " + tp));
+    args = args.append(t_unbound(tp));
   }
   for k in 0..c.args.len() {
     let ti = payload_type_param(s, us, name, k);
@@ -4857,7 +4893,10 @@ function callable_slot_open(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnknown(_) = t {
     return true;
   }
-  return false;
+  if let typeinfo.TypePending(_) = t {
+    return true;
+  }
+  return unbound_enum_argument(t);
 }
 
 function callable_slot_matches(a: typeinfo.Type, b: typeinfo.Type, unions: UnionSig[]): boolean {
@@ -5109,10 +5148,10 @@ function builtin_ctor_type(en: string, name: string, c: ast.ExprCall, s: Scope):
     return t_union_g(en, [inferred_payload(c.args[0], s)]);
   }
   if (name == "Ok" && c.args.len() == 1) {
-    return t_union_g(en, [inferred_payload(c.args[0], s), t_unknown("unbound E")]);
+    return t_union_g(en, [inferred_payload(c.args[0], s), t_unbound("E")]);
   }
   if (name == "Err" && c.args.len() == 1) {
-    return t_union_g(en, [t_unknown("unbound T"), inferred_payload(c.args[0], s)]);
+    return t_union_g(en, [t_unbound("T"), inferred_payload(c.args[0], s)]);
   }
   return t_union(en);
 }
@@ -6076,7 +6115,7 @@ function struct_lit_args(sl: ast.ExprStructLit, ssig: StructSig, s: Scope): type
     if (bi >= 0) {
       args = args.append(literal_bound_width(sl, ssig, tp, bt[bi], s));
     } else {
-      args = args.append(t_unknown("unbound " + tp));
+      args = args.append(t_unbound(tp));
     }
   }
   return args;
@@ -7032,6 +7071,12 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
         typeinfo.TypeVar(_) => {
           return CheckResult { scope: s, ty: t };
         },
+        typeinfo.TypeUnbound(_) => {
+          return CheckResult { scope: s, ty: t };
+        },
+        typeinfo.TypePending(_) => {
+          return CheckResult { scope: s, ty: t };
+        },
         _ => {}
       }
       if (is_unknown(t)) {
@@ -7207,7 +7252,10 @@ function var_bind_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
   if (v.type_name.len() > 0) {
     return var_declared_type(v, s);
   }
-  let inferred = check_expr(v.init, rec_local_scope(v, s));
+  return inferred_local_type(check_expr(v.init, rec_local_scope(v, s)));
+}
+
+function inferred_local_type(inferred: typeinfo.Type): typeinfo.Type {
   if (bare_map(inferred)) {
     return t_unknown("map without types");
   }
@@ -7693,7 +7741,7 @@ function type_from_spelling(name: string, tn: TypeNames): typeinfo.Type {
 
 function enum_argument_from_ref(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (parser.render_type_ref(r) == "$unbound") {
-    return t_unknown("unbound lifted enum argument");
+    return t_unbound("");
   }
   return type_from_ref_names(r, tn);
 }
@@ -8569,6 +8617,12 @@ pub function type_label(t: typeinfo.Type): string {
       return "unknown";
     },
     typeinfo.TypeVar(_) => {
+      return "unknown";
+    },
+    typeinfo.TypeUnbound(_) => {
+      return "unknown";
+    },
+    typeinfo.TypePending(_) => {
       return "unknown";
     },
     typeinfo.TypeErased(e) => {
@@ -14795,6 +14849,12 @@ function display_unjudged(t: typeinfo.Type): boolean {
     typeinfo.TypeVar(_) => {
       return true;
     },
+    typeinfo.TypeUnbound(_) => {
+      return true;
+    },
+    typeinfo.TypePending(_) => {
+      return true;
+    },
     typeinfo.TypeErased(_) => {
       return true;
     },
@@ -17286,6 +17346,8 @@ function tuple_destr_diags(t: typeinfo.Type, n: i32, line: i32, col: i32): util.
     },
     typeinfo.TypeUnknown(_) => {},
     typeinfo.TypeVar(_) => {},
+    typeinfo.TypeUnbound(_) => {},
+    typeinfo.TypePending(_) => {},
     _ => {
       return [dg_at("E024", "tuple destructure needs a tuple expression, got " + type_label(t), line, col)];
     }
@@ -17457,6 +17519,8 @@ function cover_shape_diags(p: CoverPat, t: typeinfo.Type, s: Scope, line: i32, c
       },
       typeinfo.TypeUnknown(_) => {},
       typeinfo.TypeVar(_) => {},
+      typeinfo.TypeUnbound(_) => {},
+      typeinfo.TypePending(_) => {},
       _ => {
         return [dg_at("E035", "tuple pattern needs a tuple value, got " + type_label(t), line, col)];
       }
@@ -33005,6 +33069,12 @@ function spellable(t: typeinfo.Type): boolean {
     typeinfo.TypeVar(_) => {
       return false;
     },
+    typeinfo.TypeUnbound(_) => {
+      return false;
+    },
+    typeinfo.TypePending(_) => {
+      return false;
+    },
     typeinfo.TypeErased(_) => {
       return false;
     },
@@ -35378,7 +35448,9 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       for arg in c.args {
         nargs = nargs.append(annotate_expr(arg, s));
       }
-      nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
+      if (nargs.len() > 0) {
+        nargs = settle_args_at_params(nargs, call_param_types(c, s), s);
+      }
       nargs = display_rewrite(c, nargs, s);
       nargs = settle_shared_literal_typevars(c, nargs, s);
       let ct = check_expr(e, s);
@@ -35508,7 +35580,7 @@ function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr
     }
   }
   if let ast.ExprFieldAccess(fa) = c.callee {
-    if (is_unsafe_builtin_method(receiver_key(check_expr(fa.obj, s)), fa.field)) {
+    if (fa.field == "close_unchecked" && is_unsafe_builtin_method(receiver_key(check_expr(fa.obj, s)), fa.field)) {
       return annotate_expr(ast.ExprFieldAccess { ...fa, field: "close" }, s);
     }
   }
@@ -35710,8 +35782,9 @@ function annotate_block(body: ast.Stmt[], s: Scope): ast.Stmt[] {
 function annotate_bound(stmt: ast.Stmt, s: Scope): (ast.Stmt, Scope) {
   if let ast.StmtVar(v) = stmt {
     if (!ast.destructures(v)) {
-      let t = var_bind_type(v, s);
-      let annotated = annotate_var(v, s, t);
+      let init = annotate_var_init(v, s);
+      let t = if (init.known && v.type_name.len() == 0) { inferred_local_type(init.ty) } else { var_bind_type(v, s) };
+      let annotated = annotate_var(v, init.e, s, t);
       return (annotated, bind_var(v, s, t));
     }
   }
@@ -35848,14 +35921,15 @@ function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
   return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
 }
 
-// annotate_var annotates v in s, where t is the type that the local gets.
-function annotate_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): ast.Stmt {
-  let init = v.init;
+function annotate_var_init(v: ast.StmtVar, s: Scope): Typed {
   if let ast.ExprLambda(lm) = v.init {
-    init = annotate_lambda_expr(lm, s, rec_local_name(v), t_unknown(""));
-  } else {
-    init = annotate_expr(v.init, s);
+    return unsettled(annotate_lambda_expr(lm, s, rec_local_name(v), t_unknown("")));
   }
+  return annotate_typed(v.init, s);
+}
+
+// Apply the local's type to its annotated initializer and record its callable signature.
+function annotate_var(v: ast.StmtVar, init: ast.Expr, s: Scope, t: typeinfo.Type): ast.Stmt {
   if (v.type_name.len() > 0) {
     init = settle_at(init, t, s);
   }
@@ -35872,7 +35946,7 @@ function annotate_var(v: ast.StmtVar, s: Scope, t: typeinfo.Type): ast.Stmt {
 function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
-      return annotate_var(v, s, after.lookup(v.name));
+      return annotate_var(v, annotate_var_init(v, s).e, s, after.lookup(v.name));
     },
     ast.StmtReturn(r) => {
       return ast.StmtReturn { value: settle_at(annotate_expr(r.value, s), s.ret_type, s), line: r.line, col: r.col };
@@ -37475,69 +37549,47 @@ struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: 
 
 struct LitRewrite { keys: util.NameIndex, tags: string[], cargs: LitArgSite[], ctags: string[], fkeys: string[], ftags: string[], pargs: LitArgSite[], ptypes: typeinfo.Type[] }
 
-const LIT_MARK: string = "literal local #";
+const PENDING_LOCAL: i32 = 0;
+
+const PENDING_STRUCT: i32 = 1;
+
+const PENDING_OPEN: i32 = 2;
 
 const LIT_WIDE: i32 = 0;
 
-function lit_marker(k: i32): typeinfo.Type {
-  return t_unknown(LIT_MARK + util.i32_to_string(k));
+function pending(kind: i32, id: i32, name: string, ids: i32[]): typeinfo.Type {
+  return typeinfo.TypePending { kind: kind, id: id, name: name, ids: ids };
 }
 
-function lit_id(t: typeinfo.Type): i32 {
-  if let typeinfo.TypeUnknown(u) = t {
-    let n = LIT_MARK.len();
-    if (u.reason.len() <= n || !util.str_range_eq(u.reason, 0, n, LIT_MARK)) {
-      return -1;
+// The local number of a placeholder of the given kind, or -1.
+function pending_id(t: typeinfo.Type, kind: i32): i32 {
+  if let typeinfo.TypePending(p) = t {
+    if (p.kind == kind) {
+      return p.id;
     }
-    let k = 0;
-    for i in n..u.reason.len() {
-      k = k * 10 + u.reason[i] as i32 - 48;
-    }
-    return k;
   }
   return -1;
 }
 
-const LIT_STRUCT_MARK: string = "literal struct #";
+function lit_marker(k: i32): typeinfo.Type {
+  return pending(PENDING_LOCAL, k, "", []);
+}
+
+function lit_id(t: typeinfo.Type): i32 {
+  return pending_id(t, PENDING_LOCAL);
+}
 
 function lit_struct_marker(name: string, ids: i32[]): typeinfo.Type {
-  let spelled = LIT_STRUCT_MARK + name + "|";
-  for i in 0..ids.len() {
-    if (i > 0) {
-      spelled += ",";
-    }
-    spelled += util.i32_to_string(ids[i]);
-  }
-  return t_unknown(spelled);
+  return pending(PENDING_STRUCT, -1, name, ids);
 }
 
 function lit_struct_of(t: typeinfo.Type): (string, i32[]) {
-  let none: i32[] = [];
-  if let typeinfo.TypeUnknown(u) = t {
-    let n = LIT_STRUCT_MARK.len();
-    if (u.reason.len() <= n || !util.str_range_eq(u.reason, 0, n, LIT_STRUCT_MARK)) {
-      return ("", none);
+  if let typeinfo.TypePending(p) = t {
+    if (p.kind == PENDING_STRUCT) {
+      return (p.name, p.ids);
     }
-    let bar = util.index_of_sub(u.reason, "|");
-    let ids: i32[] = [];
-    let k = 0;
-    let neg = false;
-    for i in bar + 1..=u.reason.len() {
-      if (i == u.reason.len() || u.reason[i] as i32 == 44) {
-        if (neg) {
-          k = -k;
-        }
-        ids = ids.append(k);
-        k = 0;
-        neg = false;
-      } else if (u.reason[i] as i32 == 45) {
-        neg = true;
-      } else {
-        k = k * 10 + u.reason[i] as i32 - 48;
-      }
-    }
-    return (slice_unchecked(u.reason, n, bar).to_owned(), ids);
   }
+  let none: i32[] = [];
   return ("", none);
 }
 
@@ -37594,8 +37646,6 @@ function lit_marked(t: typeinfo.Type): boolean {
 // An open enum local is an unannotated local whose type holds a generic
 // enum with no type arguments, such as `let e = Empty;`. Its first use at a
 // known type writes that type on the local.
-const LIT_OPEN_MARK: string = "open enum local #";
-
 // open_call_type is the type of a generic call that leaves a type parameter
 // unbound, such as `ordmap.new()`, with each unbound parameter open. It is
 // false when the call binds each parameter.
@@ -37621,7 +37671,7 @@ function open_call_type(e: ast.Expr, s: Scope): (typeinfo.Type, boolean) {
   for tp in sig.all_type_params {
     if (util.index_of_str(bn, tp) < 0) {
       bn = bn.append(tp);
-      bt = bt.append(t_unknown("unbound " + tp));
+      bt = bt.append(t_unbound(tp));
       open = true;
     }
   }
@@ -37632,22 +37682,11 @@ function open_call_type(e: ast.Expr, s: Scope): (typeinfo.Type, boolean) {
 }
 
 function lit_open_marker(k: i32): typeinfo.Type {
-  return t_unknown(LIT_OPEN_MARK + util.i32_to_string(k));
+  return pending(PENDING_OPEN, k, "", []);
 }
 
 function lit_open_id(t: typeinfo.Type): i32 {
-  let typeinfo.TypeUnknown(u) = t else {
-    return -1;
-  };
-  let n = LIT_OPEN_MARK.len();
-  if (u.reason.len() <= n || !util.str_range_eq(u.reason, 0, n, LIT_OPEN_MARK)) {
-    return -1;
-  }
-  let k = 0;
-  for i in n..u.reason.len() {
-    k = k * 10 + u.reason[i] as i32 - 48;
-  }
-  return k;
+  return pending_id(t, PENDING_OPEN);
 }
 
 function holds_open_enum(t: typeinfo.Type, s: Scope): boolean {
@@ -37858,7 +37897,33 @@ pub function unknown_reason(t: typeinfo.Type): string {
     }
     return "unrecognised type name: " + v.name;
   }
+  if let typeinfo.TypeUnbound(b) = t {
+    if (b.param.len() == 0) {
+      return "unbound lifted enum argument";
+    }
+    return "unbound " + b.param;
+  }
+  if let typeinfo.TypePending(p) = t {
+    return pending_reason(p);
+  }
   return "";
+}
+
+function pending_reason(p: typeinfo.TypePending): string {
+  if (p.kind == PENDING_OPEN) {
+    return "open enum local #" + util.i32_to_string(p.id);
+  }
+  if (p.kind == PENDING_LOCAL) {
+    return "literal local #" + util.i32_to_string(p.id);
+  }
+  let out = "literal struct #" + p.name + "|";
+  for i in 0..p.ids.len() {
+    if (i > 0) {
+      out += ",";
+    }
+    out += util.i32_to_string(p.ids[i]);
+  }
+  return out;
 }
 
 function lit_open_fill(st: LitInfer, k: i32, want: typeinfo.Type): LitInfer {

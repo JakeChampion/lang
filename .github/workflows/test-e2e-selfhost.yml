@@ -296,10 +296,15 @@ jobs:
           - { leg: x86-64-few-registers, shard: 1, count: 2 }
           - { leg: arm64-tls, shard: 0, count: 1 }
           - { leg: crypto-wasm, shard: 0, count: 1 }
-          - { leg: wasm, shard: 0, count: 4 }
-          - { leg: wasm, shard: 1, count: 4 }
-          - { leg: wasm, shard: 2, count: 4 }
-          - { leg: wasm, shard: 3, count: 4 }
+          # Seven shards keep a run with no cached oracle verdicts under the 33-minute timeout.
+          - { leg: wasm, shard: 0, count: 7 }
+          - { leg: wasm, shard: 1, count: 7 }
+          - { leg: wasm, shard: 2, count: 7 }
+          - { leg: wasm, shard: 3, count: 7 }
+          - { leg: wasm, shard: 4, count: 7 }
+          - { leg: wasm, shard: 5, count: 7 }
+          - { leg: wasm, shard: 6, count: 7 }
+    # .github/stdtest-weights.txt sets which cases each shard runs.
     env:
       FERN_STDTEST_SHARD: "${{ matrix.shard }}/${{ matrix.count }}"
     steps:
@@ -403,6 +408,8 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   # An arm64-kernel image boots on qemu-system-aarch64 -M virt, prints on the
   # board's UART and powers the VM off through PSCI. An x86-64-kernel image
@@ -920,6 +927,8 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   # Checker mutations exceeded the 20-minute test budget in run 40368845276.
   # Keep all 512 seeds and their mutations, partitioned by the shared I/N
@@ -1184,6 +1193,8 @@ jobs:
           path: shard-outcome/
           retention-days: 1
           overwrite: true
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()
 
   # Every shard must have REPORTED success: a shard whose runner vanished
   # leaves no marker, which is a failure with a diagnosis here rather than a

@@ -64,3 +64,5 @@ jobs:
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$RUNNER_TEMP"/affected-*.jsonl
+      - uses: ./.github/actions/oracle-verdict-save
+        if: always()

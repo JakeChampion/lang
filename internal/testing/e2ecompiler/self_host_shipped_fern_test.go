@@ -67,7 +67,14 @@ func TestSelfHostShippedFernCarriesItsStdlib(t *testing.T) {
 		}
 	}
 	if len(stdlibs) != 1 || strings.Contains(stdlibs[0], ".tmp-") {
-		t.Errorf("cache holds %v, want one stdlib-<digest> directory and no leftover temporary", stdlibs)
+		t.Fatalf("cache holds %v, want one stdlib-<digest> directory and no leftover temporary", stdlibs)
+	}
+	digest, err := os.ReadFile(filepath.Join(cache, stdlibs[0], "DIGEST"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(digest) != 16 || stdlibs[0] != "stdlib-"+string(digest) {
+		t.Errorf("cache directory %q, embedded DIGEST %q: want the directory named by the 16-digit digest that fern-embed-stage computed", stdlibs[0], digest)
 	}
 }
 

@@ -371,6 +371,24 @@ function hl_bound_deep(stmts: ast.Stmt[]): string[] {
   return out;
 }
 
+// The types of the captures caps of a cycle, under the names that pass them.
+// A capture that no member types is left out.
+function hl_cap_bindings(members: NestedFn[], caps: string[], passed: string[]): ast.TypedBinding[] {
+  let out: ast.TypedBinding[] = [];
+  for i in 0..caps.len() {
+    let found = false;
+    for mb in members {
+      for cap in mb.lam.captures {
+        if (!found && cap.name == caps[i]) {
+          out = out.append(ast.TypedBinding { ...cap, name: passed[i] });
+          found = true;
+        }
+      }
+    }
+  }
+  return out;
+}
+
 struct HlHoist { hoisted: parser.FuncDecl[], names: string[], caps: string[] }
 
 // Hoists the functions of one cycle to module functions. Each function gets
@@ -406,7 +424,7 @@ function hl_hoist_cycle(members: NestedFn[], sc: HlScope, hoisted: parser.FuncDe
     let (lifted_body, ir_hoisted) = hl_rewrite(lam.body, inner, acc);
     acc = ir_hoisted;
     for y in 0..members.len() {
-      lifted_body = callsubst.subst_fn(lifted_body, cycle[y], names[y], hl_idents(fwd), hl_fn_value(members[y].lam, names[y], fwd), parser.param_names(lam.params));
+      lifted_body = callsubst.subst_fn(lifted_body, cycle[y], names[y], hl_idents(fwd), hl_cap_bindings(members, caps, fwd), hl_fn_value(members[y].lam, names[y], fwd), parser.param_names(lam.params));
     }
     let notp: string[] = [];
     acc = acc.append(parser.FuncDecl {
@@ -468,7 +486,7 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: parser.FuncDecl[
               }
               for m in 0..members.len() {
                 if (members.len() > 1) {
-                  out = callsubst.subst_fn(out, members[m].name, h.names[m], hl_idents(h.caps), hl_fn_value(members[m].lam, h.names[m], h.caps), []);
+                  out = callsubst.subst_fn(out, members[m].name, h.names[m], hl_idents(h.caps), hl_cap_bindings(members, h.caps, h.caps), hl_fn_value(members[m].lam, h.names[m], h.caps), []);
                 }
               }
               // A capture that a later statement binds again keeps its value under a second name.
@@ -485,7 +503,7 @@ function hl_rewrite(stmts: ast.Stmt[], outer: HlScope, hoisted: parser.FuncDecl[
                 }
               }
               for m in 0..members.len() {
-                tail = callsubst.subst_fn(tail, members[m].name, h.names[m], hl_idents(passed), hl_fn_value(members[m].lam, h.names[m], passed), []);
+                tail = callsubst.subst_fn(tail, members[m].name, h.names[m], hl_idents(passed), hl_cap_bindings(members, h.caps, passed), hl_fn_value(members[m].lam, h.names[m], passed), []);
               }
               for q in 0..at.len() {
                 work = work.with(at[q], tail[q]);
