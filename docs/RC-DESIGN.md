@@ -602,8 +602,12 @@ no unit, and a retain or a
 release of it does nothing, because every retain and release skips an
 immortal box. At a join the counts are met per value. A count met with free
 is that count on some paths and free on the others: a spend of the free part
-does nothing, and a unit still held on the counted part is a leak. A null
-constant and a borrow are not free. Any other disagreement is unproved rather
+does nothing, and a unit still held on the counted part is a leak. A
+uniqueness test skips an immortal box, so a literal is never unique. On the
+edge where `__fern_rc_is_unique` is true, a count met with free is that count
+(`unique_on_edge`). This applies only where the other edge releases the box,
+and a token of the box reads such a released box as 0. Thus both arms of the
+token hold a plain count. A null constant and a borrow are not free. Any other disagreement is unproved rather
 than a finding. A call that returns its operand or a fresh box
 (`__fern_arr_concat`, `rcsigs.effect_kept_or_same`) leaves the operand its
 unit and gives the result a fresh one. On the edge where a test finds the two
