@@ -618,6 +618,9 @@ func freshAssociatedResult(call *ast.Call) bool {
 // method the program declares has the same name. The name decides, so the
 // answer is the same before and after the checker resolves the receiver.
 func (c *checker) freshMethodResult(x *ast.Call) bool {
+	if id, ok := x.Callee.(*ast.Ident); ok && x.Method != nil && id.Name == "__method_Cell_replace" {
+		return true
+	}
 	field := ""
 	if x.Method != nil {
 		field = x.Method.Field
@@ -708,12 +711,15 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 		if !isIdent {
 			return c.freshMethodResult(call)
 		}
+		if call.Method != nil && c.freshMethodResult(call) {
+			return true
+		}
 		sig, known := c.info.FuncSigs[id.Name]
 		if !known || sig.Result == nil || !ast.IsPointerType(sig.Result) {
 			return false
 		}
 		if call.Method != nil {
-			return c.freshMethodResult(call) || !c.signatureResultBorrows(id.Name)
+			return !c.signatureResultBorrows(id.Name)
 		}
 		return !c.signatureResultBorrows(id.Name) || c.resultAnalysed[id.Name] && !c.resultBorrows[id.Name] && !c.holdsNoHandle(sig.Result)
 	}
