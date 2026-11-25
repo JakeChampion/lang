@@ -72,8 +72,8 @@ and with the change: 5,464 refuted, 233 weakened, 219 missed. These rows
 moved on main with its sources, so the change does not pin them.
 
 The 2,871 programs under `conformance/`, `tests/`, `examples/` and
-`coreutils/` give 0 findings on x86-64 with both certifiers, and each
-program exits as it did before. Their unproved values go from 36,268 to
+`coreutils/` give 0 findings on x86-64 with both certifiers. Each program
+exits as it did before. Their unproved values go from 36,268 to
 35,862.
 
 ## Next lead
