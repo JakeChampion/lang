@@ -666,6 +666,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"shape_script", langSrcAbs(t, "tests/stdlib/shape_script_test.fern"), ""},
 		{"truetype_color", langSrcAbs(t, "tests/stdlib/truetype_color_test.fern"), ""},
 		{"android_property", langSrcAbs(t, "tests/stdlib/android_property_test.fern"), ""},
+		{"android_attestation", langSrcAbs(t, "tests/stdlib/android_attestation_test.fern"), ""},
 		{"http_forwarded", langSrcAbs(t, "tests/stdlib/http_forwarded_test.fern"), ""},
 		{"http_trace", langSrcAbs(t, "tests/stdlib/http_trace_test.fern"), ""},
 		{"metrics", langSrcAbs(t, "tests/stdlib/metrics_test.fern"), ""},

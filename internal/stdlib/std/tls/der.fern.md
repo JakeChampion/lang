@@ -6,6 +6,8 @@ This module reads DER values from byte buffers.
 
 DER readers interpret tagged values and bounded content ranges. Tag constants identify common ASN.1 forms used by certificates and keys.
 
+A tag with a number below 31 is its identifier octet. A tag with a higher number keeps the class and constructed bits and the value 31 in its low octet, and it keeps the number in the bits above that octet. `context` gives the same value for each number, so a reader compares a tag with `context(n, constructed)` in both forms.
+
 ## Contracts
 
 Lengths and value forms require validation before field access. A parsed DER value alone does not establish certificate trust.
@@ -84,6 +86,8 @@ pub const NULL: i32 = 0x05;
 
 pub const OID: i32 = 0x06;
 
+pub const ENUMERATED: i32 = 0x0a;
+
 pub const UTF8_STRING: i32 = 0x0c;
 
 pub const PRINTABLE_STRING: i32 = 0x13;
@@ -108,10 +112,14 @@ pub const SET: i32 = 0x31;
 ```fern
 <<4 pub function context(n: i32, constructed: boolean): i32>>=
 pub function context(n: i32, constructed: boolean): i32 {
+  let base = 0x80;
   if (constructed) {
-    return 0xa0 | n;
+    base = 0xa0;
   }
-  return 0x80 | n;
+  if (n >= 31) {
+    return base | 0x1f | n << 8;
+  }
+  return base | n;
 }
 ```
 
@@ -159,7 +167,7 @@ pub function (e: DerError) message(): string {
       return "der: a length DER does not allow";
     },
     HighTag => {
-      return "der: a high tag number";
+      return "der: a high tag number that DER does not allow";
     },
     UnexpectedTag(want, got) => {
       return "der: tag " + got.to_string() + " where " + want.to_string() + " was wanted";
@@ -228,14 +236,39 @@ pub function read(b: [u8], at: i32): Result[Element, DerError] {
     return Err(Truncated);
   }
   let tag = b[at] as i32;
+  let after = at + 1;
   if ((tag & 0x1f) == 0x1f) {
-    return Err(HighTag);
+    let n = __high_tag(b, after)?;
+    tag |= n.len << 8;
+    after = n.from;
   }
-  let l = __length(b, at + 1)?;
+  let l = __length(b, after)?;
   if (l.len > b.len() - l.from) {
     return Err(Truncated);
   }
   return Ok(Element { tag: tag, start: at, from: l.from, to: l.from + l.len, next: l.from + l.len });
+}
+
+// A high tag number has at most three octets, no leading zero octet, and a value of 31 or more.
+function __high_tag(b: [u8], at: i32): Result[Length, DerError] {
+  let n = 0;
+  let i = at;
+  let more = true;
+  while (more) {
+    if (i >= b.len()) {
+      return Err(Truncated);
+    }
+    if (i == at + 3 || i == at && b[i] == 0x80) {
+      return Err(HighTag);
+    }
+    n = n << 7 | (b[i] & 0x7f) as i32;
+    more = b[i] >= 0x80;
+    i += 1;
+  }
+  if (n < 31) {
+    return Err(HighTag);
+  }
+  return Ok(Length { len: n, from: i });
 }
 
 pub function expect(b: [u8], at: i32, tag: i32): Result[Element, DerError] {
@@ -309,6 +342,13 @@ pub function small(b: [u8], e: Element): Result[i32, DerError] {
     i += 1;
   }
   return Ok(out);
+}
+
+pub function enumerated(b: [u8], e: Element): Result[i32, DerError] {
+  if (e.tag != ENUMERATED) {
+    return Err(UnexpectedTag(ENUMERATED, e.tag));
+  }
+  return small(b, Element { ...e, tag: INTEGER });
 }
 
 pub function boolean_value(b: [u8], e: Element): Result[boolean, DerError] {
