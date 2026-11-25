@@ -218,6 +218,61 @@ function writer_chunks(): test.TestOutcome {
   return if (same(whole, stream)) { test.pass() } else { test.fail("chunked stream differs") };
 }
 
+// The mode of each audio frame after the Info frame, or -1 when a header does not parse.
+function modes(bytes: [u8], rate: i32, bitrate: i32): i32[] {
+  let output: i32[] = [];
+  let at = 144000 * bitrate / rate;
+  while (at < bytes.len()) {
+    let Ok(h) = header.parse(bytes, at) else {
+      return output.append(-1);
+    };
+    output = output.append(h.mode * 4 + h.mode_ext);
+    at += h.bytes;
+  }
+  return output;
+}
+
+// Equal channels use mid-side stereo and gain over left and right. Independent channels stay left and right.
+// fern-lint: allow cyclomatic-complexity
+function midside(): test.TestOutcome {
+  let independent = tone(4000, 2, 44100);
+  let equal: f32[] = [];
+  for t in 0..4000 {
+    equal = equal.append(independent[2 * t]).append(independent[2 * t]);
+  }
+  let options = encoder.Options { bitrate: 64 };
+  let Ok(a) = encoder.encode(equal, 44100, 2, options, pcm.default_limits()) else {
+    return test.fail("encode equal channels");
+  };
+  let Ok(b) = encoder.encode(independent, 44100, 2, options, pcm.default_limits()) else {
+    return test.fail("encode independent channels");
+  };
+  for m in modes(a, 44100, 64) {
+    if (m != 6) {
+      return test.fail("equal channels: mode and extension " + m.to_string() + ", want 6");
+    }
+  }
+  for m in modes(b, 44100, 64) {
+    if (m != 0) {
+      return test.fail("independent channels: mode and extension " + m.to_string() + ", want 0");
+    }
+  }
+  let Ok(da) = mp3.decode(a, pcm.default_limits()) else {
+    return test.fail("decode equal channels");
+  };
+  let Ok(db) = mp3.decode(b, pcm.default_limits()) else {
+    return test.fail("decode independent channels");
+  };
+  for ch in 0..2 {
+    let ms = snr(equal, da.samples, 2, ch, 0);
+    let lr = snr(independent, db.samples, 2, 0, 0);
+    if (ms < lr + 6.0) {
+      return test.fail("channel " + ch.to_string() + ": mid-side SNR " + ms.to_string() + " dB, left and right " + lr.to_string() + " dB");
+    }
+  }
+  return test.pass();
+}
+
 function be(bytes: [u8], at: i32, count: i32): i64 {
   let value = 0i64;
   for i in 0..count {
@@ -330,6 +385,7 @@ function main(): i32 {
   runner = runner.it("round trip through std/audio/mp3", round_trip);
   runner = runner.it("chunked push equals one encode", writer_chunks);
   runner = runner.it("Info frame with gapless fields", info_tag);
+  runner = runner.it("mid-side stereo for equal channels", midside);
   runner = runner.it("silence stays silent", silence);
   runner = runner.it("unsupported formats and invalid samples", rejects);
   return runner.finish();
