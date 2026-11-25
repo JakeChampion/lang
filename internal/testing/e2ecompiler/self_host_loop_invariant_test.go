@@ -14,10 +14,12 @@ import (
 // computations from different blocks of the loop become one value in front
 // of it.
 func TestSelfHostLoopInvariantHoist(t *testing.T) {
-	const src = `import "./ssa";
+	const src = `import "./ir";
+import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  return ssa.SInst { ir_kind: 0, kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  let k = if (kind == ssa.BINARY) { ir.kind_id(op) } else { 0 };
+  return ssa.SInst { ir_kind: k, kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 function graph(side_entry: boolean): ssa.SFunc {
