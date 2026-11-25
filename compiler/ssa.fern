@@ -4586,7 +4586,15 @@ function rewrite_through(f: SFunc, flat: i32[]): SFunc {
   return SFunc { ...f, blocks: nblocks };
 }
 
-function merge_duplicates(f: SFunc): Formed {
+// A constant merges into the same constant anywhere. A pure operation merges
+// into the same operation in its own block, and with `across` also in a block
+// that dominates it. The blocks go in reverse postorder, so a block comes after
+// each block that dominates it. thread_forwarding and thread_bool_joins copy a
+// block and make only its phis again, so a merge across blocks runs after
+// them. A compare does not merge across
+// blocks: it costs less next to its branch than as a value that stays live,
+// and split_tokens decides each token test in the block that holds it.
+pub function merge_duplicates(f: SFunc, across: boolean): Formed {
   let canon = identity_repl(f.nvals);
   let n = 0;
   for blk in f.blocks {
@@ -4602,7 +4610,11 @@ function merge_duplicates(f: SFunc): Formed {
   let seen_block: i32[] = [];
   let next: i32[] = [];
   let merged: i32[] = [];
-  for bi in 0..f.blocks.len() {
+  let at = block_positions(f);
+  let idom: i32[] = if (across) { immediate_dominators(f, at) } else { [] };
+  let single: boolean[] = if (across) { single_defs(f) } else { [] };
+  let order = if (across) { merge_order(f, at) } else { identity_repl(f.blocks.len()) };
+  for bi in order {
     for ins in f.blocks[bi].insts {
       let scope: i32 = -2;
       if (is_constant(ins, f.nvals)) {
@@ -4611,11 +4623,12 @@ function merge_duplicates(f: SFunc): Formed {
         scope = bi;
       }
       if (scope >= -1) {
-        let bk = (inst_hash(ins, canon) * 31 + (scope & 65535) & 1073741823) % nb;
+        let bk = (inst_hash(ins, canon) * 31 + (if (scope < 0) { 1 } else { 0 }) & 1073741823) % nb;
         let found: i32 = -1;
         let j = head[bk];
         while (j >= 0 && found < 0) {
-          if (seen_block[j] == scope && same_operation(seen[j], ins, canon)) {
+          let reach = if (scope < 0) { seen_block[j] < 0 } else { seen_block[j] == scope || across && !compare_op(ins.str) && seen_block[j] >= 0 && single[seen[j].result] && single[ins.result] && single_args(ins, single) && dominates(idom, seen_block[j], scope) };
+          if (reach && same_operation(seen[j], ins, canon)) {
             found = seen[j].result;
           }
           j = next[j];
@@ -4644,6 +4657,52 @@ function merge_duplicates(f: SFunc): Formed {
     k += 2;
   }
   return Formed { f: rewrite_through(f, repl), repl: repl };
+}
+
+// Whether each value is the result of one instruction. A copy on each path
+// into a join writes its value more than one time.
+function single_defs(f: SFunc): boolean[] {
+  let count = __alloc_i32(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        count = count.with(ins.result, count[ins.result] + 1);
+      }
+    }
+  }
+  let out = __alloc_bool(f.nvals);
+  for v in 0..f.nvals {
+    out = out.with(v, count[v] == 1);
+  }
+  return out;
+}
+
+function single_args(ins: SInst, single: boolean[]): boolean {
+  for a in ins.args {
+    if (a < 0 || a >= single.len() || !single[a]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The block positions in reverse postorder, then the blocks the entry does
+// not reach.
+function merge_order(f: SFunc, at: i32[]): i32[] {
+  let order = reverse_postorder(f, at);
+  if (order.len() == f.blocks.len()) {
+    return order;
+  }
+  let listed = __alloc_bool(f.blocks.len());
+  for b in order {
+    listed = listed.with(b, true);
+  }
+  for b in 0..f.blocks.len() {
+    if (!listed[b]) {
+      order = order.append(b);
+    }
+  }
+  return order;
 }
 
 function identity_repl(n: i32): i32[] {
@@ -6237,7 +6296,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 
 pub function form(f: SFunc): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
-  let merged = merge_duplicates(folded.f);
+  let merged = merge_duplicates(folded.f, false);
   let plain = fold_identities(merged.f);
   let shared = share_shape_loads(plain.f);
   let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
@@ -6260,8 +6319,9 @@ pub function form(f: SFunc): Formed {
     g = pruned.f;
     trimmed = pruned.repl;
   }
-  g = hoisted_invariants(sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(g))))));
-  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
+  let dominated = merge_duplicates(g, true);
+  g = hoisted_invariants(sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(dominated.f))))));
+  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed), dominated.repl) };
 }
 
 // A byte or a half of a loaded word is a narrow load. A variant keeps its
