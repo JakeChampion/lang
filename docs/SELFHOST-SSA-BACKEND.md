@@ -75,7 +75,8 @@ lowered function it:
    change in the loop to the one block that enters the loop, with the
    constants that it reads (`ssa.hoisted_invariants`). Inner loops go first.
    A loop with a second way in keeps its instructions. A division moves
-   only when its divisor is a constant other than 0 and -1;
+   only when its divisor is a constant other than 0 and -1. Equal
+   computations that move to the same block become one value;
 4. once the certifier has read that form, gives each side of a uniqueness
    test its own copy of the blocks that test the reuse token again, with
    each of those tests decided (`ssa.split_tokens`), gives each other reuse
@@ -128,7 +129,9 @@ lowered function it:
    is 0 matches in its folded form `x - c` or `x + c`. The constants that a
    carry reads go to the start of the block, so the subtract of a modulus
    is one chain too (#17029). On x86-64, `a * b` directly before
-   `__mulhi_u64(a, b)` is one `mulq` for both halves. The step
+   `__mulhi_u64(a, b)` is one `mulq` for both halves. The `mulq` reads
+   one factor from its register or its slot, and `%rcx` stays live across
+   it. The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
    `&&` or an `||` that the function returns is then a tail call;

@@ -21,7 +21,7 @@ function legacy_lower(outcome: Result[Option[irtables.Lowered], irtables.LowerSt
     };
 }
 function inst(kind: i32, value: i32, args: i32[], imm: i32): ssa.SInst {
-    return ssa.SInst { kind_tag: kind, result: value, args: args, imm: imm, str: "" };
+    return ssa.SInst { ir_kind: 0, kind_tag: kind, result: value, args: args, imm: imm, str: "" };
 }
 function ret(value: i32): ssa.STerm { return ssa.STerm { kind_tag: 1, value: value, cond: 0, target: 0, t: 0, f: 0 }; }
 // Explicit caller contract for ABI tests. The typed caller reads the
@@ -246,7 +246,7 @@ function masks(r: irtables.LowerResult): string {
 function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): string {
     let g = ssa.SFunc { name: "bin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
     let f = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [t, t, result], params: [t, t], result: result,
         records: semrecords.no_records(), enums: [], calls: [] };
     let p = ssaunits.plan(f, [1, 1], ssaunits.no_view());
@@ -256,14 +256,14 @@ function binary_masks(op: string, t: typeinfo.Type, result: typeinfo.Type): stri
 function wide_binary(t: typeinfo.Type, result: typeinfo.Type, op: string): ssasem.Func {
     let g = ssa.SFunc { name: "wbin", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: op }], term: ret(2) }] };
     return ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [t, t, result], params: [t, t], result: result,
         records: semrecords.no_records(), enums: [], calls: [] };
 }
 function cast_masks(from: typeinfo.Type, to: typeinfo.Type): string {
     let g = ssa.SFunc { name: "cast", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
-            ssa.SInst { kind_tag: ssasem.cast(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.cast(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
     let f = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [from, to], params: [from], result: to,
         records: semrecords.no_records(), enums: [], calls: [] };
     let p = ssaunits.plan(f, [1], ssaunits.no_view());
@@ -327,7 +327,7 @@ function main(): i32 {
     // builds as well as on the one it does.
     let shapeType: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
     let enumGraph = ssa.SFunc { name: "enum", nparams: 1, nvals: 2, entry: 7, takes_env: false,
-        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
     let wideEnum = semrecords.Enum { views: false, nests_func: false, ty: shapeType, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: f.result }] },
         semrecords.Variant { name: "N", fields: [semrecords.Field { name: "__ev", ty: wideType }] }], layout: semrecords.layout_variant() };
     let wideEnumFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: enumGraph, values: [f.result, shapeType], params: [f.result], result: shapeType, records: semrecords.records_of([wideSchema]), enums: [wideEnum], calls: [] };
@@ -396,7 +396,7 @@ function main(): i32 {
     // A frame releasing a nominal box with children makes one call to the
     // type's release helper; the uniqueness test and the child walk live there.
     let sinkGraph = ssa.SFunc { name: "sink", nparams: 1, nvals: 2, entry: 7, takes_env: false,
-        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: 1, result: 1, args: [], imm: 0, str: "" }], term: ret(1) }] };
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { ir_kind: 0, kind_tag: 1, result: 1, args: [], imm: 0, str: "" }], term: ret(1) }] };
     let sinkResult: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
     let sinkFunc = ssasem.Func { ...selfFunc, graph: sinkGraph, values: [selfType, sinkResult], result: sinkResult };
     let sinkPlan = ssaunits.plan(sinkFunc, [3], ssaunits.no_view());
@@ -445,7 +445,7 @@ function main(): i32 {
     // receiver dead after the push moves its unit into it.
     let appendGraph = ssa.SFunc { name: "append", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.append(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.append(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
     let appendFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: appendGraph, values: [f.result, i32ty, f.result],
         params: [f.result, i32ty], result: f.result, records: semrecords.no_records(), enums: [], calls: [] };
     let appendPlan = ssaunits.plan(appendFunc, [3, 1], ssaunits.no_view());
@@ -498,9 +498,9 @@ function main(): i32 {
     let growSchema = semrecords.Record { declared: [], secret: false, views: false, nests_func: false, ty: growType, fields: [semrecords.Field { name: "xs", ty: f.result }, semrecords.Field { name: "n", ty: i32ty }] };
     let growGraph = ssa.SFunc { name: "grow", nparams: 2, nvals: 6, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
-            ssa.SInst { kind_tag: ssasem.append(), result: 3, args: [2, 1], imm: 0, str: "" },
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.append(), result: 3, args: [2, 1], imm: 0, str: "" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
             inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
     let growFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: growGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType],
         params: [growType, i32ty], result: growType, records: semrecords.records_of([growSchema]), enums: [], calls: [] };
@@ -524,10 +524,10 @@ function main(): i32 {
     if (!sawGrowUnique || !sawGrowPush || !sawGrowNull || sawGrowRetain) { return 145; }
     let readGraph = ssa.SFunc { ...growGraph, nvals: 7,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
-            ssa.SInst { kind_tag: ssasem.append(), result: 3, args: [2, 1], imm: 0, str: "" },
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 6, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.append(), result: 3, args: [2, 1], imm: 0, str: "" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 6, args: [0], imm: 0, str: "xs" },
             inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
     let readFunc = ssasem.Func { ...growFunc, graph: readGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType, f.result] };
     let readPlan = ssaunits.plan(readFunc, [2, 1], ssaunits.no_view());
@@ -550,9 +550,9 @@ function main(): i32 {
     // and copies through arr_slice on the other.
     let fieldWithGraph = ssa.SFunc { ...growGraph, name: "set",
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
-            ssa.SInst { kind_tag: ssasem.with(), result: 3, args: [2, 1, 1], imm: 0, str: "" },
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.with(), result: 3, args: [2, 1, 1], imm: 0, str: "" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
             inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
     let fieldWithFunc = ssasem.Func { ...growFunc, graph: fieldWithGraph };
     let fieldWithPlan = ssaunits.plan(fieldWithFunc, [2, 1], ssaunits.no_view());
@@ -581,7 +581,7 @@ function main(): i32 {
     // copy arm stays for a caller still holding the array.
     let arrWithGraph = ssa.SFunc { ...appendGraph, name: "set_arr",
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.with(), result: 2, args: [0, 1, 1], imm: 0, str: "" }], term: ret(2) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.with(), result: 2, args: [0, 1, 1], imm: 0, str: "" }], term: ret(2) }] };
     let arrWithFunc = ssasem.Func { ...appendFunc, graph: arrWithGraph };
     let arrWithPlan = ssaunits.plan(arrWithFunc, [2, 1], ssaunits.no_view());
     if (!arrWithPlan.ok) { eprint(arrWithPlan.why); return 165; }
@@ -603,8 +603,8 @@ function main(): i32 {
     // reads the callee's row, captures the buffer, and releases the capture.
     let callGraph = ssa.SFunc { name: "caller", nparams: 2, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.call(), result: 2, args: [0, 1], imm: 0, str: "grow" },
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 3, args: [0], imm: 1, str: "n" }], term: ret(3) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: 2, args: [0, 1], imm: 0, str: "grow" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 3, args: [0], imm: 1, str: "n" }], term: ret(3) }] };
     let callFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: callGraph, values: [growType, i32ty, growType, i32ty],
         params: [growType, i32ty], result: i32ty, records: semrecords.records_of([growSchema]), enums: [],
         calls: [ssasem.Contract { name: "grow", params: [growType, i32ty], modes: [2, 1], result: growType }] };
@@ -629,9 +629,9 @@ function main(): i32 {
     // handing function the callee's row at that field: grow_table over both.
     let viaGraph = ssa.SFunc { name: "via", nparams: 2, nvals: 6, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
-            ssa.SInst { kind_tag: ssasem.call(), result: 3, args: [2, 1], imm: 0, str: "push" },
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: 3, args: [2, 1], imm: 0, str: "push" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 4, args: [0], imm: 1, str: "n" },
             inst(ssasem.record_new(), 5, [3, 4], 0)], term: ret(5) }] };
     let viaFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: viaGraph, values: [growType, i32ty, f.result, f.result, i32ty, growType],
         params: [growType, i32ty], result: growType, records: semrecords.records_of([growSchema]), enums: [],
@@ -666,7 +666,7 @@ function main(): i32 {
     // elements and releases the element the store replaces.
     let withGraph = ssa.SFunc { name: "with", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
-            ssa.SInst { kind_tag: ssasem.with(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.with(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
     let withFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: withGraph, values: [f.result, i32ty, i32ty, f.result],
         params: [f.result, i32ty, i32ty], result: f.result, records: semrecords.no_records(), enums: [], calls: [] };
     let withPlan = ssaunits.plan(withFunc, [3, 1, 1], ssaunits.no_view());
@@ -725,7 +725,7 @@ function main(): i32 {
     let viewTy: typeinfo.Type = typeinfo.TypeString { tag: 1 };
     let sliceGraph = ssa.SFunc { name: "slice", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
-            ssa.SInst { kind_tag: ssasem.slice(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(1) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.slice(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(1) }] };
     let sliceFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: sliceGraph, values: [strTy, i32ty, i32ty, viewTy],
         params: [strTy, i32ty, i32ty], result: i32ty, records: semrecords.no_records(), enums: [], calls: [] };
     let ownedSlice = ssasem.Func { ...sliceFunc, values: [strTy, i32ty, i32ty, strTy] };
@@ -825,7 +825,7 @@ function main(): i32 {
     // anchors the i32 to the bytes it came from.
     let idxGraph = ssa.SFunc { name: "idx", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.str_index(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.str_index(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
     let u8ty: typeinfo.Type = typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false };
     let idxFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: idxGraph, values: [strTy, i32ty, u8ty],
         params: [strTy, i32ty], result: u8ty, records: semrecords.no_records(), enums: [], calls: [] };
@@ -853,7 +853,7 @@ function main(): i32 {
     // Negation is the same subtraction, so it wraps for the same reason.
     let negGraph = ssa.SFunc { name: "neg", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
-            ssa.SInst { kind_tag: 10, result: 1, args: [0], imm: 0, str: "-" }], term: ret(1) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: 10, result: 1, args: [0], imm: 0, str: "-" }], term: ret(1) }] };
     let negFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: negGraph, values: [i32ty, i32ty], params: [i32ty], result: i32ty,
         records: semrecords.no_records(), enums: [], calls: [] };
     if (masks(legacy_lower(ssarc.lower(negFunc, [1], ssaunits.plan(negFunc, [1], ssaunits.no_view()), irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()))) != "i32") { return 70; }
@@ -976,7 +976,7 @@ function main(): i32 {
     let spanEnum = semrecords.Enum { views: false, nests_func: false, ty: spanTy, variants: [semrecords.Variant { name: "W", fields: [semrecords.Field { name: "__ev", ty: i64ty }] }], layout: semrecords.layout_variant() };
     let spanGraph = ssa.SFunc { name: "mkspan", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
-            ssa.SInst { kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_new(), result: 1, args: [0], imm: 0, str: "W" }], term: ret(1) }] };
     let spanFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: spanGraph, values: [i64ty, spanTy], params: [i64ty], result: spanTy,
         records: semrecords.no_records(), enums: [spanEnum], calls: [] };
     let spanPlan = ssaunits.plan(spanFunc, [1], ssaunits.no_view());
@@ -990,7 +990,7 @@ function main(): i32 {
     // A constant with no signed i32 immediate to use carries the literal's
     // text instead; a narrow signed one carries none, and neither may carry both.
     let wideK = ssa.SFunc { name: "wk", nparams: 0, nvals: 1, entry: 7, takes_env: false,
-        blocks: [ssa.SBlock { id: 7, preds: [], insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "4294967296" }], term: ret(0) }] };
+        blocks: [ssa.SBlock { id: 7, preds: [], insts: [ssa.SInst { ir_kind: 0, kind_tag: 1, result: 0, args: [], imm: 0, str: "4294967296" }], term: ret(0) }] };
     let wideKFunc = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: wideK, values: [i64ty], params: [], result: i64ty,
         records: semrecords.no_records(), enums: [], calls: [] };
     if (!ssaunits.plan(wideKFunc, [], ssaunits.no_view()).ok) { eprint(ssaunits.plan(wideKFunc, [], ssaunits.no_view()).why); return 98; }
@@ -1103,7 +1103,7 @@ function main(): i32 {
     if (!sawHelper || !sawEnvHelper) { return 189; }
     let arrInsertGraph = ssa.SFunc { name: "arr_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
-            ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
     let arrInsert = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: arrInsertGraph, values: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty, view: false }, arrMapTy], params: [arrMapTy, strTy, typeinfo.TypeArray { elem: i32ty, view: false }], result: arrMapTy, records: semrecords.no_records(), enums: [], calls: [] };
     let arrInsertPlan = ssaunits.plan(arrInsert, [3, 3, 3], ssaunits.no_view());
     if (!arrInsertPlan.ok) { eprint(arrInsertPlan.why); return 190; }
@@ -1121,7 +1121,7 @@ function main(): i32 {
     if (!sawArrPut || sawOldRead || !sawOldRelease) { return 192; }
     let intInsertGraph = ssa.SFunc { name: "int_insert", nparams: 3, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2),
-            ssa.SInst { kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.map_insert(), result: 3, args: [0, 1, 2], imm: 0, str: "" }], term: ret(3) }] };
     let intInsert = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: intInsertGraph, values: [intMapTy, i32ty, i32ty, intMapTy], params: [intMapTy, i32ty, i32ty], result: intMapTy, records: semrecords.no_records(), enums: [], calls: [] };
     let intInsertPlan = ssaunits.plan(intInsert, [3, 1, 1], ssaunits.no_view());
     if (!intInsertPlan.ok) { eprint(intInsertPlan.why); return 174; }
@@ -1142,7 +1142,7 @@ function main(): i32 {
     // is still dropped by its own helper on the way out.
     let lenMapGraph = ssa.SFunc { name: "map_len", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
-            ssa.SInst { kind_tag: ssasem.map_len(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.map_len(), result: 1, args: [0], imm: 0, str: "" }], term: ret(1) }] };
     let lenMap = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: lenMapGraph, values: [intMapTy, i32ty], params: [intMapTy], result: i32ty, records: semrecords.no_records(), enums: [], calls: [] };
     let lenMapPlan = ssaunits.plan(lenMap, [3], ssaunits.no_view());
     if (!lenMapPlan.ok) { eprint(lenMapPlan.why); return 178; }
@@ -1180,7 +1180,7 @@ function main(): i32 {
     let optI32Ty: typeinfo.Type = typeinfo.TypeUnion { name: "Option", args: [i32ty] };
     let getGraph = ssa.SFunc { name: "map_get", nparams: 2, nvals: 3, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.map_get(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.map_get(), result: 2, args: [0, 1], imm: 0, str: "" }], term: ret(2) }] };
     let optEnum = semrecords.Enum { views: false, nests_func: false, ty: optI32Ty, variants: [semrecords.Variant { name: "Some", fields: [semrecords.Field { name: "__ev", ty: i32ty }] },
         semrecords.Variant { name: "None", fields: [] }], layout: semrecords.layout_option() };
     let getMap = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: getGraph, values: [intMapTy, i32ty, optI32Ty], params: [intMapTy, i32ty], result: optI32Ty, records: semrecords.no_records(), enums: [optEnum], calls: [] };
@@ -1217,7 +1217,7 @@ function main(): i32 {
     // the field being replaced is stored last, unconditionally.
     let keepGraph = ssa.SFunc { name: "keep", nparams: 2, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
-            ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
+            ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
             inst(ssasem.record_new(), 3, [2, 1], 0)], term: ret(3) }] };
     let keepFunc = ssasem.Func { ...growFunc, graph: keepGraph, values: [growType, i32ty, f.result, growType] };
     let keepPlan = ssaunits.plan(keepFunc, [ssaunits.counted_mode(), 1], ssaunits.no_view());
@@ -1342,8 +1342,8 @@ function token_func(split: boolean): ssasem.Func {
     let schema = semrecords.Record { declared: [], secret: false, views: false, nests_func: false, ty: t, fields: [semrecords.Field { name: "a", ty: i }] };
     let p0 = inst(6, 0, [], 0);
     let mk1 = inst(ssasem.record_new(), 1, [0], 0);
-    let get = ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [1], imm: 0, str: "a" };
-    let add = ssa.SInst { kind_tag: 9, result: 3, args: [2, 0], imm: 0, str: "+" };
+    let get = ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: 2, args: [1], imm: 0, str: "a" };
+    let add = ssa.SInst { ir_kind: 0, kind_tag: 9, result: 3, args: [2, 0], imm: 0, str: "+" };
     let mk4 = inst(ssasem.record_new(), 4, [3], 0);
     let mk5 = inst(ssasem.record_new(), 5, [3], 0);
     let blocks: ssa.SBlock[] = [ssa.SBlock { id: 7, preds: [], insts: [p0, mk1, get, add, mk4, mk5], term: ret(5) }];

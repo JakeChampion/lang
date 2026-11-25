@@ -100,8 +100,8 @@ func dependencyVerifyCases() []dependencyVerifyCase {
 		{"wide", "wide", "", ""},
 		{"explicit-params-sparse", "params-sparse", `let b = f.blocks[1];
 b = ssa.SBlock { ...b, insts: [
-  ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" },
-  ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" },
+  ssa.SInst { ir_kind: 0, kind_tag: 6, result: 0, args: [], imm: 0, str: "" },
+  ssa.SInst { ir_kind: 0, kind_tag: 6, result: 1, args: [], imm: 1, str: "" },
 ] };
 f = ssa.SFunc { ...f, blocks: f.blocks.with(1, b) };`, ""},
 		{"missing-transitive-root", "nested-projection", "deps = deps.with(2, [1]);", "incomplete dependency closure"},
@@ -112,7 +112,7 @@ f = ssa.SFunc { ...f, blocks: f.blocks.with(1, b) };`, ""},
 		{"forward-local-root", "nested-projection", "deps = deps.with(0, [1]); deps = deps.with(1, []); deps = deps.with(2, [1]);", "dependency unavailable at use"},
 		{"duplicate-definition", "nested-projection", "let b = f.blocks[0]; b = ssa.SBlock { ...b, insts: b.insts.append(b.insts[0]) }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "duplicate value definition"},
 		{"undefined-operand", "nested-projection", "let b = f.blocks[0]; b = ssa.SBlock { ...b, insts: [b.insts[1], b.insts[2]] }; f = ssa.SFunc { ...f, blocks: f.blocks.with(0, b) };", "undefined value"},
-		{"phi-after-use", "phi-edges", "let b = f.blocks[3]; let ins = ssa.SInst { kind_tag: 1, result: 0 - 1, args: [], imm: 0, str: \"\" }; b = ssa.SBlock { ...b, insts: [ins, b.insts[0]] }; f = ssa.SFunc { ...f, blocks: f.blocks.with(3, b) };", "invalid phi definition"},
+		{"phi-after-use", "phi-edges", "let b = f.blocks[3]; let ins = ssa.SInst { ir_kind: 0, kind_tag: 1, result: 0 - 1, args: [], imm: 0, str: \"\" }; b = ssa.SBlock { ...b, insts: [ins, b.insts[0]] }; f = ssa.SFunc { ...f, blocks: f.blocks.with(3, b) };", "invalid phi definition"},
 	}
 }
 
@@ -210,7 +210,7 @@ const dominanceReuseChecks = `function dominance_reuse_checks(): i32 {
   let ret = ssa.STerm { kind_tag: 1, cond: -1, target: -1, t: -1, f: -1, value: 0 };
   let split = ssa.STerm { kind_tag: 3, cond: 0, target: -1, t: 11, f: 30, value: -1 };
   let dead = ssa.STerm { kind_tag: 2, cond: -1, target: 50, t: -1, f: -1, value: -1 };
-  let param = ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" };
+  let param = ssa.SInst { ir_kind: 0, kind_tag: 6, result: 0, args: [], imm: 0, str: "" };
   let blocks: ssa.SBlock[] = [
     ssa.SBlock { id: 30, preds: [7, 11], insts: [], term: ret },
     ssa.SBlock { id: 7, preds: [], insts: [param], term: split },

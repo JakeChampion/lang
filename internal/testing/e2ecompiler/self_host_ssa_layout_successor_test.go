@@ -21,7 +21,7 @@ function ret(): ssa.STerm {
 }
 function block(id: i32, preds: i32[], term: ssa.STerm): ssa.SBlock {
   let insts: ssa.SInst[] = [];
-  if (id == 0) { insts = [ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" }]; }
+  if (id == 0) { insts = [ssa.SInst { ir_kind: 0, kind_tag: 6, result: 0, args: [], imm: 0, str: "" }]; }
   return ssa.SBlock { id: id, preds: preds, insts: insts, term: term };
 }
 function graph(blocks: ssa.SBlock[]): ssa.SFunc {

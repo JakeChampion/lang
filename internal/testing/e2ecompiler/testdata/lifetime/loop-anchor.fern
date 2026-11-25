@@ -4,9 +4,9 @@ function same(a: i32[], b: i32[]): boolean { if (a.len() != b.len()) { return fa
 function main(): i32 {
 let blocks: ssa.SBlock[] = [];
 blocks = blocks.append(ssa.SBlock { id: 47, insts: [], preds: [27], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } });
-blocks = blocks.append(ssa.SBlock { id: 37, insts: [ssa.SInst { kind_tag: 9, result: 4, args: [2,1], imm: 0, str: "" }], preds: [27], term: ssa.STerm { kind_tag: 2, cond: 0, target: 27, t: 0, f: 0, value: -1 } });
-blocks = blocks.append(ssa.SBlock { id: 27, insts: [ssa.SInst { kind_tag: 8, result: 2, args: [1,1], imm: 0, str: "" },ssa.SInst { kind_tag: 1, result: 3, args: [], imm: 0, str: "" }], preds: [17,37], term: ssa.STerm { kind_tag: 3, cond: 3, target: 0, t: 37, f: 47, value: -1 } });
-blocks = blocks.append(ssa.SBlock { id: 17, insts: [ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "" },ssa.SInst { kind_tag: 9, result: 1, args: [0,0], imm: 0, str: "" }], preds: [], term: ssa.STerm { kind_tag: 2, cond: 0, target: 27, t: 0, f: 0, value: -1 } });
+blocks = blocks.append(ssa.SBlock { id: 37, insts: [ssa.SInst { ir_kind: 0, kind_tag: 9, result: 4, args: [2,1], imm: 0, str: "" }], preds: [27], term: ssa.STerm { kind_tag: 2, cond: 0, target: 27, t: 0, f: 0, value: -1 } });
+blocks = blocks.append(ssa.SBlock { id: 27, insts: [ssa.SInst { ir_kind: 0, kind_tag: 8, result: 2, args: [1,1], imm: 0, str: "" },ssa.SInst { ir_kind: 0, kind_tag: 1, result: 3, args: [], imm: 0, str: "" }], preds: [17,37], term: ssa.STerm { kind_tag: 3, cond: 3, target: 0, t: 37, f: 47, value: -1 } });
+blocks = blocks.append(ssa.SBlock { id: 17, insts: [ssa.SInst { ir_kind: 0, kind_tag: 1, result: 0, args: [], imm: 0, str: "" },ssa.SInst { ir_kind: 0, kind_tag: 9, result: 1, args: [0,0], imm: 0, str: "" }], preds: [], term: ssa.STerm { kind_tag: 2, cond: 0, target: 27, t: 0, f: 0, value: -1 } });
 let f = ssa.SFunc { name: "fixture", nparams: 0, nvals: 5, blocks: blocks, entry: 17, takes_env: false };
 let deps: i32[][] = [[],[0],[],[],[]];
 let before = ssa.print_func(f);

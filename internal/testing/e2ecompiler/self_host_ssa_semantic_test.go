@@ -47,23 +47,23 @@ let graph = ssa.SFunc { name: "semantic", nparams: 2, nvals: 11, entry: 7, takes
 
 const semanticHelpers = `
 function field(value: i32, parent: i32, index: i32, name: string): ssa.SInst {
-    return ssa.SInst { kind_tag: ssasem.record_get(), result: value, args: [parent], imm: index, str: name };
+    return ssa.SInst { ir_kind: 0, kind_tag: ssasem.record_get(), result: value, args: [parent], imm: index, str: name };
 }
 function inst(kind: i32, value: i32, args: i32[], imm: i32): ssa.SInst {
-    return ssa.SInst { kind_tag: kind, result: value, args: args, imm: imm, str: "" };
+    return ssa.SInst { ir_kind: 0, kind_tag: kind, result: value, args: args, imm: imm, str: "" };
 }
 function variant_make(value: i32, name: string, args: i32[]): ssa.SInst {
-    return ssa.SInst { kind_tag: ssasem.variant_new(), result: value, args: args, imm: 0, str: name };
+    return ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_new(), result: value, args: args, imm: 0, str: name };
 }
 function variant_test(value: i32, subject: i32, name: string): ssa.SInst {
-    return ssa.SInst { kind_tag: ssasem.variant_is(), result: value, args: [subject], imm: 0, str: name };
+    return ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_is(), result: value, args: [subject], imm: 0, str: name };
 }
 function variant_field(value: i32, subject: i32, index: i32, name: string): ssa.SInst {
-    return ssa.SInst { kind_tag: ssasem.variant_get(), result: value, args: [subject], imm: index, str: name };
+    return ssa.SInst { ir_kind: 0, kind_tag: ssasem.variant_get(), result: value, args: [subject], imm: index, str: name };
 }
 function branch_on(cond: i32): ssa.STerm { return ssa.STerm { kind_tag: 3, value: 0, cond: cond, target: 0, t: 17, f: 27 }; }
 function call_inst(value: i32, callee: string, args: i32[]): ssa.SInst {
-    return ssa.SInst { kind_tag: ssasem.call(), result: value, args: args, imm: 0, str: callee };
+    return ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: value, args: args, imm: 0, str: callee };
 }
 function contract(name: string, params: typeinfo.Type[], modes: i32[], result: typeinfo.Type): ssasem.Contract {
     return ssasem.Contract { name: name, params: params, modes: modes, result: result };
@@ -211,7 +211,7 @@ graph = ssa.SFunc { ...graph, blocks: blocks };
 		{"byte-view", semanticByteView, ""},
 		{"byte-view-string-view", semanticByteView + "types = [view, bv]; params = [view];", ""},
 		{"byte-view-call", semanticByteView + `calls = [contract("lend", [st], [2], bv)]; anchors = [ssasem.Anchor { name: "lend", params: [0] }]; graph = change(graph, 1, call_inst(1, "lend", [0]));`, ""},
-		{"byte-view-literal", semanticByteView + `params = []; graph = ssa.SFunc { ...graph, nparams: 0 }; graph = change(graph, 0, ssa.SInst { kind_tag: 5, result: 0, args: [], imm: 0, str: "hello" });`, ""},
+		{"byte-view-literal", semanticByteView + `params = []; graph = ssa.SFunc { ...graph, nparams: 0 }; graph = change(graph, 0, ssa.SInst { ir_kind: 0, kind_tag: 5, result: 0, args: [], imm: 0, str: "hello" });`, ""},
 		{"byte-view-local-source", semanticByteView + `params = []; calls = [contract("source", [], [], st)]; graph = ssa.SFunc { ...graph, nparams: 0 }; graph = change(graph, 0, call_inst(0, "source", []));`, ""},
 		{"array-view-local-source", semanticByteView + `let owned: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: false }; params = []; types = [owned, bv]; graph = ssa.SFunc { ...graph, nparams: 0 }; graph = change(graph, 0, inst(ssasem.array_new(), 0, [], 0)); graph = change(graph, 1, inst(ssasem.array_lend(), 1, [0], 0));`, ""},
 		{"byte-view-tuple", semanticByteView + `result = typeinfo.TypeTuple { elements: [bv, bv] }; types = types.append(result); let b = graph.blocks[0]; graph = ssa.SFunc { ...graph, nvals: 3, blocks: [ssa.SBlock { ...b, insts: b.insts.append(inst(ssasem.tuple_new(), 2, [1, 1], 0)), term: ret(2) }] };`, ""},
@@ -245,12 +245,12 @@ graph = ssa.SFunc { ...graph, blocks: blocks };
 		{"never-value", "types = types.with(5, typeinfo.TypeNever { tag: 0 });", "unresolved value type"},
 		{"polymorphic-type", "types = types.with(5, typeinfo.TypeFloat { width: 64, polymorphic: true });", "unresolved value type"},
 		{"opaque-signature", "types = types.with(5, typeinfo.TypeFunc { param_types: [], param_own: [], ret_own: false, ret_type: st, params_known: false, once: false });", "unresolved value type"},
-		{"string-constant", `graph = change(graph, 5, ssa.SInst { kind_tag: 5, result: 5, args: [], imm: 0, str: "a" });`, ""},
-		{"string-constant-type", `graph = change(graph, 9, ssa.SInst { kind_tag: 5, result: 9, args: [], imm: 0, str: "a" });`, "string constant type"},
-		{"string-concat", `graph = change(graph, 5, ssa.SInst { kind_tag: 9, result: 5, args: [4, 4], imm: 0, str: "+" });`, ""},
-		{"string-equality", `graph = change(graph, 7, ssa.SInst { kind_tag: 9, result: 7, args: [4, 5], imm: 0, str: "==" });`, ""},
-		{"string-ordering", `graph = change(graph, 7, ssa.SInst { kind_tag: 9, result: 7, args: [4, 5], imm: 0, str: "<" });`, ""},
-		{"string-concat-type", `graph = change(graph, 9, ssa.SInst { kind_tag: 9, result: 9, args: [4, 4], imm: 0, str: "+" });`, "binary operator contract"},
+		{"string-constant", `graph = change(graph, 5, ssa.SInst { ir_kind: 0, kind_tag: 5, result: 5, args: [], imm: 0, str: "a" });`, ""},
+		{"string-constant-type", `graph = change(graph, 9, ssa.SInst { ir_kind: 0, kind_tag: 5, result: 9, args: [], imm: 0, str: "a" });`, "string constant type"},
+		{"string-concat", `graph = change(graph, 5, ssa.SInst { ir_kind: 0, kind_tag: 9, result: 5, args: [4, 4], imm: 0, str: "+" });`, ""},
+		{"string-equality", `graph = change(graph, 7, ssa.SInst { ir_kind: 0, kind_tag: 9, result: 7, args: [4, 5], imm: 0, str: "==" });`, ""},
+		{"string-ordering", `graph = change(graph, 7, ssa.SInst { ir_kind: 0, kind_tag: 9, result: 7, args: [4, 5], imm: 0, str: "<" });`, ""},
+		{"string-concat-type", `graph = change(graph, 9, ssa.SInst { ir_kind: 0, kind_tag: 9, result: 9, args: [4, 4], imm: 0, str: "+" });`, "binary operator contract"},
 		{"physical-allocation", "graph = change(graph, 6, inst(14, 6, [5], 0));", "unsupported semantic operation"},
 		{"physical-load", "graph = change(graph, 4, inst(15, 4, [3, 1], 32));", "unsupported semantic operation"},
 		{"call", `calls = [contract("g", [sa], [2], st)]; graph = change(graph, 5, call_inst(5, "g", [3]));`, ""},

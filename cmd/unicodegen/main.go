@@ -763,6 +763,16 @@ func (st staged) at(cp int) int {
 	return dec6(st.blocks[b<<pageShift+k])
 }
 
+// stageBits is stageTable for a set of code points.
+func stageBits(name string, in func(rune) bool) staged {
+	return stageTable(name, true, func(r rune) int {
+		if in(r) {
+			return 1
+		}
+		return 0
+	})
+}
+
 // emitStaged writes the blocks, the chunks and the index of st as the
 // tables of name.
 func emitStaged(b *strings.Builder, name string, st staged) int {
@@ -1710,17 +1720,16 @@ func generate() (string, genStats) {
 		recomposes[p.cp] = true
 	}
 	isHangul := func(r rune) bool { return r >= hangulSBase && r < hangulSBase+hangulSCount }
-	nfdNo := coalesce(func(r rune) bool { return decomposes[r] || isHangul(r) })
-	nfcNo := coalesce(func(r rune) bool { return decomposes[r] && !recomposes[r] })
+	nfdNo := stageBits("nfd_no", func(r rune) bool { return decomposes[r] || isHangul(r) })
+	nfcNo := stageBits("nfc_no", func(r rune) bool { return decomposes[r] && !recomposes[r] })
 
 	combinesLeft := make(map[rune]bool, len(prims))
 	for _, p := range prims {
 		combinesLeft[p.b] = true
 	}
-	nfcMaybe := coalesce(func(r rune) bool { return combinesLeft[r] })
+	nfcMaybe := stageBits("nfc_maybe", func(r rune) bool { return combinesLeft[r] })
 
-	stats.tableBytes += len(cccT.values) + len(decompT) + len(stepT) + len(composeT) +
-		len(encodeRanges(nfcNo)) + len(encodeRanges(nfcMaybe)) + len(encodeRanges(nfdNo))
+	stats.tableBytes += len(cccT.values) + len(decompT) + len(stepT) + len(composeT)
 
 	gcbs, extPict, gcbVersion := parseGCBData()
 	gcbTable, extT := encodeGCB(gcbs), encodeRanges(extPict)
@@ -1757,12 +1766,7 @@ import "std/utf8" as utf8;
 		c := classes[name]
 		emitTable(&b, "_"+name+"_ranges", c.table)
 	}
-	stats.tableBytes += emitStaged(&b, "_mark", stageTable("mark", true, func(r rune) int {
-		if unicode.IsMark(r) {
-			return 1
-		}
-		return 0
-	}))
+	stats.tableBytes += emitStaged(&b, "_mark", stageBits("mark", unicode.IsMark))
 	emitTable(&b, "_full_upper_table", encodeFull(fullUpper))
 	emitTable(&b, "_full_lower_table", encodeFull(fullLower))
 	emitTable(&b, "_fold_table", encodeFull(foldExceptions))
@@ -1772,9 +1776,9 @@ import "std/utf8" as utf8;
 	stats.tableBytes += emitIndexed(&b, "_decomp_table", "_decomp_index", decompT, 5*fieldChars, 0)
 	stats.tableBytes += emitIndexed(&b, "_decomp_step_table", "_decomp_step_index", stepT, 3*fieldChars, 0)
 	stats.tableBytes += emitIndexed(&b, "_compose_table", "_compose_index", composeT, 3*fieldChars, 0)
-	emitTable(&b, "_nfc_no_ranges", encodeRanges(nfcNo))
-	emitTable(&b, "_nfc_maybe_ranges", encodeRanges(nfcMaybe))
-	emitTable(&b, "_nfd_no_ranges", encodeRanges(nfdNo))
+	stats.tableBytes += emitStaged(&b, "_nfc_no", nfcNo)
+	stats.tableBytes += emitStaged(&b, "_nfc_maybe", nfcMaybe)
+	stats.tableBytes += emitStaged(&b, "_nfd_no", nfdNo)
 
 	emitTable(&b, "_gcb_ranges", gcbTable)
 	emitTable(&b, "_extpict_ranges", extT)
@@ -2324,8 +2328,19 @@ function _ccc_of(cp: char): i32 {
     return _fld2(_ccc_value_table(), 2 * _staged(_ccc_index(), _ccc_pages(), _ccc_table(), cp as i32));
 }
 
+// A character that has a canonical decomposition, Hangul syllables included.
+function _decomposes(n: i32): boolean {
+    return _staged_bit(_nfd_no_index(), _nfd_no_pages(), _nfd_no_table(), n);
+}
+
+// A character that is the second of the pair of a primary composite.
+function _combines_left(n: i32): boolean {
+    return _staged_bit(_nfc_maybe_index(), _nfc_maybe_pages(), _nfc_maybe_table(), n);
+}
+
 function _decomp_append(out: char[], cp: char): char[] {
     let n = cp as i32;
+    if (!_decomposes(n)) { return out.append(cp); }
     if (n >= 44032 && n < 55204) {
         let si = n - 44032;
         out = out.append((4352 + si / 588) as char);
@@ -2388,6 +2403,7 @@ function _compose_pair(a: char, b: char): i32 {
         if ((x - 44032) % 28 == 0) { return x + (y - 4519); }
         return 0;
     }
+    if (!_combines_left(y)) { return 0; }
     let t = _compose_table();
     let (lo, hi) = _rows(_compose_index(), t.len() / 12, x);
     while (lo <= hi) {
@@ -2464,7 +2480,7 @@ pub function is_nfd(s: string): boolean {
     let i = 0;
     while (i < cps.len()) {
         let cp = cps[i];
-        if (_in_ranges(_nfd_no_ranges(), cp as i32)) { return false; }
+        if (_decomposes(cp as i32)) { return false; }
         let cc = _ccc_of(cp);
         if (cc != 0 && prev_cc > cc) { return false; }
         prev_cc = cc;
@@ -2483,8 +2499,8 @@ pub function is_nfc(s: string): boolean {
         let n = cp as i32;
         let cc = _ccc_of(cp);
         if (cc != 0 && prev_cc > cc) { return false; }
-        if (_in_ranges(_nfc_no_ranges(), n)) { return false; }
-        if (_in_ranges(_nfc_maybe_ranges(), n)) { return nfc(s) == s; }
+        if (_staged_bit(_nfc_no_index(), _nfc_no_pages(), _nfc_no_table(), n)) { return false; }
+        if (_combines_left(n)) { return nfc(s) == s; }
         prev_cc = cc;
         i += 1;
     }
@@ -2653,6 +2669,7 @@ pub function decomposition(c: char): char[] {
 // gives the syllable without it, then the final consonant.
 pub function decomposition_step(c: char): char[] {
     let n = c as i32;
+    if (!_decomposes(n)) { return [c]; }
     if (n >= 44032 && n < 55204 && (n - 44032) % 28 != 0) {
         return [(n - (n - 44032) % 28) as char, (4519 + (n - 44032) % 28) as char];
     }

@@ -10,11 +10,11 @@ func TestSelfHostLoopIndexCopy(t *testing.T) {
 	const src = `import "./ssa";
 
 function read(v: i32): ssa.SInst {
-  return ssa.SInst { kind_tag: ssa.ARR_AT, result: v, args: [0, 1], imm: 0, str: "i32" };
+  return ssa.SInst { ir_kind: 0, kind_tag: ssa.ARR_AT, result: v, args: [0, 1], imm: 0, str: "i32" };
 }
 
 function graph(side_entry: boolean): ssa.SFunc {
-  let zero = ssa.SInst { kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" };
+  let zero = ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" };
   let one = ssa.SInst { ...zero, result: 1, imm: 1 };
   let entry = if (side_entry) { ssa.t_brif(1, 1, 4) } else { ssa.t_br(1) };
   let blocks = [

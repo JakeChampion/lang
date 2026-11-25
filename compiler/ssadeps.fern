@@ -1,3 +1,4 @@
+import "./ir";
 import "./ssa";
 import "./ssalive";
 import "./util";
@@ -405,7 +406,7 @@ function loads_from(ins: ssa.SInst, v: i32, lits: boolean[]): boolean {
 // The compare of a value with the address of a static box, which is the test
 // of a variant with no field (`ssa_lift.lift_variant_is_prod`).
 function static_test(ins: ssa.SInst, lits: boolean[]): boolean {
-  return ins.kind_tag == ssa.BINARY && ins.str == "eq" && ins.imm == 64 && ins.args.len() == 2 && ins.args[0] >= 0 && ins.args[1] >= 0 && lits[ins.args[1]];
+  return ins.kind_tag == ssa.BINARY && ins.ir_kind == ir.K_EQ && ins.imm == 64 && ins.args.len() == 2 && ins.args[0] >= 0 && ins.args[1] >= 0 && lits[ins.args[1]];
 }
 
 // The values that are the address of a static box.

@@ -215,6 +215,9 @@ function width_refusal(kt: i32, w: i32): string {
   if (kt >= ir.K_INT_EXTEND && kt <= ir.K_F64_TO_I64) {
     return conv_width_refusal(kt, w);
   }
+  if (ir.is_lane_kind(kt)) {
+    return lane_width_refusal(kt, w);
+  }
   let mem = mem_width_refusal(kt, w);
   if (mem != "") {
     return mem;
