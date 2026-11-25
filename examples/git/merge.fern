@@ -788,11 +788,9 @@ function submodule_history(sub: refs.Repo, base: Version, a: Version, b: Version
     if (!n.ok) {
       // An alternate store or a partial clone may still supply this object.
       if (h == base.hash && stat(next.store.objects + "/info/alternates").is_err() && sub.config.all("extensions.partialclone").len() == 0) {
-        // Partial histories can also produce object-read diagnostics.
-        for hash in [base.hash, a.hash, b.hash] {
-          if (store.info(next.store, hash).why != "missing") {
-            return Unresolved;
-          }
+        // Git looks up the base first and stops if it is absent.
+        if (store.info(next.store, h).why != "missing") {
+          return Unresolved;
         }
         for entry in sub.config.entries {
           if (entry.name.ends_with(".promisor")) {

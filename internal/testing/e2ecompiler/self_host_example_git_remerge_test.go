@@ -828,14 +828,20 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", addMerge)
 
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
+	// The checkout has s0 and s1, but the base gitlink points to s2.
+	g.git("-C", "module", "fetch", "-q", dir, links[1])
+	s0Tree := g.git("rev-parse", "module-base^{tree}")
+	toS0 := g.git("commit-tree", "-p", "module-2", "-m", "take s0", s0Tree)
+	toS1 := g.git("commit-tree", "-p", "module-2", "-m", "take s1", tree)
+	missingBase := g.git("commit-tree", "-p", toS0, "-p", toS1, "-m", "missing submodule base", tree)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", missingBase)
 	// With the commits available locally, either parent order picks s2.
 	g.git("-C", "module", "fetch", "-q", dir, "module-history")
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
 	reversed := g.git("commit-tree", "-p", "module-2", "-p", "module-1", "-m", "swapped parents", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
 	// From s1, one parent rewinds to s0 and the other advances to s2.
-	rewindTree := g.git("rev-parse", "module-base^{tree}")
-	rewind := g.git("commit-tree", "-p", "module-1", "-m", "rewind", rewindTree)
+	rewind := g.git("commit-tree", "-p", "module-1", "-m", "rewind", s0Tree)
 	advance := g.git("commit-tree", "-p", "module-1", "-m", "advance", rightTree)
 	rewindMerge := g.git("commit-tree", "-p", rewind, "-p", advance, "-m", "take advance", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rewindMerge)
