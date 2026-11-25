@@ -104,9 +104,9 @@ x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1270
 x86_64/tokenize.ir	30310112
 x86_64/utf8_ingest_unchecked.text	8445
-x86_64/utf8_ingest_unchecked.ir	2100062
+x86_64/utf8_ingest_unchecked.ir	1797263
 x86_64/utf8_ingest_validated.text	9118
-x86_64/utf8_ingest_validated.ir	3823463
+x86_64/utf8_ingest_validated.ir	3432463
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
 # the dev container — paste its block in verbatim. The `.text` half needs no
@@ -183,9 +183,9 @@ aarch64/struct_drop.ir	220180757
 aarch64/tokenize.text	1531
 aarch64/tokenize.ir	31880127
 aarch64/utf8_ingest_unchecked.text	8951
-aarch64/utf8_ingest_unchecked.ir	2561266
+aarch64/utf8_ingest_unchecked.ir	2244468
 aarch64/utf8_ingest_validated.text	9626
-aarch64/utf8_ingest_validated.ir	4802868
+aarch64/utf8_ingest_validated.ir	4332068
 x86_64/perceus_cfold.text	2257
 x86_64/perceus_cfold.ir	34837730
 x86_64/perceus_deriv.text	2999
@@ -231,7 +231,7 @@ aarch64/gather_many.text	6715
 aarch64/gather_many.ir	40808112
 aarch64/hex_decode.ir	177963145
 aarch64/utf8_validate.text	2882
-aarch64/utf8_validate.ir	239905894
+aarch64/utf8_validate.ir	221066742
 x86_64/utf8_validate.text	2633
 x86_64/utf8_validate.ir	174730146
 aarch64/array_append.dr	1601015
@@ -275,9 +275,9 @@ aarch64/string_rfind_byte.dr	12342791
 aarch64/string_scan.dr	15509910
 aarch64/string_slice.dr	2580011
 aarch64/struct_drop.dr	47340142
-aarch64/tokenize.dr	5920013
-aarch64/utf8_ingest_unchecked.dr	548941
-aarch64/utf8_ingest_validated.dr	797344
+aarch64/tokenize.dr	5490013
+aarch64/utf8_ingest_unchecked.dr	473744
+aarch64/utf8_ingest_validated.dr	722144
 aarch64/utf8_validate.dr	29588157
 aarch64/video_qtrle.dr	93828773
 x86_64/array_append.dr	1601176
@@ -321,8 +321,8 @@ x86_64/string_rfind_byte.dr	6277999
 x86_64/string_scan.dr	16463525
 x86_64/string_slice.dr	2580009
 x86_64/struct_drop.dr	54560074
-x86_64/tokenize.dr	6770008
-x86_64/utf8_ingest_unchecked.dr	550769
-x86_64/utf8_ingest_validated.dr	776973
+x86_64/tokenize.dr	6270008
+x86_64/utf8_ingest_unchecked.dr	453773
+x86_64/utf8_ingest_validated.dr	678973
 x86_64/utf8_validate.dr	27641588
 x86_64/video_qtrle.dr	241205955
