@@ -7553,6 +7553,8 @@ function position_preds(f: SFunc, at: i32[]): i32[][] {
 // A pure integer computation in a loop whose operands do not change in the
 // loop moves to the block before the loop, so it runs one time. The loop must
 // have one way in. Inner loops go first, so a value can leave several loops.
+// A constant of the loop stays in the loop, where a target can use it as an
+// immediate. The moved computation reads a copy of it in front of the loop.
 pub function hoisted_invariants(f: SFunc): SFunc {
   if (f.blocks.len() < 3) {
     return f;
@@ -7563,36 +7565,54 @@ pub function hoisted_invariants(f: SFunc): SFunc {
   let defs = inst_defs(f);
   let def_pos = def_positions(f);
   let blocks = f.blocks;
+  let nvals = f.nvals;
   let changed = false;
   let h = latch.len() - 1;
   while (h >= 0) {
     let last = latch[h];
     let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
     if (pre >= 0) {
-      let inv = invariant_values(blocks, f, defs, def_pos, h, last);
-      let consts: SInst[] = [];
-      let others: SInst[] = [];
+      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: nvals }, defs, def_pos, h, last);
+      let lifted: SInst[] = [];
+      let originals: i32[] = [];
+      let copies: i32[] = [];
       for bi in h..=last {
         let kept: SInst[] = [];
         for ins in blocks[bi].insts {
           if (ins.result < 0 || !inv[ins.result]) {
             kept = kept.append(ins);
-          } else if (is_constant(ins, f.nvals)) {
-            consts = consts.append(ins);
-          } else {
-            others = others.append(ins);
+            continue;
           }
+          let args: i32[] = [];
+          for a in ins.args {
+            if (!is_constant(defs[a], nvals) || def_pos[a] < h || def_pos[a] > last) {
+              args = args.append(a);
+              continue;
+            }
+            let k = util.index_of_i32(originals, a);
+            if (k < 0) {
+              k = originals.len();
+              originals = originals.append(a);
+              copies = copies.append(nvals);
+              let c = SInst { ...defs[a], result: nvals };
+              lifted = lifted.append(c);
+              defs = defs.append(c);
+              def_pos = def_pos.append(pre);
+              nvals += 1;
+            }
+            args = args.append(copies[k]);
+          }
+          let moved = SInst { ...ins, args: args };
+          lifted = lifted.append(moved);
+          defs = defs.with(ins.result, moved);
+          def_pos = def_pos.with(ins.result, pre);
         }
         if (kept.len() != blocks[bi].insts.len()) {
           blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: kept });
         }
       }
-      if (others.len() > 0) {
-        let lifted = consts.concat(others);
+      if (lifted.len() > 0) {
         blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(lifted) });
-        for ins in lifted {
-          def_pos = def_pos.with(ins.result, pre);
-        }
         changed = true;
       }
     }
@@ -7601,13 +7621,14 @@ pub function hoisted_invariants(f: SFunc): SFunc {
   if (!changed) {
     return f;
   }
-  return SFunc { ...f, blocks: blocks };
+  return SFunc { ...f, blocks: blocks, nvals: nvals };
 }
 
 // The values of the loop from `h` to `last` that can move in front of it: a
 // pure integer computation of operands defined before the loop, of constants,
-// or of values that move. The constants that such a computation reads move
-// with it.
+// or of values that move. At least one operand must not be a constant: a
+// computation of constants only gains nothing in front of the loop, and it
+// holds a register across the loop there.
 function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32): boolean[] {
   let inv = __alloc_bool(f.nvals);
   for bi in h..=last {
@@ -7616,17 +7637,19 @@ function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i3
         continue;
       }
       let ok = true;
+      let reads_non_constant = false;
       for a in ins.args {
-        if (!(a >= 0 && a < f.nvals && (inv[a] || defined_before(f, def_pos, a, h, last) || is_constant(defs[a], f.nvals)))) {
+        if (!(a >= 0 && a < f.nvals)) {
+          ok = false;
+        } else if (is_constant(defs[a], f.nvals)) {
+          continue;
+        } else if (inv[a] || defined_before(f, def_pos, a, h, last)) {
+          reads_non_constant = true;
+        } else {
           ok = false;
         }
       }
-      if (ok) {
-        for a in ins.args {
-          if (is_constant(defs[a], f.nvals) && def_pos[a] >= h && def_pos[a] <= last) {
-            inv = inv.with(a, true);
-          }
-        }
+      if (ok && reads_non_constant) {
         inv = inv.with(ins.result, true);
       }
     }

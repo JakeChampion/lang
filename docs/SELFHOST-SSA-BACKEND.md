@@ -72,8 +72,10 @@ lowered function it:
    its constant picks (`ssa.thread_bool_joins`: a predicate spliced into its
    caller brings its `&&` or `||` as such a phi), and prunes again; then
    moves each pure integer computation in a loop whose operands do not
-   change in the loop to the one block that enters the loop, with the
-   constants that it reads (`ssa.hoisted_invariants`). Inner loops go first.
+   change in the loop to the one block that enters the loop
+   (`ssa.hoisted_invariants`). A computation of constants only stays. A
+   constant stays in the loop, where a target can use it as an immediate,
+   and the moved computation reads a copy of it. Inner loops go first.
    A loop with a second way in keeps its instructions. A division moves
    only when its divisor is a constant other than 0 and -1;
 4. once the certifier has read that form, gives each side of a uniqueness
