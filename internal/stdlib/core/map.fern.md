@@ -578,6 +578,18 @@ pub(package) function __map_get_impl(m: usize, k: usize): Option[usize] {
   }
 }
 
+// The value of `k` as `__map_get_or_impl` gives it, or 0 when no entry has
+// `k`. It is an `Option` of a value that is never null.
+pub(package) function __map_get_ref_impl(m: usize, k: usize): usize {
+  unsafe {
+    let idx = __map_lookup(m, k);
+    if (idx == -1) {
+      return 0;
+    }
+    return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
+  }
+}
+
 pub(package) function __map_get_or_impl(m: usize, k: usize, fallback: usize): usize {
   unsafe {
     let idx = __map_lookup(m, k);
@@ -1208,6 +1220,16 @@ pub(package) function __map_get_keyed_impl(m: usize, k: usize, hash_fn: (usize) 
       return None;
     }
     return Some(__map_retain_val(__load_ptr(m), __map_val_at(m, idx)));
+  }
+}
+
+pub(package) function __map_get_ref_keyed_impl(m: usize, k: usize, hash_fn: (usize) => i32, eq_fn: (usize, usize) => boolean): usize {
+  unsafe {
+    let idx = __map_lookup_keyed(m, k, hash_fn, eq_fn);
+    if (idx == -1) {
+      return 0;
+    }
+    return __map_retain_val(__load_ptr(m), __map_val_at(m, idx));
   }
 }
 

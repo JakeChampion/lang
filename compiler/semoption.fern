@@ -190,3 +190,30 @@ function unsplit_debug_bindings(f: ssasem.Func, split: boolean[]): ssasem.Func {
   }
   return ssasem.Func { ...f, dbg_vals: vals, dbg_names: names };
 }
+
+pub struct Niched { f: ssasem.Func, changed: boolean }
+
+// `Some(x)` of a `ssasem.niche_option` is `x`, and its payload is the value
+// itself, so each one becomes an identity op that passes the unit through.
+pub function niche(f: ssasem.Func): Niched {
+  let blocks = f.graph.blocks;
+  let changed = false;
+  for b in 0..blocks.len() {
+    let insts = blocks[b].insts;
+    for i in 0..insts.len() {
+      let ins = insts[i];
+      if (ins.kind_tag == ssasem.variant_new() && ins.str == "Some" && ins.args.len() == 1 && ins.result >= 0 && ssasem.niche_option(f, f.values[ins.result])) {
+        insts = insts.with(i, ssa.SInst { ...ins, kind_tag: ssasem.variant_up(), imm: 0 });
+        changed = true;
+      } else if (ins.kind_tag == ssasem.variant_get() && ins.str == "Some" && ins.args.len() == 1 && ins.args[0] >= 0 && ssasem.niche_option(f, f.values[ins.args[0]])) {
+        insts = insts.with(i, ssa.SInst { ...ins, kind_tag: ssasem.variant_as(), imm: 0 });
+        changed = true;
+      }
+    }
+    blocks = blocks.with(b, ssa.SBlock { ...blocks[b], insts: insts });
+  }
+  if (!changed) {
+    return Niched { f: f, changed: false };
+  }
+  return Niched { f: ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } }, changed: changed };
+}

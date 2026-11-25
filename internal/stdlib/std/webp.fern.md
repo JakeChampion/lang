@@ -2482,7 +2482,7 @@ function loop_filtered(own r: Recon, h: Lossy, info: [i32]): Recon {
 
 ### `lossy decoding`
 
-The decoder reads the macroblocks in raster order. The modes come from the first partition. The coefficients of the row `mb_y` come from the token partition `mb_y` modulo the count of partitions. A read past the end of a partition fails with `Truncated` after the frame. libwebp fails at the end of the row, so the result is the same.
+The decoder reads the macroblocks in raster order. The modes come from the first partition. The coefficients of the row `mb_y` come from the token partition `mb_y` modulo the count of partitions. A read past the end of a partition fails with `Truncated` at the macroblock that made it, as in libwebp. Thus a short file stops after the bytes that it has, and it does not decode the rest of a large frame.
 
 The output has the fancy upsampling of libwebp: each chroma sample between two luma rows or columns has the weights 3/4 and 1/4, from the nearer and the farther sample. The conversion to RGB is the integer conversion of libwebp, with 14 bits of precision.
 
@@ -2497,7 +2497,6 @@ function lossy_planes(data: [u8], h: Lossy, own first: Bool, own parts: Bool[]):
   let above = __alloc_i32(mb_w * 4);
   let nz = Nz { top: __alloc_i32(mb_w), top_dc: __alloc_i32(mb_w), left: 0, left_dc: 0 };
   let modes_reader = first;
-  let eof = false;
   for mb_y in 0..h.mb_h {
     let left = [DC_PRED, DC_PRED, DC_PRED, DC_PRED];
     nz = Nz { ...nz, left: 0, left_dc: 0 };
@@ -2511,14 +2510,13 @@ function lossy_planes(data: [u8], h: Lossy, own first: Bool, own parts: Bool[]):
       let (coef, empty, nz1, t1) = macroblock_coeffs(tokens, data, tab, h, m, nz, mb_x);
       nz = nz1;
       tokens = t1;
+      if (tokens.eof || modes_reader.eof) {
+        return Err(Truncated);
+      }
       info = with_filter(info, h, m, empty, (mb_y * mb_w + mb_x) * 4);
       r = with_macroblock(r, m, coef, mb_x, mb_y, mb_w, h.mb_h);
     }
-    eof = eof || tokens.eof;
     parts = parts.with(part, tokens);
-  }
-  if (eof || modes_reader.eof) {
-    return Err(Truncated);
   }
   return Ok(loop_filtered(r, h, info));
 }

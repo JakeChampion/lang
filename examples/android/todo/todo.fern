@@ -39,7 +39,7 @@ function row(m: Model, i: i32): ui.El[Msg] {
   if (it.done) {
     color = ui.MUTED;
   }
-  return ui.row([ui.toggle(it.done, it.text, Done(i)), ui.text(it.text).sized(16.0).colored(color).clamped(1).wide(), ui.text_button("Remove", Remove(i))]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
+  return ui.row([ui.toggle(it.done, it.text, Msg.Done(i)), ui.text(it.text).sized(16.0).colored(color).clamped(1).wide(), ui.text_button("Remove", Remove(i))]).spaced(12.0).aligned(ui.CENTER).padding_xy(16.0, 0.0);
 }
 
 pub function view(m: Model, s: ui.Screen): ui.El[Msg] {

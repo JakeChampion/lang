@@ -1600,626 +1600,81 @@ pub function (c: LocaleClass) get_default(e: usize): Result[Locale, jni.JavaErro
 // The struct of IDs of each class of this module.
 pub struct Classes { activity: ActivityClass, activity_options: ActivityOptionsClass, notification: NotificationClass, pending_intent: PendingIntentClass, component_name: ComponentNameClass, content_resolver: ContentResolverClass, context: ContextClass, intent: IntentClass, activity_info: ActivityInfoClass, application_info: ApplicationInfoClass, package_item_info: PackageItemInfoClass, package_manager: PackageManagerClass, resolve_info: ResolveInfoClass, location: LocationClass, location_manager: LocationManagerClass, uri: UriClass, bundle: BundleClass, settings_secure: Settings_SecureClass, telephony_sms: Telephony_SmsClass, notification_listener_service: NotificationListenerServiceClass, status_bar_notification: StatusBarNotificationClass, telecom_manager: TelecomManagerClass, date_format: DateFormatClass, view: ViewClass, window: WindowClass, file: FileClass, char_sequence: CharSequenceClass, hash_map: HashMapClass, list: ListClass, locale: LocaleClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let activity = match (activity_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let activity_options = match (activity_options_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      return Err(err);
-    },
-  };
-  let notification = match (notification_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      return Err(err);
-    },
-  };
-  let pending_intent = match (pending_intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      return Err(err);
-    },
-  };
-  let component_name = match (component_name_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      return Err(err);
-    },
-  };
-  let content_resolver = match (content_resolver_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      return Err(err);
-    },
-  };
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let activity_info = match (activity_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let application_info = match (application_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      return Err(err);
-    },
-  };
-  let package_item_info = match (package_item_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      return Err(err);
-    },
-  };
-  let package_manager = match (package_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      return Err(err);
-    },
-  };
-  let resolve_info = match (resolve_info_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      return Err(err);
-    },
-  };
-  let location = match (location_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      return Err(err);
-    },
-  };
-  let location_manager = match (location_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      return Err(err);
-    },
-  };
-  let uri = match (uri_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      return Err(err);
-    },
-  };
-  let bundle = match (bundle_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      return Err(err);
-    },
-  };
-  let settings_secure = match (settings_secure_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      return Err(err);
-    },
-  };
-  let telephony_sms = match (telephony_sms_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      return Err(err);
-    },
-  };
-  let notification_listener_service = match (notification_listener_service_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      return Err(err);
-    },
-  };
-  let status_bar_notification = match (status_bar_notification_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      return Err(err);
-    },
-  };
-  let telecom_manager = match (telecom_manager_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      return Err(err);
-    },
-  };
-  let date_format = match (date_format_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      return Err(err);
-    },
-  };
-  let view = match (view_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      date_format.release(e);
-      return Err(err);
-    },
-  };
-  let window = match (window_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      date_format.release(e);
-      view.release(e);
-      return Err(err);
-    },
-  };
-  let file = match (file_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      date_format.release(e);
-      view.release(e);
-      window.release(e);
-      return Err(err);
-    },
-  };
-  let char_sequence = match (char_sequence_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      date_format.release(e);
-      view.release(e);
-      window.release(e);
-      file.release(e);
-      return Err(err);
-    },
-  };
-  let hash_map = match (hash_map_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      date_format.release(e);
-      view.release(e);
-      window.release(e);
-      file.release(e);
-      char_sequence.release(e);
-      return Err(err);
-    },
-  };
-  let list = match (list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      date_format.release(e);
-      view.release(e);
-      window.release(e);
-      file.release(e);
-      char_sequence.release(e);
-      hash_map.release(e);
-      return Err(err);
-    },
-  };
-  let locale = match (locale_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      activity.release(e);
-      activity_options.release(e);
-      notification.release(e);
-      pending_intent.release(e);
-      component_name.release(e);
-      content_resolver.release(e);
-      context.release(e);
-      intent.release(e);
-      activity_info.release(e);
-      application_info.release(e);
-      package_item_info.release(e);
-      package_manager.release(e);
-      resolve_info.release(e);
-      location.release(e);
-      location_manager.release(e);
-      uri.release(e);
-      bundle.release(e);
-      settings_secure.release(e);
-      telephony_sms.release(e);
-      notification_listener_service.release(e);
-      status_bar_notification.release(e);
-      telecom_manager.release(e);
-      date_format.release(e);
-      view.release(e);
-      window.release(e);
-      file.release(e);
-      char_sequence.release(e);
-      hash_map.release(e);
-      list.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let activity = deleted_on_error(e, activity_class(e), made)?;
+  made = made.append(activity.class);
+  let activity_options = deleted_on_error(e, activity_options_class(e), made)?;
+  made = made.append(activity_options.class);
+  let notification = deleted_on_error(e, notification_class(e), made)?;
+  made = made.append(notification.class);
+  let pending_intent = deleted_on_error(e, pending_intent_class(e), made)?;
+  made = made.append(pending_intent.class);
+  let component_name = deleted_on_error(e, component_name_class(e), made)?;
+  made = made.append(component_name.class);
+  let content_resolver = deleted_on_error(e, content_resolver_class(e), made)?;
+  made = made.append(content_resolver.class);
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let activity_info = deleted_on_error(e, activity_info_class(e), made)?;
+  made = made.append(activity_info.class);
+  let application_info = deleted_on_error(e, application_info_class(e), made)?;
+  made = made.append(application_info.class);
+  let package_item_info = deleted_on_error(e, package_item_info_class(e), made)?;
+  made = made.append(package_item_info.class);
+  let package_manager = deleted_on_error(e, package_manager_class(e), made)?;
+  made = made.append(package_manager.class);
+  let resolve_info = deleted_on_error(e, resolve_info_class(e), made)?;
+  made = made.append(resolve_info.class);
+  let location = deleted_on_error(e, location_class(e), made)?;
+  made = made.append(location.class);
+  let location_manager = deleted_on_error(e, location_manager_class(e), made)?;
+  made = made.append(location_manager.class);
+  let uri = deleted_on_error(e, uri_class(e), made)?;
+  made = made.append(uri.class);
+  let bundle = deleted_on_error(e, bundle_class(e), made)?;
+  made = made.append(bundle.class);
+  let settings_secure = deleted_on_error(e, settings_secure_class(e), made)?;
+  made = made.append(settings_secure.class);
+  let telephony_sms = deleted_on_error(e, telephony_sms_class(e), made)?;
+  made = made.append(telephony_sms.class);
+  let notification_listener_service = deleted_on_error(e, notification_listener_service_class(e), made)?;
+  made = made.append(notification_listener_service.class);
+  let status_bar_notification = deleted_on_error(e, status_bar_notification_class(e), made)?;
+  made = made.append(status_bar_notification.class);
+  let telecom_manager = deleted_on_error(e, telecom_manager_class(e), made)?;
+  made = made.append(telecom_manager.class);
+  let date_format = deleted_on_error(e, date_format_class(e), made)?;
+  made = made.append(date_format.class);
+  let view = deleted_on_error(e, view_class(e), made)?;
+  made = made.append(view.class);
+  let window = deleted_on_error(e, window_class(e), made)?;
+  made = made.append(window.class);
+  let file = deleted_on_error(e, file_class(e), made)?;
+  made = made.append(file.class);
+  let char_sequence = deleted_on_error(e, char_sequence_class(e), made)?;
+  made = made.append(char_sequence.class);
+  let hash_map = deleted_on_error(e, hash_map_class(e), made)?;
+  made = made.append(hash_map.class);
+  let list = deleted_on_error(e, list_class(e), made)?;
+  made = made.append(list.class);
+  let locale = deleted_on_error(e, locale_class(e), made)?;
   return Ok(Classes { activity: activity, activity_options: activity_options, notification: notification, pending_intent: pending_intent, component_name: component_name, content_resolver: content_resolver, context: context, intent: intent, activity_info: activity_info, application_info: application_info, package_item_info: package_item_info, package_manager: package_manager, resolve_info: resolve_info, location: location, location_manager: location_manager, uri: uri, bundle: bundle, settings_secure: settings_secure, telephony_sms: telephony_sms, notification_listener_service: notification_listener_service, status_bar_notification: status_bar_notification, telecom_manager: telecom_manager, date_format: date_format, view: view, window: window, file: file, char_sequence: char_sequence, hash_map: hash_map, list: list, locale: locale });
 }
 

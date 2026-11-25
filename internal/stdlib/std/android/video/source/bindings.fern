@@ -221,51 +221,31 @@ pub function (c: ParcelFileDescriptorClass) get_fd(e: usize, self: ParcelFileDes
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, content_resolver: ContentResolverClass, asset_file_descriptor: AssetFileDescriptorClass, uri: UriClass, parcel_file_descriptor: ParcelFileDescriptorClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let content_resolver = match (content_resolver_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let asset_file_descriptor = match (asset_file_descriptor_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      return Err(err);
-    },
-  };
-  let uri = match (uri_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      asset_file_descriptor.release(e);
-      return Err(err);
-    },
-  };
-  let parcel_file_descriptor = match (parcel_file_descriptor_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      content_resolver.release(e);
-      asset_file_descriptor.release(e);
-      uri.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let content_resolver = deleted_on_error(e, content_resolver_class(e), made)?;
+  made = made.append(content_resolver.class);
+  let asset_file_descriptor = deleted_on_error(e, asset_file_descriptor_class(e), made)?;
+  made = made.append(asset_file_descriptor.class);
+  let uri = deleted_on_error(e, uri_class(e), made)?;
+  made = made.append(uri.class);
+  let parcel_file_descriptor = deleted_on_error(e, parcel_file_descriptor_class(e), made)?;
   return Ok(Classes { context: context, content_resolver: content_resolver, asset_file_descriptor: asset_file_descriptor, uri: uri, parcel_file_descriptor: parcel_file_descriptor });
 }
 

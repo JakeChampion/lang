@@ -36361,8 +36361,9 @@ function annotate_pattern(pattern: ast.Pattern, whole: typeinfo.Type, s: Scope):
 
 function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
   let narms: ast.MatchArm[] = [];
+  let scrutinee = annotate_typed(m.scrutinee, s);
+  let whole = typed_type(scrutinee, m.scrutinee, s);
   for arm in m.arms {
-    let whole = check_expr(m.scrutinee, s);
     let pattern = annotate_pattern(arm.pattern, whole, s);
     let asc = annotate_arm_scope(arm, s, whole);
     let g = arm.guard;
@@ -36371,7 +36372,7 @@ function annotate_match_stmt(m: ast.StmtMatch, s: Scope): ast.Stmt {
     }
     narms = narms.append(ast.MatchArm { ...arm, pattern: pattern, body: annotate_block(arm.body, asc), guard: g });
   }
-  return ast.StmtMatch { ...m, scrutinee: annotate_expr(m.scrutinee, s), arms: narms };
+  return ast.StmtMatch { ...m, scrutinee: scrutinee.e, arms: narms };
 }
 
 function annotate_var_init(v: ast.StmtVar, s: Scope): Typed {

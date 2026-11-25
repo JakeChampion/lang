@@ -15,7 +15,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
-| MP3 | Yes | No | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. |
+| MP3 | Yes | Partial | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. The encoder writes MPEG-1 constant-bitrate long-block frames. |
 | MP1 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer I raw streams, all six sample rates and four channel modes, with protected-frame CRC checks. |
 | MP2 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and ADTS with or without CRC protection, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
@@ -548,6 +548,34 @@ MPEG-1 shares synthesis scratch across both granules in a frame. The decoder kee
 Frame decode still allocates bounded scratch arrays. It is not an allocation-free audio callback.
 The frame API does not scan damaged input for synchronization.
 
+## Native MP3 encoding
+
+`std/audio/mp3/encoder` encodes normalized `f32` PCM as MPEG-1 Layer III frames at a constant bitrate.
+It accepts 32000, 44100 and 48000 Hz, one or two channels, and the MPEG-1 bitrates from 32 to 320 kbit/s.
+`encode` codes a complete input. `encoder` creates bounded state, and `push` appends each complete frame to an output buffer.
+The state keeps less than one frame of PCM. `finish` codes the remaining PCM and the silence that flushes the codec delay.
+
+The encoder uses the ISO 11172-3 analysis filterbank and the long-block MDCT.
+The window comes from public-domain PDMP3 through `scripts/gen-mp3-window.py`.
+The Huffman codes come from the decoder trees of `std/audio/mp3/tables`, so the encoder and the decoder share one source.
+For each granule, a binary search selects the smallest global gain whose code fits the granule's bits.
+The table and region selection compares the exact bit cost of each region split.
+
+This is a first encoder with a limited scope:
+
+- No psychoacoustic model, scalefactors, or short blocks. The quantization noise follows the spectrum, and a transient can spread before its attack.
+- No bit reservoir. Each frame holds its own main data. The granules of one frame share its bytes.
+- Two channels are independent left and right channels. No mid-side or intensity stereo.
+- No Xing, Info, or ID3 tag. A raw decode starts with `encoder.DELAY` (1057) samples of delay in each channel.
+
+`tests/stdlib/mp3_encoder_test.fern` decodes each supported rate with `std/audio/mp3`.
+It checks the frame headers, the frame sizes, the signal-to-noise ratio of two tones, and the bit counts of the Huffman plan.
+`scripts/check-mp3-encoder-interop` decodes the same streams with FFmpeg 6.1. The two decoders agree to better than 120 dB.
+
+On x86-64, 30 seconds of 44.1 kHz stereo at 128 kbit/s encode in 1.3 s.
+FFmpeg 6.1 takes 0.5 s with libmp3lame and 0.24 s with libshine for the same input.
+No quality or speed lead is claimed. The remaining encoder work is in #14688.
+
 ## Sequential MP3 input
 
 `std/audio/mp3/input` accepts a borrowed `Reader` or a bounded source callback.
@@ -991,8 +1019,12 @@ scripts/bench-mp3
 # Requires cc and libopus. Compares Opus voice encode and decode with libopus.
 scripts/bench-opus
 
+# Requires FFmpeg. Decodes native MP3 encoder output with FFmpeg and std/audio/mp3.
+scripts/check-mp3-encoder-interop
+
 # Offline table checks use the exact pinned source file.
 python3 scripts/gen-mp3-tables.py --check --source /path/to/minimp3.h
+python3 scripts/gen-mp3-window.py --check --source /path/to/pdmp3.c
 python3 -m unittest discover -s scripts -p test_gen_mp3_tables.py
 
 # AAC reference packets and complete decoded PCM use FFmpeg.
@@ -1127,7 +1159,7 @@ Each line names the issue that owns the work.
 - AAC: HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: decode timeline gaps, composition offsets, and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
 - ALAC: native ARM64 and Android measurements, and ARM64 Android qualification ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
-- Encoders: MP3, AAC, and Vorbis have no encoder, the Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
+- Encoders: AAC and Vorbis have no encoder. The MP3 encoder has no psychoacoustic model, short blocks, bit reservoir, joint stereo, or gapless tag. The Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
 - Conformance: independent corpora and malformed-stream qualification for each decoder ([#14520](https://github.com/JakeChampion/lang/issues/14520)).
 - Performance: reference baselines ([#14515](https://github.com/JakeChampion/lang/issues/14515)) and the measured CPU and allocation gaps ([#14516](https://github.com/JakeChampion/lang/issues/14516), [#16437](https://github.com/JakeChampion/lang/issues/16437)).
 - Android: the playback and measurement harness, with physical-device memory, power, thermal, and sustained-playback measurements ([#14514](https://github.com/JakeChampion/lang/issues/14514)).

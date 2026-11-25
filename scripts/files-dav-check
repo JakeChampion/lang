@@ -8,7 +8,8 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 fern=${1:-$root/bin/fern}
-port=${FILES_DAV_PORT:-44480}
+# Below the Linux ephemeral range, so a client socket cannot hold the port.
+port=${FILES_DAV_PORT:-24480}
 user=fernfiles
 password=live-check-1
 

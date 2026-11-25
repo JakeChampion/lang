@@ -443,101 +443,39 @@ pub function (c: AtomicReferenceClass) set(e: usize, self: AtomicReference, a0: 
 // The struct of IDs of each class of this module.
 pub struct Classes { context: ContextClass, class_loader: ClassLoaderClass, class: ClassClass, speech_recognizer: SpeechRecognizerClass, recognition_listener: RecognitionListenerClass, intent: IntentClass, bundle: BundleClass, array_list: ArrayListClass, atomic_reference: AtomicReferenceClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let context = match (context_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let class_loader = match (class_loader_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      return Err(err);
-    },
-  };
-  let class = match (class_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      return Err(err);
-    },
-  };
-  let speech_recognizer = match (speech_recognizer_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      return Err(err);
-    },
-  };
-  let recognition_listener = match (recognition_listener_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      speech_recognizer.release(e);
-      return Err(err);
-    },
-  };
-  let intent = match (intent_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      speech_recognizer.release(e);
-      recognition_listener.release(e);
-      return Err(err);
-    },
-  };
-  let bundle = match (bundle_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      speech_recognizer.release(e);
-      recognition_listener.release(e);
-      intent.release(e);
-      return Err(err);
-    },
-  };
-  let array_list = match (array_list_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      speech_recognizer.release(e);
-      recognition_listener.release(e);
-      intent.release(e);
-      bundle.release(e);
-      return Err(err);
-    },
-  };
-  let atomic_reference = match (atomic_reference_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      context.release(e);
-      class_loader.release(e);
-      class.release(e);
-      speech_recognizer.release(e);
-      recognition_listener.release(e);
-      intent.release(e);
-      bundle.release(e);
-      array_list.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let context = deleted_on_error(e, context_class(e), made)?;
+  made = made.append(context.class);
+  let class_loader = deleted_on_error(e, class_loader_class(e), made)?;
+  made = made.append(class_loader.class);
+  let class = deleted_on_error(e, class_class(e), made)?;
+  made = made.append(class.class);
+  let speech_recognizer = deleted_on_error(e, speech_recognizer_class(e), made)?;
+  made = made.append(speech_recognizer.class);
+  let recognition_listener = deleted_on_error(e, recognition_listener_class(e), made)?;
+  made = made.append(recognition_listener.class);
+  let intent = deleted_on_error(e, intent_class(e), made)?;
+  made = made.append(intent.class);
+  let bundle = deleted_on_error(e, bundle_class(e), made)?;
+  made = made.append(bundle.class);
+  let array_list = deleted_on_error(e, array_list_class(e), made)?;
+  made = made.append(array_list.class);
+  let atomic_reference = deleted_on_error(e, atomic_reference_class(e), made)?;
   return Ok(Classes { context: context, class_loader: class_loader, class: class, speech_recognizer: speech_recognizer, recognition_listener: recognition_listener, intent: intent, bundle: bundle, array_list: array_list, atomic_reference: atomic_reference });
 }
 

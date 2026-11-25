@@ -331,6 +331,38 @@ func TestWasmSanitizeReportsSlackWrite(t *testing.T) {
 	}
 }
 
+// A 13-byte block written at byte OFFSET. Bytes 13 to 15 are the rounding of
+// the request to 8 bytes.
+const sanWasmRoundingSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(13);
+    __store_u8(p + OFFSET, 7);
+    __free(p, 13);
+  }
+  print("survived");
+  return 0;
+}`
+
+// A raw release checks the bytes of the last word past the request, as the
+// native release does.
+func TestWasmSanitizeReportsRoundingWrite(t *testing.T) {
+	const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
+	for _, offset := range []string{"13", "15"} {
+		stdout, stderr, code := runSanitizeWasm(t, strings.Replace(sanWasmRoundingSrc, "OFFSET", offset, 1), "FERN_SANITIZE=1")
+		if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, report) || strings.Contains(stdout, "survived") {
+			t.Errorf("write at %s: exit=%d, want %d with the report\nstdout: %s\nstderr: %s", offset, code, e2eharness.ExitSanitizer, stdout, stderr)
+		}
+	}
+	stdout, stderr, code := runSanitizeWasm(t, strings.Replace(sanWasmRoundingSrc, "OFFSET", "12", 1), "FERN_SANITIZE=1")
+	if code != 0 || !strings.Contains(stdout, "survived") || strings.Contains(stderr, "fern-sanitizer:") {
+		t.Errorf("last byte of the request: exit=%d, want a clean run\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	stdout, stderr, code = runSanitizeWasm(t, strings.Replace(sanWasmRoundingSrc, "OFFSET", "13", 1))
+	if code != 0 || !strings.Contains(stdout, "survived") {
+		t.Errorf("release build: exit=%d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+}
+
 // A 64-byte block that is never released, written at byte OFFSET.
 const sanWasmLeakedRedzoneSrc = `function main(): i32 {
   unsafe {

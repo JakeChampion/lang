@@ -9624,6 +9624,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
       all = sign_tested_reads(caller_ranges(all, names, mod));
     }
   }
+  all = niche_options(all);
   if (opts.shape_slot) {
     all = with_shape_slots(all);
   }
@@ -9839,6 +9840,20 @@ function byte_copy_loops(all: Produced[]): Produced[] {
       let r = sembytecopy.rewrite(p.func, contracts);
       if (r.changed && optbisect.allowed_by(sw, "byte-copy", p.func.graph.name)) {
         p = Produced { ...p, func: r.func, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+function niche_options(all: Produced[]): Produced[] {
+  let out: Produced[] = [];
+  for p in all {
+    if (p.ok && !p.template && !p.bodyless) {
+      let n = semoption.niche(p.func);
+      if (n.changed) {
+        p = Produced { ...p, func: n.f, analysis: None };
       }
     }
     out = out.append(p);
@@ -10283,6 +10298,12 @@ function prune_dead_constructions(all: Produced[], stack_phi_joins: boolean): Pr
       let th = semthread.thread(p.func, stack_phi_joins);
       if (th.changed > 0 && optbisect.allowed_by(sw, "thread", name)) {
         p = Produced { ...p, func: th.f, analysis: None };
+        // A threaded branch can leave a part read off its construction, not off a phi.
+        if (optbisect.allowed_by(sw, "split-threaded", name)) {
+          if let Some(split) = seminline.split_reads(p.func, p.modes) {
+            p = Produced { ...p, func: split, analysis: None };
+          }
+        }
       }
       let ho = semhoist.hoist(p.func);
       if (ho.moved > 0 && optbisect.allowed_by(sw, "hoist", name)) {

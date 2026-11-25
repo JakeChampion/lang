@@ -2617,6 +2617,15 @@ function value_type(e: Edits, v: i32): typeinfo.Type {
   return e.added[v - e.base];
 }
 
+// Some(f) when f reads a part of a construction off the construction itself.
+pub function split_reads(f0: ssasem.Func, modes: i32[]): Option[ssasem.Func] {
+  let r = split_constructions(f0, modes);
+  if (r.changed) {
+    return Some(r.f);
+  }
+  return None;
+}
+
 function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
   if (!reads_parts(f0.graph)) {
     return Rewrite { f: f0, changed: false };

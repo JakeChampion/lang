@@ -256,6 +256,7 @@ mp2_shard3 21
 mp2_smoke 21
 mp3 25
 mp3_bits 13
+mp3_encoder 30
 mp3_file 136
 mp3_file_smoke 39
 mp3_freeformat 430

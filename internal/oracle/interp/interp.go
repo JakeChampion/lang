@@ -79,8 +79,12 @@ const wholeBox = -1
 // len(e) is the array's length and cap(e) its storage. A box made by
 // appending into spare capacity shares that storage with the box it grew
 // from until one of them is filled in place (privatise).
+//
+// A box of bytes keeps its elements in bytes instead, one byte each, and e is
+// nil. Elems widens it to e for good. Such a box never shares its storage.
 type arrBox struct {
 	e      []Value
+	bytes  []byte
 	st     *arrStore
 	owners int32
 	held   int // the most elements the box has had; later slots are not its own
@@ -102,13 +106,71 @@ func boxOf(e []Value) Array {
 
 func newArray(n int) Array { return boxOf(make([]Value, n)) }
 
+func bytesBox(b []byte) Array {
+	return Array{b: &arrBox{bytes: b, st: &arrStore{boxes: 1}, held: len(b), maps: mapsNone}, n: wholeBox}
+}
+
 func arrayOf(vs ...Value) Array { return boxOf(vs) }
 
 func (a Array) Elems() []Value {
+	if a.b.bytes != nil {
+		a.b.widen()
+	}
 	if a.n == wholeBox {
 		return a.b.e
 	}
 	return a.b.e[a.off : a.off+a.n : a.off+a.n]
+}
+
+// Len is len(a.Elems()), and keeps a box of bytes narrow.
+func (a Array) Len() int {
+	switch {
+	case a.n != wholeBox:
+		return a.n
+	case a.b.bytes != nil:
+		return len(a.b.bytes)
+	}
+	return len(a.b.e)
+}
+
+// At is a.Elems()[k], and keeps a box of bytes narrow.
+func (a Array) At(k int) Value {
+	if a.b.bytes != nil {
+		return Number(a.b.bytes[a.off+k])
+	}
+	return a.Elems()[k]
+}
+
+// Bytes gives the elements of a box of bytes. The slice shares the storage.
+func (a Array) Bytes() ([]byte, bool) {
+	if a.b.bytes == nil {
+		return nil, false
+	}
+	if a.n == wholeBox {
+		return a.b.bytes, true
+	}
+	return a.b.bytes[a.off : a.off+a.n : a.off+a.n], true
+}
+
+func (b *arrBox) widen() {
+	e := make([]Value, len(b.bytes), cap(b.bytes))
+	for k, c := range b.bytes[:cap(b.bytes)] {
+		e[:cap(e)][k] = Number(c)
+	}
+	b.e, b.bytes = e, nil
+}
+
+// asBytes gives vs as bytes when each one is a Number from 0 to 255.
+func asBytes(vs []Value) ([]byte, bool) {
+	out := make([]byte, len(vs))
+	for k, v := range vs {
+		n, ok := v.(Number)
+		if !ok || n < 0 || n > 255 {
+			return nil, false
+		}
+		out[k] = byte(n)
+	}
+	return out, true
 }
 
 func (a Array) view(lo, hi int) Array {
@@ -262,10 +324,13 @@ func appendedTail(old, next Value) ([]Value, bool) {
 	if !ok {
 		return nil, false
 	}
-	ne, oe := na.Elems(), oa.Elems()
-	if oa.b.st != na.b.st || len(ne) < len(oe) {
+	if oa.b.st != na.b.st || na.Len() < oa.Len() {
 		return nil, false
 	}
+	if na.b.bytes != nil {
+		return nil, true
+	}
+	ne, oe := na.Elems(), oa.Elems()
 	return ne[len(oe):], true
 }
 
@@ -770,8 +835,8 @@ func New() *Interp {
 	i.Builtins["__method_Map_keys"] = &Builtin{Fn: builtinMapKeys}
 	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
 	i.Builtins["__alloc_len"] = &Builtin{Fn: builtinAllocLength}
-	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
-	i.Builtins["__alloc_u8_uninit"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8_uninit", Number(0))}
+	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", nil)}
+	i.Builtins["__alloc_u8_uninit"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8_uninit", nil)}
 	i.Builtins["__arr_set_len"] = &Builtin{Fn: builtinArrSetLen}
 	registerRawMemory(i)
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
@@ -2566,6 +2631,19 @@ func builtinArrSetLen(_ *Interp, args []Value) (Value, error) {
 		return nil, fmt.Errorf("__arr_set_len: length %d below zero", int64(n))
 	}
 	b := a.b
+	if b.bytes != nil {
+		if int(n) > cap(b.bytes) {
+			grown := make([]byte, n)
+			copy(grown, b.bytes[:b.held])
+			b.bytes = grown
+		}
+		if int(n) > b.held {
+			clear(b.bytes[b.held:n])
+			b.held = int(n)
+		}
+		b.bytes = b.bytes[:n]
+		return Void{}, nil
+	}
 	if int(n) <= b.held {
 		b.e = b.e[:n]
 		return Void{}, nil
@@ -2591,8 +2669,8 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__method_Array_set: index must be number, got %T", args[1])
 	}
-	if idx < 0 || int(idx) >= len(arr.Elems()) {
-		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.Elems()))
+	if idx < 0 || int(idx) >= arr.Len() {
+		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), arr.Len())
 	}
 	return ip.writeElems(arr, int(idx), args[2])
 }
@@ -2609,8 +2687,22 @@ func (ip *Interp) writeElems(arr Array, at int, vs ...Value) (Array, error) {
 			return Array{}, err
 		}
 		if inPlace {
+			if dst, ok := arr.Bytes(); ok {
+				if src, ok := asBytes(vs); ok {
+					copy(dst[at:], src)
+					return arr, nil
+				}
+			}
 			copy(arr.Elems()[at:], vs)
 			return arr, nil
+		}
+	}
+	if old, ok := arr.Bytes(); ok {
+		if src, ok := asBytes(vs); ok {
+			b := append([]byte(nil), old...)
+			copy(b[at:], src)
+			ip.arraySetCopies += len(b)
+			return bytesBox(b), nil
 		}
 	}
 	out := newArray(len(arr.Elems()))
@@ -2669,6 +2761,9 @@ func coversBuffer(v Value, st *arrStore, depth int) int {
 	case Array:
 		if x.b.st == st {
 			n++
+		}
+		if x.b.bytes != nil {
+			return n
 		}
 		for _, e := range x.Elems() {
 			n += coversBuffer(e, st, depth+1)
@@ -2950,6 +3045,7 @@ func builtinAllocLength(_ *Interp, args []Value) (Value, error) {
 	return n, nil
 }
 
+// A nil zero fills the array with zero bytes, one byte each.
 func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, error) {
 	return func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 1 {
@@ -2961,6 +3057,9 @@ func builtinAllocFilled(name string, zero Value) func(*Interp, []Value) (Value, 
 		}
 		if n < 0 {
 			return nil, &Abort{CauseAllocSize, fmt.Sprintf("%s length %d", name, int64(n))}
+		}
+		if zero == nil {
+			return bytesBox(make([]byte, n)), nil
 		}
 		out := newArray(int(n))
 		for i := range out.Elems() {
@@ -2977,6 +3076,9 @@ func builtinStringFromBytes(_ *Interp, args []Value) (Value, error) {
 	arr, ok := args[0].(Array)
 	if !ok {
 		return nil, fmt.Errorf("string_from_bytes_unchecked: arg must be array, got %T", args[0])
+	}
+	if b, ok := arr.Bytes(); ok {
+		return String(b), nil
 	}
 	buf := make([]byte, len(arr.Elems()))
 	for i, v := range arr.Elems() {
@@ -3002,8 +3104,8 @@ func builtinStringFromBytesRange(in *Interp, args []Value) (Value, error) {
 	if !fok || !eok {
 		return nil, fmt.Errorf("string_from_bytes_range_unchecked: bounds must be numbers")
 	}
-	if from < 0 || int(end) > len(arr.Elems()) || from > end {
-		return nil, fmt.Errorf("string_from_bytes_range_unchecked: range [%d:%d] out of bounds for length %d", int(from), int(end), len(arr.Elems()))
+	if from < 0 || int(end) > arr.Len() || from > end {
+		return nil, fmt.Errorf("string_from_bytes_range_unchecked: range [%d:%d] out of bounds for length %d", int(from), int(end), arr.Len())
 	}
 	return builtinStringFromBytes(in, []Value{arr.view(int(from), int(end))})
 }
@@ -5477,7 +5579,7 @@ func builtinLen(_ *Interp, args []Value) (Value, error) {
 	case String:
 		return Number(int64(len(string(v)))), nil
 	case Array:
-		return Number(int64(len(v.Elems()))), nil
+		return Number(int64(v.Len())), nil
 	}
 	return nil, fmt.Errorf(".len(): expected string, array, or slice receiver, got %T", args[0])
 }
@@ -7267,8 +7369,13 @@ func valuesEqual(a, b Value) bool {
 		return ok && ax.V == bx.V && ax.Width == bx.Width
 	case Array:
 		bx, ok := b.(Array)
-		if !ok || len(ax.Elems()) != len(bx.Elems()) {
+		if !ok || ax.Len() != bx.Len() {
 			return false
+		}
+		if ab, ok := ax.Bytes(); ok {
+			if bb, ok := bx.Bytes(); ok {
+				return bytes.Equal(ab, bb)
+			}
 		}
 		for i := range ax.Elems() {
 			if !valuesEqual(ax.Elems()[i], bx.Elems()[i]) {
@@ -7546,10 +7653,10 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		if !ok {
 			return nil, fmt.Errorf("indexing non-array %T", arrV)
 		}
-		if idx < 0 || idx >= Number(len(arr.Elems())) {
-			return nil, indexAbort(CauseArrOOB, indexText(idx, x.IdxUnsigned), len(arr.Elems()))
+		if idx < 0 || idx >= Number(arr.Len()) {
+			return nil, indexAbort(CauseArrOOB, indexText(idx, x.IdxUnsigned), arr.Len())
 		}
-		return arr.Elems()[idx], nil
+		return arr.At(int(idx)), nil
 	case *ast.SliceExpr:
 		srcV, err := i.evalExpr(x.Source, env)
 		if err != nil {
@@ -7560,7 +7667,7 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		var slen int64
 		switch v := srcV.(type) {
 		case Array:
-			slen = int64(len(v.Elems()))
+			slen = int64(v.Len())
 		case String:
 			slen = int64(len(v))
 		default:
@@ -8591,7 +8698,10 @@ func builtinArrayTruncate(ip *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("__method_Array_truncate: length must be number, got %T", args[1])
 	}
-	keep := max(0, min(int(n), len(arr.Elems())))
+	keep := max(0, min(int(n), arr.Len()))
+	if b, ok := arr.Bytes(); ok {
+		return bytesBox(append([]byte(nil), b[:keep]...)), nil
+	}
 	out := newArray(keep)
 	copy(out.Elems(), arr.Elems()[:keep])
 	return out, nil

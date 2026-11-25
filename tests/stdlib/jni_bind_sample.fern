@@ -371,32 +371,27 @@ pub function (c: SampleClass) total(e: usize, a0: jni.Object, a1: f64, a2: jni.O
 // The struct of IDs of each class of this module.
 pub struct Classes { point: PointClass, shape: ShapeClass, sample: SampleClass }
 
+// `r`, after the deletion of the classes `made` if `r` is an error.
+function deleted_on_error[T](e: usize, own r: Result[T, jni.JavaError], made: usize[]): Result[T, jni.JavaError] {
+  if let Err(_) = r {
+    for class in made {
+      jni.delete_global_ref(e, class);
+    }
+  }
+  return r;
+}
+
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
 // class, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function classes(e: usize): Result[Classes, jni.JavaError] {
-  let point = match (point_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      return Err(err);
-    },
-  };
-  let shape = match (shape_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      point.release(e);
-      return Err(err);
-    },
-  };
-  let sample = match (sample_class(e)) {
-    Ok(c) => c,
-    Err(err) => {
-      point.release(e);
-      shape.release(e);
-      return Err(err);
-    },
-  };
+  let made: usize[] = [];
+  let point = deleted_on_error(e, point_class(e), made)?;
+  made = made.append(point.class);
+  let shape = deleted_on_error(e, shape_class(e), made)?;
+  made = made.append(shape.class);
+  let sample = deleted_on_error(e, sample_class(e), made)?;
   return Ok(Classes { point: point, shape: shape, sample: sample });
 }
 

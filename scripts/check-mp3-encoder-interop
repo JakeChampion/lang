@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Encode tones with the native Fern MP3 encoder, then decode them with FFmpeg and std/audio/mp3."""
+import math
+import os
+from pathlib import Path
+import struct
+import subprocess
+import tempfile
+
+root = Path(__file__).resolve().parent.parent
+os.chdir(root)
+compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
+target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
+DELAY = 1057
+CONFIGS = [(44100, 1, 128), (44100, 2, 128), (48000, 1, 64), (48000, 2, 320), (32000, 2, 32), (32000, 1, 320)]
+
+
+def floats(data):
+    return struct.unpack('<' + 'f' * (len(data) // 4), data)
+
+
+def tone(frames, channels, rate):
+    out = []
+    for t in range(frames):
+        for ch in range(channels):
+            f = 440.0 if ch == 0 else 1000.0
+            out.append(0.5 * math.sin(2 * math.pi * f * t / rate) + 0.2 * math.sin(2 * math.pi * 3000 * t / rate))
+    return out
+
+
+def ratio(signal, noise):
+    return 10 * math.log10(signal / noise) if noise > 0 else math.inf
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = Path(tmp)
+    encode = tmp / 'encode'
+    decode = tmp / 'decode'
+    subprocess.run([compiler, '-target', target, '-o', str(encode), 'scripts/audio-reference/mp3-encode.fern', 'internal/stdlib'], check=True)
+    subprocess.run([compiler, '-target', target, '-o', str(decode), 'scripts/audio-reference/mp3.fern', 'internal/stdlib'], check=True)
+    failed = False
+    for rate, channels, bitrate in CONFIGS:
+        frames = rate
+        pcm = tone(frames, channels, rate)
+        raw = tmp / 'in.f32'
+        raw.write_bytes(struct.pack('<' + 'f' * len(pcm), *pcm))
+        mp3 = tmp / 'out.mp3'
+        subprocess.run([str(encode), str(raw), str(mp3), str(rate), str(channels), str(bitrate)], check=True)
+        theirs = floats(subprocess.run(['ffmpeg', '-v', 'error', '-i', str(mp3), '-f', 'f32le', '-'], check=True, capture_output=True).stdout)
+        ours_path = tmp / 'ours.f32'
+        subprocess.run([str(decode), str(mp3), str(ours_path)], check=True, capture_output=True)
+        ours = floats(ours_path.read_bytes())
+        if len(ours) != len(theirs):
+            print(f'{rate} Hz {channels} ch {bitrate} kbit/s: FFmpeg gives {len(theirs)} samples, std/audio/mp3 gives {len(ours)}')
+            failed = True
+            continue
+        agree = ratio(sum(v * v for v in theirs), sum((a - b) ** 2 for a, b in zip(ours, theirs)))
+        end = (frames - 600) * channels
+        signal = sum(v * v for v in pcm[1000 * channels:end])
+        noise = sum((pcm[i] - theirs[i + DELAY * channels]) ** 2 for i in range(1000 * channels, end))
+        snr = ratio(signal, noise)
+        print(f'{rate} Hz {channels} ch {bitrate:3} kbit/s: SNR {snr:6.1f} dB, decoders agree to {agree:6.1f} dB')
+        if agree < 100:
+            failed = True
+    raise SystemExit(1 if failed else 0)

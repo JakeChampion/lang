@@ -8853,8 +8853,8 @@ function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // The allocation side of the redzone. The block takes its class and six
-// words more. The two words after the class and the words of the class past
-// the request get the poison. The four words after them link the block into
+// words more. The two words after the class and the words of the class from
+// the word that holds the end of the request get the poison. The four words after them link the block into
 // __fern_san_live: the next and the previous link, the words of the class and
 // the words of the request. The census counts the request alone. It uses x0
 // to x4, as the allocator does.
@@ -8866,7 +8866,7 @@ function emit_san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    adrp x2, __fern_lc_alloc_bytes\n    add x2, x2, :lo12:__fern_lc_alloc_bytes\n    ldr x4, [x2]\n    sub x4, x4, x3, lsl #3\n    str x4, [x2]\n");
   }
   s = s.write("    add x3, x0, x1, lsl #3\n" + rc_poison_into("w2") + "    orr x2, x2, x2, lsl #32\n    str x2, [x3]\n    str x2, [x3, #8]\n");
-  s = s.write("    ldr x4, [sp, #16]\n    add x4, x4, #7\n    lsr x4, x4, #3\n.Lsan_slack_fill:\n    cmp x4, x1\n    b.hs .Lsan_slack_filled\n");
+  s = s.write("    ldr x4, [sp, #16]\n    lsr x4, x4, #3\n.Lsan_slack_fill:\n    cmp x4, x1\n    b.hs .Lsan_slack_filled\n");
   s = s.write("    str x2, [x0, x4, lsl #3]\n    add x4, x4, #1\n    b .Lsan_slack_fill\n.Lsan_slack_filled:\n");
   s = s.write("    add x3, x0, x1, lsl #3\n    add x3, x3, #16\n    str x1, [x3, #16]\n    ldr x4, [sp, #16]\n    add x4, x4, #7\n    lsr x4, x4, #3\n    str x4, [x3, #24]\n");
   s = s.write("    adrp x2, __fern_san_live\n    add x2, x2, :lo12:__fern_san_live\n    ldr x4, [x2]\n    str x4, [x3]\n    str xzr, [x3, #8]\n");
@@ -8892,6 +8892,15 @@ function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lsan_unlink_first:\n    adrp x12, __fern_san_live\n    add x12, x12, :lo12:__fern_san_live\n    str x10, [x12]\n");
   s = s.write(".Lsan_unlink_back:\n    cbz x10, .Lsan_unlink_done\n    str x11, [x10, #8]\n.Lsan_unlink_done:\n");
   return s.write("    add x1, x1, #6\n    ldr x30, [sp], #16\n.Lquar_redzone_ok:\n");
+}
+
+// A raw release: x0 is the block and x1 the request in bytes. The bytes of
+// the last word past the request hold the poison from the allocation, so a
+// byte that lost it was written past the end of the block. It uses x9 to x11.
+function san_rounding_check(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    ands x9, x1, #7\n    b.eq .Lrawfree_round_ok\n    and x10, x1, #-8\n    ldr x10, [x0, x10]\n" + rc_poison_into("w11") + "    orr x11, x11, x11, lsl #32\n");
+  s = s.write("    eor x10, x10, x11\n    lsl x9, x9, #3\n    mov x11, #-1\n    lsl x11, x11, x9\n    tst x10, x11\n    b.ne __fern_san_abort_hbo\n.Lrawfree_round_ok:\n");
+  return s;
 }
 
 // The name of each shape id, its length and the words of its box
@@ -11703,6 +11712,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write("    adrp x9, __fern_heap_base\n    add x9, x9, :lo12:__fern_heap_base\n    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lrawfree_bad\n");
   s = s.write("    adrp x9, __fern_heap_end\n    add x9, x9, :lo12:__fern_heap_end\n    ldr x9, [x9]\n    cmp x0, x9\n    b.hs .Lrawfree_bad\n");
+  if (san_redzone_on(s)) {
+    s = san_rounding_check(s);
+  }
   s = s.write("    add x1, x1, #7\n");
   s = s.write("    lsr x5, x1, #3\n");
   s = s.write("    cbz x5, .Lrawfree_done\n");

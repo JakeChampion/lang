@@ -323,6 +323,9 @@ function owned_columns(t: typeinfo.Type): boolean {
 }
 
 function release_name(t: typeinfo.Type, f: ssasem.Func): string {
+  if (ssasem.niche_option(f, t)) {
+    return release_name(ssasem.niche_payload(f, t), f);
+  }
   if (counted_elems_view(t, f)) {
     return release_helper_name(t);
   }
@@ -359,6 +362,9 @@ function unlinked_map(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 function release(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
+  if (ssasem.niche_option(f, t)) {
+    return release(r, slot, ssasem.niche_payload(f, t), f);
+  }
   if (unlinked_map(t, f)) {
     return helper(r, slot, release_name(t, f));
   }
@@ -381,6 +387,14 @@ function release(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, f: ssa
 @noinline
 function emit(own r: irtables.LowerState, op: ir.Op): irtables.LowerState {
   return irtables.LowerState { ...r, ops: r.ops.append(op) };
+}
+
+// Opens a block that runs when the value in `slot` is not null.
+function when_set(own r: irtables.LowerState, slot: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(slot));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("ne", ir.width_ptr(), false));
+  return emit(r, ir.op_if(0));
 }
 
 function shell_release(own r: irtables.LowerState): irtables.LowerState {
@@ -672,6 +686,9 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (semtypes.is_handle(t)) {
     return false;
   }
+  if (ssasem.niche_option(f, t)) {
+    return has_children(ssasem.niche_payload(f, t), f);
+  }
 
   if let typeinfo.TypeFunc(_) = t {
     return env_records(f, t).len() > 0;
@@ -845,6 +862,9 @@ function drop_children(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, 
   if (unlinked_map(t, f)) {
     return r;
   }
+  if (ssasem.niche_option(f, t)) {
+    return drop_children(r, slot, ssasem.niche_payload(f, t), scratch, f);
+  }
 
   if let typeinfo.TypeFunc(_) = t {
     r = drop_captures(r, slot, t, f);
@@ -894,6 +914,9 @@ function childless_shapes(t: typeinfo.Type, f: ssasem.Func): string[] {
 }
 
 function drop_value(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  if (ssasem.niche_option(f, t)) {
+    return drop_value(r, slot, ssasem.niche_payload(f, t), scratch, f);
+  }
   if (outlined_release(t, f)) {
     r = helper(r, slot, release_helper_name(t));
     return if (ssasem.box_shape(t) && ssasem.counted(f, t)) { mark_release(r, ir.box_release) } else { r };
@@ -906,6 +929,9 @@ function outlined_release(t: typeinfo.Type, f: ssasem.Func): boolean {
 }
 
 function drop_value_inline(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  if (ssasem.niche_option(f, t)) {
+    return drop_value_inline(r, slot, ssasem.niche_payload(f, t), scratch, f);
+  }
   if (has_children(t, f)) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, aligned_unique_of(t, f));
@@ -1606,6 +1632,9 @@ function drop_secret_fields(own r: irtables.LowerState, slot: i32, fields: semre
 // walk is inside. A named type that is already on it goes to its wipe helper,
 // which calls itself for each deeper level.
 function drop_secret_child(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func, path: typeinfo.Type[]): irtables.LowerState {
+  if (ssasem.niche_option(f, t)) {
+    return drop_secret_child(r, slot, ssasem.niche_payload(f, t), scratch, f, path);
+  }
   let shift = ssasem.elem_shift(t);
   if (shift >= 0) {
     r = wipe_sole(r, slot, shift);
@@ -2783,7 +2812,9 @@ function one_helper(t: typeinfo.Type, f: ssasem.Func): irtables.LowerState {
     r = drop_record_fields(r, 0, ssasem.record_fields(t, f), 1, f, semtypes.is_env(t), semtypes.env_takes(t), ssasem.secret_record(t, f));
   }
   if let typeinfo.TypeUnion(_) = t {
-    if (self_tail_enum(t, f)) {
+    if (ssasem.niche_option(f, t)) {
+      r = drop_children(r, 0, t, 1, f);
+    } else if (self_tail_enum(t, f)) {
       r = drop_variant_chain(r, t, f, false);
     } else {
       r = drop_variant_fields(r, 0, t, 1, f);
@@ -3557,6 +3588,15 @@ function send_option(own r: irtables.LowerState, t: typeinfo.Type, f: ssasem.Fun
   r = reserve(r, tag + 1);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(out));
+  if (ssasem.niche_option(f, t)) {
+    r = when_set(r, 0);
+    r = emit(r, ir.op_load_local(0));
+    r = send_part(r, ssasem.niche_payload(f, t), f);
+    r = emit(r, ir.op_store_local(out));
+    r = emit(r, ir.op_end());
+    r = emit(r, ir.op_load_local(out));
+    return emit(r, ir.op_return());
+  }
   r = emit(r, ir.op_load_local(0));
   r = emit(r, ir.op_opt_tag());
   r = emit(r, ir.op_store_local(tag));
@@ -4576,6 +4616,10 @@ function routed_lookup(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
     if (cell_column(v)) {
       return map_entry(r, f, ins, "__map_get_cell_impl", "__map_get_cell_keyed_impl", 2);
     }
+    if (ssasem.niche_option(f, f.values[ins.result])) {
+      r = mark_got_value(map_entry(r, f, ins, "__map_get_ref_impl", "__map_get_ref_keyed_impl", 2), v);
+      return if (counted) { emit(r, ir.op_call_direct("__fern_rc_inc", 1)) } else { r };
+    }
     r = map_entry(r, f, ins, "__map_get_impl", "__map_get_keyed_impl", 2);
     if (!counted) {
       return r;
@@ -5017,6 +5061,9 @@ function wide_or_float(t: typeinfo.Type): boolean {
 }
 
 function option_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, whole: typeinfo.Type): irtables.LowerState {
+  if (ssasem.niche_option(f, whole)) {
+    return niche_site(r, ins);
+  }
   let tag = variant_tag(f, whole, ins.str);
   if (ins.kind_tag == ssasem.variant_new()) {
     if (ins.args.len() == 0) {
@@ -5038,6 +5085,19 @@ function option_site(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst,
     return emit(r, ir.op_opt_payload_w(64, !ssasem.is_float(got)));
   }
   return emit(r, marked_load(ir.op_opt_payload(), got, f));
+}
+
+// A value of a `ssasem.niche_option` is its payload or null. `Some(x)` and
+// its payload read are identity ops (`semoption.niche`).
+function niche_site(own r: irtables.LowerState, ins: ssa.SInst): irtables.LowerState {
+  if (ins.kind_tag == ssasem.variant_new() && ins.args.len() == 0) {
+    return emit(r, ir.op_const_i32(0));
+  }
+  if (ins.kind_tag != ssasem.variant_is()) {
+    return irtables.LowerState { ...r, ok: false, why: "the niche option op " + ins.str + " is not an identity op" };
+  }
+  r = emit(r, ir.op_const_i32(0));
+  return emit(r, ir.op_bin(if (ins.str == "Some") { "ne" } else { "eq" }, ir.width_ptr(), false));
 }
 
 function zero(t: typeinfo.Type): ir.Op {

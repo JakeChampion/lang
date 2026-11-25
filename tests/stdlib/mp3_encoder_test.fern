@@ -1,0 +1,266 @@
+import "std/audio/mp3";
+import "std/audio/mp3/codes";
+import "std/audio/mp3/encoder";
+import "std/audio/mp3/header";
+import "std/audio/pcm";
+import "std/f32";
+import "std/f64";
+import "std/test";
+
+// Each table with no escape codes values up to its capacity. Tables 16 and 24 code 0 through 15.
+function complete(c: codes.Codes, table: i32, size: i32): boolean {
+  let sum = 0i64;
+  let count = 0;
+  for at in 0..256 {
+    let n = c.length[table * 256 + at];
+    if (n != 0) {
+      if (at / 16 >= size || at % 16 >= size || n > 19) {
+        return false;
+      }
+      sum += 1i64 << (19 - n) as i64;
+      count += 1;
+    }
+  }
+  return count == size * size && sum == 1i64 << 19i64;
+}
+
+// Each code table is a complete prefix code, and some codes match ISO 11172-3 Table B.7.
+// fern-lint: allow cyclomatic-complexity
+function code_tables(): test.TestOutcome {
+  let c = codes.codes();
+  let tables = [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 15, 16, 24];
+  let sizes = [2, 3, 3, 4, 4, 6, 6, 6, 8, 8, 8, 16, 16, 16, 16];
+  for i in 0..tables.len() {
+    if (!complete(c, tables[i], sizes[i])) {
+      return test.fail("table " + tables[i].to_string() + " is not a complete prefix code");
+    }
+  }
+  let quads = 0i64;
+  for q in 0..16 {
+    quads += 1i64 << (6 - c.quad_length[q]) as i64;
+  }
+  if (quads != 64i64) {
+    return test.fail("count1 table A is not a complete prefix code");
+  }
+  // Table 1: (0, 0) is 1, (0, 1) is 001, (1, 0) is 01 and (1, 1) is 000.
+  if (c.code[256] != 1 || c.length[256] != 1 || c.code[257] != 1 || c.length[257] != 3 || c.code[272] != 1 || c.length[272] != 2 || c.code[273] != 0 || c.length[273] != 3) {
+    return test.fail("table 1 codes");
+  }
+  // Count1 table A: (0, 0, 0, 0) is 1 and (0, 0, 0, 1) is 0101.
+  if (c.quad_code[0] != 1 || c.quad_length[0] != 1 || c.quad_code[1] != 5 || c.quad_length[1] != 4) {
+    return test.fail("count1 table A codes");
+  }
+  return test.pass();
+}
+
+function next_random(state: i64): i64 {
+  return state * 6364136223846793005i64 + 1442695040888963407i64 & 9223372036854775807i64;
+}
+
+// The cost that `plan` gives is the exact count of bits that `write` adds.
+// fern-lint: allow cyclomatic-complexity
+function plan_cost(): test.TestOutcome {
+  let c = codes.codes();
+  let bounds = [0, 4, 8, 12, 16, 20, 24, 30, 36, 44, 52, 62, 74, 90, 110, 134, 162, 196, 238, 288, 342, 418, 576];
+  let state = 12345i64;
+  for round in 0..24 {
+    let top = [1, 2, 3, 5, 7, 15, 16, 30, 100, 1000, 8206, 40][round % 12];
+    let end = [576, 400, 288, 100, 30, 2][round % 6];
+    let ix: i32[] = [];
+    let negative: boolean[] = [];
+    for i in 0..576 {
+      state = next_random(state);
+      let limit = if (i < end / 2) { top } else if (i < end) { 1 } else { 0 };
+      let v = ((state >> 33i64) % ((limit + 1) as i64)) as i32;
+      ix = ix.append(if ((state >> 20i64) % 3i64 == 0i64) { 0 } else { v });
+      negative = negative.append((state >> 13i64) % 2i64 == 0i64);
+    }
+    let p = codes.plan(c, ix, bounds);
+    let b = codes.write(c, codes.Bits { data: __alloc_u8(65536), pos: 0 }, ix, negative, p, bounds);
+    if (b.pos != p.bits) {
+      return test.fail("round " + round.to_string() + ": plan " + p.bits.to_string() + " bits, write " + b.pos.to_string());
+    }
+    if (p.big > 288 || p.count1_end > 576 || p.region0 > 15 || p.region1 > 7) {
+      return test.fail("side info field range");
+    }
+  }
+  return test.pass();
+}
+
+function tone(frames: i32, channels: i32, rate: i32): f32[] {
+  let samples: f32[] = [];
+  for t in 0..frames {
+    for ch in 0..channels {
+      let f = if (ch == 0) { 440.0 } else { 1000.0 };
+      let phase = 6.283185307179586 * (t as f64) / (rate as f64);
+      samples = samples.append((0.5 * (f * phase).sin() + 0.2 * (3000.0 * phase).sin()) as f32);
+    }
+  }
+  return samples;
+}
+
+// The signal-to-noise ratio in dB of `channel` of the decoded output, from frame 1000 to one granule before the end.
+function snr(input: [f32], output: [f32], channels: i32, channel: i32): f64 {
+  let signal = 0.0;
+  let noise = 0.0;
+  let frames = input.len() / channels;
+  for t in 1000..frames - 600 {
+    let a = input[t * channels + channel] as f64;
+    let b = output[(t + encoder.DELAY) * channels + channel] as f64;
+    signal += a * a;
+    noise += (a - b) * (a - b);
+  }
+  return 10.0 * (signal / noise).log10();
+}
+
+// Each frame header is valid, and the padding gives the mean frame size of the bitrate.
+function frames_valid(bytes: [u8], rate: i32, channels: i32, bitrate: i32, count: i32): boolean {
+  let at = 0;
+  let total = 0i64;
+  for _ in 0..count {
+    let Ok(h) = header.parse(bytes, at) else {
+      return false;
+    };
+    if (h.version != 1 || h.sample_rate != rate || h.channels != channels || h.bitrate != bitrate || h.crc) {
+      return false;
+    }
+    at += h.bytes;
+    total += h.bytes as i64;
+  }
+  let exact = 144000i64 * (bitrate as i64) * (count as i64);
+  return at == bytes.len() && total * (rate as i64) <= exact && exact - total * (rate as i64) < rate as i64;
+}
+
+// Decode with std/audio/mp3 and compare each channel with the input.
+// fern-lint: allow cyclomatic-complexity
+function round_trip(): test.TestOutcome {
+  let configs = [[44100, 1, 128, 60], [44100, 2, 128, 50], [48000, 1, 64, 52], [32000, 2, 32, 38], [48000, 2, 320, 70], [32000, 1, 320, 64]];
+  for config in configs {
+    let rate = config[0];
+    let channels = config[1];
+    let bitrate = config[2];
+    let input = tone(3000, channels, rate);
+    let bytes = match (encoder.encode(input, rate, channels, encoder.Options { bitrate: bitrate }, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("encode: " + e.message()); } };
+    let count = (3000 + encoder.DELAY + 1151) / 1152;
+    if (!frames_valid(bytes, rate, channels, bitrate, count)) {
+      return test.fail("frame headers at " + rate.to_string() + " Hz and " + bitrate.to_string() + " kbit/s");
+    }
+    let decoded = match (mp3.decode_raw(bytes, pcm.default_limits())) { Ok(value) => value, Err(e) => { return test.fail("decode: " + e.message()); } };
+    if (decoded.sample_rate != rate || decoded.channels != channels || decoded.samples.len() != count * 1152 * channels) {
+      return test.fail("decoded format or length");
+    }
+    for ch in 0..channels {
+      let value = snr(input, decoded.samples, channels, ch);
+      if (value < config[3] as f64) {
+        return test.fail(rate.to_string() + " Hz, " + channels.to_string() + " channels, " + bitrate.to_string() + " kbit/s: SNR " + value.to_string() + " dB");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Uneven chunks give the same stream as one call of encode, and the state keeps less than one frame.
+function writer_chunks(): test.TestOutcome {
+  let input = tone(5000, 2, 44100);
+  let options = encoder.Options { bitrate: 96 };
+  let Ok(whole) = encoder.encode(input, 44100, 2, options, pcm.default_limits()) else {
+    return test.fail("encode");
+  };
+  let Ok(e) = encoder.encoder(44100, 2, options) else {
+    return test.fail("encoder");
+  };
+  let output: u8[] = [];
+  let at = 0;
+  let sizes = [2, 1000, 2302, 4, 2304, 1150];
+  let i = 0;
+  while (at < input.len()) {
+    let n = if (at + sizes[i % sizes.len()] > input.len()) { input.len() - at } else { sizes[i % sizes.len()] };
+    let Ok((next, out)) = e.push(input[at:at + n], output, pcm.default_limits()) else {
+      return test.fail("push");
+    };
+    e = next;
+    output = out;
+    at += n;
+    i += 1;
+  }
+  let Ok((_, done)) = e.finish(output, pcm.default_limits()) else {
+    return test.fail("finish");
+  };
+  return if (same(whole, done)) { test.pass() } else { test.fail("chunked stream differs") };
+}
+
+function silence(): test.TestOutcome {
+  let input: f32[] = [];
+  for _ in 0..2000 {
+    input = input.append(0.0f32);
+  }
+  let Ok(bytes) = encoder.encode(input, 48000, 1, encoder.default_options(), pcm.default_limits()) else {
+    return test.fail("encode");
+  };
+  let Ok(decoded) = mp3.decode_raw(bytes, pcm.default_limits()) else {
+    return test.fail("decode");
+  };
+  for s in decoded.samples {
+    if (s != 0.0f32) {
+      return test.fail("silence decodes to a nonzero sample");
+    }
+  }
+  return test.pass();
+}
+
+function error_is(r: Result[u8[], pcm.AudioError], want: pcm.AudioError): boolean {
+  return match (r) { Ok(_) => false, Err(e) => e.message() == want.message() };
+}
+
+function rejects(): test.TestOutcome {
+  let input = tone(100, 2, 44100);
+  let limits = pcm.default_limits();
+  for bitrate in [0, 8, 33, 384] {
+    if (!error_is(encoder.encode(input, 44100, 2, encoder.Options { bitrate: bitrate }, limits), pcm.Unsupported)) {
+      return test.fail("bitrate " + bitrate.to_string());
+    }
+  }
+  for rate in [22050, 24000, 96000] {
+    if (!error_is(encoder.encode(input, rate, 2, encoder.default_options(), limits), pcm.Unsupported)) {
+      return test.fail("sample rate " + rate.to_string());
+    }
+  }
+  if (!error_is(encoder.encode(input, 44100, 3, encoder.default_options(), limits), pcm.Unsupported)) {
+    return test.fail("three channels");
+  }
+  if (!error_is(encoder.encode(input[:199], 44100, 2, encoder.default_options(), limits), pcm.Sample)) {
+    return test.fail("a partial interleaved frame");
+  }
+  for bad in [0.0f32 / 0.0f32, 1.5f32, -1.0001f32] {
+    if (!error_is(encoder.encode(input.with(7, bad), 44100, 2, encoder.default_options(), limits), pcm.Sample)) {
+      return test.fail("sample out of range");
+    }
+  }
+  if (!error_is(encoder.encode(input, 44100, 2, encoder.default_options(), pcm.Limits { ...limits, max_input_bytes: 500 }), pcm.Limit)) {
+    return test.fail("output limit");
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.new("MPEG-1 Layer III encoding");
+  runner = runner.it("complete prefix codes from the decoder trees", code_tables);
+  runner = runner.it("planned cost equals written bits", plan_cost);
+  runner = runner.it("round trip through std/audio/mp3", round_trip);
+  runner = runner.it("chunked push equals one encode", writer_chunks);
+  runner = runner.it("silence stays silent", silence);
+  runner = runner.it("unsupported formats and invalid samples", rejects);
+  return runner.finish();
+}
