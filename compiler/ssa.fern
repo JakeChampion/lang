@@ -4369,6 +4369,76 @@ pub function use_counts(f: SFunc): i32[] {
   return uses;
 }
 
+// For each value, whether its one read is a non-phi instruction of the block
+// that defines it. Such a value is dead after that instruction. A carry that
+// takes the flags of the sum before it (`roles` from `carry_roles`) reads no
+// operand.
+pub function dies_where_defined(f: SFunc, uses: i32[], roles: i32[]): boolean[] {
+  let def = __alloc_i32(f.nvals);
+  let reads = uses;
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        def = def.with(ins.result, bi + 1);
+      }
+      if (flag_carry(roles, ins)) {
+        for a in ins.args {
+          if (a >= 0 && a < f.nvals) {
+            reads = reads.with(a, reads[a] - 1);
+          }
+        }
+      }
+    }
+  }
+  let out = __alloc_bool(f.nvals);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.kind_tag == PHI || flag_carry(roles, ins)) {
+        continue;
+      }
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals && reads[a] == 1 && def[a] == bi + 1) {
+          out = out.with(a, true);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// For each value, whether the code right after the instruction that defines it
+// can read it: the next instruction that is not an immediate reads it, or no
+// such instruction follows in the block, so the terminator or a successor does.
+pub function read_by_next(f: SFunc, imm: Imms): boolean[] {
+  let out = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    let n = blk.insts.len();
+    for i in 0..n {
+      let r = blk.insts[i].result;
+      if (r < 0 || r >= f.nvals) {
+        continue;
+      }
+      let read = true;
+      for j in i + 1..n {
+        let next = blk.insts[j];
+        if (next.result < 0 || next.result >= f.nvals || !imm.is_imm[next.result]) {
+          read = util.has_i32(next.args, r);
+          break;
+        }
+      }
+      if (read) {
+        out = out.with(r, true);
+      }
+    }
+  }
+  return out;
+}
+
+function flag_carry(roles: i32[], ins: SInst): boolean {
+  let role = carry_role(roles, ins);
+  return ins.kind_tag == CARRY && (role == CARRY_FLAG || role == CARRY_KEEP);
+}
+
 function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
   let only: i32 = -1;
   for i in 0..ins.args.len() {
