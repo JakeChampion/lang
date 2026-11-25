@@ -855,7 +855,7 @@ function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.Nam
 
 function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
   let k = ins.kind_tag;
-  if (k == ssasem.call() && raw_word_read(ins.str)) {
+  if (k == ssasem.call() && ssabytes.raw_word_read(ins.str)) {
     return true;
   }
   // Pair operations transfer their input dependency without a new memory read.
@@ -1817,7 +1817,7 @@ function leaf_element_read(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.kind_tag == ssasem.length()) {
     return ins.args.len() == 1;
   }
-  return ins.kind_tag == ssasem.call() && word_read(ins.str);
+  return ins.kind_tag == ssasem.call() && ssabytes.word_read(ins.str);
 }
 
 // A byte kernel reads its arguments and returns a count, an index or a hash.
@@ -1867,19 +1867,6 @@ function read_view_param(f: ssasem.Func, ins: ssa.SInst): boolean {
 
 function term_reads(t: ssa.STerm, v: i32): boolean {
   return t.value == v && t.kind_tag == ssa.TERM_RET || t.cond == v && t.kind_tag == ssa.TERM_BRIF;
-}
-
-function raw_word_read(name: string): boolean {
-  return name == "__raw_arr_ptr" || name == "__raw_data" || raw_load(name);
-}
-
-function raw_load(name: string): boolean {
-  return name == "__load_u16" || name == "__load_i32" || name == "__load_i64";
-}
-
-function word_read(name: string): boolean {
-  return ssabytes.word_bytes(name) > 0 || name == ssabytes.swap_name(4) || name == ssabytes.swap_name(8)
-    || raw_word_read(name);
 }
 
 // Scalar fields carry no ownership units. Keep finalizers out of this rule.
