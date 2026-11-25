@@ -1,0 +1,49 @@
+// spec: RH-27
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function take(own slot: Cell[Handle]): Handle {
+  return slot.get();
+}
+
+function set_fresh(): i32 {
+  let slot = cell_new(Handle { fd: 1 });
+  slot.set(Handle { fd: 2 });
+  return take(slot).close();
+}
+
+function set_owned(own h: Handle): i32 {
+  let slot = cell_new(Handle { fd: 1 });
+  slot.set(h);
+  return take(slot).close();
+}
+
+function set_local(): i32 {
+  let h = Handle { fd: 4 };
+  let slot = cell_new(Handle { fd: 1 });
+  slot.set(h);
+  return take(slot).close();
+}
+
+function set_returned(own h: Handle): Cell[Handle] {
+  let slot = cell_new(Handle { fd: 1 });
+  slot.set(h);
+  return slot;
+}
+
+function set_data(values: i32[]): i32 {
+  let slot = cell_new([1]);
+  slot.set(values);
+  return slot.get()[0];
+}
+
+function main(): i32 {
+  let total = set_fresh() + set_owned(Handle { fd: 3 }) + set_local();
+  total = total + take(set_returned(Handle { fd: 5 })).close();
+  total = total + set_data([6]);
+  print(total);
+  return 0;
+}

@@ -161,9 +161,15 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 				return false
 			case *ast.Var:
 				changed = mark(s.Name, s.Init) || changed
+				changed = markCellSource(mark, s.Name, s.Type, s.Init, b.locals) || changed
 			case *ast.Assign:
 				if id, ok := s.Target.(*ast.Ident); ok {
 					changed = mark(id.Name, s.Value) || changed
+				}
+			case *ast.Call:
+				// A cell that stores a borrowed payload lends it to each holder of the cell.
+				if cell, payload := cellSet(s); cell != "" {
+					changed = mark(cell, payload) || changed
 				}
 			case *ast.ForEach:
 				changed = markForEach(mark, s, b.values) || changed
@@ -179,6 +185,29 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 		})
 	}
 	return b.locals
+}
+
+// cellSet is the cell name and the payload of a call `cell.set(payload)`.
+func cellSet(x *ast.Call) (string, ast.Expr) {
+	id, ok := x.Callee.(*ast.Ident)
+	if !ok || id.Name != "__method_Cell_set" || x.Method == nil || len(x.Args) != 2 {
+		return "", nil
+	}
+	if recv, ok := x.Args[0].(*ast.Ident); ok {
+		return recv.Name, x.Args[1]
+	}
+	return "", nil
+}
+
+// markCellSource marks the source of `let name = source` when both name one
+// cell and name already borrows: a payload set through either name is in both.
+func markCellSource(mark func(string, ast.Expr) bool, name string, t ast.Type, init ast.Expr, locals map[string]bool) bool {
+	st, isStruct := t.(ast.StructType)
+	src, isIdent := init.(*ast.Ident)
+	if !isStruct || st.Name != "Cell" || !isIdent || !locals[name] {
+		return false
+	}
+	return mark(src.Name, &ast.Ident{P: src.P, Name: name})
 }
 
 // Scalar array elements are copies. Other elements retain the iterable borrow.
