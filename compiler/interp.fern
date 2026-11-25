@@ -1270,6 +1270,9 @@ function (e: Env) static_type_of(x: ast.Expr): string {
       }
       return struct_field_type(e.type_decls, ot, fa.field);
     },
+    ast.ExprStructLit(st) => {
+      return st.written;
+    },
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(id) => {
@@ -1321,6 +1324,9 @@ function matched_method_result(fd: parser.FuncDecl, recv_ty: string): Option[str
   if (parser.plain_type_spelling(fd.receiver_type)) {
     return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
   }
+  if (!generic_head_may_match(fd.receiver_type, recv_ty)) {
+    return None;
+  }
   let d = parser.parse_type_ref(fd.receiver_type);
   if (d.args.len() == 0) {
     return if (fd.receiver_type == recv_ty) { Some(fd.ret_type) } else { None };
@@ -1336,6 +1342,26 @@ function matched_method_result(fd: parser.FuncDecl, recv_ty: string): Option[str
     cts = cts.append(parser.render_type_ref(r.args[i]));
   }
   return Some(parser.subst_ty(fd.ret_type, vars, cts));
+}
+
+// False when `decl` is a named generic `B[...]` and `actual` does not start
+// with `B[`, so that no parse can give them the same base.
+function generic_head_may_match(decl: string, actual: string): boolean {
+  let n = decl.len();
+  for i in 0..decl.len() {
+    let c = decl[i];
+    if (c == b'[') {
+      n = i;
+      break;
+    }
+    if (!(c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.')) {
+      return true;
+    }
+  }
+  if (n == 0 || n == decl.len()) {
+    return true;
+  }
+  return actual.len() > n && actual[n] == b'[' && slice_unchecked(actual, 0, n) == slice_unchecked(decl, 0, n);
 }
 
 function (e: Env) binds_name(name: string): boolean {
@@ -7342,12 +7368,28 @@ function method_target(funcs: Funcs, name: string, recv: Value, recv_type: strin
   return fallback;
 }
 
+// A method of the static union type wins over a method of the member that the
+// value holds, as in compiled code. -1 when the static type has no such method.
+function static_union_method(funcs: Funcs, name: string, recv: Value, recv_static: string, aliases: parser.TypeAlias[]): i32 {
+  if (recv_static.len() == 0) {
+    return -1;
+  }
+  let owner = runtime_receiver_name(recv_static);
+  if (owner == dispatch_type_name(recv) || !variant_of_enum(recv, owner, aliases)) {
+    return -1;
+  }
+  return receiver_method_index(funcs, name, owner);
+}
+
 function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
   }
-  let at = method_target(funcs, name, recv, recv_type, aliases);
+  let at = static_union_method(funcs, name, recv, recv_static, aliases);
+  if (at < 0) {
+    at = method_target(funcs, name, recv, recv_type, aliases);
+  }
   if (at >= 0) {
     let fd = funcs.decls[at];
     if (args.len() != fd.params.len()) {
