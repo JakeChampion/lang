@@ -253,6 +253,43 @@ function main(): i32 {
 }
 
 var dropOrderCases = []dropCase{
+	{"inlined-finalizer-reads-counted-field", `import "core/mem";
+struct Res { id: i32, name: string }
+impl mem.Drop for Res {
+    function drop(self: Self): void { print(self.name); }
+}
+@noinline function make(n: i32): Res {
+    return Res { id: n, name: "r" + n.to_string() };
+}
+function main(): i32 {
+    for i in 0..3 {
+        let a = make(i);
+        let k = a.id;
+    }
+    return 0;
+}
+`, "r0\nr1\nr2"},
+	{"inlined-finalizer-reads-counted-field-on-one-branch", `import "core/mem";
+struct Res { id: i32, name: string, tag: string }
+impl mem.Drop for Res {
+    function drop(self: Self): void {
+        if (self.id > 0) {
+            print(self.name);
+        }
+        print(self.tag + self.name);
+    }
+}
+@noinline function make(n: i32): Res {
+    return Res { id: n, name: "r" + n.to_string(), tag: "t" };
+}
+function main(): i32 {
+    for i in 0..2 {
+        let a = make(i);
+        let k = a.id;
+    }
+    return 0;
+}
+`, "tr0\nr1\ntr1"},
 	{"inlined-producer-read-by-field", `import "std/string";
 import "std/i32";
 import "core/mem";

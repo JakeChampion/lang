@@ -18,8 +18,7 @@ func TestSelfHostLoopInvariantHoist(t *testing.T) {
 import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  let k = if (kind == ssa.BINARY) { ir.kind_id(op) } else { 0 };
-  return ssa.SInst { ir_kind: k, kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(op) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 function graph(side_entry: boolean): ssa.SFunc {
@@ -86,7 +85,7 @@ function main(): i32 {
   }
   let copy = f.blocks[0].insts[2];
   if (copy.kind_tag != ssa.CONST_INT || copy.imm != 8 || !same(f.blocks[0].insts[3].args, [0, 14])) {
-    return 5;
+    return 7;
   }
   let side = ssa.hoisted_invariants(graph(true)).f;
   if (side.blocks[0].insts.len() != 2 || side.blocks[2].insts.len() != 11) {
