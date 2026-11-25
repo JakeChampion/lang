@@ -17,7 +17,7 @@ function same(a: i32[], b: i32[]): boolean {
 
 function main(): i32 {
   let blocks: ssa.SBlock[] = [
-    ssa.SBlock { id: 90, insts: [ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: "+" }], preds: [47], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } },
+    ssa.SBlock { id: 90, insts: [ssa.SInst { ir_kind: 0, kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: "+" }], preds: [47], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } },
     ssa.SBlock { id: 47, insts: [], preds: [], term: ssa.STerm { kind_tag: 2, cond: 0, target: 90, t: 0, f: 0, value: -1 } },
   ];
   let f = ssa.SFunc { name: "fixture", nparams: 2, nvals: 4, blocks: blocks, entry: 47, takes_env: false };

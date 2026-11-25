@@ -24,7 +24,7 @@ function main(): i32 {
     print(ssa.term_name(9));
     return 10;
   }
-  let one = ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 0, str: "1" };
+  let one = ssa.SInst { ir_kind: 0, kind_tag: 1, result: 0, args: [], imm: 0, str: "1" };
   let enter = ssa.SBlock { id: 0, preds: [], insts: [one], term: ssa.STerm { kind_tag: 2, cond: 0, target: 1, t: 0, f: 0, value: 0 } };
   let leave = ssa.SBlock { id: 1, preds: [0], insts: [], term: ssa.STerm { kind_tag: 4, cond: 0, target: 0, t: 0, f: 0, value: 0 } };
   let f = ssa.SFunc { name: "jump", nparams: 0, nvals: 1, entry: 0, takes_env: false, blocks: [enter, leave] };

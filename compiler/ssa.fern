@@ -6376,8 +6376,8 @@ pub function form(f: SFunc): Formed {
     trimmed = pruned.repl;
   }
   let dominated = merge_duplicates(g, true);
-  g = hoisted_invariants(sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(dominated.f))))));
-  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed), dominated.repl) };
+  let hoisted = hoisted_invariants(sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(dominated.f))))));
+  return Formed { f: hoisted.f, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed), dominated.repl), hoisted.repl) };
 }
 
 // A byte or a half of a loaded word is a narrow load. A variant keeps its
@@ -7553,9 +7553,10 @@ function position_preds(f: SFunc, at: i32[]): i32[][] {
 // A pure integer computation in a loop whose operands do not change in the
 // loop moves to the block before the loop, so it runs one time. The loop must
 // have one way in. Inner loops go first, so a value can leave several loops.
-pub function hoisted_invariants(f: SFunc): SFunc {
+// Computations that become equal in one block merge.
+pub function hoisted_invariants(f: SFunc): Formed {
   if (f.blocks.len() < 3) {
-    return f;
+    return Formed { f: f, repl: [] };
   }
   let at = block_positions(f);
   let latch = furthest_latches(f, at);
@@ -7599,9 +7600,9 @@ pub function hoisted_invariants(f: SFunc): SFunc {
     h -= 1;
   }
   if (!changed) {
-    return f;
+    return Formed { f: f, repl: [] };
   }
-  return SFunc { ...f, blocks: blocks };
+  return merge_duplicates(SFunc { ...f, blocks: blocks }, false);
 }
 
 // The values of the loop from `h` to `last` that can move in front of it: a

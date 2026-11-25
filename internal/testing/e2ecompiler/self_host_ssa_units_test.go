@@ -81,7 +81,7 @@ graph = ssa.SFunc { name: "call", nparams: 2, nvals: 4, entry: 7, takes_env: fal
 const unitString = `
 params = [st]; types = [st, st, st]; result = st; modes = [2];
 graph = ssa.SFunc { name: "concat", nparams: 1, nvals: 3, entry: 7, takes_env: false, blocks: [
-    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { kind_tag: 5, result: 1, args: [], imm: 0, str: "a" }, ssa.SInst { kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: "+" }], term: ret(0) }
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), ssa.SInst { ir_kind: 0, kind_tag: 5, result: 1, args: [], imm: 0, str: "a" }, ssa.SInst { ir_kind: 0, kind_tag: 9, result: 2, args: [0, 1], imm: 0, str: "+" }], term: ret(0) }
 ] };
 `
 
