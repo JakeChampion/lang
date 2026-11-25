@@ -220,9 +220,10 @@ and 32 in GNU diff:
   have.
 - A sign extension after each `i32` addition, 4 instructions. An `i32`
   wraps, so the extension is necessary. GNU diff uses 64-bit offsets.
-- Loads and stores of loop values in stack slots, about 6 instructions.
-  A value holds its register over its whole interval, also where it is
-  dead. Interference that follows liveness can remove more of these
+- Loads and stores of loop values in stack slots, about 8 instructions.
+  Short temporaries take the saved registers of these values, and the
+  allocator does not split an interval. Thus each value stays in its slot
+  over its full interval, and the register is empty after the temporary
   (#15650).
 
 These are causes in the compiler and its array layout, and this work does
