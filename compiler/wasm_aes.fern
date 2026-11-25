@@ -523,6 +523,7 @@ function gcm_func(): string {
     + "    (if (local.get $seal) (then (memory.copy (local.get $tag) (local.get $s) (i32.const 16)))\n"
     + "      (else (i32.store8 (local.get $tag) (i64.ne (i64.or (i64.xor (i64.load (local.get $tag)) (i64.load (local.get $s)))\n"
     + "        (i64.xor (i64.load offset=8 (local.get $tag)) (i64.load offset=8 (local.get $s)))) (i64.const 0)))))\n"
+    + "    (memory.fill (local.get $j0) (i32.const 0) (i32.load (local.get $tmp)))\n"
     + "    (drop (call $__fern_arr_dec (local.get $tmp)))\n    (local.get $buf))\n"
     + "  (func $__fern_aes_gcm_seal_into " + params + " (result i32)\n    (call $__fern_aes_gcm_into " + args + " (i32.const 1)))\n"
     + "  (func $__fern_aes_gcm_open_into " + params + " (result i32)\n    (call $__fern_aes_gcm_into " + args + " (i32.const 0)))\n";

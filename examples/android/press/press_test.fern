@@ -2,6 +2,7 @@
 // device of the tests decodes with std/jpeg, and keeps the files that the
 // app saves and shares in cells. With PRESS_UI_PNG set to a directory, the
 // tests write the screens there as PNG files.
+import "std/android";
 import "std/android/draw";
 import "std/android/fonts";
 import "std/android/testkit";
@@ -369,6 +370,21 @@ function test_back(): test.TestOutcome {
   return test.assert_eq(closed.to_string() + " " + sim.finished(sim.back(s)).to_string(), "true true");
 }
 
+// A phone of 1080 by 2400 pixels, with a status bar of 24 dp and a
+// navigation bar of 48 dp, turns to landscape. From Android 15 the insets
+// of the new orientation come before the new size. The buttons stay in the
+// free part of the screen, and Save still saves.
+function test_turn(): test.TestOutcome {
+  let f = fake();
+  let s = sim.event(opened(f), android.Insets(0, 66, 0, 132));
+  s = sim.resized(sim.event(s, android.Insets(0, 66, 132, 0)), 2400, 1080);
+  saved(s, "landscape");
+  let (x, y) = sim.place_of(s, "Save", 0).unwrap_or((-1, -1));
+  let free = x > 0 && x < 2400 - 132 && y > 66 && y < 1080;
+  s = sim.tap(s, "Save");
+  return test.assert_eq(free.to_string() + " " + f.files.get().len().to_string(), "true 1");
+}
+
 function test_dark(): test.TestOutcome {
   let f = fake();
   let s = sim.themed(opened(f), true);
@@ -414,6 +430,7 @@ function main(): i32 {
   r = r.it("the split shows the original and the output", test_split);
   r = r.it("save and share give the file to the phone", test_save_and_share);
   r = r.it("the back key closes the image, then the app", test_back);
+  r = r.it("the screen turns to landscape", test_turn);
   r = r.it("the dark theme", test_dark);
   r = r.it("the texts of sizes and names", test_texts);
   r = r.it("the work on pixels", test_pixels);

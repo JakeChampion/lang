@@ -117,6 +117,36 @@ function test_property_aliases(): test.TestOutcome {
   return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / error");
 }
 
+// A class of Grapheme_Cluster_Break or Word_Break needs the name of its
+// property. Other is not a value, and "ex" is Extend in one property and
+// ExtendNumLet in the other, as in regex-syntax.
+function test_break_classes(): test.TestOutcome {
+  let got = [
+    all("\\p{gcb=ri}+", "a🇬🇧b"), all("\\p{Grapheme_Cluster_Break=Prepend}", "x\u{0600}"), all("\\p{gcb=LV}", "가각"),
+    all("\\p{gcb=cn}", "a\tb\r\n"), all("\\p{gcb=ex}", "e\u{200C}_"), all("\\p{wb=ex}", "e\u{200C}_"),
+    all("\\p{wb=Extend}", "e\u{200C}_"), all("\\p{wb=le}+", "ab, cd1"), all("\\p{wb:hl}", "aא"),
+    all("\\p{wb!=nu}+", "a12b3"), all("\\P{Word_Break=ALetter}+", "ab, cd"), all("\\p{wb=mid num let}", "a.b"),
+    all("[\\p{wb=ka}\\p{wb=dq}]+", "a\"ア\"b"), all("(?i)\\p{wb=sq}", "a'b"),
+  ];
+  return test.assert_eq(got.join(" / "), "🇬🇧 / \u{0600} / 가 / \t / \u{200C} / _ / \u{200C} / ab|cd / א / 12|3 / ,  / . / \"ア\" / '");
+}
+
+function test_break_class_errors(): test.TestOutcome {
+  let got = [
+    reported("\\p{gcb=Other}"), reported("\\p{wb=xx}"), reported("\\p{gcb=eb}"), reported("\\p{wb=gaz}"),
+    reported("\\p{gcb=le}"), reported("\\p{ALetter}"),
+  ];
+  let value = "error: Unicode property value not found";
+  return test.assert_eq_array(got, [
+    "regex parse error:\n    \\p{gcb=Other}\n    ^^^^^^^^^^^^^\n" + value,
+    "regex parse error:\n    \\p{wb=xx}\n    ^^^^^^^^^\n" + value,
+    "regex parse error:\n    \\p{gcb=eb}\n    ^^^^^^^^^^\n" + value,
+    "regex parse error:\n    \\p{wb=gaz}\n    ^^^^^^^^^^\n" + value,
+    "regex parse error:\n    \\p{gcb=le}\n    ^^^^^^^^^^\n" + value,
+    "regex parse error:\n    \\p{ALetter}\n    ^^^^^^^^^^^\nerror: Unicode property not found",
+  ]);
+}
+
 // White space in a count, a `--` after an item of a set, `\\b{2}` and the
 // digits of `\\x{...}` under `(?x)`, as regex-syntax reads them.
 function test_spaces_and_repetitions(): test.TestOutcome {
@@ -419,6 +449,8 @@ function main(): i32 {
   r = r.it("full and lazy tables", test_full_and_lazy_tables);
   r = r.it("many columns stay lazy", test_many_columns_stay_lazy);
   r = r.it("property aliases", test_property_aliases);
+  r = r.it("break classes", test_break_classes);
+  r = r.it("break class errors", test_break_class_errors);
   r = r.it("spaces and repetitions", test_spaces_and_repetitions);
   r = r.it("syntax errors", test_syntax_errors);
   return r.finish();

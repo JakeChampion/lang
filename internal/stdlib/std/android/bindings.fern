@@ -15,20 +15,21 @@ pub function (x: Context) object(): jni.Object {
 pub const CONTEXT_AUDIO_SERVICE: string = "audio";
 
 // The class android.content.Context and the IDs of its members.
-pub struct ContextClass { class: usize, id_check_self_permission: usize, id_get_cache_dir: usize, id_get_content_resolver: usize, id_get_files_dir: usize, id_get_no_backup_files_dir: usize, id_get_resources: usize, id_get_system_service: usize }
+pub struct ContextClass { class: usize, id_check_self_permission: usize, id_get_application_context: usize, id_get_cache_dir: usize, id_get_content_resolver: usize, id_get_files_dir: usize, id_get_no_backup_files_dir: usize, id_get_resources: usize, id_get_system_service: usize }
 
 // One lookup for each member, and each one can fail.
 // fern-lint: allow cyclomatic-complexity
 pub function context_class(e: usize): Result[ContextClass, jni.JavaError] {
   let class = jni.global_class(e, "android/content/Context")?;
   let id_check_self_permission = jni.checked_id(e, class, jni.get_method_id(e, class, "checkSelfPermission", "(Ljava/lang/String;)I"))?;
+  let id_get_application_context = jni.checked_id(e, class, jni.get_method_id(e, class, "getApplicationContext", "()Landroid/content/Context;"))?;
   let id_get_cache_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getCacheDir", "()Ljava/io/File;"))?;
   let id_get_content_resolver = jni.checked_id(e, class, jni.get_method_id(e, class, "getContentResolver", "()Landroid/content/ContentResolver;"))?;
   let id_get_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getFilesDir", "()Ljava/io/File;"))?;
   let id_get_no_backup_files_dir = jni.checked_id(e, class, jni.get_method_id(e, class, "getNoBackupFilesDir", "()Ljava/io/File;"))?;
   let id_get_resources = jni.checked_id(e, class, jni.get_method_id(e, class, "getResources", "()Landroid/content/res/Resources;"))?;
   let id_get_system_service = jni.checked_id(e, class, jni.get_method_id(e, class, "getSystemService", "(Ljava/lang/String;)Ljava/lang/Object;"))?;
-  return Ok(ContextClass { class: class, id_check_self_permission: id_check_self_permission, id_get_cache_dir: id_get_cache_dir, id_get_content_resolver: id_get_content_resolver, id_get_files_dir: id_get_files_dir, id_get_no_backup_files_dir: id_get_no_backup_files_dir, id_get_resources: id_get_resources, id_get_system_service: id_get_system_service });
+  return Ok(ContextClass { class: class, id_check_self_permission: id_check_self_permission, id_get_application_context: id_get_application_context, id_get_cache_dir: id_get_cache_dir, id_get_content_resolver: id_get_content_resolver, id_get_files_dir: id_get_files_dir, id_get_no_backup_files_dir: id_get_no_backup_files_dir, id_get_resources: id_get_resources, id_get_system_service: id_get_system_service });
 }
 
 // Deletes the reference to the class. Do not use `c` after this call.
@@ -46,6 +47,15 @@ pub function (c: ContextClass) check_self_permission(e: usize, self: Context, a0
   jni.free_buffer(args);
   jni.check(e)?;
   return Ok(got as i32);
+}
+
+// android.content.Context.getApplicationContext()Landroid/content/Context;
+pub function (c: ContextClass) get_application_context(e: usize, self: Context): Result[Context, jni.JavaError] {
+  let args = jni.jvalue_alloc(0);
+  let got = jni.invoke(e, jni.CALL_METHOD + 0, self.ref, c.id_get_application_context, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  return Ok(Context { ref: got });
 }
 
 // android.content.Context.getCacheDir()Ljava/io/File;
@@ -1162,8 +1172,116 @@ pub function (c: InputDeviceClass) release(e: usize): void {
   jni.delete_global_ref(e, c.class);
 }
 
+// A java.lang.System.
+pub struct System { ref: usize }
+
+pub function (x: System) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: System) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class java.lang.System and the IDs of its members.
+pub struct SystemClass { class: usize, id_clear_property: usize, id_get_property: usize, id_set_property: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function system_class(e: usize): Result[SystemClass, jni.JavaError] {
+  let class = jni.global_class(e, "java/lang/System")?;
+  let id_clear_property = jni.checked_id(e, class, jni.get_static_method_id(e, class, "clearProperty", "(Ljava/lang/String;)Ljava/lang/String;"))?;
+  let id_get_property = jni.checked_id(e, class, jni.get_static_method_id(e, class, "getProperty", "(Ljava/lang/String;)Ljava/lang/String;"))?;
+  let id_set_property = jni.checked_id(e, class, jni.get_static_method_id(e, class, "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;"))?;
+  return Ok(SystemClass { class: class, id_clear_property: id_clear_property, id_get_property: id_get_property, id_set_property: id_set_property });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: SystemClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// java.lang.System.clearProperty(Ljava/lang/String;)Ljava/lang/String;
+pub function (c: SystemClass) clear_property(e: usize, a0: string): Result[string, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_clear_property, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// java.lang.System.getProperty(Ljava/lang/String;)Ljava/lang/String;
+pub function (c: SystemClass) get_property(e: usize, a0: string): Result[string, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let args = jni.jvalue_alloc(1);
+  jni.jvalue_set_int(args, 0, s0);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_get_property, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// java.lang.System.setProperty(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+pub function (c: SystemClass) set_property(e: usize, a0: string, a1: string): Result[string, jni.JavaError] {
+  let s0 = jni.checked_string(e, a0)?;
+  defer jni.delete_local_ref(e, s0);
+  let s1 = jni.checked_string(e, a1)?;
+  defer jni.delete_local_ref(e, s1);
+  let args = jni.jvalue_alloc(2);
+  jni.jvalue_set_int(args, 0, s0);
+  jni.jvalue_set_int(args, 1, s1);
+  let got = jni.invoke(e, jni.CALL_STATIC + 0, c.class, c.id_set_property, args);
+  jni.free_buffer(args);
+  jni.check(e)?;
+  let text = jni.string_of(e, got);
+  jni.delete_local_ref(e, got);
+  return Ok(text);
+}
+
+// A android.os.Build.VERSION.
+pub struct Build_VERSION { ref: usize }
+
+pub function (x: Build_VERSION) is_null(): boolean {
+  return x.ref == 0 as usize;
+}
+
+pub function (x: Build_VERSION) object(): jni.Object {
+  return jni.Object { ref: x.ref };
+}
+
+// The class android.os.Build.VERSION and the IDs of its members.
+pub struct Build_VERSIONClass { class: usize, id_sdk_int: usize }
+
+// One lookup for each member, and each one can fail.
+// fern-lint: allow cyclomatic-complexity
+pub function build_version_class(e: usize): Result[Build_VERSIONClass, jni.JavaError] {
+  let class = jni.global_class(e, "android/os/Build$VERSION")?;
+  let id_sdk_int = jni.checked_id(e, class, jni.get_static_field_id(e, class, "SDK_INT", "I"))?;
+  return Ok(Build_VERSIONClass { class: class, id_sdk_int: id_sdk_int });
+}
+
+// Deletes the reference to the class. Do not use `c` after this call.
+pub function (c: Build_VERSIONClass) release(e: usize): void {
+  jni.delete_global_ref(e, c.class);
+}
+
+// android.os.Build.VERSION.SDK_INT
+pub function (c: Build_VERSIONClass) sdk_int(e: usize): Result[i32, jni.JavaError] {
+  let got = jni.invoke(e, jni.GET_STATIC_FIELD + 5, c.class, c.id_sdk_int, 0 as usize);
+  jni.check(e)?;
+  return Ok(got as i32);
+}
+
 // The struct of IDs of each class of this module.
-pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass, window: WindowClass, view: ViewClass, window_manager: WindowManagerClass, window_manager_layout_params: WindowManager_LayoutParamsClass, display: DisplayClass, display_mode: Display_ModeClass, picture_in_picture_params_builder: PictureInPictureParams_BuilderClass, rational: RationalClass, input_device: InputDeviceClass }
+pub struct Classes { context: ContextClass, activity: ActivityClass, file: FileClass, intent: IntentClass, package_manager: PackageManagerClass, key_character_map: KeyCharacterMapClass, settings_system: Settings_SystemClass, audio_manager: AudioManagerClass, time_zone: TimeZoneClass, resources: ResourcesClass, configuration: ConfigurationClass, locale_list: LocaleListClass, window: WindowClass, view: ViewClass, window_manager: WindowManagerClass, window_manager_layout_params: WindowManager_LayoutParamsClass, display: DisplayClass, display_mode: Display_ModeClass, picture_in_picture_params_builder: PictureInPictureParams_BuilderClass, rational: RationalClass, input_device: InputDeviceClass, system: SystemClass, build_version: Build_VERSIONClass }
 
 // Makes the struct of IDs of each class. Call it one time, and call
 // `release` when the app does not call Java again. One lookup for each
@@ -1506,7 +1624,62 @@ pub function classes(e: usize): Result[Classes, jni.JavaError] {
       return Err(err);
     },
   };
-  return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list, window: window, view: view, window_manager: window_manager, window_manager_layout_params: window_manager_layout_params, display: display, display_mode: display_mode, picture_in_picture_params_builder: picture_in_picture_params_builder, rational: rational, input_device: input_device });
+  let system = match (system_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      window_manager_layout_params.release(e);
+      display.release(e);
+      display_mode.release(e);
+      picture_in_picture_params_builder.release(e);
+      rational.release(e);
+      input_device.release(e);
+      return Err(err);
+    },
+  };
+  let build_version = match (build_version_class(e)) {
+    Ok(c) => c,
+    Err(err) => {
+      context.release(e);
+      activity.release(e);
+      file.release(e);
+      intent.release(e);
+      package_manager.release(e);
+      key_character_map.release(e);
+      settings_system.release(e);
+      audio_manager.release(e);
+      time_zone.release(e);
+      resources.release(e);
+      configuration.release(e);
+      locale_list.release(e);
+      window.release(e);
+      view.release(e);
+      window_manager.release(e);
+      window_manager_layout_params.release(e);
+      display.release(e);
+      display_mode.release(e);
+      picture_in_picture_params_builder.release(e);
+      rational.release(e);
+      input_device.release(e);
+      system.release(e);
+      return Err(err);
+    },
+  };
+  return Ok(Classes { context: context, activity: activity, file: file, intent: intent, package_manager: package_manager, key_character_map: key_character_map, settings_system: settings_system, audio_manager: audio_manager, time_zone: time_zone, resources: resources, configuration: configuration, locale_list: locale_list, window: window, view: view, window_manager: window_manager, window_manager_layout_params: window_manager_layout_params, display: display, display_mode: display_mode, picture_in_picture_params_builder: picture_in_picture_params_builder, rational: rational, input_device: input_device, system: system, build_version: build_version });
 }
 
 // Deletes the reference to each class. Do not use `c` after this call.
@@ -1532,4 +1705,6 @@ pub function (c: Classes) release(e: usize): void {
   c.picture_in_picture_params_builder.release(e);
   c.rational.release(e);
   c.input_device.release(e);
+  c.system.release(e);
+  c.build_version.release(e);
 }

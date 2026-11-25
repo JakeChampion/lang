@@ -152,6 +152,29 @@ function main(): i32 {
 	testAccelerationTargets(t, src)
 }
 
+// The literal 2147483648 wraps to the least i32, and its negation is that
+// same value. A table that holds it is static, as each other table is.
+func TestSelfHostStaticTableOfLeastI32(t *testing.T) {
+	src := `const WORDS: i32[] = [-2147483648, -2147483647, 7];
+@noinline fip function word(i: i32): i32 { return WORDS[i]; }
+function main(): i32 {
+  let before: i64 = __heap_alloc_count();
+  let sum: i64 = 0;
+  let i: i32 = 0;
+  while (i < 63) {
+    sum = sum + word(i % 3) as i64;
+    i = i + 1;
+  }
+  if (__heap_alloc_count() != before) { return 1; }
+  if (word(0) != -2147483647 - 1 || word(1) != -2147483647 || word(2) != 7) { return 2; }
+  if (sum != -90194313048) { return 3; }
+  let changed: i32[] = WORDS.with(0, 5);
+  if (changed[0] != 5 || WORDS[0] != -2147483647 - 1) { return 4; }
+  return 0;
+}`
+	testAccelerationTargets(t, src)
+}
+
 func testAccelerationTargets(t *testing.T, src string) {
 	t.Helper()
 	cli := buildSelfHostCLI(t)

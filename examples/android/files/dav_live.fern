@@ -1,7 +1,8 @@
 // Checks the WebDAV client against a real server. FILES_DAV_SERVER holds
 // the address of the top folder, the user and the password, with spaces
-// between them. scripts/files-dav-check runs this program against
-// wsgidav.
+// between them. FILES_DAV_LARGE holds the path of a large file.
+// scripts/files-dav-check runs this program against wsgidav.
+import "std/i64";
 import "std/result";
 import "std/string";
 import "std/test";
@@ -115,6 +116,54 @@ function test_pinned(): test.TestOutcome {
   ]);
 }
 
+// The most memory that this process held, in bytes: the VmHWM line of
+// /proc/self/status.
+function most_memory(): i64 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0i64;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      let kb = line.drop(6).trim().split(" ")[0];
+      return i64.parse_i64(kb).unwrap_or(0i64) * 1024i64;
+    }
+  }
+  return 0i64;
+}
+
+function size_of(local: string): i64 {
+  let Ok(r) = open_reader(local) else {
+    return 0i64;
+  };
+  let size = match (r.stat()) {
+    Ok(st) => st.size,
+    Err(_) => 0i64,
+  };
+  r.close();
+  return size;
+}
+
+// The file of FILES_DAV_LARGE goes to the server from the disk in parts:
+// the most memory that this program held is less than half of the file.
+function test_large_file(): test.TestOutcome {
+  let local = env("FILES_DAV_LARGE").unwrap_or("");
+  let size = size_of(local);
+  if (size == 0i64) {
+    return test.fail("set FILES_DAV_LARGE to the path of a large file");
+  }
+  let s = server();
+  let sent = dav.put_file(s, "large.bin", local);
+  let sizes = dav.list(s, "").unwrap_or([]).filter((e: smb.Entry): boolean => e.name == "large.bin").map((e: smb.Entry): string => e.size.to_string()).join(",");
+  let removed = dav.remove(s, "large.bin");
+  let held = most_memory();
+  return all([
+    test.assert_eq(sent.err().unwrap_or(""), ""),
+    test.assert_eq(sizes, size.to_string()),
+    test.assert_eq(removed.is_ok(), true),
+    test.assert_eq(held > 0i64 && held < size / 2i64, true),
+  ]);
+}
+
 function main(): i32 {
   if (server().url.len() == 0) {
     print("set FILES_DAV_SERVER to: url user password");
@@ -125,5 +174,6 @@ function main(): i32 {
   r = r.it("a file goes to the server and back in parts", test_round_trip);
   r = r.it("a rename keeps an item of that name, and a delete takes a folder", test_rename_and_remove);
   r = r.it("a server with a self-signed certificate needs its pin", test_pinned);
+  r = r.it("a large file goes to the server and stays out of memory", test_large_file);
   return r.finish();
 }

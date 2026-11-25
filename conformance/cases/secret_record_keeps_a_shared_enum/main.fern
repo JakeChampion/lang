@@ -1,0 +1,62 @@
+// spec: SE-06
+// A record of a `@secret` struct zeroes the fields of an enum value that it
+// holds alone when it is released. An enum value that another value still
+// holds keeps its fields, and a variant with no field is not written.
+
+import "std/option";
+
+enum Part { Words(u64, u64[]), Small(i32), Empty }
+
+@secret
+struct Key { part: Part, spare: Option[u8[]], count: Option[i32], id: i32 }
+
+@noinline
+function words(v: u64): Part {
+  return Words(v, [v + 1u64, v + 2u64]);
+}
+
+@noinline
+function spare(v: u8): Option[u8[]] {
+  return Some([v, v + 1 as u8]);
+}
+
+function weigh(p: Part): u64 {
+  return match (p) {
+    Words(a, ws) => a + ws[1],
+    Small(a) => a as u64,
+    Empty => 0u64,
+  };
+}
+
+@noinline
+function held_part(v: u64): Part {
+  let p = words(v);
+  let k = Key { part: p, spare: None, count: Some(7), id: 3 };
+  print("key " + k.id.to_string() + " weighs " + weigh(k.part).to_string() + " and counts " + k.count.unwrap_or(0).to_string());
+  return p;
+}
+
+@noinline
+function held_spare(v: u8): Option[u8[]] {
+  let s = spare(v);
+  let k = Key { part: Empty, spare: s, count: None, id: 4 };
+  print("key " + k.id.to_string() + " weighs " + weigh(k.part).to_string());
+  return s;
+}
+
+@noinline
+function sum(k: Key): u64 {
+  return weigh(k.part) + k.spare.map((b: u8[]): u64 => b[1] as u64).unwrap_or(0u64) + k.count.unwrap_or(0) as u64;
+}
+
+function main(): i32 {
+  let p = held_part(65u64);
+  print("the shared variant still weighs " + weigh(p).to_string());
+  let s = held_spare(70 as u8);
+  print("the shared option still reads " + s.map((b: u8[]): string => b[0].to_string() + " " + b[1].to_string()).unwrap_or("nothing"));
+  let k = Key { part: Small(5), spare: spare(20 as u8), count: Some(9), id: 9 };
+  print("sum " + sum(k).to_string());
+  let copy = Key { ...k, id: 10 };
+  print("the copy " + copy.id.to_string() + " sums " + sum(copy).to_string());
+  return 0;
+}

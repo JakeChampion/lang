@@ -292,6 +292,44 @@ function test_shake256_a3(): test.TestOutcome {
   return test.assert_eq(__sha3_256_of(crypto.shake256(__a3x200(), 512).unwrap_or([])), "2730489e394c59f24db0aa5275070ec976a5e81f17599cb4c28149603ae10a09");
 }
 
+function test_output_bounds(): test.TestOutcome {
+  let reader = crypto.shake128_new().reader();
+  for n in [crypto.MAX_OUTPUT_BYTES + 1, 2147483647] {
+    if (!rejected_length(crypto.shake128([], n), n) || !rejected_length(crypto.shake256([], n), n)) {
+      return test.fail("oversized SHAKE output");
+    }
+    let Err(err) = crypto.pbkdf2_sha256([], [], 1, n) else {
+      return test.fail("oversized PBKDF2 output");
+    };
+    if let InvalidKeyLength(actual) = err {
+      if (actual != n) {
+        return test.fail("wrong key length");
+      }
+    } else {
+      return test.fail("wrong PBKDF2 error");
+    }
+  }
+  let first = reader.squeeze(1).0;
+  for n in [-1, 2147483647] {
+    let Err(err) = reader.try_squeeze(n) else {
+      return test.fail("invalid reader count");
+    };
+    if let InvalidOutputLength(actual) = err {
+      if (actual != n) {
+        return test.fail("wrong reader count");
+      }
+    }
+    let (empty, next) = reader.squeeze(n);
+    if (empty.len() != 0 || next.squeeze(1).0[0] != first[0]) {
+      return test.fail("reader advanced");
+    }
+  }
+  let Ok((empty, next)) = reader.try_squeeze(0) else {
+    return test.fail("zero reader count");
+  };
+  return test.assert_true(empty.len() == 0 && next.squeeze(1).0[0] == first[0]);
+}
+
 function test_shake_streaming(): test.TestOutcome {
   let msg = __a3x200();
   let r = crypto.shake128_new().update(msg[0:77]).update(msg[77:200]).reader();
@@ -412,6 +450,7 @@ function main(): i32 {
   r = r.it("shake128 0xa3 x 200", test_shake128_a3);
   r = r.it("shake256 empty", test_shake256_empty);
   r = r.it("shake256 0xa3 x 200", test_shake256_a3);
+  r = r.it("output bounds", test_output_bounds);
   r = r.it("shake streaming", test_shake_streaming);
   r = r.it("erase accepts owned bytes", test_erase_accepts_owned_bytes);
   r = r.it("erase accepts owned words", test_erase_accepts_owned_words);

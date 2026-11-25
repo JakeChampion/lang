@@ -1,4 +1,4 @@
-android.content.Context getNoBackupFilesDir getCacheDir getFilesDir checkSelfPermission getContentResolver getSystemService(Ljava/lang/String;)Ljava/lang/Object; getResources AUDIO_SERVICE
+android.content.Context getNoBackupFilesDir getCacheDir getFilesDir checkSelfPermission getContentResolver getSystemService(Ljava/lang/String;)Ljava/lang/Object; getResources getApplicationContext AUDIO_SERVICE
 android.app.Activity getIntent requestPermissions setVolumeControlStream moveTaskToBack getWindow getWindowManager setRequestedOrientation isInPictureInPictureMode()Z? setPictureInPictureParams?
 java.io.File getAbsolutePath
 android.content.Intent getAction getStringExtra
@@ -19,3 +19,5 @@ android.view.Display$Mode getPhysicalWidth getPhysicalHeight getRefreshRate getM
 android.app.PictureInPictureParams$Builder <init>()V setAspectRatio setAutoEnterEnabled? build
 android.util.Rational <init>(II)V
 android.view.InputDevice SOURCE_CLASS_POINTER
+java.lang.System getProperty(Ljava/lang/String;)Ljava/lang/String; setProperty clearProperty
+android.os.Build$VERSION SDK_INT

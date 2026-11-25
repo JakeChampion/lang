@@ -46,7 +46,7 @@ which ones.
 | `IDIOMS.md` | [reference] | Fern source style, with compiler bootstrap and validation limits. |
 | `LANGUAGE-DIRECTION.md` | [reference] | The language's direction: positioning, ideas adopted and rejected from other languages, and the shipping plan. |
 | `MUST-CONSUME.md` | [reference] | `@must_consume` types: structs and enums that may not be implicitly dropped, checked as E067. |
-| `SECRET-TYPES.md` | [policy] | `@secret` structs: the drop zeroes the numeric arrays that a record holds alone and its scalar fields, also inside a nested record or tuple, in each build. |
+| `SECRET-TYPES.md` | [policy] | `@secret` structs: the drop zeroes the numeric arrays that a record holds alone and its scalar fields, also inside a nested record, tuple or enum value, in each build. |
 | `WORKERS.md` | [reference] | Share-nothing workers: `std/worker` spawn and join, the `send` parameter mode and E100, and the sequential degrade every engine runs. |
 | `NAMED-FIELD-VARIANTS.md` | [reference] | Named-field enum variants: declaring, constructing and destructuring them. |
 | `TRAITS.md` | [reference] | Traits: static ad-hoc polymorphism, bounded generics and cross-module coherence; phases 1–3 shipped. |

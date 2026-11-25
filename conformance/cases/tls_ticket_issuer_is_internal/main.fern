@@ -1,0 +1,12 @@
+import "std/tls/client";
+import "std/tls/handshake";
+import "std/tls/message";
+import "std/time";
+
+function visible(c: handshake.Client, t: message.NewSessionTicket): Option[client.Ticket] {
+  return client.ticket_from_peer(c, t, "", time.timestamp_from_unix(0), false, None);
+}
+
+function main(): i32 {
+  return 0;
+}

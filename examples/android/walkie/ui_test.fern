@@ -2,6 +2,9 @@
 // colours at points of the buttons, and the dot font has a case of its own. With WALKIE_UI_PNG set to a directory,
 // the test also writes each screen there as a PNG file.
 import "std/android/draw";
+import "std/android/text";
+import "std/android/ui/sim";
+import "./identity_error";
 import "std/png";
 import "std/test";
 import "../look";
@@ -165,6 +168,15 @@ function test_dot_font(): test.TestOutcome {
   return test.assert_eq(rows + " " + lower.to_string() + " " + matrix.lit(35u8, 2, 3).to_string() + " " + matrix.width("AB", 3).to_string(), ".###./#...#/#...#/#...#/#####/#...#/#...#/ true false 33");
 }
 
+function test_identity_error(): test.TestOutcome {
+  let reason = "The identity key is unavailable.";
+  let s = sim.start(reason.to_owned(), identity_error.program(), text.from_faces([], []), 720, 1600, 2.0);
+  if (!sim.shows(s, reason) || sim.finished(s)) {
+    return test.fail("identity load failure must stay visible");
+  }
+  return test.assert_eq(sim.finished(sim.back(s)), true);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("walkie ui");
   r = r.it("ready shows a ring of dots", test_ready_shows_a_ring_of_dots);
@@ -176,5 +188,6 @@ function main(): i32 {
   r = r.it("the settings screen shows the modes", test_settings_screen);
   r = r.it("the keyboard of the server", test_host_keyboard);
   r = r.it("the dot font", test_dot_font);
+  r = r.it("identity error stays visible until Back closes the app", test_identity_error);
   return r.finish();
 }

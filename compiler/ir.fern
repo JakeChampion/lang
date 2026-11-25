@@ -746,6 +746,10 @@ pub function op_raw_store_ptr(): Op {
 }
 
 // The count word of the array on the stack.
+pub function op_storage_bytes(): Op {
+  return op0(K_STORAGE_BYTES);
+}
+
 pub function op_arr_rc(): Op {
   return op0(K_ARR_RC);
 }
@@ -2113,6 +2117,10 @@ pub function op_sha256_hw(): Op {
   return op0(K_SHA256_HW);
 }
 
+pub function op_sha256_hw_digest_block(): Op {
+  return op0(K_SHA256_HW_DIGEST_BLOCK);
+}
+
 pub function op_sha256_hw_blocks(): Op {
   return op0(K_SHA256_HW_BLOCKS);
 }
@@ -2172,13 +2180,13 @@ pub function op_scrypt_block_mix(): Op {
 // The builtins that each backend runs in a hand-written kernel. kernel_builtin_ops gives the op of each.
 const KERNEL_BUILTINS: string[] = [
   "__aes_expand_key", "__aes_ctr32", "__ghash", "__aes_gcm_seal_into", "__aes_gcm_open_into", "__chacha20_xor_into", "__poly1305_blocks",
-  "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix", "__aes_dec_blocks",
+  "__chacha20_poly1305_seal_into", "__chacha20_poly1305_open_into", "__mont_mul", "__scrypt_block_mix", "__aes_dec_blocks", "__sha256_hw_digest_block",
 ];
 
 function kernel_builtin_ops(): Op[] {
   return [
     op_aes_expand_key(), op_aes_ctr32(), op_ghash(), op_aes_gcm_seal_into(), op_aes_gcm_open_into(), op_chacha20_xor_into(), op_poly1305_blocks(),
-    op_chacha20_poly1305_seal_into(), op_chacha20_poly1305_open_into(), op_mont_mul(), op_scrypt_block_mix(), op_aes_dec_blocks(),
+    op_chacha20_poly1305_seal_into(), op_chacha20_poly1305_open_into(), op_mont_mul(), op_scrypt_block_mix(), op_aes_dec_blocks(), op_sha256_hw_digest_block(),
   ];
 }
 
@@ -2194,7 +2202,7 @@ pub function kernel_builtin_op(name: string): Option[Op] {
 
 // An op that a hand-written kernel of each backend runs over byte arrays.
 pub function is_byte_kernel_op(tag: i32): boolean {
-  return is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == K_CHACHA20_XOR_INTO || tag == K_POLY1305_BLOCKS || is_chacha20_poly1305_op(tag) || tag == K_MONT_MUL || tag == K_SCRYPT_BLOCK_MIX;
+  return tag == K_SHA256_HW_DIGEST_BLOCK || is_aes_gcm_op(tag) || is_sha_blocks_op(tag) || tag == K_CHACHA20_XOR_INTO || tag == K_POLY1305_BLOCKS || is_chacha20_poly1305_op(tag) || tag == K_MONT_MUL || tag == K_SCRYPT_BLOCK_MIX;
 }
 
 pub function is_sha_hw_op(tag: i32): boolean {
@@ -2210,6 +2218,7 @@ pub function is_sha_blocks_op(tag: i32): boolean {
 pub function kernel_need(tag: i32): string {
   return match (tag) {
     410 => "sha256",
+    579 => "sha256",
     553 => "sha1x8",
     554 => "chacha20",
     555 => "poly1305",
@@ -2223,6 +2232,9 @@ pub function kernel_need(tag: i32): string {
 }
 
 pub function kernel_symbol(tag: i32): string {
+  if (tag == K_SHA256_HW_DIGEST_BLOCK) {
+    return "__fern_sha256_hw_digest_block";
+  }
   if (tag == K_CHACHA20_XOR_INTO) {
     return "__fern_chacha20_xor_into";
   }
@@ -2987,6 +2999,8 @@ pub const K_ARR_LEN: i32 = 90;
 
 pub const K_ARR_RC: i32 = 91;
 
+pub const K_STORAGE_BYTES: i32 = 580;
+
 pub const K_ARR_PUSH: i32 = 92;
 
 pub const K_ARR_PUSH_OWNED: i32 = 93;
@@ -3520,6 +3534,8 @@ pub const K_SHA1X8_HW_BLOCKS: i32 = 553;
 pub const K_SHA256X8_HW: i32 = 577;
 
 pub const K_SHA256X8_HW_BLOCKS: i32 = 578;
+
+pub const K_SHA256_HW_DIGEST_BLOCK: i32 = 579;
 
 // ChaCha20 XORs its key stream over a range of a byte array in place.
 pub const K_CHACHA20_XOR_INTO: i32 = 554;
@@ -4178,10 +4194,12 @@ const KIND_NAMES: string[] = [
   "wasm_name_lookup",  // 576
   "sha256x8_hw",  // 577
   "sha256x8_hw_blocks",  // 578
+  "sha256_hw_digest_block",  // 579
+  "storage_bytes",  // 580
 ];
 
 // BEGIN GENERATED KIND ORDER (cmd/irkindgen) — do not edit by hand.
-const KIND_ORDER: i32[] = [237, 21, 403, 575, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 557, 556, 554, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 572, 574, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 568, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 558, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 555, 221, 418, 419, 483, 163, 282, 213, 280, 211, 560, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 573, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 569, 571, 324, 361, 559, 525, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 552, 553, 409, 410, 577, 578, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 542, 526, 528, 529, 536, 546, 537, 544, 545, 539, 540, 534, 535, 532, 533, 548, 565, 566, 538, 541, 547, 549, 550, 551, 543, 527, 530, 531, 567, 563, 564, 561, 562, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 570, 447, 457, 476, 451, 462, 472, 162, 576, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
+const KIND_ORDER: i32[] = [237, 21, 403, 575, 402, 445, 444, 76, 77, 515, 28, 180, 88, 90, 87, 92, 95, 94, 93, 303, 302, 217, 216, 91, 383, 89, 96, 227, 524, 523, 521, 522, 152, 499, 157, 506, 158, 329, 369, 411, 386, 489, 297, 295, 291, 292, 488, 487, 294, 372, 371, 370, 351, 485, 328, 326, 325, 293, 306, 296, 347, 502, 503, 519, 151, 149, 150, 385, 557, 556, 554, 277, 268, 321, 275, 316, 389, 388, 405, 219, 4, 6, 1, 2, 3, 5, 218, 482, 235, 359, 327, 379, 252, 309, 373, 480, 481, 260, 231, 262, 263, 399, 220, 424, 426, 427, 422, 421, 428, 423, 425, 396, 24, 25, 159, 146, 147, 155, 156, 176, 249, 164, 35, 166, 14, 15, 16, 17, 12, 13, 56, 45, 58, 366, 311, 300, 307, 299, 241, 301, 48, 414, 49, 59, 572, 574, 54, 53, 52, 51, 47, 50, 55, 78, 61, 57, 46, 60, 40, 44, 251, 239, 238, 247, 248, 246, 362, 374, 404, 39, 43, 491, 315, 80, 229, 230, 240, 416, 11, 154, 382, 9, 7, 8, 507, 510, 508, 509, 232, 38, 42, 363, 375, 288, 67, 69, 70, 18, 71, 153, 365, 377, 236, 37, 41, 568, 222, 225, 358, 74, 75, 245, 378, 446, 274, 412, 413, 182, 558, 398, 23, 484, 430, 36, 34, 183, 184, 420, 203, 304, 305, 120, 123, 124, 122, 29, 381, 408, 187, 555, 221, 418, 419, 483, 163, 282, 213, 280, 211, 560, 212, 286, 397, 271, 79, 165, 185, 186, 223, 81, 224, 287, 207, 83, 85, 205, 331, 82, 84, 86, 367, 443, 342, 341, 343, 178, 348, 171, 310, 391, 432, 169, 233, 264, 179, 407, 573, 242, 330, 26, 27, 261, 172, 173, 267, 357, 356, 384, 160, 435, 434, 438, 439, 436, 272, 234, 360, 322, 569, 571, 324, 361, 559, 525, 495, 497, 406, 269, 283, 284, 314, 318, 319, 317, 364, 376, 440, 441, 552, 553, 409, 410, 579, 577, 578, 31, 32, 33, 392, 394, 244, 279, 243, 278, 395, 285, 393, 181, 266, 417, 175, 270, 580, 68, 72, 199, 19, 73, 104, 100, 98, 345, 99, 103, 380, 390, 101, 97, 113, 108, 111, 102, 105, 107, 106, 109, 139, 138, 140, 141, 22, 177, 253, 368, 298, 204, 206, 228, 323, 401, 500, 501, 201, 511, 486, 116, 338, 437, 200, 332, 320, 112, 344, 387, 353, 346, 333, 20, 174, 312, 313, 188, 504, 505, 273, 143, 142, 144, 10, 334, 442, 335, 337, 517, 516, 336, 355, 265, 250, 340, 339, 518, 433, 458, 450, 470, 473, 145, 479, 461, 453, 464, 448, 514, 460, 456, 400, 469, 477, 468, 542, 526, 528, 529, 536, 546, 537, 544, 545, 539, 540, 534, 535, 532, 533, 548, 565, 566, 538, 541, 547, 549, 550, 551, 543, 527, 530, 531, 567, 563, 564, 561, 562, 467, 475, 520, 466, 455, 454, 452, 465, 459, 471, 512, 513, 449, 463, 474, 478, 570, 447, 457, 476, 451, 462, 472, 162, 576, 167, 161, 148, 415, 276, 493, 494, 492, 496, 349, 170, 352, 226, 308, 350, 490, 498, 431, 281, 202, 30];
 
 // END GENERATED KIND ORDER
 
@@ -4267,7 +4285,7 @@ function pops1_mem(t: i32): boolean {
   return t == K_LOAD || t == K_LOAD_I32 || t == K_LOAD_I64 || t == K_LOAD_PTR
     || t == K_ALLOC || t == K_ALLOC_U8
     || t == K_RAW_ALLOC || t == K_RAW_SCRATCH || t == K_RAW_ARR_BOX || t == K_ARR_RESERVE
-    || t == K_ARR_LEN || t == K_ARR_RC
+    || t == K_ARR_LEN || t == K_ARR_RC || t == K_STORAGE_BYTES
     || t == K_STR_LEN || t == K_STR_FROM_BYTES || t == K_STR_BYTES || t == K_STR_DATA
     || t == K_SUM_BYTES || t == K_SUM_BYTES_ARRAY
     || t == K_STR_TO_UPPER || t == K_STR_TO_LOWER || t == K_STR_TRIM
@@ -4319,7 +4337,7 @@ function pops2_kernel(t: i32): boolean {
   return t == K_ASCII_RUN || t == K_COUNT_BYTE
     || t == K_BSD_SUM || t == K_BSD_SUM_BYTES
     || t == K_STR_HASH
-    || t == K_AES_DEC_BLOCKS
+    || t == K_AES_DEC_BLOCKS || t == K_SHA256_HW_DIGEST_BLOCK
     || is_crc32_op(t)
     || t == K_SCALE_F64 || t == K_OUTER_MUL_F64
     || is_sha_blocks_op(t);

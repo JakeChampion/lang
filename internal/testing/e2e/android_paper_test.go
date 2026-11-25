@@ -94,7 +94,7 @@ func TestAndroidPaperApk(t *testing.T) {
 	for _, f := range zr.File {
 		names = append(names, f.Name)
 	}
-	want := "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png"
+	want := "AndroidManifest.xml classes.dex resources.arsc res/drawable/icon.png res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml"
 	for _, a := range paperAssets {
 		want += " assets/" + a
 	}

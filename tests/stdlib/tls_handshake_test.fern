@@ -1408,7 +1408,8 @@ function test_quic_early_data(): test.TestOutcome {
 }
 
 function test_quic_ip_sni(): test.TestOutcome {
-  for name in ["192.0.2.7", "2001:db8::7", "tls.example"] {
+  for name in ["192.0.2.7", "2001:db8::7", "[2001:db8::7]", "fe80::1%eth0", "[fe80::1%eth0]", ".", "", "tls.example.", "tls.example"] {
+    let dns = name == "tls.example" || name == "tls.example.";
     let cfg = handshake.ClientConfig { ...handshake.client_config(name), quic: true, alpn: ["h3"] };
     let Ok(step) = handshake.client_start(cfg, pattern(1, handshake.client_entropy(cfg))) else {
       return test.fail("cannot start QUIC for " + name);
@@ -1419,12 +1420,12 @@ function test_quic_ip_sni(): test.TestOutcome {
     };
     match (message.find(hello.extensions, message.EXT_SERVER_NAME)) {
       Some(data) => {
-        if (name != "tls.example" || message.server_name(data).unwrap_or("") != name) {
+        if (!dns || message.server_name(data).unwrap_or("") != "tls.example") {
           return test.fail("unexpected SNI for " + name);
         }
       },
       None => {
-        if (name == "tls.example") {
+        if (dns) {
           return test.fail("missing DNS name in SNI");
         }
       }

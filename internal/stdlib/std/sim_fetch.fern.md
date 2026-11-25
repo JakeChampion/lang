@@ -595,7 +595,10 @@ function __h3_server(n: Net, p: Peer, data: u8[], now: Instant): Option[h3q.Conn
   if let Some(parked) = p.server {
     return Some(h3q.unpark(parked));
   }
-  let cfg = h3q.transport(quic.config([]).server_side(n.endpoints[p.endpoint].id).with_tickets(TICKET_SECRET.as_bytes()).with_early_data());
+  let Ok(tickets) = quic.config([]).server_side(n.endpoints[p.endpoint].id).with_tickets(TICKET_SECRET.as_bytes()) else {
+    return None;
+  };
+  let cfg = h3q.transport(tickets.with_early_data());
   let Ok(h) = packet.parse(data, 0, cfg.cid_len) else {
     return None;
   };

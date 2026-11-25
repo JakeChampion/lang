@@ -360,6 +360,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (aes_gcm) {
     out = out.append("@uses_aes_gcm");
   }
+  if (has_kind(kinds, "sha256_hw_digest_block")) {
+    out = out.append("@uses_sha256_digest_block");
+  }
   if (uses_sha_hw_blocks(kinds)) {
     out = out.append("@uses_sha_hw_blocks");
   }
@@ -662,6 +665,9 @@ function uses_sha_hw_blocks(kinds: i32[]): boolean {
 
 // The helper that runs a byte kernel op.
 function byte_kernel_name(tag: i32): string {
+  if (tag == ir.K_SHA256_HW_DIGEST_BLOCK) {
+    return "$__fern_sha256_hw_digest_block";
+  }
   if (ir.is_aes_gcm_op(tag)) {
     return wasm_aes.kernel_name(tag);
   }
@@ -739,6 +745,9 @@ function crypto_helper_parts(needs: string[], own parts: string[]): string[] {
   parts = limb_kernel_parts(needs, parts);
   if (need(needs, "@uses_bswap")) {
     parts = parts.append(wasm_aes.bswap_funcs());
+  }
+  if (need(needs, "@uses_sha256_digest_block")) {
+    parts = parts.append("  (func $__fern_sha256_hw_digest_block (param i32 i32) (result i32) (local.get 0))\n");
   }
   if (need(needs, "@uses_sha_hw_blocks")) {
     parts = parts.append(sha_hw_blocks_helper());
@@ -2824,7 +2833,7 @@ pub function component_uses_stderr(mod: parser.Module, needs: string[]): boolean
 }
 
 pub function needs_abort(needs: string[]): boolean {
-  return need(needs, "@allocates") || need(needs, "free") || need(needs, "@abort_checks");
+  return need(needs, "@allocates") || need(needs, "free") || need(needs, "@abort_checks") || need(needs, "@uses_random");
 }
 
 function runtime_needs(mod: parser.Module, needs: string[]): string[] {
@@ -5120,6 +5129,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_arr_set(arrtmp, bctmp, eltmp, f64tmp, i64tmp, o, parts);
   } else if (o.kind_tag == ir.K_ARR_LEN) {
     parts = parts.append("    i32.load\n");
+  } else if (o.kind_tag == ir.K_STORAGE_BYTES) {
+    parts = parts.append("    i32.const 4\n    i32.sub\n    i32.load\n    i32.const 16\n    i32.sub\n");
   } else if (o.kind_tag == ir.K_ARR_RC) {
     parts = parts.append("    i32.const 8\n    i32.sub\n    i32.load\n");
   } else if (o.kind_tag == ir.K_CONST_STR) {
@@ -5994,7 +6005,7 @@ pub function random_bytes_ir_func(): string {
   o += "    (local.set $arr (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n";
   o += "    (i32.store (local.get $arr) (local.get $n))\n";
   o += "    (i32.store (i32.add (local.get $arr) (i32.const 4)) (local.get $n))\n";
-  o += "    (drop (call $__fern_random_get (i32.add (local.get $arr) (i32.const 8)) (local.get $n)))\n";
+  o += "    (if (call $__fern_random_get (i32.add (local.get $arr) (i32.const 8)) (local.get $n)) (then (call $__fern_abort_entropy) (unreachable)))\n";
   o += "    (local.get $arr))\n";
   return o;
 }
@@ -6002,7 +6013,7 @@ pub function random_bytes_ir_func(): string {
 pub function random_i32_func(): string {
   let o = "";
   o += "  (func $__fern_random_i32 (result i32)\n";
-  o += "    (drop (call $__fern_random_get (i32.const 16) (i32.const 4)))\n";
+  o += "    (if (call $__fern_random_get (i32.const 16) (i32.const 4)) (then (call $__fern_abort_entropy) (unreachable)))\n";
   o += "    (i32.load (i32.const 16)))\n";
   return o;
 }

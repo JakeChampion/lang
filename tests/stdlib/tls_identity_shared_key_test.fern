@@ -37,7 +37,7 @@ function test_ecdsa(): test.TestOutcome {
     return test.fail("identity");
   };
   key.erase();
-  let config = server.config(id, []).without_tickets();
+  let config = server.config_without_tickets(id);
   release_identity(id);
   let content = "configured identity".as_bytes();
   let Ok(signature) = config.identity.key.sign(0x0403, content) else {
@@ -67,7 +67,7 @@ function test_ed25519(): test.TestOutcome {
   };
   crypto.erase(seed);
   key.erase();
-  let config = server.config(id, []).without_tickets();
+  let config = server.config_without_tickets(id);
   release_identity(id);
   let content = "configured identity".as_bytes();
   let Ok(signature) = config.identity.key.sign(0x0807, content) else {

@@ -635,11 +635,6 @@ struct Matcher { mask: i32, syllable: i32, zwnj: boolean, zwj: boolean }
 // offset of a coverage table from `table`.
 struct Seq { kind: i32, table: i32, at: i32, n: i32 }
 
-// A rule of a context: the glyphs before the input, the input, the glyphs
-// after it, and `count` lookup records at `records`. The input sequence
-// starts after the glyph already matched by the first coverage table.
-struct Rule { back: Seq, input: Seq, ahead: Seq, records: i32, count: i32 }
-
 // The most glyphs that a run can grow to.
 const MAX_GLYPHS: i32 = 65536;
 
@@ -822,10 +817,15 @@ function ligature_would_apply(b: [u8], st: i32, cov: i32, gs: i32[]): boolean {
 function context_would_apply(b: [u8], st: i32, kind: i32, cov: i32, gs: i32[], zero_context: boolean): boolean {
   let format = u16_at(b, st);
   let set = rule_set(b, st, kind, cov, gs[0], format);
+  let chain = kind - 5;
   for k in 0..rule_count(b, set, format) {
-    let rule = context_rule(b, st, set, kind, format, k);
-    let bare = rule.back.n == 0 && rule.ahead.n == 0;
-    if ((bare || !zero_context) && rule.input.n + 1 == gs.len() && seq_matches(b, rule.input, gs, 1)) {
+    let at = rule_at(b, st, set, format, k);
+    let nb = chain * u16_at(b, at);
+    let input_count = at + chain * (2 + 2 * nb);
+    let n = u16_at(b, input_count) - 1;
+    let first = input_count + first_input(chain, format);
+    let bare = nb + chain * u16_at(b, first + 2 * n) == 0;
+    if ((bare || !zero_context) && n + 1 == gs.len() && seq_matches(b, Seq { kind: (format - 1).min(2), table: rule_table(b, st, format, 4 + 2 * chain), at: first, n: n }, gs, 1)) {
       return true;
     }
   }
@@ -1497,29 +1497,47 @@ function following_parts(out: i32[], ls: i32[], from: i32, last_id: i32, id: i32
 }
 
 // `r` after the first rule of the context subtable at `st` that matches at
-// `i`, and the index of the glyph after its input, or -1.
+// `i`, and the index of the glyph after its input, or -1. It reads each part
+// of a rule only when the parts before it match. `chain` is 1 in a chaining
+// context, of `kind` 6, and 0 in a context, which has its input only.
 function contextual(f: Font, own r: Run, l: Lookup, st: i32, kind: i32, cov: i32, i: i32, mask: i32, budget: i32): (Run, i32, i32) {
-  let format = u16_at(f.data, st);
-  let set = rule_set(f.data, st, kind, cov, r.glyphs[i], format);
-  for k in 0..rule_count(f.data, set, format) {
-    // Each part of a rule needs one glyph for each of its values.
-    let after = r.glyphs.len() - 1 - i;
-    if (!rule_has_room(f.data, set, kind, format, k, i, after)) {
-      continue;
-    }
-    let rule = context_rule(f.data, st, set, kind, format, k);
-    if (rule.back.n > i || rule.input.n + rule.ahead.n > after) {
-      continue;
-    }
-    let end = input_end(f, r, l, mask, i, rule.input);
+  let b = f.data;
+  let format = u16_at(b, st);
+  let set = rule_set(b, st, kind, cov, r.glyphs[i], format);
+  let chain = kind - 5;
+  let values = (format - 1).min(2);
+  let first = first_input(chain, format);
+  // Each part of a rule needs one glyph for each of its values.
+  let after = r.glyphs.len() - 1 - i;
+  for k in 0..rule_count(b, set, format) {
+    let at = rule_at(b, st, set, format, k);
+    let nb = chain * u16_at(b, at);
+    let input_count = at + chain * (2 + 2 * nb);
+    let n = u16_at(b, input_count) - 1;
+    // A chaining context has the count of the glyphs after the input here.
+    // A context has its lookup records here.
+    let end = input_count + first + 2 * n;
+    let na = chain * u16_at(b, end);
     // HarfBuzz keeps the glyphs before the input in the syllable only while
     // the lookup has not changed the count of glyphs, and the glyphs after
     // it only after an input of one glyph.
-    if (end < 0 || !matched_context(f, r, l, i, rule.back, -1, r.glyphs.len() == l.base) || !matched_context(f, r, l, end, rule.ahead, 1, end == i)) {
+    if (nb > i || n + na > after || nb > 0 && !matched_context(f, r, l, i, Seq { kind: values, table: rule_table(b, st, format, 4), at: at + 2, n: nb }, -1, r.glyphs.len() == l.base)) {
       continue;
     }
-    let ps = input_positions(f, r, l, mask, i, rule.input);
-    return records_applied(f, r, l, ps, rule, mask, budget);
+    let ahead = Seq { kind: values, table: rule_table(b, st, format, 8), at: end + 2, n: na };
+    // An input of one glyph is the glyph at `i`, so the glyphs after it can
+    // refuse the rule before the input makes its list of positions.
+    if (n == 0 && na > 0 && !matched_context(f, r, l, i, ahead, 1, true)) {
+      continue;
+    }
+    let input = Seq { kind: values, table: rule_table(b, st, format, 4 + 2 * chain), at: input_count + first, n: n };
+    let last = input_end(f, r, l, mask, i, input);
+    if (last < 0 || n > 0 && na > 0 && !matched_context(f, r, l, last, ahead, 1, false)) {
+      continue;
+    }
+    let ps = input_positions(f, r, l, mask, i, input);
+    let records = end + chain * (4 + 2 * na);
+    return records_applied(f, r, l, ps, records, u16_at(b, if (chain == 1) { records - 2 } else { at + 2 }), mask, budget);
   }
   return (r, -1, budget);
 }
@@ -1550,71 +1568,38 @@ function rule_count(b: [u8], set: i32, format: i32): i32 {
   return if (set == 0) { 0 } else { u16_at(b, set) };
 }
 
-// Whether rule `k` of the set at `set` can fit `before` glyphs before the
-// position and `after` glyphs after it. It reads the counts of the rule
-// only. A subtable of format 3 has its counts in its one rule, so it fits.
-function rule_has_room(b: [u8], set: i32, kind: i32, format: i32, k: i32, before: i32, after: i32): boolean {
-  if (format == 3) {
-    return true;
-  }
-  let at = set + u16_at(b, set + 2 + 2 * k);
-  if (kind == 5) {
-    return u16_at(b, at) - 1 <= after;
-  }
-  let nb = u16_at(b, at);
-  if (nb > before) {
-    return false;
-  }
-  let ni = at + 2 + 2 * nb;
-  let n = u16_at(b, ni);
-  return n - 1 + u16_at(b, ni + 2 * n) <= after;
+// The offset of the first count of rule `k` of the set at `set`. A subtable
+// of format 3 is its one rule.
+function rule_at(b: [u8], st: i32, set: i32, format: i32, k: i32): i32 {
+  return if (format == 3) { st + 2 } else { set + u16_at(b, set + 2 + 2 * k) };
 }
 
-function context_rule(b: [u8], st: i32, set: i32, kind: i32, format: i32, k: i32): Rule {
-  if (format == 3) {
-    return format3_rule(b, st, kind);
-  }
-  let at = set + u16_at(b, set + 2 + 2 * k);
-  let values = format - 1;
-  let input_class = if (format == 2) { st + u16_at(b, st + (if (kind == 5) { 4 } else { 6 })) } else { 0 };
-  let empty = Seq { kind: 0, table: 0, at: 0, n: 0 };
-  if (kind == 5) {
-    let n = u16_at(b, at);
-    return Rule { back: empty, input: Seq { kind: values, table: input_class, at: at + 4, n: n - 1 }, ahead: empty, records: at + 4 + 2 * (n - 1), count: u16_at(b, at + 2) };
-  }
-  let nb = u16_at(b, at);
-  let ni = at + 2 + 2 * nb;
-  let n = u16_at(b, ni);
-  let na = ni + 2 * n;
-  let rc = na + 2 + 2 * u16_at(b, na);
-  return Rule { back: Seq { kind: values, table: if (format == 2) { st + u16_at(b, st + 4) } else { 0 }, at: at + 2, n: nb }, input: Seq { kind: values, table: input_class, at: ni + 2, n: n - 1 }, ahead: Seq { kind: values, table: if (format == 2) { st + u16_at(b, st + 8) } else { 0 }, at: na + 2, n: u16_at(b, na) }, records: rc + 2, count: u16_at(b, rc) };
+// How far the first input value of a rule is after the count of its input.
+// A context has the count of its lookup records between them. Format 3 has
+// the coverage of the first glyph, which matched already.
+function first_input(chain: i32, format: i32): i32 {
+  return 4 - 2 * chain + (if (format == 3) { 2 } else { 0 });
 }
 
-// The rule of the subtable of format 3 at `st`, with coverage tables.
-function format3_rule(b: [u8], st: i32, kind: i32): Rule {
-  if (kind == 5) {
-    let n = u16_at(b, st + 2);
-    let empty = Seq { kind: 2, table: st, at: 0, n: 0 };
-    return Rule { back: empty, input: Seq { kind: 2, table: st, at: st + 8, n: n - 1 }, ahead: empty, records: st + 6 + 2 * n, count: u16_at(b, st + 4) };
-  }
-  let nb = u16_at(b, st + 2);
-  let ni = st + 4 + 2 * nb;
-  let na = ni + 2 + 2 * u16_at(b, ni);
-  let rc = na + 2 + 2 * u16_at(b, na);
-  return Rule { back: Seq { kind: 2, table: st, at: st + 4, n: nb }, input: Seq { kind: 2, table: st, at: ni + 4, n: u16_at(b, ni) - 1 }, ahead: Seq { kind: 2, table: st, at: na + 2, n: u16_at(b, na) }, records: rc + 2, count: u16_at(b, rc) };
+// The table that the values of a rule of the subtable `st` refer to: the
+// class definition whose offset is at `field` in format 2, and the subtable
+// in format 3.
+function rule_table(b: [u8], st: i32, format: i32, field: i32): i32 {
+  return if (format == 2) { st + u16_at(b, st + field) } else if (format == 3) { st } else { 0 };
 }
 
-// `r` after the lookup records of `rule`, at the input positions `ps`.
+// `r` after the `count` lookup records at `records`, at the input positions
+// `ps`.
 // When a lookup changes the count of glyphs, the positions after it move,
 // as HarfBuzz moves them. The index is that of the glyph after the input.
-function records_applied(f: Font, own r: Run, l: Lookup, ps0: i32[], rule: Rule, mask: i32, budget: i32): (Run, i32, i32) {
+function records_applied(f: Font, own r: Run, l: Lookup, ps0: i32[], records: i32, count: i32, mask: i32, budget: i32): (Run, i32, i32) {
   let b = f.data;
   let ps = ps0;
   let end = ps[ps.len() - 1] + 1;
   let run = r;
   let left = budget;
-  for k in 0..rule.count {
-    let idx = u16_at(b, rule.records + 4 * k);
+  for k in 0..count {
+    let idx = u16_at(b, records + 4 * k);
     if (left <= 0) {
       break;
     }
@@ -1622,7 +1607,7 @@ function records_applied(f: Font, own r: Run, l: Lookup, ps0: i32[], rule: Rule,
       continue;
     }
     let before = run.glyphs.len();
-    let nested = Lookup { ...lookup_of(f, l.table, l.gpos, u16_at(b, rule.records + 4 * k + 2)), opts: l.opts, base: l.base, classes: l.classes };
+    let nested = Lookup { ...lookup_of(f, l.table, l.gpos, u16_at(b, records + 4 * k + 2)), opts: l.opts, base: l.base, classes: l.classes };
     let (next, at, rest) = applied(f, run, nested, ps[idx], mask, left - 1, []);
     run = next;
     left = rest;
@@ -1762,9 +1747,10 @@ pub function apply_each(ps: PreparedLookup[], r: Run, masks: i32[], opts: i32[])
   let (of_mask, of_flag, of_set, counted) = (0, 0, 0, -1);
   let owed = 0;
   for k in 0..ps.len() {
-    let ds = ps[k].digests;
+    let p = ps[k];
+    let ds = p.digests;
     let tried = -1;
-    if (ds.len() >= 3 && !ps[k].reverse) {
+    if (ds.len() >= 3 && !p.reverse) {
       if (!known) {
         r0 = 0u64;
         r4 = 0u64;
@@ -1778,13 +1764,14 @@ pub function apply_each(ps: PreparedLookup[], r: Run, masks: i32[], opts: i32[])
         counted = -1;
       }
       let shared = (r0 & ds[0]) != 0u64 && (r4 & ds[1]) != 0u64 && (r9 & ds[2]) != 0u64;
-      if (!shared || !holds_tried(ps[k], run, masks[k], ds[0], ds[1], ds[2])) {
-        let (flag, set) = (ps[k].lookup.flag, ps[k].lookup.set);
+      if (!shared || !holds_tried(p, run, masks[k], ds[0], ds[1], ds[2])) {
+        let flag = p.lookup.flag;
+        let set = p.lookup.set;
         if (counted < 0 || of_mask != masks[k] || of_flag != flag || of_set != set) {
           of_mask = masks[k];
           of_flag = flag;
           of_set = set;
-          counted = attempts(ps[k], run, of_mask);
+          counted = attempts(p, run, of_mask);
         }
         tried = counted;
       }
@@ -1793,7 +1780,7 @@ pub function apply_each(ps: PreparedLookup[], r: Run, masks: i32[], opts: i32[])
       owed += tried;
       continue;
     }
-    let (next, changed) = applied_prepared(ps[k], with_attempts_taken(run, owed), masks[k], opts[k]);
+    let (next, changed) = applied_prepared(p, with_attempts_taken(run, owed), masks[k], opts[k]);
     run = next;
     owed = 0;
     known = known && !changed;

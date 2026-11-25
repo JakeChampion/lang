@@ -321,13 +321,15 @@ function initialize(own h0: u8[], segment: i32, lanes: i32): Result[i64[], Argon
 }
 
 function finish(own m: i64[], p: Params, segment: i32): Result[u8[], ArgonError] {
-  let last: u8[] = [];
+  let last = __alloc_u8(1024);
   for j in 0..128 {
     let word = 0i64;
     for lane in 0..p.lanes {
       word ^= m[((lane + 1) * 4 * segment - 1) * 128 + j];
     }
-    last = binary.append_u64_le(last, word as u64);
+    for byte in 0..8 {
+      last = last.with(j * 8 + byte, (word as u64 >> (byte * 8) as u64) as u8);
+    }
   }
   crypto.erase(m);
   let tag = expand(last, p.tag_len);

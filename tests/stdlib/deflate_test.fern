@@ -460,6 +460,93 @@ function level_corpus(): u8[] {
   return out;
 }
 
+// What `inflate_start` gives for `want` bytes of `stream`, as a text.
+function start_text(stream: [u8], from: i32, want: i32): string {
+  match (deflate.inflate_start(stream, from, want)) {
+    Ok(out) => {
+      return "ok " + hex.encode(out);
+    },
+    Err(e) => {
+      return "error: " + e.message();
+    }
+  }
+  return "";
+}
+
+// The fault of `stream` for `inflate_start`, or "". For each count of
+// bytes, the start must be the start of the whole output. A start of
+// `stream` with its end cut off must give the same bytes or say that the
+// data ends early.
+function start_fault(name: string, stream: u8[]): string {
+  let Ok(all) = deflate.inflate(stream, 1048576) else {
+    return name + ": the stream does not decode";
+  };
+  let whole = all.out;
+  for want in [0, 1, 2, 3, 5, 19, 20, 21, 64, 300, whole.len(), whole.len() + 10] {
+    let have = "ok " + hex.encode(whole.take(want.min(whole.len())));
+    let got = start_text(stream, 0, want);
+    if (got != have) {
+      return name + " want " + want.to_string() + ": " + got;
+    }
+    let shifted: u8[] = [255 as u8, 0 as u8, 255 as u8];
+    if (start_text(shifted.concat(stream), 3, want) != have) {
+      return name + " want " + want.to_string() + ": the offset changes the result";
+    }
+  }
+  let have = "ok " + hex.encode(whole.take(20.min(whole.len())));
+  for cut in 0..stream.len().min(400) {
+    let got = start_text(stream.take(cut), 0, 20);
+    if (got != have && got != "error: the compressed data ends early") {
+      return name + " cut " + cut.to_string() + ": " + got;
+    }
+  }
+  return "";
+}
+
+function test_inflate_start(): test.TestOutcome {
+  let words = "The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs. ".repeat(30).bytes();
+  let mixed = lcg_bytes(17000).concat("the quick brown fox jumps over the lazy dog ".repeat(40).bytes());
+  let short = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabcabcabcabcabc".bytes();
+  let empty: u8[] = [];
+  let faults = [
+    start_fault("stored", __codec_bytes(hex.decode("010300fcff616263"))),
+    start_fault("fixed", __codec_bytes(hex.decode("cb48cdc9c957c8402701"))),
+    start_fault("fast words", deflate.deflate_fast(words)),
+    start_fault("level 6 words", deflate.deflate(words)),
+    start_fault("level 9 words", deflate.deflate_level(words, 9)),
+    start_fault("level 6 blocks", deflate.deflate(mixed)),
+    start_fault("level 1 blocks", deflate.deflate_level(mixed, 1)),
+    start_fault("short", deflate.deflate(short)),
+    start_fault("empty", deflate.deflate(empty)),
+    start_fault("flushed", deflate.deflate_flushed(words, 15).concat(deflate.deflate(short))),
+  ];
+  for fault in faults {
+    if (fault != "") {
+      return test.fail(fault);
+    }
+  }
+  let malformed = "error: malformed compressed data: ";
+  let got = [
+    start_text(__codec_bytes(hex.decode("0500022400000000")), 0, 20),
+    start_text(__codec_bytes(hex.decode("4b043e00000000")), 0, 20),
+    start_text(__codec_bytes(hex.decode("4b1c0300000000")), 0, 20),
+    start_text(__codec_bytes(hex.decode("010300fcfe616263")), 0, 20),
+    start_text(__codec_bytes(hex.decode("07")), 0, 20),
+    start_text(__codec_bytes(hex.decode("cb48cdc9c957c8402701")), -1, 20),
+    start_text(__codec_bytes(hex.decode("4b043e00000000")), 0, 1),
+  ].join("|");
+  let want = [
+    malformed + "a repeat with no length before it",
+    malformed + "a bit pattern that is no distance code",
+    text(deflate.inflate(__codec_bytes(hex.decode("4b1c0300000000")), 1024)),
+    malformed + "a stored block's length and its complement disagree",
+    malformed + "a reserved block type",
+    malformed + "an offset below zero",
+    "ok 61",
+  ].join("|");
+  return test.assert_eq(got, want);
+}
+
 function test_offset_below_zero(): test.TestOutcome {
   let packed = deflate.deflate_fast("abc".bytes());
   if (deflate.inflate_from(packed, -1, 16).is_ok() || deflate.gzip_member(packed, -1, 16).is_ok()) {
@@ -632,6 +719,7 @@ function main(): i32 {
   r = r.it("blocks of each kind in one stream", test_deflate_blocks);
   r = r.it("gzip reads back", test_gzip_round_trip);
   r = r.it("each level reads back", test_deflate_levels);
+  r = r.it("the start of a stream is the start of its output", test_inflate_start);
   r = r.it("an offset outside the input is an error", test_offset_below_zero);
   r = r.it("gzip marks the fastest and the smallest levels", test_gzip_levels);
   r = r.it("blocks with a dictionary join into one stream", test_deflate_blocks_with_a_dictionary);

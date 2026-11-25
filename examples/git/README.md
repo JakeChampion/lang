@@ -400,12 +400,25 @@ port has a worker for each CPU in `index-pack`, and one thread in
 32.3 s for the port. For `verify-pack`, it is 29.6 s and 46.0 s.
 At its peak, git uses 248 MB and the port uses 1.7 GB.
 
-The port uses less CPU time than git only in `index-pack` and
-`verify-pack`. The inflate of `std/deflate` is most of the gap in the
-other commands: it is half of the instructions of
-`cat-file --batch-check`. For each small stream, the decoder fills a
-table of 1,024 entries for the literals and 256 for the distances. zlib
-fills fewer entries.
+In the table, the port uses less CPU time than git only in `index-pack`
+and `verify-pack`. The table is older than the change below.
+
+`cat-file --batch-check` and `ls-tree -r -l` need the size of each object,
+and the size of a delta is in the first bytes of its stream. The port
+reads them with `deflate.inflate_start`, which builds no decode table.
+A name of the input is checked and changed to bytes with a table of the
+hexadecimal digits. On 2026-11-24, on a clone of Fern with 28,778 objects
+in one packfile, x86-64 with 4 CPUs, git 2.43, the best time of seven runs:
+
+| Command | git | The port before | The port |
+|---|---|---|---|
+| `cat-file --batch-check` (all objects) | 0.037 s | 0.064 s | 0.037 s |
+| `ls-tree -r -l HEAD` | 0.046 s | 0.055 s | 0.047 s |
+
+callgrind counts 183.6 M instructions for git in `cat-file --batch-check`.
+The port ran 301.5 M, and it runs 188.5 M now. What is left of the gap is
+the read of the code lengths of a dynamic block (30.8 M) and the search of
+the pack index (18.6 M).
 
 The port inflates each commit one time: the graph of the walk keeps the
 commit for the text of `log`. It does not inflate a packed object for its

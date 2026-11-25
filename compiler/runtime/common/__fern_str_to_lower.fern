@@ -1,7 +1,18 @@
 function __fern_str_to_lower(s: string): string {
   let n = s.len();
   let p = __raw_alloc(n);
+  let src = __raw_data(s);
   let i = 0;
+  // Eight bytes in each pass. Bit 7 of a byte of `m` marks a letter from
+  // A to Z: the low seven bits are at least 'A' and at most 'Z', and the
+  // byte is ASCII.
+  while (i + 8 <= n) {
+    let w = __load_i64(src + i as usize) as u64;
+    let low = w & 0x7f7f7f7f7f7f7f7f as u64;
+    let m = low + 0x3f3f3f3f3f3f3f3f as u64 & ~(low + 0x2525252525252525 as u64) & ~w & 0x8080808080808080 as u64;
+    __store_i64(p + i as usize, (w | m >> 2u64) as i64);
+    i += 8;
+  }
   while (i < n) {
     let c = s[i] as i32;
     if (c >= 65) {

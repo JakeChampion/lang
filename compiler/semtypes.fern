@@ -86,7 +86,8 @@ pub function equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
         return x.value == y.value;
       }
     },
-    typeinfo.TypeUnknown(_) => {}
+    typeinfo.TypeUnknown(_) => {},
+    typeinfo.TypeVar(_) => {}
   }
   return false;
 }

@@ -8,7 +8,7 @@ This module derives keys from passwords with scrypt under RFC 7914.
 
 ## Contracts
 
-N is a power of 2 that is more than 1. The block size r and the parallelization p are 1 or more. The derived key length must be at least one byte. Zero and negative lengths give `KeyLength` with the supplied value. Parameters that need more than 2^31 - 1 slots give `Memory`. `key` caps the variable-sized working buffers at 32 MiB. Use `key_with_memory_limit` to supply a byte limit. The check counts the ROMix array and parallel blocks together, and the PBKDF2 output and salt copy while each derivation runs. It excludes caller-owned inputs, fixed-size hash state and allocator overhead. scrypt reads its memory at an index that depends on the password. That index is the only value that the module makes public under the constant-time gate.
+N is a power of 2 that is more than 1. The block size r and the parallelization p are 1 or more. The derived key length must be at least one byte. Lengths outside 1 through `crypto.MAX_OUTPUT_BYTES` give `KeyLength` with the supplied value. Parameters that need more than 2^31 - 1 slots give `Memory`. `key` caps the variable-sized working buffers at 32 MiB. Use `key_with_memory_limit` to supply a byte limit. The check counts the ROMix array and parallel blocks together, and the PBKDF2 output and salt copy while each derivation runs. It excludes caller-owned inputs, fixed-size hash state and allocator overhead. scrypt reads its memory at an index that depends on the password. That index is the only value that the module makes public under the constant-time gate.
 
 ## Executable example
 
@@ -97,6 +97,9 @@ pub function (e: ScryptError) message(): string {
       return "scrypt: the parallelization p is " + p.to_string() + ", want 1 or more";
     },
     KeyLength(n) => {
+      if (n > crypto.MAX_OUTPUT_BYTES) {
+        return f"scrypt: the key length {n} exceeds the array limit";
+      }
       return f"scrypt: the key length is {n}, want 1 or more";
     },
     MemoryLimit(limit) => {
@@ -219,7 +222,7 @@ function __refusal(n: i32, r: i32, p: i32): Option[ScryptError] {
   }
   let block_bytes = 128i64 * (r as i64);
   // Divide before multiplying so even the largest i32 inputs cannot wrap.
-  if (p as i64 > 2147483647i64 / block_bytes || n as i64 + 3i64 > 2147483647i64 / (16i64 * (r as i64))) {
+  if (p as i64 > (crypto.MAX_OUTPUT_BYTES as i64 - 4i64) / block_bytes || n as i64 + 3i64 > crypto.MAX_OUTPUT_BYTES as i64 / block_bytes) {
     return Some(Memory);
   }
   return None;
@@ -235,7 +238,7 @@ pub function key_with_memory_limit(password: [u8], salt: [u8], n: i32, r: i32, p
   if let Some(e) = __refusal(n, r, p) {
     return Err(e);
   }
-  if (key_len < 1) {
+  if (key_len < 1 || key_len > crypto.MAX_OUTPUT_BYTES) {
     return Err(KeyLength(key_len));
   }
   let block_bytes = 128i64 * (r as i64);

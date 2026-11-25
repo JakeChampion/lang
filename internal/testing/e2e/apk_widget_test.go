@@ -83,7 +83,7 @@ func TestApkWidget(t *testing.T) {
 	for _, f := range zr.File {
 		names = append(names, f.Name)
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/layout/widget.xml res/xml/widget.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/layout/widget.xml res/xml/widget.xml res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
@@ -181,7 +181,7 @@ func TestApkCar(t *testing.T) {
 	for _, f := range zr.File {
 		names = append(names, f.Name)
 	}
-	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/xml/automotive_app_desc.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
+	if got := strings.Join(names, " "); got != "AndroidManifest.xml classes.dex resources.arsc res/xml/automotive_app_desc.xml res/xml/data_extraction_rules.xml res/xml/full_backup_content.xml lib/arm64-v8a/libapp.so lib/x86_64/libapp.so" {
 		t.Errorf("entries = %s", got)
 	}
 	man := readZipEntry(t, zr, "AndroidManifest.xml")
