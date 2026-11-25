@@ -105,7 +105,28 @@ function test_lengths(): test.TestOutcome {
   if (element(der.read(h("020501"), 0)) != "der: truncated") {
     return test.fail("truncated");
   }
-  return test.assert_eq(element(der.read(h("1f0100"), 0)), "der: a high tag number");
+  return test.assert_eq(element(der.read(h("1f0100"), 0)), "der: a high tag number that DER does not allow");
+}
+
+function test_high_tags(): test.TestOutcome {
+  let t701 = first("bf853d03020101");
+  if (t701.tag != der.context(701, true) || t701.from != 4 || t701.to != 7) {
+    return test.fail("[701] read as " + element(der.read(h("bf853d03020101"), 0)));
+  }
+  let t31 = first("9f1f00");
+  if (t31.tag != der.context(31, false) || t31.from != 3 || t31.to != 3) {
+    return test.fail("[31] read as " + element(der.read(h("9f1f00"), 0)));
+  }
+  if (der.context(30, true) != 0xbe || der.context(5, false) != 0x85) {
+    return test.fail("low tag numbers changed");
+  }
+  let refused = ["1f1e00", "1f80810100", "1f8181810100"];
+  for s in refused {
+    if (element(der.read(h(s), 0)) != "der: a high tag number that DER does not allow") {
+      return test.fail(s + " gave " + element(der.read(h(s), 0)));
+    }
+  }
+  return test.assert_eq(element(der.read(h("bf85"), 0)), "der: truncated");
 }
 
 function test_children(): test.TestOutcome {
@@ -158,7 +179,27 @@ function test_integers(): test.TestOutcome {
       return test.fail("2^32 - 1 accepted");
     },
     Err(e) => {
-      return test.assert_eq(e.message(), "der: malformed integer");
+      if (e.message() != "der: malformed integer") {
+        return test.fail(e.message());
+      }
+    }
+  }
+  match (der.enumerated(h("0a0102"), first("0a0102"))) {
+    Ok(v) => {
+      if (v != 2) {
+        return test.fail("enumerated");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (der.enumerated(h("020102"), first("020102"))) {
+    Ok(v) => {
+      return test.fail("an INTEGER read as ENUMERATED");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "der: tag 2 where 10 was wanted");
     }
   }
   return test.fail("unreachable");
@@ -266,6 +307,7 @@ function test_text(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("std/tls/der");
   r = r.it("lengths and tags", test_lengths);
+  r = r.it("high tag numbers", test_high_tags);
   r = r.it("children", test_children);
   r = r.it("integers", test_integers);
   r = r.it("object identifiers", test_oids);
