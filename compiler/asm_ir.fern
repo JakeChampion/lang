@@ -10281,7 +10281,6 @@ function ssa_str_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
 
 function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   s = asmcore.ssa_x0_forget(s);
-  s = s.need("str_eq");
   s = ssa_read(reg_of, ins.args[0], "%r11", s);
   let a = ssa_src(reg_of, ins.args[0], "%r11");
   s = ssa_read(reg_of, ins.args[1], "%rcx", s);
@@ -10290,14 +10289,27 @@ function ssa_str_eq(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, s: 
   let nn = asmcore.lab_new(s, lp + "streqn" + n);
   let dn = asmcore.lab_new(nn.state, lp + "streqd" + n);
   s = dn.state;
-  s = ssa_branch(ssa_alu_rm(ssa_mov_rm(s, 64, true, "%rdx", a, 8), 7, 64, true, "%rdx", b, 8), J_JNE, nn.lab);
-  let lit_a = fr.lit0[ins.args[0]];
-  let lit_b = fr.lit0[ins.args[1]];
-  if (lit_b >= 0) {
-    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", a), 7, 8, lit_b, "%rdx"), J_JNE, nn.lab);
-  } else if (lit_a >= 0) {
-    s = ssa_branch(ssa_alu_im0(ssa_mov_rm0(s, 64, true, "%rdx", b), 7, 8, lit_a, "%rdx"), J_JNE, nn.lab);
+  let lit = ssa.eq_literal(fr.lits, ins.args[0], ins.args[1]);
+  if (lit.other < 0) {
+    s = ssa_branch(ssa_alu_rm(ssa_mov_rm(s, 64, true, "%rdx", a, 8), 7, 64, true, "%rdx", b, 8), J_JNE, nn.lab);
+  } else {
+    let other = if (lit.other == 0) { a } else { b };
+    s = ssa_branch(ssa_alu_im(s, 7, 64, lit.text.len(), other, 8), J_JNE, nn.lab);
+    let nbytes = ssa.inline_eq_bytes(lit.text);
+    if (nbytes > 0) {
+      s = ssa_mov_rm0(s, 64, true, "%rdx", other);
+    }
+    for k in 0..nbytes {
+      let byte = lit.text[k] as i32;
+      s = ssa_branch(if (k == 0) { ssa_alu_im0(s, 7, 8, byte, "%rdx") } else { ssa_alu_im(s, 7, 8, byte, "%rdx", k) }, J_JNE, nn.lab);
+    }
+    if (nbytes == lit.text.len()) {
+      s = ssa_branch(ssa_mov_ir(s, 32, 1i64, "1", "%rax"), J_JMP, dn.lab);
+      s = ssa_zero(s.lab_def(nn.lab), "%rax").lab_def(dn.lab);
+      return ssa_store(reg_of, ins.result, "%rax", asmcore.ssa_x0_forget(s));
+    }
   }
+  s = s.need("str_eq");
   let x = a;
   let y = b;
   if (y == "%rax" || x == "%rsi") {
@@ -11048,7 +11060,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "%rdx", asmcore.ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lit0: i32[], lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], leaf: boolean, bare: boolean, pad: i32, epilogue: string, imm: ssa.Imms, shift32: i32[], lits: ssa.Literals, lbase: i32, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
 // With `test`, `b` is the immediate mask of an `and` whose result the compare tested against zero.
 // load_bits is not 0 when the compare reads one operand from memory, with a
@@ -12462,7 +12474,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = s.lab_take(bp.len());
   let lanes = ssa.lane_values(f);
   let uses = ssa.use_counts(f);
-  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lit0: ssa.literal_first_bytes(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
+  let fr = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, leaf: leaf, bare: bare, pad: pad, epilogue: epilogue, imm: imm, shift32: ssa.narrow_right_shifts(f, imm), lits: ssa.literals(f), lbase: lbase, lanes: lanes, cold: cold, cold_base: nspill + 3 * ssa.view_count(views), canary: canary };
   let early_homes = ssa_early_homes(f, reg_of, s);
   let split = if (bare) { ssa_frame_split(f, fr, reg_of, early_homes) } else { ssa.FrameSplit { early: [], sites: [] } };
   // An early block returns with no frame to take down.
