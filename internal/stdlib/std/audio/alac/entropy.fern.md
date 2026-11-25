@@ -16,6 +16,7 @@ import "std/audio/alac/bits";
 import "std/audio/alac/config";
 import "std/audio/pcm";
 import "std/u32";
+import "std/u64";
 
 pub struct Parameters { depth: i32, mode: i32, shift: i32, factor: u32, coefficients: i32[] }
 
@@ -36,11 +37,11 @@ pub function parameters(input: [u8], at: i64, info: config.Info, depth: i32): Re
   if (mode != 0u32 && mode != 15u32) {
     return Err(pcm.Header);
   }
-  let coefficients: i32[] = [];
-  for _ in 0..order as i32 {
+  let coefficients = pcm.zeros(order as i32);
+  for i in 0..order as i32 {
     let (next, value) = bits.signed(input, at, 16)?;
     at = next;
-    coefficients = coefficients.append(value);
+    coefficients = coefficients.with(i, value);
   }
   return Ok((at, Parameters { depth: depth, mode: mode as i32, shift: shift as i32, factor: factor * (info.pb as u32) >> 2u32, coefficients: coefficients }));
 }
@@ -58,30 +59,37 @@ pub function rice(input: [u8], at: i64, k: i32, escape: i32): Result[(i64, u32),
   if (at == size) {
     return Err(pcm.Truncated);
   }
-  // Two bytes cover the entire nine-bit unary prefix at any alignment.
-  let index = (at / 8i64) as i32;
-  let next_byte = if (index + 1 < input.len()) { input[index + 1] as u32 } else { 255u32 };
-  let window = (input[index] as u32 << 8u32 | next_byte) << (16 + (at % 8i64) as i32) as u32;
+  // One window holds the nine-bit prefix with the escape or the suffix and its extra bit.
+  let window = bits.window(input, at);
   let ones = (~window).leading_zeros();
   let prefix = if (ones < 9) { ones as u32 } else { 9u32 };
-  at += if (prefix == 9u32) { 9i64 } else { prefix as i64 + 1i64 };
+  let used = if (prefix == 9u32) { 9 } else { prefix as i32 + 1 };
+  at += used as i64;
   if (at > size) {
     return Err(pcm.Truncated);
   }
   if (prefix == 9u32) {
-    return bits.read(input, at, escape);
+    if (at + escape as i64 > size) {
+      return Err(pcm.Truncated);
+    }
+    return Ok((at + escape as i64, (window << 9u64 >> (64 - escape) as u64) as u32));
   }
   if (k < 2) {
     return Ok((at, if (k == 1) { prefix } else { 0u32 }));
   }
   let base = (prefix as u64 << k as u64) - prefix as u64;
-  let (after_suffix, suffix) = bits.read(input, at, k - 1)?;
-  at = after_suffix;
+  at += (k - 1) as i64;
+  if (at > size) {
+    return Err(pcm.Truncated);
+  }
+  let suffix = window << used as u64 >> (65 - k) as u64;
   let value = base;
-  if (suffix != 0u32) {
-    let (next, bit) = bits.read(input, at, 1)?;
-    at = next;
-    value += (suffix as u64 << 1u64) + bit as u64 - 1u64;
+  if (suffix != 0u64) {
+    at += 1i64;
+    if (at > size) {
+      return Err(pcm.Truncated);
+    }
+    value += (suffix << 1u64) + (window << (used + k - 1) as u64 >> 63u64) - 1u64;
   }
   if (value > 4294967295u64) {
     return Err(pcm.Header);

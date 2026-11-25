@@ -1,6 +1,7 @@
 # Bounded ALAC bit input
 
 This module reads most-significant-bit-first fields with checked positions.
+`window` gives the 64 bits at a position, so one load can supply several fields.
 Positions retain no input bytes. Incomplete fields return `Truncated`.
 
 ```fern
@@ -17,17 +18,26 @@ pub function read(input: [u8], at: i64, count: i32): Result[(i64, u32), pcm.Audi
   if (end > input.len() as i64 * 8i64) {
     return Err(pcm.Truncated);
   }
-  let result = 0u32;
-  let left = count;
-  while (left > 0) {
-    let bit = (at % 8i64) as i32;
-    let take = if (left < 8 - bit) { left } else { 8 - bit };
-    let value = input[(at / 8i64) as i32] as u32 >> (8 - bit - take) as u32 & (1u32 << take as u32) - 1u32;
-    result = result << take as u32 | value;
-    at += take as i64;
-    left -= take;
+  if (count == 0) {
+    return Ok((end, 0u32));
   }
-  return Ok((end, result));
+  return Ok((end, (window(input, at) >> (64 - count) as u64) as u32));
+}
+
+// The 64 bits from bit `at`, most significant first. Bits past the input are zero.
+@inline
+pub function window(input: [u8], at: i64): u64 {
+  let index = (at / 8i64) as i32;
+  let bit = (at % 8i64) as u64;
+  if (index + 8 <= input.len()) {
+    return (input[index] as u64 << 56 | input[index + 1] as u64 << 48 | input[index + 2] as u64 << 40 | input[index + 3] as u64 << 32
+      | input[index + 4] as u64 << 24 | input[index + 5] as u64 << 16 | input[index + 6] as u64 << 8 | input[index + 7] as u64) << bit;
+  }
+  let value = 0u64;
+  for i in 0..8 {
+    value = value << 8u64 | (if (index + i < input.len()) { input[index + i] as u64 } else { 0u64 });
+  }
+  return value << bit;
 }
 
 pub function signed(input: [u8], at: i64, count: i32): Result[(i64, i32), pcm.AudioError] {

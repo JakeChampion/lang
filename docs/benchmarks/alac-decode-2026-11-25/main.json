@@ -1,0 +1,843 @@
+{
+  "schema": 1,
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.44-fc-v880-x86_64-with-glibc2.39",
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cpu": 3,
+  "rounds": 16,
+  "trials": 7,
+  "frames_per_file": 262144,
+  "packet_frames": 4096,
+  "git_head": "6b37aea4060e4107313d72a0f73ef0a8f74803fb",
+  "compiler_sha256": "0a9f5654ae29e40b44579c7b7e3eae1432688c747826bc8c70d957f94dea12b8",
+  "reference_commit": "c38887c5c5e64a4b31108733bd79ca9b2496d987",
+  "reference_sha256": "0525c46243d97a0ae15c0b4391cd3a8d2690c8cffb1084dcbd0c4d0ed6bb490d",
+  "fern_sha256": "97d40a88047ad95392136113b225e145be2c87ba3396fe862ad71de466a5afae",
+  "stdlib": "git archive of origin/main internal/stdlib",
+  "source_sha256": {
+    "scripts/bench-alac": "c88afa5a579ec2839a5edc6df0e6ef50ae26e01b6316a02563f40353ce9922ed",
+    "scripts/audio-reference/alac_bench.cpp": "adea82decf023ae1a00a0170df3046d26213f2c8c0ea5e0eae20eb3b9609e6b1",
+    "bench/audio/alac_decode.fern": "0ad94d1312a744f50113ba6666ba2e255966f6dfcab8d21948b4491279c5ec4d",
+    "alac.fern.md": "7e6e9ef4630c34d1c89d0d6be4fc5f261c53f2d0b270f5109f419dc3ba11c007",
+    "bits.fern.md": "27c65cc67b35c3a5228eab5d32f3cd175080a040b96b48785c85e04f87d2ea87",
+    "config.fern.md": "62953ee190b9b63e568c29d481b169d29641cbe4bac0818b117a4ec7f677e4c8",
+    "entropy.fern.md": "53a60efc4948f86568b1e530bbd9b7f307c3d9d3df8834ffb2f823e30eefb135",
+    "layout.fern.md": "afc7c358eec278b06c1b8486fe2c25933dce2268f850c62e7a7fe8b7eaa708f1",
+    "predict.fern.md": "37ef049aeba7f0da21457badfce0ad7dace087cf1d6c0ec29182f4a2f06bd6c6"
+  },
+  "measurement": "decode of every packet into reusable output, four warmup rounds; file read, packet split, and decoder setup excluded; checksum pass after the timed region",
+  "output_storage": "Fern: interleaved signed 32-bit PCM in WAVE order. Apple: interleaved packed PCM in ALAC order",
+  "peak_rss": "Linux process VmHWM after decode, including code, packets and output",
+  "cases": {
+    "music1_16": {
+      "channels": 1,
+      "bits": 16,
+      "encoded_bytes": 221372,
+      "checksum": 2360357864,
+      "median_ns_per_sample": {
+        "fern": 66.66801738739014,
+        "apple": 52.60401892662048
+      },
+      "fern_over_apple": 1.2673559691396983,
+      "fern_allocs_per_packet": 4.0,
+      "fern_fresh_bytes": 0,
+      "peak_rss_kb": {
+        "fern": 728,
+        "apple": 3860
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 287593648,
+            "allocs": 4096,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 728,
+            "observed": 18433
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 279625932,
+            "allocs": 4096,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 728,
+            "observed": 18433
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 266336235,
+            "allocs": 4096,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 728,
+            "observed": 18433
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 279745606,
+            "allocs": 4096,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 728,
+            "observed": 18433
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 266822243,
+            "allocs": 4096,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 728,
+            "observed": 18433
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 323895248,
+            "allocs": 4096,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 728,
+            "observed": 18433
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 242579439,
+            "allocs": 4096,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 728,
+            "observed": 18433
+          }
+        ],
+        "apple": [
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 218741582,
+            "peak_rss_kb": 3860,
+            "observed": 1
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 220637247,
+            "peak_rss_kb": 3860,
+            "observed": 1
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 217452372,
+            "peak_rss_kb": 3816,
+            "observed": 1
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 256794710,
+            "peak_rss_kb": 3780,
+            "observed": 1
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 208207306,
+            "peak_rss_kb": 3840,
+            "observed": 1
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 250781278,
+            "peak_rss_kb": 3828,
+            "observed": 1
+          },
+          {
+            "samples": 4194304,
+            "checksum": 2360357864,
+            "wall_ns": 224014080,
+            "peak_rss_kb": 3844,
+            "observed": 1
+          }
+        ]
+      }
+    },
+    "music2_16": {
+      "channels": 2,
+      "bits": 16,
+      "encoded_bytes": 419998,
+      "checksum": 3726975458,
+      "median_ns_per_sample": {
+        "fern": 60.063950181007385,
+        "apple": 54.3775110244751
+      },
+      "fern_over_apple": 1.1045733622116842,
+      "fern_allocs_per_packet": 7.0,
+      "fern_fresh_bytes": 0,
+      "peak_rss_kb": {
+        "fern": 1280,
+        "apple": 4212
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 481544165,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 1280,
+            "observed": 19041
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 562283882,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 1276,
+            "observed": 19041
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 606787029,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 1280,
+            "observed": 19041
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 664777674,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 1276,
+            "observed": 19041
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 460093689,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 1276,
+            "observed": 19041
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 465604521,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 1276,
+            "observed": 19041
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 503852933,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 1280,
+            "observed": 19041
+          }
+        ],
+        "apple": [
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 604997286,
+            "peak_rss_kb": 4208,
+            "observed": 97
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 460122843,
+            "peak_rss_kb": 4056,
+            "observed": 97
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 431712248,
+            "peak_rss_kb": 4212,
+            "observed": 97
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 456151624,
+            "peak_rss_kb": 4104,
+            "observed": 97
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 425304663,
+            "peak_rss_kb": 4044,
+            "observed": 97
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 521074180,
+            "peak_rss_kb": 4212,
+            "observed": 97
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3726975458,
+            "wall_ns": 450429121,
+            "peak_rss_kb": 4208,
+            "observed": 97
+          }
+        ]
+      }
+    },
+    "music2_24": {
+      "channels": 2,
+      "bits": 24,
+      "encoded_bytes": 772630,
+      "checksum": 3951852512,
+      "median_ns_per_sample": {
+        "fern": 66.21313059329987,
+        "apple": 58.482292890548706
+      },
+      "fern_over_apple": 1.1321910841837144,
+      "fern_allocs_per_packet": 7.0,
+      "fern_fresh_bytes": 0,
+      "peak_rss_kb": {
+        "fern": 2008,
+        "apple": 4932
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 479387228,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 2004,
+            "observed": 4877968
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 584187192,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 2004,
+            "observed": 4877968
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 585671509,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 2008,
+            "observed": 4877968
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 496495316,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 2004,
+            "observed": 4877968
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 555435997,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 2004,
+            "observed": 4877968
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 643028146,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 2008,
+            "observed": 4877968
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 492203189,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 2004,
+            "observed": 4877968
+          }
+        ],
+        "apple": [
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 522861960,
+            "peak_rss_kb": 4824,
+            "observed": 144
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 509445364,
+            "peak_rss_kb": 4868,
+            "observed": 144
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 462452598,
+            "peak_rss_kb": 4848,
+            "observed": 144
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 467963344,
+            "peak_rss_kb": 4816,
+            "observed": 144
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 473014154,
+            "peak_rss_kb": 4864,
+            "observed": 144
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 565421360,
+            "peak_rss_kb": 4932,
+            "observed": 144
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3951852512,
+            "wall_ns": 490585030,
+            "peak_rss_kb": 4872,
+            "observed": 144
+          }
+        ]
+      }
+    },
+    "noise2_24": {
+      "channels": 2,
+      "bits": 24,
+      "encoded_bytes": 1573416,
+      "checksum": 1119218824,
+      "median_ns_per_sample": {
+        "fern": 17.39366924762726,
+        "apple": 4.672533750534058
+      },
+      "fern_over_apple": 3.7225347480131545,
+      "fern_allocs_per_packet": 1.0,
+      "fern_fresh_bytes": 0,
+      "peak_rss_kb": {
+        "fern": 5356,
+        "apple": 6512
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 145908673,
+            "allocs": 1024,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 5356,
+            "observed": -5131636
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 149276438,
+            "allocs": 1024,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 5352,
+            "observed": -5131636
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 159743465,
+            "allocs": 1024,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 5352,
+            "observed": -5131636
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 140274643,
+            "allocs": 1024,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 5352,
+            "observed": -5131636
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 139407280,
+            "allocs": 1024,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 5352,
+            "observed": -5131636
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 138247500,
+            "allocs": 1024,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 5356,
+            "observed": -5131636
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 172509095,
+            "allocs": 1024,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 5352,
+            "observed": -5131636
+          }
+        ],
+        "apple": [
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 39991816,
+            "peak_rss_kb": 6404,
+            "observed": 140
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 45618717,
+            "peak_rss_kb": 6408,
+            "observed": 140
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 37876063,
+            "peak_rss_kb": 6412,
+            "observed": 140
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 39196054,
+            "peak_rss_kb": 6512,
+            "observed": 140
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 37947171,
+            "peak_rss_kb": 6412,
+            "observed": 140
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 38403373,
+            "peak_rss_kb": 6408,
+            "observed": 140
+          },
+          {
+            "samples": 8388608,
+            "checksum": 1119218824,
+            "wall_ns": 48169712,
+            "peak_rss_kb": 6384,
+            "observed": 140
+          }
+        ]
+      }
+    },
+    "music6_24": {
+      "channels": 6,
+      "bits": 24,
+      "encoded_bytes": 2341447,
+      "checksum": 3967739328,
+      "median_ns_per_sample": {
+        "fern": 70.77667240301768,
+        "apple": 60.452568451563515
+      },
+      "fern_over_apple": 1.1707802367359488,
+      "fern_allocs_per_packet": 19.0,
+      "fern_fresh_bytes": 0,
+      "peak_rss_kb": {
+        "fern": 7308,
+        "apple": 7948
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1781153281,
+            "allocs": 19456,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 7304,
+            "observed": 5441080
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1832158625,
+            "allocs": 19456,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 7308,
+            "observed": 5441080
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1856085987,
+            "allocs": 19456,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 7308,
+            "observed": 5441080
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1613634471,
+            "allocs": 19456,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 7308,
+            "observed": 5441080
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1758084606,
+            "allocs": 19456,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 7304,
+            "observed": 5441080
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1708458248,
+            "allocs": 19456,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 7304,
+            "observed": 5441080
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 2014713915,
+            "allocs": 19456,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 7304,
+            "observed": 5441080
+          }
+        ],
+        "apple": [
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1492544474,
+            "peak_rss_kb": 7888,
+            "observed": 154
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1521338698,
+            "peak_rss_kb": 7932,
+            "observed": 154
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1664381960,
+            "peak_rss_kb": 7944,
+            "observed": 154
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1490710541,
+            "peak_rss_kb": 7892,
+            "observed": 154
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1481082657,
+            "peak_rss_kb": 7948,
+            "observed": 154
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1621050809,
+            "peak_rss_kb": 7948,
+            "observed": 154
+          },
+          {
+            "samples": 25165824,
+            "checksum": 3967739328,
+            "wall_ns": 1524628178,
+            "peak_rss_kb": 7944,
+            "observed": 154
+          }
+        ]
+      }
+    },
+    "music2_32": {
+      "channels": 2,
+      "bits": 32,
+      "encoded_bytes": 1295890,
+      "checksum": 3348165534,
+      "median_ns_per_sample": {
+        "fern": 71.50753164291382,
+        "apple": 59.99045979976654
+      },
+      "fern_over_apple": 1.1919817231204501,
+      "fern_allocs_per_packet": 7.0,
+      "fern_fresh_bytes": 0,
+      "peak_rss_kb": {
+        "fern": 3032,
+        "apple": 5900
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 550675947,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 3028,
+            "observed": 1248693544
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 553518632,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 3032,
+            "observed": 1248693544
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 557809029,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 3028,
+            "observed": 1248693544
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 690697214,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 3028,
+            "observed": 1248693544
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 614037827,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 3028,
+            "observed": 1248693544
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 599848652,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 3028,
+            "observed": 1248693544
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 740889896,
+            "allocs": 7168,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 3028,
+            "observed": 1248693544
+          }
+        ],
+        "apple": [
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 503236451,
+            "peak_rss_kb": 5896,
+            "observed": 40
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 496267295,
+            "peak_rss_kb": 5868,
+            "observed": 40
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 505446895,
+            "peak_rss_kb": 5896,
+            "observed": 40
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 505139836,
+            "peak_rss_kb": 5884,
+            "observed": 40
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 475576955,
+            "peak_rss_kb": 5900,
+            "observed": 40
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 569653386,
+            "peak_rss_kb": 5860,
+            "observed": 40
+          },
+          {
+            "samples": 8388608,
+            "checksum": 3348165534,
+            "wall_ns": 491661318,
+            "peak_rss_kb": 5900,
+            "observed": 40
+          }
+        ]
+      }
+    }
+  }
+}

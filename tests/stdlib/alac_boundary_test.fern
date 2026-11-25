@@ -178,6 +178,37 @@ function bounded_bits(): test.TestOutcome {
   return test.pass();
 }
 
+// Each field equals the bits read one at a time, near the end of the input too.
+function window_fields(): test.TestOutcome {
+  let source: u8[] = [];
+  for i in 0..11 {
+    source = source.append((i * 151 + 29) as u8);
+  }
+  for size in 1..12 {
+    let input: u8[] = [];
+    for i in 0..size {
+      input = input.append(source[i]);
+    }
+    for at in 0..size * 8 + 1 {
+      let limit = if (size * 8 - at < 32) { size * 8 - at } else { 32 };
+      for width in 0..limit + 1 {
+        let expected = 0u32;
+        for i in 0..width {
+          let bit = at + i;
+          expected = expected << 1u32 | (input[bit / 8] >> (7 - bit % 8) as u8 & 1u8) as u32;
+        }
+        let Ok((end, value)) = bits.read(input, at as i64, width) else {
+          return test.fail("field inside the input");
+        };
+        if (value != expected || end != (at + width) as i64) {
+          return test.fail("field at bit " + at.to_string() + " width " + width.to_string() + " of " + size.to_string() + " bytes");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 function rice_prefixes(): test.TestOutcome {
   for offset in 0..8 {
     for ones in 0..10 {
@@ -277,6 +308,7 @@ function main(): i32 {
   runner = runner.it("scratch, output, packet, and declared byte budgets", budgets);
   runner = runner.it("Rice prefixes at every bit alignment", rice_prefixes);
   runner = runner.it("checked bit positions and incomplete Rice escapes", bounded_bits);
+  runner = runner.it("fields at every position near the end of the input", window_fields);
   runner = runner.it("bounded zero runs and predictor warm-up", zero_runs);
   runner = runner.it("channel permutations and declared predictor width", layouts);
   return runner.finish();
