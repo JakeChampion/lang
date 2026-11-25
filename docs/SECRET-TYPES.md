@@ -15,6 +15,7 @@ The rule applies again to a record or a tuple inside it.
 
 The drop also does the same for an enum value that the record holds alone, such as an `Option`.
 It zeroes the scalars of the variant, and the numeric arrays that the variant holds alone.
+The 64-bit integer or float payload of an `Option` or a `Result` is also a scalar of its variant.
 
 This holds in each build, not only under `-harden`.
 
@@ -51,8 +52,6 @@ A struct can have `@value` and `@secret` together. `aes_gcm.Key`, `ecdsa.Private
 ## Limits
 
 - The drop does not wipe a string. It does not wipe an array or a scalar inside an array of records.
-- The drop does not wipe a 64-bit integer or a float that is the payload of an `Option` or of a `Result`.
-  The payload store of that layout takes a 32-bit value.
 - The drop does not wipe a value of a `type A | B` union.
 - The drop does not wipe a nested record or enum that has a `core/mem.Drop` finalizer, because the finalizer reads the fields after the wipe.
   Give a record of that kind the attribute `@secret`, and its own drop then wipes it after the finalizer.
@@ -64,3 +63,4 @@ The semantic index is [spec/semantics.md](../spec/semantics.md).
 `TestSelfHostSecretRecordWipesItsArrays` reads the released blocks back through raw allocations on x86-64 and arm64.
 Its control is the same record without the attribute, which must read the secret bytes back.
 `TestSelfHostSecretRecordWipesItsScalars` does the same for the scalar fields, `TestSelfHostSecretRecordWipesItsNestedBoxes` for a nested record and a tuple, and `TestSelfHostSecretRecordWipesItsEnums` for an enum value.
+`TestSelfHostSecretRecordWipesItsWidePayloads` does the same for the 64-bit payload of an option.

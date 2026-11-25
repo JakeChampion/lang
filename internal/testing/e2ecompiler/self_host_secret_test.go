@@ -328,6 +328,88 @@ function main(): i32 {
 }
 `
 
+// A @secret record also zeroes the 64-bit payload of an Option or a Result
+// that it holds alone: an integer and a float. Each payload is eight bytes of
+// 0x41, and the box of each option is two words.
+const secretWideSrc = `import "std/option";
+import "std/result";
+
+@secret
+struct Key { word: Option[u64], real: Option[f64], res: Result[u64, i32], n: i32 }
+
+struct Plain { word: Option[u64], real: Option[f64], res: Result[u64, i32], n: i32 }
+
+@noinline
+function word(v: u64): Option[u64] {
+  return if (v > 0u64) { Some(v) } else { None };
+}
+
+@noinline
+function real(x: f64): Option[f64] {
+  return if (x > 0.0) { Some(x) } else { None };
+}
+
+@noinline
+function res(v: u64): Result[u64, i32] {
+  return if (v > 0u64) { Ok(v) } else { Err(1) };
+}
+
+function sum(w: Option[u64], r: Option[f64], s: Result[u64, i32]): u64 {
+  return w.unwrap_or(0u64) + (r.unwrap_or(0.0) as u64) + s.unwrap_or(0u64);
+}
+
+@noinline
+function key(v: u64, x: f64): u64 {
+  let k = Key { word: word(v), real: real(x), res: res(v), n: 1 };
+  return sum(k.word, k.real, k.res);
+}
+
+@noinline
+function plain(v: u64, x: f64): u64 {
+  let k = Plain { word: word(v), real: real(x), res: res(v), n: 1 };
+  return sum(k.word, k.real, k.res);
+}
+
+@noinline
+function shared(v: u64, x: f64): Option[f64] {
+  let r = real(x);
+  let k = Key { word: word(v), real: r, res: res(v), n: 1 };
+  let n = k.n;
+  return r;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 2..10 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  let x: f64 = 2261634.5098039214 + (args().len() as f64) - 2.0;
+  if (mode == "secret") {
+    let n = key(word, x);
+  } else if (mode == "shared") {
+    let r = shared(word, x);
+    print((r.unwrap_or(0.0) == x).to_string());
+  } else {
+    let n = plain(word, x);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
 // secretRun compiles src for target and gives a function that runs the
 // program in one mode and splits its output into fields.
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
@@ -437,6 +519,23 @@ func TestSelfHostSecretRecordWipesItsEnums(t *testing.T) {
 			}
 			if got := run("shared"); len(got) != 2 || got[0] != "true" {
 				t.Fatalf("shared printed %q; the enum value that the caller still holds must keep its fields", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsWidePayloads(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretWideSrc)
+			if got := secretCount(t, "plain", run("plain")); got != 24 {
+				t.Fatalf("plain read %d secret bytes back, want 24; the raw allocations no longer observe the released boxes", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its 64-bit payloads back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 2 || got[0] != "true" {
+				t.Fatalf("shared printed %q; the option that the caller still holds must keep its payload", got)
 			}
 		})
 	}

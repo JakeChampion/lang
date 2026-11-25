@@ -65,7 +65,7 @@ The call consumes one holder.
 
 A struct with the attribute `@secret` erases without a call. When the last reference to such a record goes away, its drop zeroes each numeric array that the record holds alone and each scalar field of the record, in each build.
 The drop does the same inside a nested record, a tuple and an enum value that the record holds alone.
-An array that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays`, `TestSelfHostSecretRecordWipesItsScalars`, `TestSelfHostSecretRecordWipesItsNestedBoxes` and `TestSelfHostSecretRecordWipesItsEnums` pin them on both native targets.
+An array that another value still holds keeps its elements. The rules and the limits are in [SECRET-TYPES.md](../SECRET-TYPES.md), and `TestSelfHostSecretRecordWipesItsArrays`, `TestSelfHostSecretRecordWipesItsScalars`, `TestSelfHostSecretRecordWipesItsNestedBoxes`, `TestSelfHostSecretRecordWipesItsEnums` and `TestSelfHostSecretRecordWipesItsWidePayloads` pin them on both native targets.
 The key records of `aes`, `aes_gcm`, `des`, `chacha20poly1305`, `hpke`, `mlkem768` and `rsa` have the attribute. [SECRET-TYPES.md](../SECRET-TYPES.md) lists them.
 
 The stores cannot be elided, because no pass of the compiler removes a store to an array.
