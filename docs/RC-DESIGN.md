@@ -96,8 +96,10 @@ a re-read never holds a parent longer than the plan already does. An
 ancestor of the parent counts too (`ancestor_spent_past`). It does not
 re-read a value while a read off its first read lives into the block and is
 not read again there (`child_kept_across`). The plan holds that old read
-across the new one, and an update of it then copies. A `length` does not
-spend.
+across the new one, and an update of it then copies. It does not re-read a
+record that another block updates (`updated_elsewhere`): that block can
+take the first read only when no block reads the slot again. A `length`
+does not spend.
 `semcse.fern` then merges a block's repeated reads of one slot of one value,
 which the re-reads at a block's head most often make, so the slot has one
 holder for the plan to hold or take where its box is consumed. Last,
