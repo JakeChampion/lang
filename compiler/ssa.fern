@@ -4188,8 +4188,9 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
 // `zero_stores` says it stores only a zero so.
 // With `flag_carries`, a carry that stays in the flags does not take its
 // operands out of the immediates, because it emits no instruction that reads them.
+// The 0 of a carry mask does not either.
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[], stores: boolean, zero_stores: boolean, flag_carries: boolean): Imms {
-  let roles: i32[] = if (flag_carries) { carry_roles(f, use_counts(f)) } else { [] };
+  let roles = carry_roles(f, use_counts(f));
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -4212,7 +4213,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[],
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      if (flag_carry(roles, ins)) {
+      if (flag_carries && flag_carry(roles, ins) || carry_mask(roles, ins, konst, value)) {
         continue;
       }
       for a in 0..ins.args.len() {
@@ -4441,6 +4442,12 @@ pub function read_by_next(f: SFunc, imm: Imms): boolean[] {
     }
   }
   return out;
+}
+
+// `ins` is `0 - c` for a carry `c` in the flags, which is all ones when the flag is set.
+pub function carry_mask(roles: i32[], ins: SInst, konst: boolean[], value: i64[]): boolean {
+  let z = if (ins.args.len() == 2) { ins.args[0] } else { -1 };
+  return carry_role(roles, ins) == CARRY_READ && ins.ir_kind == ir.K_SUB && z >= 0 && z < konst.len() && konst[z] && value[z] == 0i64;
 }
 
 function flag_carry(roles: i32[], ins: SInst): boolean {
@@ -10094,13 +10101,9 @@ function consts_first(a: SInst[]): SInst[] {
     }
   }
   let moved: i32[] = [];
-  for ins in a {
-    if (ins.kind_tag == CARRY) {
-      for v in ins.args {
-        if (listed(consts, v) && !listed(moved, v)) {
-          moved = moved.append(v);
-        }
-      }
+  for v in carry_inputs(a) {
+    if (listed(consts, v) && !listed(moved, v)) {
+      moved = moved.append(v);
     }
   }
   if (moved.len() == 0) {
@@ -10128,12 +10131,13 @@ function consts_first(a: SInst[]): SInst[] {
 // outside a chain that follows another one.
 function consts_to_chains(a: SInst[], uses: i32[], nvals: i32): SInst[] {
   let roles = block_carry_roles(a, uses, __alloc_i32(nvals));
+  let inputs = carry_inputs(a);
   let lead = first_body_inst(a);
   let anchor = util.minus_ones(a.len());
   let moves = false;
   for i in lead..a.len() {
     let c = a[i];
-    if (!is_const_inst(c) || !carry_read(a, c.result)) {
+    if (!is_const_inst(c) || !listed(inputs, c.result)) {
       continue;
     }
     let r = first_reader(a, i + 1, c.result);
@@ -10197,9 +10201,30 @@ function only_consts(a: SInst[], from: i32, to: i32): boolean {
   return true;
 }
 
-function carry_read(a: SInst[], v: i32): boolean {
+// The operands of the carries of a block, and of the adds and subtracts that
+// read one of those carries.
+function carry_inputs(a: SInst[]): i32[] {
+  let carries: SInst[] = [];
   for ins in a {
-    if (ins.kind_tag == CARRY && listed(ins.args, v)) {
+    if (ins.kind_tag == CARRY) {
+      carries = carries.append(ins);
+    }
+  }
+  let out: i32[] = [];
+  for ins in a {
+    if (ins.kind_tag == CARRY || reads_a_carry(carries, ins)) {
+      out = out.concat(ins.args);
+    }
+  }
+  return out;
+}
+
+function reads_a_carry(carries: SInst[], ins: SInst): boolean {
+  if (ins.kind_tag != BINARY || ins.args.len() != 2) {
+    return false;
+  }
+  for c in carries {
+    if (reader_of(ins, c)) {
       return true;
     }
   }
