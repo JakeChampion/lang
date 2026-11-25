@@ -24,6 +24,9 @@ function main(): i32 {
   out += row("not a variable spelling", typeinfo.TypeVar { name: "widget", declared: false });
   out += row("unbound", typeinfo.TypeUnbound { param: "T" });
   out += row("unbound lifted", typeinfo.TypeUnbound { param: "" });
+  out += row("pending local", typeinfo.TypePending { kind: 0, id: 4, name: "", ids: [] });
+  out += row("pending struct", typeinfo.TypePending { kind: 1, id: -1, name: "Point", ids: [2, -1] });
+  out += row("pending open enum", typeinfo.TypePending { kind: 2, id: 7, name: "", ids: [] });
   out += row("unchecked", typeinfo.unchecked());
   out += row("erased", typeinfo.TypeErased { name: "T" });
   out += row("i32", typeinfo.t_i32());

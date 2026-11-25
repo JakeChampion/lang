@@ -713,6 +713,9 @@ function known(t: typeinfo.Type): boolean {
   if let typeinfo.TypeUnbound(_) = t {
     return false;
   }
+  if let typeinfo.TypePending(_) = t {
+    return false;
+  }
   return true;
 }
 
