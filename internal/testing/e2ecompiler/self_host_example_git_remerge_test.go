@@ -833,6 +833,12 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
 	reversed := g.git("commit-tree", "-p", "module-2", "-p", "module-1", "-m", "swapped parents", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// From s1, one parent rewinds to s0 and the other advances to s2.
+	rewindTree := g.git("rev-parse", "module-base^{tree}")
+	rewind := g.git("commit-tree", "-p", "module-1", "-m", "rewind", rewindTree)
+	advance := g.git("commit-tree", "-p", "module-1", "-m", "advance", rightTree)
+	rewindMerge := g.git("commit-tree", "-p", rewind, "-p", advance, "-m", "take advance", rightTree)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rewindMerge)
 	// With no form of the diff, the port does not do the merge.
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-s", "--format=%s", "module-merge")
 	g.git("config", "merge.custom.name", "custom merge")

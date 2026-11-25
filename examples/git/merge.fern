@@ -775,31 +775,39 @@ function submodule_absent(repo: refs.Repo, path: string): boolean {
   return stat(repo.common + "/modules").is_err() && stat(repo.dir + "/modules").is_err();
 }
 
-// Fast-forward a checked-out submodule when both sides descend from the
-// base and the later side contains the earlier one.
-function submodule_fast_forward(sub: refs.Repo, base: Version, a: Version, b: Version): Option[Version] {
+enum SubmoduleHistory { FastForward(Version), Rewind, Unresolved }
+
+// Compare the commits of a checked-out submodule with their base.
+function submodule_history(sub: refs.Repo, base: Version, a: Version, b: Version): SubmoduleHistory {
   if (kind_of(base.mode) != KIND_COMMIT || a.hash.len() != 2 * sub.width) {
-    return None;
+    return Unresolved;
   }
   let g = walk.graph_of(sub.store());
   for h in [base.hash, a.hash, b.hash] {
     let (next, n) = walk.node(g, h);
     if (!n.ok) {
-      return None;
+      return Unresolved;
     }
     g = next;
   }
   let (ga, forward_a) = walk.reaches(g, a.hash, base.hash);
   let (gb, forward_b) = walk.reaches(ga, b.hash, base.hash);
   if (!forward_a || !forward_b) {
-    return None;
+    // An incomplete walk cannot establish that a side rewound.
+    for entry in gb.nodes.entries() {
+      let (_, n) = entry;
+      if (!n.ok) {
+        return Unresolved;
+      }
+    }
+    return Rewind;
   }
   let (gab, includes_a) = walk.reaches(gb, b.hash, a.hash);
   if (includes_a) {
-    return Some(b);
+    return FastForward(b);
   }
   let (_, includes_b) = walk.reaches(gab, a.hash, b.hash);
-  return if (includes_b) { Some(a) } else { None };
+  return if (includes_b) { FastForward(a) } else { Unresolved };
 }
 
 // The merge of the versions `o`, `a` and `b` of one path
@@ -835,8 +843,15 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
             st = message(st, path, "Failed to merge submodule " + path + " (no merge base)");
             return (st, false, if (st.depth > 0) { o } else { a });
           }
-          if let Some(later) = submodule_fast_forward(sub, o, a, b) {
-            return (st, clean, later);
+          match (submodule_history(sub, o, a, b)) {
+            FastForward(later) => {
+              return (st, clean, later);
+            },
+            Rewind => {
+              st = message(st, path, "Failed to merge submodule " + path + " (commits don't follow merge-base)");
+              return (st, false, if (st.depth > 0) { o } else { a });
+            },
+            Unresolved => {}
           }
         }
       }
