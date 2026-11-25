@@ -15093,8 +15093,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           return out;
         }
       }
-      out = dest_call_diags(mfa.obj, receiver_dest(mfa, dest, s), s);
-      match (check_expr(mfa.obj, s)) {
+      let receiver = check_expr(mfa.obj, s);
+      out = dest_call_diags(mfa.obj, receiver_dest(mfa, receiver, dest, s), s);
+      match (receiver) {
         typeinfo.TypeTuple(mtt) => {
           let tdg = tuple_field_diags(mfa.field, mtt, mfa.line, mfa.col);
           if (s.lookup_method(mfa.field, parser.tuple_arity_namespace(mtt.elements.len())).is_some()) {
@@ -17031,8 +17032,11 @@ function lit_dest_args(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Sco
 // give `dest`: the result type of the method binds its type variables, and
 // they give the receiver type. A receiver with no type of its own has the
 // method of the struct that `dest` is.
-function receiver_dest(mfa: ast.ExprFieldAccess, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+function receiver_dest(mfa: ast.ExprFieldAccess, receiver: typeinfo.Type, dest: typeinfo.Type, s: Scope): typeinfo.Type {
   let none = t_unknown("no destination");
+  if (is_unknown(dest)) {
+    return none;
+  }
   let ast.ExprCall(_) = mfa.obj else {
     return none;
   };
@@ -17040,7 +17044,7 @@ function receiver_dest(mfa: ast.ExprFieldAccess, dest: typeinfo.Type, s: Scope):
   if let typeinfo.TypeStruct(wanted) = dest {
     owner = wanted.name;
   }
-  if let typeinfo.TypeStruct(found) = check_expr(mfa.obj, s) {
+  if let typeinfo.TypeStruct(found) = receiver {
     owner = found.name;
   }
   let Some(msig) = s.scoped_method(mfa.field, owner) else {
@@ -17048,7 +17052,7 @@ function receiver_dest(mfa: ast.ExprFieldAccess, dest: typeinfo.Type, s: Scope):
   };
   let rref = parser.parse_type_ref(msig.receiver_type);
   let vars = ref_type_vars(rref, parser.type_str_vars(msig.receiver_type, []), s, []);
-  if (is_unknown(dest) || vars.len() == 0) {
+  if (vars.len() == 0) {
     return none;
   }
   let (names, types) = gc_bind_param(parser.parse_type_ref(msig.ret_type_name), dest, vars, s.type_names(), [], []);
