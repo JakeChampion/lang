@@ -15,7 +15,7 @@ The operations run in constant time. An S-box lookup reads each of the 64 entrie
 ## Executable example
 
 ```fern test name=std-crypto-des-example
-import "std/crypto/des";
+import "std/crypto/legacy/des";
 
 function main(): i32 {
   let key = __alloc_u8(24).with(0, 1u8).with(8, 2u8).with(16, 3u8);
