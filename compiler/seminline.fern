@@ -363,6 +363,9 @@ function owns_resource(t: typeinfo.Type, owners: ResourceOwners): boolean {
   if let typeinfo.TypeVar(_) = t {
     return true;
   }
+  if let typeinfo.TypeUnbound(_) = t {
+    return true;
+  }
   return false;
 }
 
