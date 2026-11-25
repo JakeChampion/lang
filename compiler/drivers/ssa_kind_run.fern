@@ -1,21 +1,33 @@
+import "../ir";
 import "../ssa";
 import "../util";
+
+function unary(kind: i32, name: string): ssa.SInst {
+  return ssa.SInst { ir_kind: kind, kind_tag: ssa.UNARY, result: 1, args: [0], imm: 0, str: name };
+}
 
 function rotate_operands_match(): boolean {
   for width in [32, 64] {
     for count in 0..width {
-      let op = "rotr:" + util.i32_to_string(width) + ":" + util.i32_to_string(count);
-      if (ssa.rotr_count(op) != count) {
+      let op = unary(ir.K_ROTR, "rotr:" + util.i32_to_string(width) + ":" + util.i32_to_string(count));
+      if (ssa.rotr_count(op) != count || ssa.rotr_width(op) != width) {
         return false;
       }
     }
   }
-  for op in ["rotr:16:1", "rotr:32:", "rotr:64:x", "rotr:32:-1", "rotr:32:32", "rotr:64:64", "rotr:32:4294967296"] {
-    if (ssa.rotr_count(op) >= 0) {
+  for name in ["rotr:16:1", "rotr:32:", "rotr:64:x", "rotr:32:-1", "rotr:32:32", "rotr:64:64", "rotr:32:4294967296"] {
+    if (ssa.rotr_count(unary(ir.K_ROTR, name)) >= 0) {
       return false;
     }
   }
-  return true;
+  return ssa.rotr_count(unary(0, "rotr:32:7")) < 0 && ssa.lifted_kind(ssa.UNARY, "rotr:32:7") == ir.K_ROTR;
+}
+
+function unary_loads_match(): boolean {
+  let wide = unary(ssa.lifted_kind(ssa.UNARY, "load_i32"), "load_i32");
+  let half = unary(ssa.lifted_kind(ssa.UNARY, "load_u16"), "load_u16");
+  return ssa.is_unary_load(wide) && wide.ir_kind == ir.K_LOAD_I32 && ssa.is_unary_load(half) && half.ir_kind == ir.K_LOAD
+    && !ssa.is_unary_load(unary(0, "load_i32"));
 }
 
 function main(): i32 {
@@ -95,6 +107,10 @@ function main(): i32 {
 
   if (!rotate_operands_match()) {
     print("rotate operand mismatch");
+    return 1;
+  }
+  if (!unary_loads_match()) {
+    print("unary load kind mismatch");
     return 1;
   }
   return failures + tfailures;

@@ -2267,14 +2267,14 @@ function ssa_adrp_add(s: asmcore.EmitState, d: string, label: string): asmcore.E
 
 function ssa_unary_known(ins: ssa.SInst): boolean {
   let k = ins.ir_kind;
-  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins.str)) {
+  if (k == ir.K_NOT || k == ir.K_INT_EXTEND || k == ir.K_INT_WRAP || k == ir.K_U32_WRAP || ssa.is_unary_load(ins)) {
     return true;
   }
   let to = ssa.cast_target(ins);
   if (to == "u8" || to == "u16" || to == "i16" || to == "u32" || to == "i32") {
     return true;
   }
-  return ssa.rotr_count(ins.str) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "x4") != "";
+  return ssa.rotr_count(ins) >= 0 || asmcore.ssa_funary_known(ins) || ssa_bits_asm(ins, "x4") != "";
 }
 
 function ssa_inst_known(ins: ssa.SInst): boolean {
@@ -2324,11 +2324,10 @@ function ssa_unary_asm(ins: ssa.SInst, d: string): string {
   if (f != "") {
     return f;
   }
-  let what = ins.str;
-  if (what == "load_i32") {
+  if (ins.ir_kind == ir.K_LOAD_I32) {
     return "    ldrsw " + d + ", [" + d + "]\n";
   }
-  if (what == "load_u16") {
+  if (ins.ir_kind == ir.K_LOAD) {
     return "    ldrh " + w + ", [" + d + "]\n";
   }
   let k = ins.ir_kind;
@@ -2336,9 +2335,9 @@ function ssa_unary_asm(ins: ssa.SInst, d: string): string {
   if (k == ir.K_NOT) {
     return "    cmp " + d + ", #0\n    cset " + d + ", eq\n";
   }
-  if (what.starts_with("rotr:")) {
-    let n = util.i32_to_string(ssa.rotr_count(what));
-    if (ssa.rotr_width(what) == 64) {
+  if (ins.ir_kind == ir.K_ROTR) {
+    let n = util.i32_to_string(ssa.rotr_count(ins));
+    if (ssa.rotr_width(ins) == 64) {
       return "    ror " + d + ", " + d + ", #" + n + "\n";
     }
     return "    ror " + w + ", " + w + ", #" + n + "\n";
@@ -2370,11 +2369,10 @@ function ssa_unary_asm(ins: ssa.SInst, d: string): string {
 function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
   let w = ssa_wreg(d);
   let ws = ssa_wreg(src);
-  let what = ins.str;
-  if (what == "load_i32") {
+  if (ins.ir_kind == ir.K_LOAD_I32) {
     return "    ldrsw " + d + ", [" + src + "]\n";
   }
-  if (what == "load_u16") {
+  if (ins.ir_kind == ir.K_LOAD) {
     return "    ldrh " + w + ", [" + src + "]\n";
   }
   let k = ins.ir_kind;
@@ -2397,9 +2395,9 @@ function ssa_unary_from(ins: ssa.SInst, src: string, d: string): string {
   if (to == "i16") {
     return "    sxth " + d + ", " + ws + "\n";
   }
-  if (what.starts_with("rotr:")) {
-    let n = util.i32_to_string(ssa.rotr_count(what));
-    if (ssa.rotr_width(what) == 64) {
+  if (ins.ir_kind == ir.K_ROTR) {
+    let n = util.i32_to_string(ssa.rotr_count(ins));
+    if (ssa.rotr_width(ins) == 64) {
       return "    ror " + d + ", " + src + ", #" + n + "\n";
     }
     return "    ror " + w + ", " + ws + ", #" + n + "\n";
