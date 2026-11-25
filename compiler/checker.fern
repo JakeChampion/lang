@@ -27742,6 +27742,13 @@ function ow_result_loan(value: ast.Expr, ctx: OwnCtx): boolean {
   }
   let lu = ctx.last_use.get();
   let lenders = BorrowContext { lenders: lu.lenders, result_scope: Some(ctx.scope), value_proofs: Some(ctx.value_proofs) };
+  let borrowed = ow_lending_names(ctx);
+  let locals = ow_borrowed_locals(ow_spine_stmts(ctx.result_body), ctx.ofuncs, borrowed, [], lu.borrows, lu.builtins, lenders, false);
+  return ow_expr_borrows(value, ctx.ofuncs, borrowed, locals, [], lu.borrows, lu.builtins, lenders, false);
+}
+
+// The names whose values can lend a handle.
+function ow_lending_names(ctx: OwnCtx): string[] {
   let borrowed: string[] = [];
   for name in ctx.borrowed {
     if (typeinfo.ownable(ctx.scope.lookup(name))) {
@@ -27756,8 +27763,45 @@ function ow_result_loan(value: ast.Expr, ctx: OwnCtx): boolean {
       }
     }
   }
-  let locals = ow_borrowed_locals(ow_spine_stmts(ctx.result_body), ctx.ofuncs, borrowed, [], lu.borrows, lu.builtins, lenders, false);
-  return ow_expr_borrows(value, ctx.ofuncs, borrowed, locals, [], lu.borrows, lu.builtins, lenders, false);
+  return borrowed;
+}
+
+// An own Cell parameter that a `set` call gives a borrowed payload is
+// borrowed: a move of it gives away the loan. typed is the annotated body,
+// which has the source names of the bindings.
+function ow_cell_loan_params(ctx: OwnCtx, typed: ast.Stmt[], bindings: lexical.Binding[]): OwnCtx {
+  let cells: string[] = [];
+  for name in ctx.owned {
+    if (typeinfo.is_cell(ctx.scope.lookup(name))) {
+      cells = cells.append(name);
+    }
+  }
+  if (cells.len() == 0) {
+    return ctx;
+  }
+  let lu = ctx.last_use.get();
+  let lenders = BorrowContext { lenders: lu.lenders, result_scope: Some(ctx.scope), value_proofs: Some(ctx.value_proofs) };
+  let borrowed: string[] = [];
+  for name in ow_lending_names(ctx) {
+    borrowed = borrowed.append(ow_source_name(name, bindings));
+  }
+  let locals = ow_borrowed_locals(ow_spine_stmts(typed), ctx.ofuncs, borrowed, [], lu.borrows, lu.builtins, lenders, false);
+  let marked = ctx.borrowed;
+  for name in cells {
+    if (util.has_str(locals, ow_source_name(name, bindings))) {
+      marked = marked.append(name);
+    }
+  }
+  return OwnCtx { ...ctx, borrowed: marked };
+}
+
+function ow_source_name(symbol: string, bindings: lexical.Binding[]): string {
+  for binding in bindings {
+    if (binding.symbol == symbol) {
+      return binding.name;
+    }
+  }
+  return symbol;
 }
 
 function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
@@ -30079,6 +30123,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
       }
     }
     let ctx = OwnCtx { factories: factories, result_body: fn.body, ret_own: fn.ret_own, value_proofs: value_proofs, owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, enums: mod.enums, snames: snames, decls: decls, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: util.name_index(ow_param_names(fn)), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_pending(fn, lu_fn, ofuncs, handle_borrows, lenders, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret, loops: [], jumps: ow_fresh_jumps(), replaced: ow_replaced_reads(fn.body), sends: send_params(fn), lends: ow_fresh_lends() };
+    ctx = ow_cell_loan_params(ctx, lu_fn.body, resolved.bindings);
     let nomoved: MovedEntry[] = [];
     let r = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, ow_source_diags(util.append_diags(send_param_assign_diags(fn, ctx.sends), r.diags), resolved.bindings));

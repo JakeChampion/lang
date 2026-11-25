@@ -11408,8 +11408,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			borrowedParam[p.Name] = true
 		}
 	}
-	if fn.Body == nil {
-		return
+	for name := range c.cellLoanParams(fn) {
+		borrowedParam[name] = true
 	}
 
 	selfMoveArgs := map[ast.Expr]bool{}
