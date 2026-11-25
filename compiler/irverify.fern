@@ -133,6 +133,23 @@ function conv_width_refusal(kt: i32, w: i32): string {
   return "";
 }
 
+// The widths of a memory access that the backends read. A `load` is lowered
+// only as the 16-bit load. The native backends read an MMIO width other than
+// 8, 16 or 32 as 64 bits, and wasm reads it as 32 bits. Each load or store of
+// a fixed size has no width.
+function mem_width_refusal(kt: i32, w: i32): string {
+  if (kt == ir.K_LOAD) {
+    return if (w == 16) { "" } else { "16" };
+  }
+  if (kt == ir.K_MMIO_LOAD || kt == ir.K_MMIO_STORE) {
+    return if (w == 8 || w == 16 || w == 32 || w == 64) { "" } else { "8, 16, 32 or 64" };
+  }
+  if (kt >= ir.K_LOAD_I32 && kt <= ir.K_STORE_PTR || kt == ir.K_STORE_I64 || kt >= ir.K_RAW_STORE8 && kt <= ir.K_RAW_LOAD_PTR) {
+    return if (w == 0) { "" } else { "0" };
+  }
+  return "";
+}
+
 // The backends read an integer arithmetic or compare op as 64 bits, as the
 // pointer width, or else as 32 bits. Only 0 and 32 name the 32-bit form.
 // The backends have a bit-count op only for 32 and 64 bits.
@@ -140,6 +157,10 @@ function conv_width_refusal(kt: i32, w: i32): string {
 function width_refusal(kt: i32, w: i32): string {
   if (kt >= ir.K_INT_EXTEND && kt <= ir.K_F64_TO_I64) {
     return conv_width_refusal(kt, w);
+  }
+  let mem = mem_width_refusal(kt, w);
+  if (mem != "") {
+    return mem;
   }
   if (bit_count_kind(kt)) {
     return if (w == 32 || w == 64) { "" } else { "32 or 64" };

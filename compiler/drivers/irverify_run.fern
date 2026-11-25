@@ -133,11 +133,11 @@ function stack_checks(): i32 {
     return 96;
   }
 
-  let loaded: ir.Op[] = [ir.op_const_i32(0), ir.op_load(32), ir.op_return()];
+  let loaded: ir.Op[] = [ir.op_const_i32(0), ir.op_load_u16(), ir.op_return()];
   if (sp_bail(loaded).len() != 0 || sp_count(loaded) != 0) {
     return 107;
   }
-  let no_address: ir.Op[] = [ir.op_load(32), ir.op_return()];
+  let no_address: ir.Op[] = [ir.op_load_u16(), ir.op_return()];
   if (sp_bail(no_address).len() != 0 || sp_count(no_address) != 1) {
     return 108;
   }
@@ -653,7 +653,48 @@ function conv_width_checks(): i32 {
   if (count_problems(bits_ops(ir.Op { ...ir.op_int_cast("u16"), width: 16 }), 1, 1) != 1 || count_problems(bits_ops(ir.Op { ...ir.op_u32_wrap(), width: 32 }), 1, 1) != 1) {
     return 249;
   }
+  return mem_width_checks();
+}
+
+function mem_width_checks(): i32 {
+  let loads: ir.Op[] = [ir.op_load_u16(), ir.op_load_i32(), ir.op_load_i64(), ir.op_load_ptr(), ir.op_raw_load8(), ir.op_raw_load_ptr()];
+  for w in [8, 16, 32, 64] {
+    loads = loads.append(ir.op_mmio_load(w));
+  }
+  for o in loads {
+    if (count_problems(bits_ops(o), 1, 1) != 0) {
+      return 250;
+    }
+  }
+  let stores: ir.Op[] = [ir.op_store_i32(), ir.op_store_i64(), ir.op_store_ptr(), ir.op_raw_store8(), ir.op_raw_store_ptr()];
+  for w in [8, 16, 32, 64] {
+    stores = stores.append(ir.op_mmio_store(w));
+  }
+  for o in stores {
+    if (count_problems(store_ops(o), 2, 2) != 0) {
+      return 251;
+    }
+  }
+  if (!util.contains(first_msg(bits_ops(ir.op_load(32)), 1, 1), "op 1 (load): width 32 is not 16")) {
+    return 252;
+  }
+  if (!util.contains(first_msg(bits_ops(ir.op_mmio_load(0)), 1, 1), "op 1 (mmio_load): width 0 is not 8, 16, 32 or 64")) {
+    return 253;
+  }
+  if (count_problems(store_ops(ir.op_mmio_store(ir.width_ptr())), 2, 2) != 1) {
+    return 254;
+  }
+  if (!util.contains(first_msg(bits_ops(ir.Op { ...ir.op_load_i64(), width: 64 }), 1, 1), "op 1 (load_i64): width 64 is not 0")) {
+    return 255;
+  }
+  if (count_problems(store_ops(ir.Op { ...ir.op_raw_store8(), width: 8 }), 2, 2) != 1) {
+    return 256;
+  }
   return 0;
+}
+
+function store_ops(o: ir.Op): ir.Op[] {
+  return [ir.op_load_local(0), ir.op_load_local(1), o, ir.op_return()];
 }
 
 function refuse_probe(): i32 {
