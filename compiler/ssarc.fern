@@ -288,6 +288,25 @@ function variants_of(t: typeinfo.Type, f: ssasem.Func): semrecords.Variant[] {
   return f.enums[semrecords.find_enum(f.enums, t)].variants;
 }
 
+// The record of the member type that a variant of a `type A | B` union holds,
+// or -1 when `t` is not such a union.
+function member_record(f: ssasem.Func, t: typeinfo.Type, v: semrecords.Variant): i32 {
+  if (enum_layout(f, t) != semrecords.layout_member()) {
+    return -1;
+  }
+  return f.records.names.find(v.name);
+}
+
+// Whether the drop of a value of variant `v` has work: a child to drop, or a
+// finalizer of its member type.
+function variant_drops(f: ssasem.Func, t: typeinfo.Type, v: semrecords.Variant): boolean {
+  if (!semrecords.inhabited(v)) {
+    return false;
+  }
+  let at = member_record(f, t, v);
+  return fields_have_children(v.fields, f) || at >= 0 && ssasem.has_finalizer(f, f.records.list[at].ty);
+}
+
 function fields_have_children(fields: semrecords.Field[], f: ssasem.Func): boolean {
   for field in fields {
     if (ssasem.counted(f, field.ty)) {
@@ -689,7 +708,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
   }
   if let typeinfo.TypeUnion(_) = t {
     for v in variants_of(t, f) {
-      if (semrecords.inhabited(v) && fields_have_children(v.fields, f)) {
+      if (variant_drops(f, t, v)) {
         return true;
       }
     }
@@ -948,16 +967,31 @@ function drop_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
   }
   let open = 0;
   for v in e.variants {
-    if (semrecords.inhabited(v) && fields_have_children(v.fields, f)) {
+    if (variant_drops(f, t, v)) {
       r = else_if_open(r, open);
       r = emit(r, ir.op_load_local(slot));
       r = variant_test(r, f, t, v.name);
       r = emit(r, ir.op_if(0));
-      r = drop_record_fields(r, slot, v.fields, scratch, f, false, false, false);
+      r = drop_member_fields(r, slot, t, v, scratch, f);
       open += 1;
     }
   }
   return close_ifs(r, open);
+}
+
+// A value of a `type A | B` union is the box of its member, so its drop runs
+// the finalizer of the member type and wipes a `@secret` member.
+function drop_member_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.Type, v: semrecords.Variant, scratch: i32, f: ssasem.Func): irtables.LowerState {
+  let at = member_record(f, t, v);
+  if (at < 0) {
+    return drop_record_fields(r, slot, v.fields, scratch, f, false, false, false);
+  }
+  let member = f.records.list[at].ty;
+  let finalizer = ssasem.finalizer_of(f, member);
+  if (finalizer != "") {
+    r = helper(r, slot, finalizer);
+  }
+  return drop_record_fields(r, slot, v.fields, scratch, f, false, false, ssasem.secret_record(member, f));
 }
 
 function self_tail_type(field: typeinfo.Type, whole: typeinfo.Type): boolean {
@@ -987,12 +1021,17 @@ function self_tail_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   if (e.layout == semrecords.layout_option() || ssasem.has_finalizer(f, t)) {
     return false;
   }
+  let tail = false;
   for v in e.variants {
+    let at = member_record(f, t, v);
+    if (at >= 0 && ssasem.has_finalizer(f, f.records.list[at].ty)) {
+      return false;
+    }
     if (semrecords.inhabited(v) && self_tail_field(v, t) >= 0) {
-      return true;
+      tail = true;
     }
   }
-  return false;
+  return tail;
 }
 
 // The slots of the chain drop: the node, its last child, a field of the
@@ -1591,12 +1630,10 @@ function wipe_elements(own r: irtables.LowerState, slot: i32, elem: typeinfo.Typ
   return emit(r, ir.op_end());
 }
 
-// An enum whose value is a box of its own: not an immediate enum, and not a
-// union whose value is the box of a member type.
+// An enum whose value is a box: not an immediate enum.
 function wiped_enum(t: typeinfo.Type, f: ssasem.Func): boolean {
   if let typeinfo.TypeUnion(_) = t {
-    let layout = enum_layout(f, t);
-    return ssasem.counted(f, t) && (layout == semrecords.layout_variant() || layout == semrecords.layout_option());
+    return ssasem.counted(f, t) && enum_layout(f, t) != 0;
   }
   return false;
 }
@@ -1605,7 +1642,7 @@ function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
   let e = f.enums[semrecords.find_enum(f.enums, t)];
   if (e.layout != semrecords.layout_option()) {
     for v in e.variants {
-      if (semrecords.inhabited(v) && v.fields.len() > 0) {
+      if (semrecords.inhabited(v) && v.fields.len() > 0 && !finalized_member(f, t, v)) {
         r = emit(r, ir.op_load_local(slot));
         r = variant_test(r, f, t, v.name);
         r = emit(r, ir.op_if(0));
@@ -1641,6 +1678,13 @@ function wipe_variant_fields(own r: irtables.LowerState, slot: i32, t: typeinfo.
     }
   }
   return r;
+}
+
+// A member with a finalizer keeps its fields for the finalizer, and a
+// `@secret` member is wiped by its own drop.
+function finalized_member(f: ssasem.Func, t: typeinfo.Type, v: semrecords.Variant): boolean {
+  let at = member_record(f, t, v);
+  return at >= 0 && ssasem.has_finalizer(f, f.records.list[at].ty);
 }
 
 function wipe_record_fields(own r: irtables.LowerState, slot: i32, fields: semrecords.Field[], scratch: i32, f: ssasem.Func): irtables.LowerState {

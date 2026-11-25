@@ -508,6 +508,171 @@ function main(): i32 {
 
 // secretRun compiles src for target and gives a function that runs the
 // program in one mode and splits its output into fields.
+// A record of a `@secret` struct also wipes a value of a `type A | B` union
+// that it holds alone: the scalars and the array of a Pass, and the scalars
+// of a Token. "held" keeps a `@secret` Seed in a union inside a plain record,
+// so the drop of the union must run the wipe of Seed. "shared" returns the
+// Pass from the key, so the Pass must keep its fields. The control is the
+// same record without the attribute.
+const secretUnionSrc = `struct Pass { a: u64, b: u64, ws: u64[] }
+
+struct Token { t: u64, n: i32 }
+
+@secret
+struct Seed { s: u64, ws: u64[] }
+
+type Cred = Pass | Token;
+
+type Held = Seed | Token;
+
+@secret
+struct Key { cred: Cred, other: Cred, n: i32 }
+
+struct Plain { cred: Cred, other: Cred, n: i32 }
+
+struct Box { held: Held, n: i32 }
+
+@noinline
+function words(v: u64): u64[] {
+  return [v, v, v, v, v, v];
+}
+
+@noinline
+function pass(v: u64): Cred {
+  return Pass { a: v, b: v, ws: words(v) };
+}
+
+@noinline
+function token(v: u64): Cred {
+  return Token { t: v, n: 1094795585 };
+}
+
+@noinline
+function seed(v: u64): Held {
+  return Seed { s: v, ws: words(v) };
+}
+
+function weigh(c: Cred): u64 {
+  return match (c) {
+    Pass(p) => p.a + p.b + p.ws[5],
+    Token(t) => t.t + (t.n as u64),
+  };
+}
+
+function weigh_held(h: Held): u64 {
+  return match (h) {
+    Seed(s) => s.s + s.ws[5],
+    Token(t) => t.t,
+  };
+}
+
+@noinline
+function key(v: u64): u64 {
+  let k = Key { cred: pass(v), other: token(v), n: 1 };
+  return weigh(k.cred) + weigh(k.other);
+}
+
+@noinline
+function plain(v: u64): u64 {
+  let k = Plain { cred: pass(v), other: token(v), n: 1 };
+  return weigh(k.cred) + weigh(k.other);
+}
+
+@noinline
+function held(v: u64): u64 {
+  let b = Box { held: seed(v), n: 1 };
+  return weigh_held(b.held);
+}
+
+@noinline
+function shared(v: u64): Cred {
+  let c = pass(v);
+  let k = Key { cred: c, other: token(0u64), n: 1 };
+  let n = k.n;
+  return c;
+}
+
+function stale(): i32 {
+  unsafe {
+    let found: i32 = 0;
+    for size in 2..24 {
+      for k in 0..8 {
+        let p: usize = __alloc(size * 8);
+        for i in 0..size * 8 {
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
+        }
+      }
+    }
+    return found;
+  }
+}
+
+function main(): i32 {
+  let mode: string = args()[1];
+  let word: u64 = 4702111234474983745u64 + (args().len() as u64) - 2u64;
+  if (mode == "secret") {
+    let n = key(word);
+  } else if (mode == "held") {
+    let n = held(word);
+  } else if (mode == "shared") {
+    let c = shared(word);
+    print((weigh(c) == word + word + word).to_string());
+  } else {
+    let n = plain(word);
+  }
+  print(stale().to_string());
+  return 0;
+}
+`
+
+// The drop of a `type A | B` union value runs the finalizer of its member
+// type: Res holds a string, and Bare holds only a scalar. Alt has no
+// finalizer.
+const unionMemberDropSrc = `import "core/mem";
+
+struct Res { id: i32, name: string }
+
+struct Alt { v: i32 }
+
+struct Bare { id: i32 }
+
+impl mem.Drop for Res {
+    @noinline function drop(self: Self): void { print("res " + self.name); }
+}
+
+impl mem.Drop for Bare {
+    @noinline function drop(self: Self): void { print("bare " + self.id.to_string()); }
+}
+
+type Any = Res | Alt | Bare;
+
+@noinline function make(n: i32): Any {
+    if (n % 3 == 1) {
+        return Res { id: n, name: "r" + n.to_string() };
+    }
+    if (n % 3 == 2) {
+        return Bare { id: n };
+    }
+    return Alt { v: n };
+}
+
+@noinline function weigh(a: Any): i32 {
+    return match (a) { Res(r) => r.id, Alt(x) => x.v, Bare(b) => b.id };
+}
+
+function main(): i32 {
+    let total = 0;
+    for i in 0..4 {
+        let a = make(i);
+        total += weigh(a);
+    }
+    let kept: Any[] = [make(7), make(8), make(9)];
+    total += kept.len();
+    print("end " + total.to_string());
+    return 0;
+}
+`
+
 func secretRun(t *testing.T, target, src string) func(mode string) []string {
 	t.Helper()
 	cli := buildSelfHostCLI(t)
@@ -652,6 +817,38 @@ func TestSelfHostSecretRecordWipesItsArraysOfBoxes(t *testing.T) {
 			}
 			if got := run("shared"); len(got) != 3 || got[0] != "65" || got[1] != "65" {
 				t.Fatalf("shared printed %q; the row that the caller still holds must keep its bytes", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostSecretRecordWipesItsUnions(t *testing.T) {
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			run := secretRun(t, target, secretUnionSrc)
+			if got := secretCount(t, "plain", run("plain")); got < 76 {
+				t.Fatalf("plain read %d secret bytes back, want at least 76; the raw allocations no longer observe the released union values", got)
+			}
+			if got := secretCount(t, "secret", run("secret")); got != 0 {
+				t.Fatalf("after the release of a @secret record the raw allocations read %d bytes of its union values back, want 0", got)
+			}
+			if got := secretCount(t, "held", run("held")); got != 0 {
+				t.Fatalf("after the release of a union that holds a @secret record the raw allocations read %d bytes of the record back, want 0", got)
+			}
+			if got := run("shared"); len(got) != 2 || got[0] != "true" {
+				t.Fatalf("shared printed %q; the union value that the caller still holds must keep its fields", got)
+			}
+		})
+	}
+}
+
+func TestSelfHostUnionDropRunsMemberFinalizer(t *testing.T) {
+	want := []string{"res", "r1", "bare", "2", "res", "r7", "bare", "8", "end", "9"}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			got := secretRun(t, target, unionMemberDropSrc)("run")
+			if strings.Join(got, " ") != strings.Join(want, " ") {
+				t.Fatalf("printed %q, want %q", got, want)
 			}
 		})
 	}
