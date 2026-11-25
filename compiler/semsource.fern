@@ -2620,10 +2620,11 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Sta
   if (fa.field == "get" && c.args.len() == 0) {
     return define(s, ssasem.cell_get(), [recv], 0, "", elem);
   }
-  if (fa.field != "set" || c.args.len() != 1) {
+  let replace = fa.field == "replace";
+  if (!replace && fa.field != "set" || c.args.len() != 1) {
     return refused(s, "unsupported call target");
   }
-  if (!statement) {
+  if (!replace && !statement) {
     return refused(s, "unsupported void call");
   }
   let v = expr(c.args[0], s, elem);
@@ -2637,7 +2638,14 @@ function cell_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: Sta
   if (!semtypes.equal(s.values[v.id], elem)) {
     return refused(s, "cell element type");
   }
-  return define(s, ssasem.cell_set(), [recv, v.id], 0, "", typeinfo.t_void());
+  if (!replace) {
+    return define(s, ssasem.cell_set(), [recv, v.id], 0, "", typeinfo.t_void());
+  }
+  // The read takes a reference to the old payload, and the store releases the
+  // reference of the cell, so the caller is the one holder of the old payload.
+  let old = define(s, ssasem.cell_get(), [recv], 0, "", elem);
+  let stored = define(old.s, ssasem.cell_set(), [recv, v.id], 0, "", typeinfo.t_void());
+  return Value { s: stored.s, id: old.id };
 }
 
 function map_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State): Value {
@@ -9863,7 +9871,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, opt
     rewrite = rewrite.append(usable);
     inlinable = inlinable.append(usable && d >= 0 && inlinable_decl(mod.funcs[d]) && !lowered.has(names[i]) && optbisect.allowed_by(sw, "inline", names[i]));
     uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, late));
-    unnamed = unnamed.append(uncalled[i] && spliceable_body(p, names[i], i, mod));
+    unnamed = unnamed.append(uncalled[i]);
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i += 1;
   }
@@ -10047,7 +10055,7 @@ function unnamed(all: Produced[], names: string[], spliced: boolean[], mod: pars
   let out: boolean[] = [];
   let late = util.name_index(late_named(all));
   for i in 0..all.len() {
-    let candidate = i < spliced.len() && spliced[i] && outside_uncalled(all[i], names[i], i, mod, late) && spliceable_body(all[i], names[i], i, mod);
+    let candidate = i < spliced.len() && spliced[i] && outside_uncalled(all[i], names[i], i, mod, late);
     if (candidate) {
       candidates = candidates.append(names[i]);
       at = at.append(i);
@@ -10118,17 +10126,6 @@ function outside_uncalled(p: Produced, name: string, i: i32, mod: parser.Module,
   }
   let fd = mod.funcs[i];
   return fd.receiver_type.len() > 0 && fd.import_iface == "" && !parser.decl_named_outside(mod, fd) && !rooted_method(fd, mod);
-}
-
-// A method's body joins the once set only when it is one block. A branch in
-// the spliced body puts the caller's store-back after a join, and the plan
-// takes an element out of its slot only within the block that reads it
-// (#13990).
-function spliceable_body(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
-  if (i >= mod.funcs.len() || mod.funcs[i].receiver_type.len() == 0) {
-    return true;
-  }
-  return p.func.graph.blocks.len() == 1;
 }
 
 function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {

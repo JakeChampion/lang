@@ -887,6 +887,14 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 				}
 			}
 			return true
+		case *ast.Assign:
+			// An own parameter takes the value that replaces it.
+			if id, ok := x.Target.(*ast.Ident); ok && x.Value != nil && ownParam[id.Name] && declCount[id.Name] == 0 {
+				for _, part := range argParts(&ast.Call{Args: []ast.Expr{x.Value}}) {
+					moveSite(x, part)
+				}
+			}
+			return true
 		default:
 			return true
 		}
@@ -1171,7 +1179,7 @@ func callArgDeaths(fn *ast.FuncDecl, info *Info, handleFree func(ast.Type) bool,
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathDead(info, bf, c, q, fa.Field, order, fieldOf, updates) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field)-len(replacedPathRoots(c, q.Name, fa.Field)) != 1 || !fieldPathDead(info, bf, c, q, fa.Field, order, fieldOf, updates) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -1440,8 +1448,9 @@ func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, fi
 	}
 	inner := frames[len(frames)-1]
 	later := false
+	replaced := replacedPathRoots(holder, q.Name, field)
 	ast.Walk(inner.stmts[inner.idx], func(m ast.Node) bool {
-		if id, ok := m.(*ast.Ident); ok && order.Idx[id] > order.Idx[q] && readsPath(id) {
+		if id, ok := m.(*ast.Ident); ok && order.Idx[id] > order.Idx[q] && !replaced[id] && readsPath(id) {
 			later = true
 		}
 		return !later
@@ -1450,6 +1459,28 @@ func fieldPathDead(info *Info, bf *bodyFrames, holder ast.Node, q *ast.Ident, fi
 		return !later
 	}
 	return !later && !liveFromReads(info, frames, len(frames)-1, q.Name, bindingLevel(frames, q.Name), reads)
+}
+
+// replacedPathRoots gives the roots of the reads in n that a literal with base
+// q.field replaces: `S { ...q.field, f: g(q.field.f) }` takes q.field.f once,
+// through its base.
+func replacedPathRoots(n ast.Node, q, field string) map[*ast.Ident]bool {
+	out := map[*ast.Ident]bool{}
+	for read, sl := range replacedReads(n) {
+		base, ok := sl.Base.(*ast.FieldAccess)
+		if !ok || base.Field != field {
+			continue
+		}
+		if id, ok := base.Target.(*ast.Ident); !ok || id.Name != q {
+			continue
+		}
+		if mid, ok := read.Target.(*ast.FieldAccess); ok {
+			if id, ok := mid.Target.(*ast.Ident); ok {
+				out[id] = true
+			}
+		}
+	}
+	return out
 }
 
 // UpdateBases maps the base of each update literal `S { ...q, f: v }` to the
@@ -1739,6 +1770,7 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 	aliasOf := map[string]*ast.Ident{}
 	litOf := map[string]*ast.StructLit{}
 	assigns := map[string][]ast.Expr{}
+	sets := map[string][]ast.Expr{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.Var:
@@ -1759,6 +1791,10 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 		case *ast.Assign:
 			if t, ok := x.Target.(*ast.Ident); ok {
 				assigns[t.Name] = append(assigns[t.Name], x.Value)
+			}
+		case *ast.Call:
+			if cell, payload := cellSet(x); cell != "" {
+				sets[cell] = append(sets[cell], payload)
 			}
 		}
 		return true
@@ -1793,10 +1829,16 @@ func moveAdmission(info *Info, scalar map[ast.Expr]bool, body *ast.Block, isPara
 	for changed := true; changed; {
 		changed = false
 		for name := range in {
+			// A payload set into a cell is in the cell, so it must be owned as well.
+			keep := !slices.ContainsFunc(sets[name], func(v ast.Expr) bool { return !valueOwned(name, v) })
 			if admitted(name) {
+				if !keep {
+					delete(in, name)
+					changed = true
+				}
 				continue
 			}
-			keep := aliasOf[name] != nil && owned(aliasOf[name].Name) || aliasOf[name] == nil && litOf[name] != nil
+			keep = keep && (aliasOf[name] != nil && owned(aliasOf[name].Name) || aliasOf[name] == nil && litOf[name] != nil)
 			if sl := litOf[name]; sl != nil {
 				keep = keep && litFieldsOwned(info, sl, fieldOwned)
 			}

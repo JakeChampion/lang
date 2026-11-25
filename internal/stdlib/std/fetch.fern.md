@@ -824,14 +824,13 @@ function __has_fd(marks: u8[], fd: i32): boolean {
   return fd >= 0 && fd < marks.len() && marks[fd] != 0;
 }
 
-// The cell lets go of the map before the write, so the write is in place.
+// The cell gives up the map before the write, so the write is in place.
 function __mark_fd(c: Cell[u8[]], fd: i32, mark: u8): void {
   if (fd < 0 || mark == 0 && fd >= c.get().len()) {
     return;
   }
-  let marks = c.get();
   let none: u8[] = [];
-  c.set(none);
+  let marks = c.replace(none);
   while (marks.len() <= fd) {
     marks = marks.append(0);
   }
@@ -849,9 +848,8 @@ function __sock_at(c: Cell[Option[Socket][]], fd: i32): Option[Socket] {
 
 function __keep_sock(c: Cell[Option[Socket][]], own sock: Socket): i32 {
   let fd = sock.fd;
-  let socks = c.get();
   let none: Option[Socket][] = [];
-  c.set(none);
+  let socks = c.replace(none);
   while (socks.len() <= fd) {
     socks = socks.append(None);
   }
@@ -860,12 +858,11 @@ function __keep_sock(c: Cell[Option[Socket][]], own sock: Socket): i32 {
 }
 
 function __drop_sock(c: Cell[Option[Socket][]], fd: i32): i32 {
-  let socks = c.get();
-  if (fd < 0 || fd >= socks.len()) {
+  if (fd < 0 || fd >= c.get().len()) {
     return 0;
   }
   let none: Option[Socket][] = [];
-  c.set(none);
+  let socks = c.replace(none);
   let (slot, rest) = socks.swap_at(fd, None);
   c.set(rest);
   match (slot) {
