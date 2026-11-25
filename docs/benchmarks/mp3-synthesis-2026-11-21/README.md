@@ -26,7 +26,25 @@ The native Ubuntu ARM64 runner compared the prior and candidate libraries at thr
 | 24 kHz, mono | 1,187 / 1,187 | 1.607 / 1.599 | 0.440 / 0.242 | 268 / 272 |
 | 8 kHz, mono | 661 / 661 | 0.752 / 0.749 | 0.176 / 0.104 | 268 / 272 |
 
-## Reproduce
+## Keeping the frame scratch in the decoder
+
+The decoder now keeps three arrays between MPEG-1 frames: the 3,264 synthesis lines, the 1,152-value spectrum and the 128-value transform scratch. The first frame makes them. Before the change, each frame made all three again, and it made the synthesis lines one value at a time.
+
+The decoder copies only the 960 history values into the kept lines. The synthesis writes each new line before it reads it. A short block also no longer copies its 18 values to a temporary array. It computes its three windows before it writes the block.
+
+The table compares 3 passes over each `tests/stdlib/mp3_vectors.fern` stream with `decode_frame_into` on x86-64 Linux, built from main `90224f69` with and without the change. The first pass is not counted. The PCM of each stream is the same before and after the change.
+
+| Stream | Allocations, before / after |
+| --- | ---: |
+| `mpeg-32000-1` | 1,011 / 783 |
+| `mpeg-44100-2` | 1,929 / 1,509 |
+| `mpeg-48000-1` | 1,515 / 1,173 |
+| `gapless-vbr-48000` | 3,030 / 2,382 |
+| `l3-si_block.bit` | 8,034 / 6,246 |
+| `mpeg-8000-1` (MPEG-2.5) | 603 / 507 |
+
+Callgrind counts 248,521,958 instructions before and 245,821,824 after for one process that decodes all 16 streams in this way. On `mpeg-44100-2`, 384 of the 503 allocations that are left in a pass are the three window records of each short block. These are boxes of returned records (#16964).
+
 
 Use the compiler and prior stdlib from the same checkout before changing the decoder. Set `prior` to that checkout and `headers` to the directory containing the two pinned minimp3 headers. Run each sample-rate/channel pair from the table. The producer checks both header hashes before building the C references.
 

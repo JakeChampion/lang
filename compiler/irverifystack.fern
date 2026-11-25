@@ -70,7 +70,7 @@ function int_binary_kind(t: i32): boolean {
 }
 
 function float_unary_kind(t: i32): boolean {
-  return t == ir.K_FNEG || t >= ir.K_FABS && t <= ir.K_FROUND;
+  return t == ir.K_FNEG || t >= ir.K_FABS && t <= ir.K_FROUND || t == ir.K_F32_ROUND;
 }
 
 function lane_unary_kind(t: i32): boolean {

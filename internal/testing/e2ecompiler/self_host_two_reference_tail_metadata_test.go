@@ -48,7 +48,7 @@ const twoRefMetadataProbe = `import "./physicalbody"; import "./ssasem"; import 
 import "./rccertify"; import "./rcsigs"; import "./ssa"; import "./ir"; import "./util"; import "std/string";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.SInst {
-    return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(str) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: str };
+    return ssa.SInst { ir_kind: ssa.lifted_kind(kind, str), kind_tag: kind, result: result, args: args, imm: imm, str: str };
 }
 function call(result: i32, name: string, args: i32[]): ssa.SInst { return inst(11, result, args, 0, name); }
 function param(i: i32): ssa.SInst { return inst(6, i, [], i, ""); }

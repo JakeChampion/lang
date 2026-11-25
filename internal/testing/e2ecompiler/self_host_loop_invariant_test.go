@@ -12,13 +12,14 @@ import (
 // constants only, a division by 0 or by a value that is not a constant, a
 // load, and a loop with a second way in stay where they are. Two equal
 // computations from different blocks of the loop become one value in front
-// of it.
+// of it. When an outer loop moves a value that an inner loop moved, each
+// operand of the value is defined in front of it, also a constant copy that
+// merged.
 func TestSelfHostLoopInvariantHoist(t *testing.T) {
-	const src = `import "./ir";
-import "./ssa";
+	const src = `import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, op: string): ssa.SInst {
-  return ssa.SInst { ir_kind: if (kind == ssa.BINARY) { ir.kind_id(op) } else { 0 }, kind_tag: kind, result: result, args: args, imm: imm, str: op };
+  return ssa.SInst { ir_kind: ssa.lifted_kind(kind, op), kind_tag: kind, result: result, args: args, imm: imm, str: op };
 }
 
 function graph(side_entry: boolean): ssa.SFunc {
@@ -54,6 +55,41 @@ function twin(): ssa.SFunc {
     ssa.SBlock { id: 4, preds: [1], insts: [], term: ssa.t_ret(2) }
   ];
   return ssa.SFunc { name: "twin", nparams: 2, nvals: 10, blocks: blocks, entry: 0, takes_env: false };
+}
+
+function nested(): ssa.SFunc {
+  let inner = [
+    inst(ssa.CONST_INT, 5, [], 3, ""),
+    inst(ssa.CONST_INT, 6, [], 3, ""),
+    inst(ssa.BINARY, 7, [0, 5], 32, "add"),
+    inst(ssa.BINARY, 10, [0, 6], 32, "mul"),
+    inst(ssa.BINARY, 11, [7, 10], 32, "add"),
+    inst(ssa.BINARY, 8, [3, 11], 32, "sub")
+  ];
+  let blocks = [
+    ssa.SBlock { id: 0, preds: [], insts: [inst(ssa.PARAM, 0, [], 0, ""), inst(ssa.PARAM, 1, [], 1, "")], term: ssa.t_br(1) },
+    ssa.SBlock { id: 1, preds: [0, 5], insts: [inst(ssa.PHI, 2, [1, 12], 0, "")], term: ssa.t_brif(2, 2, 6) },
+    ssa.SBlock { id: 2, preds: [1], insts: [], term: ssa.t_br(3) },
+    ssa.SBlock { id: 3, preds: [2, 4], insts: [inst(ssa.PHI, 3, [2, 8], 0, "")], term: ssa.t_brif(3, 4, 5) },
+    ssa.SBlock { id: 4, preds: [3], insts: inner, term: ssa.t_br(3) },
+    ssa.SBlock { id: 5, preds: [3], insts: [inst(ssa.BINARY, 12, [2, 3], 32, "sub")], term: ssa.t_br(1) },
+    ssa.SBlock { id: 6, preds: [1], insts: [], term: ssa.t_ret(2) }
+  ];
+  return ssa.SFunc { name: "nested", nparams: 2, nvals: 13, blocks: blocks, entry: 0, takes_env: false };
+}
+
+// Each operand of an instruction of the block is defined in front of it in the block.
+function ordered(b: ssa.SBlock): boolean {
+  let seen: i32[] = [];
+  for ins in b.insts {
+    for a in ins.args {
+      if (!seen.contains(a)) {
+        return false;
+      }
+    }
+    seen = seen.append(ins.result);
+  }
+  return true;
 }
 
 function results(insts: ssa.SInst[]): i32[] {
@@ -98,6 +134,10 @@ function main(): i32 {
   let st = t.f.blocks[3].insts[0];
   if (st.args[0] != 4 || t.f.blocks[3].insts[1].args[1] != 4 || t.repl.len() != 11 || t.repl[6] != 4) {
     return 6;
+  }
+  let n = ssa.hoisted_invariants(nested()).f;
+  if (!ordered(n.blocks[0]) || n.blocks[0].insts.len() < 5) {
+    return 8;
   }
   return 0;
 }`

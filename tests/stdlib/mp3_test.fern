@@ -315,22 +315,25 @@ function synthesis_input(seed: i32): f32[] {
 function synthesis_history(): test.TestOutcome {
   let expected = spectral.zeros(960);
   let actual = spectral.zeros(960);
+  // The lines of each frame start from the lines of the frame before.
+  let kept: f32[] = [];
   for channels in [2, 1, 2] {
     let reference = spectral.zeros(1152 * channels);
     let output = spectral.zeros(1152 * channels);
-    let lines = synthesis.frame_lines(actual);
+    let lines = synthesis.frame_lines_into(kept, actual);
     let transform = spectral.zeros(128);
     for g in 0..2 {
       let at = g * 576 * channels;
       let (next, pcm) = synthesis.granule(expected, synthesis_input(g), channels, reference, at);
       expected = next;
       reference = pcm;
-      let (window, values, scratch) = synthesis.granule_at(lines, g * 18 * 64, synthesis_input(g), channels, output, at, transform);
+      let (window, values, scratch, _) = synthesis.granule_at(lines, g * 18 * 64, synthesis_input(g), channels, output, at, transform);
       lines = window;
       output = values;
       transform = scratch;
     }
     actual = synthesis.frame_history(actual, lines, channels);
+    kept = lines;
     for i in 0..960 {
       if (f32_bits(expected[i]) != f32_bits(actual[i])) {
         return test.fail("retained synthesis history");
@@ -345,11 +348,67 @@ function synthesis_history(): test.TestOutcome {
   return test.assert_true(true);
 }
 
+function stream_allocations(bytes: [u8], drop_scratch: boolean): (i64, i32) {
+  let state = mp3.decoder();
+  let buffer = spectral.zeros(2304);
+  let before = 0i64;
+  let decoded = 0;
+  for pass in 0..3 {
+    if (pass == 1) {
+      before = __heap_alloc_count();
+      decoded = 0;
+    }
+    let at = 0;
+    while (at < bytes.len()) {
+      if (drop_scratch) {
+        state = mp3.Decoder { ...state, lines: [], spectrum: [], transform: [] };
+      }
+      let (next, result) = state.decode_frame_into(bytes, at, buffer, pcm.default_limits());
+      state = next;
+      let Ok(frame) = result else {
+        return (-1i64, 0);
+      };
+      if (!frame.needs_history) {
+        decoded += 1;
+      }
+      buffer = frame.samples;
+      at += frame.bytes_read;
+    }
+  }
+  return (__heap_alloc_count() - before, decoded);
+}
+
+// An MPEG-1 frame keeps its synthesis lines, spectrum and transform arrays in the decoder.
+function steady_state(): test.TestOutcome {
+  let v = mp3_vectors.cases()[7];
+  let Ok(bytes) = hex.decode(v.bytes) else {
+    return test.fail("fixture");
+  };
+  let (state, result) = mp3.decoder().decode_frame_into(bytes, 0, spectral.zeros(2304), pcm.default_limits());
+  let Ok(_) = result else {
+    return test.fail("first frame");
+  };
+  if (state.lines.len() != synthesis.FRAME_LINES || state.spectrum.len() != 1152 || state.transform.len() != 128) {
+    return test.fail("scratch arrays are not in the decoder");
+  }
+  let (kept, decoded) = stream_allocations(bytes, false);
+  let (dropped, _) = stream_allocations(bytes, true);
+  if (kept < 0i64 || dropped < 0i64 || decoded == 0) {
+    return test.fail("stream frame");
+  }
+  // Interpreters return zero for the allocator counters.
+  if (dropped != 0i64 && dropped - kept < 3i64 * (decoded as i64)) {
+    return test.fail("kept " + kept.to_string() + " and dropped " + dropped.to_string() + " allocations");
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("MP3 Layer III");
   runner = runner.it("two-granule history across stereo and mono transitions", synthesis_history);
   runner = runner.it("independent PCM reference vectors", goldens);
   runner = runner.it("stream state and reusable buffers", streaming);
+  runner = runner.it("steady-state frames reuse the decoder scratch arrays", steady_state);
   runner = runner.it("ID3, APE, and gapless metadata", metadata);
   runner = runner.it("MPEG-1 private bits do not change PCM", private_bits);
   runner = runner.it("bit reservoir warmup after seek", priming);

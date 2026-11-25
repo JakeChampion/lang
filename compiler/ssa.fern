@@ -535,6 +535,27 @@ pub function binary_inst(result: i32, args: i32[], imm: i32, kind: i32): SInst {
   return SInst { kind_tag: BINARY, result: result, args: args, imm: imm, str: ir.kind_name(kind), ir_kind: kind };
 }
 
+// The IR kind that the lift gives an op of kind `kind_tag` named `name`, or 0.
+// A UNARY or TERNARY name can carry operands after a colon, as in
+// "int_cast:u8". The lift spells `not` as "!".
+pub function lifted_kind(kind_tag: i32, name: string): i32 {
+  if (kind_tag == BINARY) {
+    return ir.kind_id(name);
+  }
+  if (kind_tag != UNARY && kind_tag != TERNARY) {
+    return 0;
+  }
+  if (name == "!") {
+    return ir.K_NOT;
+  }
+  for k in 0..name.len() {
+    if (name[k] == b':') {
+      return ir.kind_id(slice_unchecked(name, 0, k).to_owned());
+    }
+  }
+  return ir.kind_id(name);
+}
+
 // The id of an instruction kind name, or 0. Semantic names are not looked up.
 pub function kind_id(name: string): i32 {
   if (name == "") {
@@ -1777,9 +1798,9 @@ function float_def(ins: SInst): boolean {
     return float_arith(ins.ir_kind);
   }
   if (k == UNARY) {
-    return float_math(ins.str) || ins.str.starts_with("i32_to_f64:") || ins.str == "f64_from_bits" || ins.ir_kind == ir.K_VEXTRACT;
+    return float_math(ins.ir_kind) || ins.ir_kind == ir.K_I32_TO_F64 || ins.ir_kind == ir.K_F64_FROM_BITS || ins.ir_kind == ir.K_VEXTRACT;
   }
-  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
+  return k == TERNARY && (ins.ir_kind == ir.K_FFMA || ins.ir_kind == ir.K_FFMA32);
 }
 
 function float_load(ins: SInst): boolean {
@@ -1804,9 +1825,9 @@ function float_use(ins: SInst): boolean {
     return float_arith(ins.ir_kind) || float_cmp(ins.ir_kind);
   }
   if (k == UNARY) {
-    return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits" || ins.ir_kind == ir.K_VSPLAT;
+    return float_math(ins.ir_kind) || ins.ir_kind == ir.K_F64_TO_I32 || ins.ir_kind == ir.K_F64_TO_I64 || ins.ir_kind == ir.K_F64_BITS || ins.ir_kind == ir.K_VSPLAT;
   }
-  return k == TERNARY && (ins.str == "ffma" || ins.str == "ffma32");
+  return k == TERNARY && (ins.ir_kind == ir.K_FFMA || ins.ir_kind == ir.K_FFMA32);
 }
 
 pub function float_arith(kind: i32): boolean {
@@ -1817,8 +1838,13 @@ pub function float_cmp(kind: i32): boolean {
   return kind >= ir.K_FEQ && kind <= ir.K_FGE;
 }
 
-pub function float_math(op: string): boolean {
-  return op == "fsqrt" || op == "ffloor" || op == "fceil" || op == "ftrunc" || op == "fabs" || op == "fround" || op == "fneg";
+// int_extend or int_wrap, which resize an integer between 32 and 64 bits.
+function int_resize(kind: i32): boolean {
+  return kind == ir.K_INT_EXTEND || kind == ir.K_INT_WRAP;
+}
+
+function float_math(kind: i32): boolean {
+  return kind >= ir.K_FNEG && kind <= ir.K_FROUND || kind == ir.K_F32_ROUND;
 }
 
 function class_order(order: i32[], fl: boolean[]): i32[] {
@@ -4343,6 +4369,76 @@ pub function use_counts(f: SFunc): i32[] {
   return uses;
 }
 
+// For each value, whether its one read is a non-phi instruction of the block
+// that defines it. Such a value is dead after that instruction. A carry that
+// takes the flags of the sum before it (`roles` from `carry_roles`) reads no
+// operand.
+pub function dies_where_defined(f: SFunc, uses: i32[], roles: i32[]): boolean[] {
+  let def = __alloc_i32(f.nvals);
+  let reads = uses;
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        def = def.with(ins.result, bi + 1);
+      }
+      if (flag_carry(roles, ins)) {
+        for a in ins.args {
+          if (a >= 0 && a < f.nvals) {
+            reads = reads.with(a, reads[a] - 1);
+          }
+        }
+      }
+    }
+  }
+  let out = __alloc_bool(f.nvals);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      if (ins.kind_tag == PHI || flag_carry(roles, ins)) {
+        continue;
+      }
+      for a in ins.args {
+        if (a >= 0 && a < f.nvals && reads[a] == 1 && def[a] == bi + 1) {
+          out = out.with(a, true);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// For each value, whether the code right after the instruction that defines it
+// can read it: the next instruction that is not an immediate reads it, or no
+// such instruction follows in the block, so the terminator or a successor does.
+pub function read_by_next(f: SFunc, imm: Imms): boolean[] {
+  let out = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    let n = blk.insts.len();
+    for i in 0..n {
+      let r = blk.insts[i].result;
+      if (r < 0 || r >= f.nvals) {
+        continue;
+      }
+      let read = true;
+      for j in i + 1..n {
+        let next = blk.insts[j];
+        if (next.result < 0 || next.result >= f.nvals || !imm.is_imm[next.result]) {
+          read = util.has_i32(next.args, r);
+          break;
+        }
+      }
+      if (read) {
+        out = out.with(r, true);
+      }
+    }
+  }
+  return out;
+}
+
+function flag_carry(roles: i32[], ins: SInst): boolean {
+  let role = carry_role(roles, ins);
+  return ins.kind_tag == CARRY && (role == CARRY_FLAG || role == CARRY_KEEP);
+}
+
 function phi_sole_operand(ins: SInst, repl: i32[]): i32 {
   let only: i32 = -1;
   for i in 0..ins.args.len() {
@@ -5012,8 +5108,8 @@ function mergeable(ins: SInst): boolean {
     return !binary_fixes_abi(ins.ir_kind);
   }
   if (ins.kind_tag == UNARY) {
-    return ins.str == "!" || ins.str == "u32_wrap" || ins.str == "int_wrap" || ins.str == "int_extend"
-      || ins.str.starts_with("int_cast:") || ins.str.starts_with("rotr:");
+    return ins.ir_kind == ir.K_NOT || int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP
+      || ins.ir_kind == ir.K_INT_CAST || ins.str.starts_with("rotr:");
   }
   return false;
 }
@@ -6342,7 +6438,7 @@ function two_way(head: SBlock): boolean {
 
 function tested_by_call(head: SBlock, cond: i32): boolean {
   for ins in head.insts {
-    if (ins.result == cond && ins.kind_tag == UNARY && ins.str == "!") {
+    if (ins.result == cond && ins.kind_tag == UNARY && ins.ir_kind == ir.K_NOT) {
       return tested_by_call(head, ins.args[0]);
     }
     if (ins.result == cond) {
@@ -6376,21 +6472,15 @@ function speculable(ins: SInst): boolean {
     return int_binary(ins);
   }
   if (k == UNARY) {
-    return int_unary(ins.str);
+    return int_unary(ins);
   }
   return false;
 }
 
-function int_unary(op: string): boolean {
-  if (util.has_str(["!", "int_extend", "int_wrap", "u32_wrap"], op)) {
-    return true;
-  }
-  for pre in ["int_cast:", "rotr:", "bswap:", "clz:", "ctz:", "popcount:"] {
-    if (op.starts_with(pre)) {
-      return true;
-    }
-  }
-  return false;
+function int_unary(ins: SInst): boolean {
+  let k = ins.ir_kind;
+  return k == ir.K_NOT || int_resize(k) || k == ir.K_U32_WRAP || k == ir.K_INT_CAST
+    || k == ir.K_BSWAP || k == ir.K_CLZ || k == ir.K_CTZ || k == ir.K_POPCOUNT || ins.str.starts_with("rotr:");
 }
 
 function select_join(f: SFunc, fl: boolean[], j: SBlock, from_t: i32, from_f: i32): boolean {
@@ -7307,7 +7397,7 @@ pub function unsigned_group_checks(f: SFunc): SFunc {
       if (signed_extension(def_of(defs, src))) {
         src = def_of(defs, src).args[0];
       }
-      insts = insts.append(SInst { ir_kind: 0, kind_tag: UNARY, result: nvals, args: [src], imm: 0, str: "int_cast:u32" });
+      insts = insts.append(SInst { ir_kind: ir.K_INT_CAST, kind_tag: UNARY, result: nvals, args: [src], imm: 0, str: "int_cast:u32" });
       insts = insts.append(SInst { ir_kind: 0, kind_tag: CONST_INT, result: nvals + 1, args: [], imm: g.span, str: "" });
       insts = insts.append(binary_inst(nvals + 2, [nvals, nvals + 1], 64, ir.K_ADD));
       insts = insts.append(SInst { ...ins, args: ins.args.with(1, nvals + 2) });
@@ -7356,7 +7446,7 @@ pub function zero_extended_indices(f: SFunc): SFunc {
     let insts: SInst[] = [];
     for ins in blk.insts {
       if (ins.result >= 0 && ins.result < f.nvals && zero[ins.result]) {
-        insts = insts.append(SInst { ...ins, str: "u32_wrap" });
+        insts = insts.append(SInst { ...ins, str: "u32_wrap", ir_kind: ir.K_U32_WRAP });
       } else {
         insts = insts.append(ins);
       }
@@ -7423,7 +7513,7 @@ pub function fold_lane_identities(f: SFunc): SFunc {
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_VSPLAT || facts[ins.args[0]] == 1 && (ins.str == "f32_bits" || ins.str == "f32_from_bits"))) {
+      if (ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_VSPLAT || facts[ins.args[0]] == 1 && (ins.ir_kind == ir.K_F32_BITS || ins.ir_kind == ir.K_F32_FROM_BITS || ins.ir_kind == ir.K_F32_ROUND))) {
         facts = facts.with(ins.result, facts[ins.args[0]]);
       }
     }
@@ -7815,8 +7905,8 @@ pub function hoisted_invariants(f: SFunc): Formed {
             merged = true;
           } else {
             lifted = lifted.append(ins);
-            def_pos = def_pos.with(ins.result, pre);
           }
+          def_pos = def_pos.with(ins.result, pre);
         }
         blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(lifted) });
         changed = true;
@@ -7882,7 +7972,7 @@ function hoistable(ins: SInst, defs: SInst[]): boolean {
     return false;
   }
   if (ins.kind_tag == UNARY) {
-    return ins.args.len() == 1 && int_unary(ins.str);
+    return ins.args.len() == 1 && int_unary(ins);
   }
   if (ins.kind_tag != BINARY || ins.args.len() != 2) {
     return false;
@@ -8630,14 +8720,14 @@ function has_extension(f: SFunc): boolean {
 }
 
 function signed_extension(ins: SInst): boolean {
-  return ins.kind_tag == UNARY && ins.args.len() == 1 && ins.imm == 0 && (ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "int_cast:i32");
+  return ins.kind_tag == UNARY && ins.args.len() == 1 && ins.imm == 0 && (int_resize(ins.ir_kind) || ins.str == "int_cast:i32");
 }
 
 function unsigned_extension(ins: SInst): boolean {
   if (ins.kind_tag != UNARY || ins.args.len() != 1) {
     return false;
   }
-  return ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.imm != 0 && (ins.str == "int_wrap" || ins.str == "int_extend");
+  return ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32" || ins.imm != 0 && int_resize(ins.ir_kind);
 }
 
 function holds_result(ins: SInst, held: i32): boolean {
@@ -8796,7 +8886,7 @@ function unary_facts(ins: SInst, held: i32): i32 {
     }
     return EXT_U32;
   }
-  if (ins.str == "int_cast:u8" || ins.str.starts_with("ctz:") || ins.str.starts_with("clz:") || ins.str.starts_with("popcount:")) {
+  if (ins.str == "int_cast:u8" || ins.ir_kind == ir.K_CTZ || ins.ir_kind == ir.K_CLZ || ins.ir_kind == ir.K_POPCOUNT) {
     return EXT_BYTE;
   }
   if (ins.str == "int_cast:u16") {
@@ -9165,7 +9255,7 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
 }
 
 function low_wrap(ins: SInst): boolean {
-  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16");
+  return signed_extension(ins) || ins.kind_tag == UNARY && ins.args.len() == 1 && (ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32" || ins.str == "int_cast:u8" || ins.str == "int_cast:u16" || ins.str == "int_cast:i16");
 }
 
 function low_half_binary(kind: i32): boolean {
@@ -9179,7 +9269,7 @@ function demand_propagates(ins: SInst): boolean {
   if (ins.kind_tag == BINARY) {
     return low_half_binary(ins.ir_kind) || ins.ir_kind == ir.K_SHL || ins.ir_kind == ir.K_SHR_S || ins.ir_kind == ir.K_SHR_U;
   }
-  return ins.kind_tag == UNARY && (low_wrap(ins) || ins.str == "int_wrap" || ins.str == "int_extend");
+  return ins.kind_tag == UNARY && (low_wrap(ins) || int_resize(ins.ir_kind));
 }
 
 // A five-level lattice bounds worklist growth even when shifts feed a phi.
@@ -9293,7 +9383,7 @@ function operand_bits(ins: SInst, k: i32, result: i32, f: SFunc, def_b: i32[], d
     }
   }
   if (ins.kind_tag == UNARY) {
-    if (low_wrap(ins) || ins.str == "int_wrap" || ins.str == "int_extend") {
+    if (low_wrap(ins) || int_resize(ins.ir_kind)) {
       let bits = low_wrap_bits(ins);
       if (bits < result) {
         return bits;
@@ -9628,7 +9718,7 @@ struct ByteSource { value: i32, shift: i32 }
 function byte_source(v: i32, defs: SInst[]): ByteSource {
   v = low_byte_source(v, defs);
   let d = defs[v];
-  if (d.kind_tag == BINARY && (d.str == "shr_u" || d.str == "shr_s") && d.args.len() == 2) {
+  if (d.kind_tag == BINARY && (d.ir_kind == ir.K_SHR_U || d.ir_kind == ir.K_SHR_S) && d.args.len() == 2) {
     let c = const_value(defs, d.args[1]);
     if (c > 0i64 && c < 32i64) {
       return ByteSource { value: d.args[0], shift: c as i32 };
@@ -9639,15 +9729,16 @@ function byte_source(v: i32, defs: SInst[]): ByteSource {
 
 function low_byte_source(v: i32, defs: SInst[]): i32 {
   let d = defs[v];
-  while (d.kind_tag == UNARY && low_byte_cast(d.str) || d.kind_tag == BINARY && d.str == "and" && d.args.len() == 2 && const_value(defs, d.args[1]) == 255i64) {
+  while (d.kind_tag == UNARY && low_byte_cast(d) || d.kind_tag == BINARY && d.ir_kind == ir.K_AND && d.args.len() == 2 && const_value(defs, d.args[1]) == 255i64) {
     v = d.args[0];
     d = defs[v];
   }
   return v;
 }
 
-function low_byte_cast(what: string): boolean {
-  return what == "int_wrap" || what == "int_extend" || what == "u32_wrap" || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16";
+function low_byte_cast(ins: SInst): boolean {
+  let what = ins.str;
+  return int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP || what == "int_cast:u32" || what == "int_cast:i32" || what == "int_cast:u16" || what == "int_cast:i16";
 }
 
 // The position of the byte append that reads the result of the append at
@@ -10465,10 +10556,10 @@ function zero_extends_u32(ins: SInst): boolean {
   if (ins.kind_tag != UNARY || ins.args.len() != 1) {
     return false;
   }
-  if (ins.str == "u32_wrap" || ins.str == "int_cast:u32") {
+  if (ins.ir_kind == ir.K_U32_WRAP || ins.str == "int_cast:u32") {
     return true;
   }
-  return (ins.str == "int_wrap" || ins.str == "int_extend") && ins.imm == 1;
+  return int_resize(ins.ir_kind) && ins.imm == 1;
 }
 
 function def_of(defs: SInst[], v: i32): SInst {
@@ -10666,88 +10757,6 @@ pub function pred_slot(blk: SBlock, prev: i32): i32 {
   return 0;
 }
 
-function eval_binary(op: string, l: i32, r: i32): i32 {
-  if (op == "+") {
-    return l + r;
-  }
-  if (op == "-") {
-    return l - r;
-  }
-  if (op == "*") {
-    return l * r;
-  }
-  if (op == "/") {
-    return l / r;
-  }
-  if (op == "%") {
-    return l % r;
-  }
-  if (op == "==") {
-    if (l == r) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == "!=") {
-    if (l != r) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == "<") {
-    if (l < r) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == "<=") {
-    if (l <= r) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == ">") {
-    if (l > r) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == ">=") {
-    if (l >= r) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == "&&") {
-    if (l != 0 && r != 0) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == "||") {
-    if (l != 0 || r != 0) {
-      return 1;
-    }
-    return 0;
-  }
-  if (op == "&") {
-    return l & r;
-  }
-  if (op == "|") {
-    return l | r;
-  }
-  if (op == "^") {
-    return l ^ r;
-  }
-  if (op == "<<") {
-    return l << r;
-  }
-  if (op == ">>") {
-    return l >> r;
-  }
-  return 0;
-}
-
 pub function only_phis(b: SBlock): boolean {
   for ins in b.insts {
     if (ins.kind_tag != PHI) {
@@ -10911,7 +10920,7 @@ function byte_shift_op(kind: i32): boolean {
 }
 
 function byte_wrap_op(ins: SInst): boolean {
-  return low_wrap(ins) || ins.str == "int_wrap" || ins.str == "int_extend";
+  return low_wrap(ins) || int_resize(ins.ir_kind);
 }
 
 function byte_extract(ins: SInst, byte: i32, fuel: i32): ByteOrigin {

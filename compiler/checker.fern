@@ -5658,13 +5658,17 @@ function bound_arg_accepts(e: ast.Expr, actual: typeinfo.Type, want: typeinfo.Ty
 
 function call_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
   let (bn, bt) = call_bindings(sig, c, s);
+  return (bn, call_literal_binding_types(sig, c, s, bn, bt));
+}
+
+function call_literal_binding_types(sig: FuncSig, c: ast.ExprCall, s: Scope, bn: string[], bt: typeinfo.Type[]): typeinfo.Type[] {
   for wbi in 0..bn.len() {
     let (wty, wok) = shared_literal_typevar_width(sig, c, bn[wbi], s);
     if (wok) {
       bt = bt.with(wbi, wty);
     }
   }
-  return (bn, bt);
+  return bt;
 }
 
 function elemless_array(t: typeinfo.Type): boolean {
@@ -15238,10 +15242,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
           } else {
             let cbn: string[] = [];
             let cbt: typeinfo.Type[] = [];
+            let inferred_types = cbt;
             if (sig.all_type_params.len() > 0) {
-              let (bn0, bt0) = call_type_bindings(sig, c, s);
+              let (bn0, bt0) = call_bindings(sig, c, s);
               cbn = bn0;
-              cbt = bt0;
+              inferred_types = bt0;
+              cbt = call_literal_binding_types(sig, c, s, cbn, inferred_types);
             }
             for ai in 0..c.args.len() {
               let at = check_expr(c.args[ai], s);
@@ -15259,9 +15265,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest:
             }
             if (sig.all_type_params.len() > 0) {
               out = util.append_diags(out, call_bound_diags(sig.type_params, sig.type_bounds, sig.module, util.demangle(sig.name), cbn, cbt, s, c.line, c.col));
-              let (fbn, fbt) = call_bindings(sig, c, s);
-              out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
-              out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name, s, dest));
+              out = util.append_diags(out, bound_arg_diags(sig, c, cbn, inferred_types, s));
+              out = util.append_diags(out, uninferred_call_diags(sig, c, cbn, id.name, s, dest));
             }
           }
         } else {
@@ -26718,7 +26723,7 @@ function lu_function(fn: parser.FuncDecl, facts: LuFacts, ofuncs: OwnFuncs, borr
   return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
 }
 
-// `fn` is resolved with lu_resolved.
+// `fn` is resolved with lu_resolved, so each lambda in its body is resolved too.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts = lu_empty_facts();
   let nested: ast.ExprLambda[] = [];
@@ -26734,7 +26739,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
   let out = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
-    out = util.append_all(out, lu_last_use_args(lu_resolved(parser.FuncDecl { ...fn, params: lm.params, ret_own: lm.ret_own, body: lm.body }), ofuncs, borrows, lenders, builtins, noret));
+    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, ret_own: lm.ret_own, body: lm.body }, ofuncs, borrows, lenders, builtins, noret));
   }
   return out;
 }
@@ -28162,7 +28167,7 @@ function ow_stmts(stmts: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk 
     m = r.moved;
     d = util.append_diags(d, r.diags);
     if let ast.StmtVar(v) = stmt {
-      if (util.has_str(c.owned, v.name) || util.has_str(c.borrowed, v.name)) {
+      if (util.has_str(c.owned, v.name) || util.has_str(c.borrowed, v.name) || ow_local_capture_owner(v.name, c)) {
         locals = locals.append(OwnLocalScope { parent: c, moved: m, name: v.name });
         m = ow_moves_without(m, [v.name]);
         c = ow_shadow_names_ctx(c, [v.name]);
