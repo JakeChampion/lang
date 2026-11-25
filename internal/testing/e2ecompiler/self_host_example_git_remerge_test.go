@@ -819,6 +819,14 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	rightTree := g.git("rev-parse", "module-2^{tree}")
 	rightMerge := g.git("commit-tree", "-p", "module-1", "-p", "module-2", "-m", "take second parent", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
+	if err := os.Mkdir(filepath.Join(dir, ".git", "modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
+	if err := os.MkdirAll(filepath.Join(dir, "module", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
 	g.git("init", "-q", "--object-format="+run.format, "module")
 	// With an initialized checkout, two independent additions have no base
 	// gitlink, even when the checkout lacks both commits.

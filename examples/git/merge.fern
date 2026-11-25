@@ -762,6 +762,15 @@ function merge_3way(st_in: State, path: string, o: string, a: string, b: string,
   return (st, text.status, store.hold(st.store, "blob", text.bytes));
 }
 
+// A missing path or empty directory cannot contain a Git repository.
+// A .git file can point elsewhere, so preserve it for repository lookup.
+function missing_or_empty_dir(path: string): boolean {
+  return match (read_dir(path)) {
+    Ok(names) => names.len() == 0,
+    Err(_) => stat(path).is_err(),
+  };
+}
+
 // Git can find the submodule in the worktree or in its module store.
 // A configured gitdir can live elsewhere. Leave that lookup to the
 // submodule history merge.
@@ -769,10 +778,10 @@ function submodule_absent(repo: refs.Repo, path: string): boolean {
   if (repo.top == "" || repo.config.flag("extensions.submodulepathconfig", false)) {
     return false;
   }
-  if (stat(repo.top + "/" + path + "/.git").is_ok()) {
+  if (!missing_or_empty_dir(repo.top + "/" + path + "/.git")) {
     return false;
   }
-  return stat(repo.common + "/modules").is_err() && stat(repo.dir + "/modules").is_err();
+  return missing_or_empty_dir(repo.common + "/modules") && (repo.common == repo.dir || missing_or_empty_dir(repo.dir + "/modules"));
 }
 
 enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Unresolved }
