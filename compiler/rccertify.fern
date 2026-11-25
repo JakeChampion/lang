@@ -887,14 +887,95 @@ function region_count(rg: Regions): i32 {
 }
 
 function child_load(w: Walk, regions: i32[][], bi: i32, ins: ssa.SInst, children_box: boolean[]): boolean {
+  if (children_load(w, ins, children_box)) {
+    return true;
+  }
+  return ins.args.len() > 0 && util.index_of_i32(regions[bi], w.root[ins.args[0]]) >= 0;
+}
+
+function children_load(w: Walk, ins: ssa.SInst, children_box: boolean[]): boolean {
   if (ins.args.len() == 0) {
     return false;
   }
   let base = w.root[ins.args[0]];
-  if (base < children_box.len() && children_box[base]) {
-    return true;
+  return base < children_box.len() && children_box[base];
+}
+
+// Whether each path from the load at pos reads the same slot of the same box
+// again, so the later load, not this one, holds the child.
+function reloaded(w: Walk, bi: i32, pos: i32, ld: ssa.SInst): boolean {
+  if (!slot_read_again(w, ld)) {
+    return false;
   }
-  return util.index_of_i32(regions[bi], base) >= 0;
+  let first = reread_in(w, ld, bi, pos + 1);
+  if (first != 0) {
+    return first > 0;
+  }
+  let seen = __alloc_bool(w.f.blocks.len());
+  let stack: i32[] = [bi];
+  let top = 1;
+  while (top > 0) {
+    top -= 1;
+    let b = stack[top];
+    if (w.splits.returns[b]) {
+      return false;
+    }
+    for e in 0..2 {
+      let si = w.splits.to[b * 2 + e];
+      if (si == bi) {
+        return false;
+      }
+      if (si >= 0 && !seen[si]) {
+        seen = seen.with(si, true);
+        let r = reread_in(w, ld, si, 0);
+        if (r < 0) {
+          return false;
+        }
+        if (r == 0) {
+          stack = pushed(stack, top, si);
+          top += 1;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// 1 when block b reads the slot of ld again from `from` on, -1 when an op
+// first defines, writes or hands on the box, and 0 when the block does neither.
+function reread_in(w: Walk, ld: ssa.SInst, b: i32, from: i32): i32 {
+  let base = w.root[ld.args[0]];
+  let insts = w.f.blocks[b].insts;
+  for i in from..insts.len() {
+    let d = insts[i];
+    if (same_slot_load(w, d, ld)) {
+      return 1;
+    }
+    if (d.result >= 0 && w.root[d.result] == base || d.kind_tag != ssa.LD_AT && d.kind_tag != ssa.ARR_AT && !is_call(d, "__fern_rc_is_unique") && uses_root(w, d, base)) {
+      return -1;
+    }
+  }
+  return 0;
+}
+
+function uses_root(w: Walk, d: ssa.SInst, base: i32): boolean {
+  for a in d.args {
+    if (a >= 0 && w.root[a] == base) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function slot_read_again(w: Walk, ld: ssa.SInst): boolean {
+  for b in w.firsts[w.root[ld.args[0]]] {
+    for d in w.f.blocks[b].insts {
+      if (same_slot_load(w, d, ld)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 struct Shells { base: i32[], phi: i32[], block: i32[], at: i32[] }
@@ -1207,7 +1288,7 @@ function param_origin(w: Walk, p: i32): i32 {
 }
 
 function load_origin(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
-  if (child_load(w, c.regions, bi, ins, c.children_box)) {
+  if (child_load(w, c.regions, bi, ins, c.children_box) && !(children_load(w, ins, c.children_box) && reloaded(w, bi, pos, ins))) {
     let fd = child(1);
     if (ins.args.len() > 0) {
       let at = util.index_of_i32(c.regions[bi], w.root[ins.args[0]]);
@@ -1837,13 +1918,11 @@ function between(w: Walk, dom: ssadeps.Dom, ld: ssa.SInst, lb: i32, lp: i32, sb:
 function event_in(w: Walk, ld: ssa.SInst, mb: i32, from: i32, to: i32): boolean {
   let insts = w.f.blocks[mb].insts;
   let base = w.root[ld.args[0]];
-  let i = from;
-  while (i < to && i < insts.len()) {
+  for i in from..to.min(insts.len()) {
     let d = insts[i];
     if (same_slot_load(w, d, ld) || d.result == base || d.kind_tag == ssa.CALL && d.str.starts_with("__sem_drop_") && d.args.len() > 0 && w.root[d.args[0]] == base) {
       return true;
     }
-    i += 1;
   }
   return false;
 }

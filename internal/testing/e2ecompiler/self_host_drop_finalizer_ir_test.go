@@ -402,6 +402,29 @@ function main(): i32 {
     return 0;
 }
 `, "holder\nfield\ndrop field\n= 6\narray\na0\ndrop a0\ndrop a1\n= 13\nslot\npayload\ndrop payload\n= 12\nsig\ndrop Sig\n= 13"},
+	// #17136: the inlined finalizer reads a counted field, and the drop
+	// helper then loads the same field again to release it.
+	{"inlined-finalizer-reads-counted-field", `import "core/mem";
+struct Res { id: i32, name: string }
+impl mem.Drop for Res {
+    function drop(self: Self): void { print(self.name); }
+}
+struct Counted { n: Cell[i32], id: i32 }
+impl mem.Drop for Counted {
+    function drop(self: Self): void { print("cell " + self.n.get().to_string()); }
+}
+@noinline function make(n: i32): Res { return Res { id: n, name: "r" + n.to_string() }; }
+@noinline function counted(n: i32): Counted { return Counted { n: cell_new(n * 10), id: n }; }
+function main(): i32 {
+    let total = 0;
+    for i in 0..3 {
+        let a = make(i);
+        let c = counted(i);
+        total += a.id + c.id;
+    }
+    return total - 6;
+}
+`, "r0\ncell 0\nr1\ncell 10\nr2\ncell 20"},
 }
 
 func sortedLines(s string) string {
