@@ -3042,7 +3042,7 @@ function main(): i32 { return 0; }
 		{"e108-name-that-the-function-declares-ok", "function main(): i32 {\n  function a(n: i32): i32 { if (n == 0) { return 0; } return b(n - 1); }\n  let k = 5;\n  function b(n: i32): i32 { let k = 2; if (n == 0) { return k; } return a(n - 1); }\n  return a(3) + k;\n}\n", nil},
 	}
 	// The symbol of each generic builtin method (#15210).
-	for _, name := range []string{"Array_len", "Array_push", "Array_set", "Array_truncate", "Cell_get", "Cell_set", "Map_clear", "Map_contains", "Map_get", "Map_get_or", "Map_keys", "Map_len", "Map_remove", "Map_set", "Map_values", "slice_len"} {
+	for _, name := range []string{"Array_len", "Array_push", "Array_set", "Array_truncate", "Cell_get", "Cell_replace", "Cell_set", "Map_clear", "Map_contains", "Map_get", "Map_get_or", "Map_keys", "Map_len", "Map_remove", "Map_set", "Map_values", "slice_len"} {
 		fn := "__method_" + name
 		cases = append(cases, struct {
 			name string

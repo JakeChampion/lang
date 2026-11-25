@@ -439,6 +439,30 @@ read. Anything that could hold a reference back to the cell — a function
 value, another cell, a `dyn` trait object, a type parameter — is rejected
 (`E057`), as is a borrowed view such as `str`.
 
+`replace(v)` stores `v` and returns the old value. The caller then owns the
+old value, so it can give it to an `own` parameter:
+
+```fern
+struct Conn { fd: i32 }
+
+function (own c: Conn) close(): i32 {
+    return c.fd;
+}
+
+function main(): i32 {
+    let slot: Cell[Option[Conn]] = cell_new(Some(Conn { fd: 3 }));
+    match (slot.replace(None)) {
+        Some(c) => {
+            return c.close();   // 3
+        },
+        None => {
+            return 0;
+        }
+    }
+    return 0;
+}
+```
+
 ## Built-in `Option` and `Result`
 
 ```fern

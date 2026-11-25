@@ -526,6 +526,9 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
   if (name == "set" && argc == 1) {
     return typeinfo.t_void();
   }
+  if (name == "replace" && argc == 1) {
+    return cell_elem_type(recv);
+  }
   return t_unknown("not a cell method");
 }
 
@@ -4175,7 +4178,7 @@ function preregistered_methods(ns: string): string[] {
     "slice" => ["len"],
     "string" => ["as_bytes", "len"],
     "Map" => ["cleared", "contains", "get", "get_or", "insert", "keys", "len", "remove", "values"],
-    "Cell" => ["get", "set"],
+    "Cell" => ["get", "replace", "set"],
     _ => [],
   };
 }
@@ -14749,11 +14752,11 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
   if (mfa.field == "get") {
     want = 0;
   }
-  if (mfa.field == "set") {
+  if (mfa.field == "set" || mfa.field == "replace") {
     want = 1;
   }
   if (want < 0) {
-    return [access_fix(dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, ["get", "set"])];
+    return [access_fix(dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, ["get", "replace", "set"])];
   }
   if (c.args.len() != want) {
     return [dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", want, c.args.len(), "argument"), c.line, c.col)];
@@ -21672,7 +21675,7 @@ function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
 }
 
 function ow_fresh_builtin_methods(): string[] {
-  return ["Dir.open_dir", "Dir.open_reader", "Dir.open_writer", "Dir.open_reader_with", "Dir.open_writer_with"];
+  return ["Cell.replace", "Dir.open_dir", "Dir.open_reader", "Dir.open_writer", "Dir.open_reader_with", "Dir.open_writer_with"];
 }
 
 function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {

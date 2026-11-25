@@ -2373,6 +2373,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{cellT, cellParam},
 		Result: ast.VoidType{},
 	}
+	// Cell.replace stores its argument and gives the old payload to the caller.
+	c.info.Methods["Cell.replace"] = "__method_Cell_replace"
+	c.info.FuncSigs["__method_Cell_replace"] = &ast.FuncType{
+		Params:    []ast.Type{cellT, cellParam},
+		Result:    cellParam,
+		ResultOwn: true,
+	}
 
 	registerStringMethod := func(methodName string, params []ast.Type, result ast.Type) {
 		mangled := "__method_string_" + methodName
@@ -8487,7 +8494,7 @@ func storesArgument(name string, i int) bool {
 		return i == 2
 	case "__method_Map_set":
 		return i == 1 || i == 2
-	case "__method_Cell_set":
+	case "__method_Cell_set", "__method_Cell_replace":
 		return i == 1
 	}
 	return false

@@ -2110,6 +2110,17 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     }
     return cell_set_value(c, args[0]);
   }
+  if (name == "replace") {
+    if (args.len() != 1) {
+      return v_err("Cell.replace takes exactly 1 argument");
+    }
+    let old = managed_cell_value(c.root);
+    let stored = cell_set_value(c, args[0]);
+    if (is_err(stored)) {
+      return stored;
+    }
+    return old;
+  }
   return v_err("undefined method `" + name + "` on `Cell`");
 }
 
