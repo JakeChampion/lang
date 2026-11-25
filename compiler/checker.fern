@@ -37906,7 +37906,7 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
         callee = qualified_variant_ref(id, want, s);
         dests = member_payload_dests(member, want, c, s);
       } else if (s.ident_binding(id) < 0) {
-        dests = match (s.lookup_sig(id.name)) { Some(sig) => sig.param_types, None => variant_payload_dests(c, want, s, []) };
+        dests = match (s.lookup_sig(id.name)) { Some(sig) => bound_argument_dests(c, want, s, sig.param_types), None => variant_payload_dests(c, want, s, []) };
       }
     },
     ast.ExprFieldAccess(fa) => {
