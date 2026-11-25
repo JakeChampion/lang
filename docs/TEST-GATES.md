@@ -979,7 +979,13 @@ open over a secret key and plaintext must be clean, where `open`
 declassifies only its tag verdict. The AES-GCM case runs AES-128 and AES-256,
 so it covers the AES-NI and `pclmulqdq` kernels; memcheck tracks definedness
 through both.
-`TestSelfHostCtGateArm64` is the same on an arm64 host.
+Valgrind decodes no SHA extension instruction on x86-64, so the x86-64 gate
+compiles its probes with `FERN_DEBUG_NO_SHA_EXT=1`. SHA-256 and SHA-1 then
+take the rounds of std/crypto, and memcheck checks the code around them.
+The gate does not run the SHA-NI kernels, which have no branch and no
+address that a message byte sets.
+`TestSelfHostCtGateArm64` is the same on an arm64 host, where valgrind
+decodes the SHA-2 instructions.
 `TestSelfHostCtMarksArm64` (under qemu), `TestSelfHostCtMarksWasm` and
 `TestSelfHostInterpCtMarks` (both interpreters) run the same probes where the
 marks are no-ops, so each must answer as it would unmarked. The gate runs
