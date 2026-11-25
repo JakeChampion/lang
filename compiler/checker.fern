@@ -20780,8 +20780,9 @@ function ocl_callback_type(spelling: string, tparams: string[]): boolean {
 }
 
 function ocl_callback_value(e: ast.Expr, facts: OclFacts): boolean {
-  if let ast.ExprLambda(_) = e {
-    return true;
+  if let ast.ExprLambda(lm) = e {
+    // The parser wraps a value block in a lambda. Its body runs in the surrounding scope.
+    return !(parser.is_value_block_origin(lm.origin) || ow_value_if_origin(lm.origin));
   }
   if let ast.ExprCall(c) = e {
     return ocl_callback_result(c, parser.parse_type_ref(ocl_callable_spelling(c.callee, facts)), facts);
