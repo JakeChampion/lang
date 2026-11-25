@@ -340,8 +340,8 @@ With git 2.43, these settings, messages and merges are also different:
 ## What it does not have yet
 
 - Three parts of the merge of `--remerge-diff`. They are the merge of a
-  submodule that the two parents changed when the checkout cannot
-  fast-forward and its history must be searched, or when only its
+  submodule that the two parents changed when its history contains a
+  possible merge resolution or cannot be fully read, or when only its
   module store is present, and a merge driver of the
   configuration (`merge.NAME.driver`). The third is
   `merge.renormalize`.

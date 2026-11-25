@@ -872,6 +872,18 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 		tagMerge := g.git("commit-tree", "-p", "module-1", "-p", tagSide, "-m", "take untagged side", tree)
 		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", tagMerge)
 	}
+	// A dangling merge of the two sides cannot resolve their divergence.
+	subTree := g.git("-C", "module", "rev-parse", links[1]+"^{tree}")
+	other := g.git("-C", "module", "commit-tree", subTree, "-p", links[0], "-m", "other submodule side")
+	solution := g.git("-C", "module", "commit-tree", subTree, "-p", links[1], "-p", other, "-m", "possible resolution")
+	g.git("-C", "module", "update-ref", "refs/heads/other", other)
+	g.git("update-index", "--add", "--cacheinfo", "160000,"+other+",module")
+	otherTree := g.git("write-tree")
+	otherSide := g.git("commit-tree", "-p", "module-base", "-m", "other gitlink", otherTree)
+	diverged := g.git("commit-tree", "-p", "module-1", "-p", otherSide, "-m", "diverged", otherTree)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	g.git("-C", "module", "update-ref", "--no-deref", "HEAD", solution)
+	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
 	// From s1, one parent rewinds to s0 and the other advances to s2.
 	rewind := g.git("commit-tree", "-p", "module-1", "-m", "rewind", s0Tree)
 	advance := g.git("commit-tree", "-p", "module-1", "-m", "advance", rightTree)

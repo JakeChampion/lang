@@ -785,10 +785,49 @@ function submodule_absent(repo: refs.Repo, path: string): boolean {
   return missing_or_empty_dir(repo.common + "/modules") && (repo.common == repo.dir || missing_or_empty_dir(repo.dir + "/modules"));
 }
 
-enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Unresolved }
+enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Diverged, Unresolved }
+
+// A merge of two divergent commits is reachable only if a ref tip or
+// detached HEAD reaches both. A missing object leaves the answer unknown.
+function no_submodule_resolution(sub: refs.Repo, graph: walk.Graph, a: string, b: string): boolean {
+  if (sub.dir != sub.common || sub.config.get("extensions.refstorage").unwrap_or("files") != "files") {
+    return false;
+  }
+  let tips = refs.all_refs(sub);
+  let head = refs.resolve_ref(sub, "HEAD");
+  if (head.hash != "") {
+    tips = tips.append(head);
+  }
+  let g = graph;
+  for tip in tips {
+    let peeled = rev.commit_of(g.store, tip.hash);
+    if (peeled.hash == "") {
+      if (peeled.errors.len() > 0) {
+        continue;
+      }
+      return false;
+    }
+    let (ga, has_a) = walk.reaches(walk.Graph { ...g, store: peeled.store }, peeled.hash, a);
+    g = ga;
+    if (has_a) {
+      let (gb, has_b) = walk.reaches(g, peeled.hash, b);
+      g = gb;
+      if (has_b) {
+        return false;
+      }
+    }
+  }
+  for entry in g.nodes.entries() {
+    let (_, n) = entry;
+    if (!n.ok) {
+      return false;
+    }
+  }
+  return true;
+}
 
 // Compare the commits of a checked-out submodule with their base.
-function submodule_history(sub: refs.Repo, base: Version, a: Version, b: Version): SubmoduleHistory {
+function submodule_history(sub: refs.Repo, base: Version, a: Version, b: Version, inner: boolean): SubmoduleHistory {
   if (kind_of(base.mode) != KIND_COMMIT || a.hash.len() != 2 * sub.width) {
     return Unresolved;
   }
@@ -857,8 +896,11 @@ function submodule_history(sub: refs.Repo, base: Version, a: Version, b: Version
   if (includes_a) {
     return FastForward(b);
   }
-  let (_, includes_b) = walk.reaches(gab, commits[1], commits[2]);
-  return if (includes_b) { FastForward(a) } else { Unresolved };
+  let (gba, includes_b) = walk.reaches(gab, commits[1], commits[2]);
+  if (includes_b) {
+    return FastForward(a);
+  }
+  return if (inner || no_submodule_resolution(sub, gba, commits[1], commits[2])) { Diverged } else { Unresolved };
 }
 
 // The merge of the versions `o`, `a` and `b` of one path
@@ -894,9 +936,15 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
             st = message(st, path, "Failed to merge submodule " + path + " (no merge base)");
             return (st, false, if (st.depth > 0) { o } else { a });
           }
-          match (submodule_history(sub, o, a, b)) {
+          match (submodule_history(sub, o, a, b, st.depth > 0)) {
             FastForward(later) => {
               return (st, clean, later);
+            },
+            Diverged => {
+              if (st.depth == 0) {
+                st = message(st, path, "Failed to merge submodule " + path);
+              }
+              return (st, false, if (st.depth > 0) { o } else { a });
             },
             Rewind => {
               st = message(st, path, "Failed to merge submodule " + path + " (commits don't follow merge-base)");
