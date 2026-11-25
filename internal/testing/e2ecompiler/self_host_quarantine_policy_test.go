@@ -119,6 +119,18 @@ const redzoneInBoundsSrc = `function main(): i32 {
 }
 `
 
+// A 64-byte block that is never released, written at byte WRITE. The leak
+// census at exit checks the redzone of each block that is still live.
+const redzoneLeakedSrc = `function main(): i32 {
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_u8(p + WRITE, 7);
+  }
+  print("survived");
+  return 0;
+}
+`
+
 // A 3000-byte block takes a class of 384 words. A write at byte 3008 lands
 // in the class past the request, and a write at byte 2999 is in bounds.
 const redzoneSlackSrc = `function main(): i32 {
@@ -372,6 +384,23 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 				r := quarantineBuild(t, cli, qemu, target, redzoneInBoundsSrc, []string{"-sanitize"})
 				if r.code != 0 || !strings.Contains(r.stdout, "survived") || strings.Contains(r.stderr, "fern-sanitizer") || !strings.Contains(r.stdout+r.stderr, "allocs=2 frees=2 live_bytes=0") {
 					t.Fatalf("in bounds: exit %d, want a clean run with a balanced census\n%s%s", r.code, r.stdout, r.stderr)
+				}
+			})
+			t.Run("redzone-of-a-leaked-block", func(t *testing.T) {
+				const report = "fern-sanitizer: heap-buffer-overflow (a block was written past its end)"
+				for _, at := range []string{"64", "79"} {
+					r := quarantineBuild(t, cli, qemu, target, strings.Replace(redzoneLeakedSrc, "WRITE", at, 1), []string{"-sanitize"})
+					if r.code != 124 || !strings.Contains(r.stderr, report) || !strings.Contains(r.stdout+r.stderr, "fern-sanitizer: leak 64 bytes in 1 blocks") {
+						t.Fatalf("write at %s: exit %d, want 124 with the leak verdict and the heap-buffer-overflow report\n%s%s", at, r.code, r.stdout, r.stderr)
+					}
+				}
+				inside := quarantineBuild(t, cli, qemu, target, strings.Replace(redzoneLeakedSrc, "WRITE", "63", 1), []string{"-sanitize"})
+				if inside.code != 0 || strings.Contains(inside.stderr, report) || !strings.Contains(inside.stdout+inside.stderr, "fern-sanitizer: leak 64 bytes in 1 blocks") {
+					t.Fatalf("write at 63: exit %d, want the leak verdict and no overflow report\n%s%s", inside.code, inside.stdout, inside.stderr)
+				}
+				plain := quarantineBuild(t, cli, qemu, target, strings.Replace(redzoneLeakedSrc, "WRITE", "64", 1), nil)
+				if plain.code != 0 || !strings.Contains(plain.stdout, "survived") {
+					t.Fatalf("release build: exit %d\n%s%s", plain.code, plain.stdout, plain.stderr)
 				}
 			})
 			t.Run("payload-read-after-free", func(t *testing.T) {

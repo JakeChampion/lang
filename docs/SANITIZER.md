@@ -370,7 +370,12 @@ whose reference outlived the count.
   redzone starts at the request rounded up to 8 bytes. A write in those 7
   bytes or fewer is not seen. A write that lands beyond the redzone, or in the
   next block, is seen only when that block's own release or count reports it.
-  A block that is never released is never checked.
+  A block that is never released gets one check: after a leak verdict, the
+  census reads the two redzone words after the class of each live block
+  (the `redzone-of-a-leaked-block` case of `TestSelfHostQuarantinePolicy`).
+  The words of the class past the request are not checked there, because a
+  string grows into them. Wasm keeps no list of live blocks, so it has no
+  such check.
 
 - **A misaligned ordinary raw access.** The native targets accept a
   misaligned `__load_*` or `__store_*`, so only the atomics are checked
