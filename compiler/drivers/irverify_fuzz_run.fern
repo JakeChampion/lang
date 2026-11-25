@@ -2,6 +2,7 @@ import "../ir";
 import "../irverify";
 import "../irverifystack";
 import "../irverifyrc";
+import "../rcsigs";
 import "../util";
 
 // `irverify_fuzz_run verify FILE` decodes a byte file into an op sequence and
@@ -88,7 +89,7 @@ function main(): i32 {
   ]);
   let structural = irverify.verify_fn("f", ops, n_params, n_locals, sigs).len();
   let stack = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
-  let rc = irverifyrc.verify_rc_fn("f", ops);
+  let rc = irverifyrc.verify_rc_fn("f", ops, rcsigs.table());
   print("verify ops " + util.i32_to_string(ops.len())
     + " structural " + util.i32_to_string(structural)
     + " stack " + util.i32_to_string(stack.problems.len())
