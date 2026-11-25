@@ -2471,7 +2471,7 @@ function live_of(w: Walk, takes: Takes): Live {
   return live_edges(w, live_rows(w, fl, takes));
 }
 
-struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[], ulog: i32[], mlog: i32[], keyed: boolean[], condkey: boolean[] }
+struct Progress { out: i32[], done: boolean[], dead: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[], maybe_at: i32[], ulog: i32[], mlog: i32[], keyed: boolean[], condkey: boolean[] }
 
 function filled(n: i32, v: i32): i32[] {
   let out = __alloc_i32(n);
@@ -3078,7 +3078,7 @@ function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
   let bases: i32[] = [];
   for pid in b.preds {
     let pb = w.at[pid];
-    if (pb >= 0 && p.done[pb]) {
+    if (edge_live(p, w, pb, b.id)) {
       bases = bases.append(edge_base(w, lv, pb, b.id));
     }
   }
@@ -3149,7 +3149,7 @@ function edge_sides(w: Walk, b: ssa.SBlock, n: i32, p: Progress): i32[] {
   let out: i32[] = [];
   for pid in b.preds {
     let pb = w.at[pid];
-    if (pb >= 0 && p.done[pb]) {
+    if (edge_live(p, w, pb, b.id)) {
       let side = arm_of(w, d, t, pb, b.id);
       if (side < 0) {
         return none;
@@ -3884,9 +3884,120 @@ function hand_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
       if (e == 1) {
         p = restore_row(p, lv, bi, saved);
       }
+      if (twin_dead_on_edge(p, w, bi, ssa.successor_id(t, e))) {
+        let r = kill_edge(p, w, lv, bi, e);
+        p = r.p;
+        changed = changed || r.changed;
+        continue;
+      }
+      if (p.dead[bi * 2 + e]) {
+        p = Progress { ...p, dead: p.dead.with(bi * 2 + e, false) };
+        changed = true;
+      }
       let r = hand_edge(p, w, lv, bi, e);
       p = r.p;
       changed = changed || r.changed;
+    }
+  }
+  return RoundResult { p: p, changed: changed };
+}
+
+// The edge from block `pb` into the block `id` carries a path in this round.
+function edge_live(p: Progress, w: Walk, pb: i32, id: i32): boolean {
+  if (pb < 0 || !p.done[pb]) {
+    return false;
+  }
+  let e = 0;
+  if (ssa.successor_id(w.f.blocks[pb].term, 0) != id) {
+    e = 1;
+  }
+  return !p.dead[pb * 2 + e];
+}
+
+// A block that no live edge reaches runs nothing, and its edges carry no path.
+function reached(p: Progress, w: Walk, bi: i32): boolean {
+  let b = w.f.blocks[bi];
+  if (bi == w.at[w.f.entry] || b.preds.len() == 0) {
+    return true;
+  }
+  for pid in b.preds {
+    if (edge_live(p, w, w.at[pid], b.id)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A test of a twin against its key that selects a side the twin does not
+// have: no path takes the edge.
+function twin_dead_on_edge(p: Progress, w: Walk, bi: i32, sid: i32): boolean {
+  let t = w.f.blocks[bi].term;
+  if (t.kind_tag != ssa.TERM_BRIF || t.t == t.f) {
+    return false;
+  }
+  let c = def_in(w, t.cond);
+  if (c.kind_tag != ssa.BINARY || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+    return false;
+  }
+  let equal = sid == t.t;
+  if (c.str == "ne") {
+    equal = !equal;
+  }
+  return no_side_of(p, w, c.args[0], c.args[1], equal) || no_side_of(p, w, c.args[1], c.args[0], equal);
+}
+
+function no_side_of(p: Progress, w: Walk, x: i32, y: i32, equal: boolean): boolean {
+  if (x < 0 || y < 0 || w.derived[x]) {
+    return false;
+  }
+  let kx = w.idx[w.root[x]];
+  if (kx < 0) {
+    return false;
+  }
+  let s = p.state[kx];
+  if (!is_twin(s) || twin_key(s) != w.root[y]) {
+    return false;
+  }
+  if (equal) {
+    return twin_same(s) == no_side();
+  }
+  return twin_apart(s) == no_side();
+}
+
+function kill_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
+  let changed = false;
+  let t = w.f.blocks[bi].term;
+  for e in 0..2 {
+    if (lv.out_at[bi * 2 + e] >= 0 && (e == 0 || ssa.successor_id(t, 1) != ssa.successor_id(t, 0))) {
+      let r = kill_edge(p, w, lv, bi, e);
+      p = r.p;
+      changed = changed || r.changed;
+    }
+  }
+  return RoundResult { p: p, changed: changed };
+}
+
+// The edge `e` of block `bi` carries no path: its phi inputs are absent.
+function kill_edge(own p: Progress, w: Walk, lv: Live, bi: i32, e: i32): RoundResult {
+  let changed = !p.dead[bi * 2 + e];
+  p = Progress { ...p, dead: p.dead.with(bi * 2 + e, true) };
+  let sid = ssa.successor_id(w.f.blocks[bi].term, e);
+  let si = w.at[sid];
+  if (si < 0) {
+    return RoundResult { p: p, changed: changed };
+  }
+  let s = w.f.blocks[si];
+  let pi = util.index_of_i32(s.preds, w.f.blocks[bi].id);
+  if (pi < 0) {
+    return RoundResult { p: p, changed: changed };
+  }
+  for ins in s.insts {
+    if (ins.kind_tag == ssa.PHI && ins.result >= 0 && w.idx[ins.result] >= 0 && pi < ins.args.len()) {
+      let at = p.phi_at[ins.result] + pi;
+      if (p.phin[at] != absent()) {
+        changed = true;
+        p = Progress { ...p, phin: p.phin.with(at, absent()) };
+      }
     }
   }
   return RoundResult { p: p, changed: changed };
@@ -3941,6 +4052,11 @@ function clear_row(own p: Progress, lv: Live, bi: i32): Progress {
 
 function block_round(own p: Progress, w: Walk, lv: Live, bi: i32, takes: Takes): RoundResult {
   let b = w.f.blocks[bi];
+  if (!reached(p, w, bi)) {
+    let r = kill_edges(p, w, lv, bi);
+    p = r.p;
+    return RoundResult { p: p, changed: r.changed };
+  }
   p = entry_row(p, w, lv, bi);
   p = apply_block(p, w, bi, takes);
   let changed = false;
@@ -4244,7 +4360,7 @@ function progress_of(w: Walk, lv: Live): Progress {
       }
     }
   }
-  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked), ulog: [], mlog: [], keyed: __alloc_bool(f.nvals), condkey: __alloc_bool(f.nvals) };
+  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), dead: __alloc_bool(f.blocks.len() * 2), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked), maybe_at: util.minus_ones(w.tracked), ulog: [], mlog: [], keyed: __alloc_bool(f.nvals), condkey: __alloc_bool(f.nvals) };
 }
 
 struct Settled { p: Progress, changed: boolean, rounds: i32 }
@@ -4308,7 +4424,7 @@ function block_inputs(p: Progress, w: Walk, lv: Live, bi: i32): i32[] {
   let out: i32[] = [];
   for pid in b.preds {
     let pb = w.at[pid];
-    if (pb >= 0 && p.done[pb]) {
+    if (edge_live(p, w, pb, b.id)) {
       out = out.append(1);
       let base = edge_base(w, lv, pb, b.id);
       let j = 0;
@@ -4370,7 +4486,7 @@ function inputs_match(p: Progress, w: Walk, lv: Live, bi: i32, old: i32[]): bool
   let at = 0;
   for pid in b.preds {
     let pb = w.at[pid];
-    let ran = pb >= 0 && p.done[pb];
+    let ran = edge_live(p, w, pb, b.id);
     if (at >= old.len() || old[at] == 1 != ran) {
       return false;
     }
