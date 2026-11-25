@@ -28,5 +28,8 @@ function __fern_str_trim(s: string): string {
       }
     }
   }
+  if (start == 0 && end == n) {
+    return s;
+  }
   return slice_unchecked(s, start, end) + "";
 }

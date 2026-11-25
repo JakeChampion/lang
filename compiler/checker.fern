@@ -26723,7 +26723,7 @@ function lu_function(fn: parser.FuncDecl, facts: LuFacts, ofuncs: OwnFuncs, borr
   return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
 }
 
-// `fn` is resolved with lu_resolved.
+// `fn` is resolved with lu_resolved, so each lambda in its body is resolved too.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts = lu_empty_facts();
   let nested: ast.ExprLambda[] = [];
@@ -26739,7 +26739,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.N
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
   let out = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
-    out = util.append_all(out, lu_last_use_args(lu_resolved(parser.FuncDecl { ...fn, params: lm.params, ret_own: lm.ret_own, body: lm.body }), ofuncs, borrows, lenders, builtins, noret));
+    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, ret_own: lm.ret_own, body: lm.body }, ofuncs, borrows, lenders, builtins, noret));
   }
   return out;
 }
