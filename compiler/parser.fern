@@ -14515,15 +14515,6 @@ function module_value_names(mod: Module): string[] {
       out = out.append(fd.name);
     }
   }
-  for sd in mod.structs {
-    out = out.append(sd.name);
-  }
-  for ed in mod.enums {
-    out = out.append(ed.name);
-  }
-  for al in mod.aliases {
-    out = out.append(al.name);
-  }
   return out;
 }
 
