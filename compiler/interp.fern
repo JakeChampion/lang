@@ -210,7 +210,11 @@ function coerce_int_width(val: Value, type_name: string): Value {
   if (type_name.len() == 0) {
     return val;
   }
-  let k = scalar_code(type_name);
+  return coerce_scalar(val, scalar_code(type_name), type_name);
+}
+
+// coerce_scalar is coerce_int_width with the scalar code `k` of `type_name`.
+function coerce_scalar(val: Value, k: i32, type_name: string): Value {
   if (k == SC_OTHER) {
     return coerce_to_declared(val, type_name);
   }
@@ -316,6 +320,11 @@ const SC_U16: i32 = 7;
 const SC_I16: i32 = 8;
 
 const SC_U32: i32 = 9;
+
+// The integer codes are the range SC_USIZE to SC_U32.
+const SC_FIRST_INT: i32 = SC_USIZE;
+
+const SC_LAST_INT: i32 = SC_U32;
 
 const SC_F64: i32 = 10;
 
@@ -4786,20 +4795,21 @@ function checked_64(op: string, a: i64, b: i64, signed: boolean): Option[i64] {
 }
 
 function eval_typed_binary(code: i32, lv: Value, rv: Value, ty: string): Value {
+  let k = scalar_code(ty);
   if (ast.is_saturating_code(code) && is_int_like(lv) && is_int_like(rv)) {
-    if (ty == "u8") {
+    if (k == SC_U8) {
       return v_int(sat_clamp(sat_exact(code, vint_as_i64(lv), vint_as_i64(rv)), 0, 255) as i32);
     }
-    if (ty == "u16") {
+    if (k == SC_U16) {
       return v_int(sat_clamp(sat_exact(code, vint_as_i64(lv), vint_as_i64(rv)), 0, 65535) as i32);
     }
-    if (ty == "i16") {
+    if (k == SC_I16) {
       return v_int(sat_clamp(sat_exact(code, vint_as_i64(lv), vint_as_i64(rv)), -32768, 32767) as i32);
     }
   }
   let v = eval_binary(code, lv, rv);
-  if (ty == "i32" || ty == "u8" || ty == "i64" || ty == "u32" || ty == "u64" || ty == "usize" || ty == "u16" || ty == "i16") {
-    return coerce_int_width(v, ty);
+  if (k >= SC_FIRST_INT && k <= SC_LAST_INT) {
+    return coerce_scalar(v, k, ty);
   }
   return v;
 }
