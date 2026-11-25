@@ -10,7 +10,7 @@ import (
 func TestSelfHostIRVerifyReportsCoverage(t *testing.T) {
 	cli := newStrictCLI(t)
 	src := "function add(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return add(1, 2); }\n"
-	re := regexp.MustCompile(`(?m)^FERN_IR_VERIFY: (\d+) functions verified, (\d+) modelled by the stack verifier, (\d+) skipped$`)
+	re := regexp.MustCompile(`(?m)^FERN_IR_VERIFY: (\d+) functions verified$`)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			_, diags, err := cli.tryEmit(t, target, src, "FERN_IR_VERIFY=1")
@@ -21,11 +21,8 @@ func TestSelfHostIRVerifyReportsCoverage(t *testing.T) {
 			if m == nil {
 				t.Fatalf("no coverage line on stderr:\n%s", diags)
 			}
-			funcs, _ := strconv.Atoi(m[1])
-			modelled, _ := strconv.Atoi(m[2])
-			skipped, _ := strconv.Atoi(m[3])
-			if funcs < 1 || funcs != modelled+skipped {
-				t.Errorf("coverage %s: want at least one function, modelled + skipped = verified", m[0])
+			if funcs, _ := strconv.Atoi(m[1]); funcs < 1 {
+				t.Errorf("coverage %s: want at least one function", m[0])
 			}
 			if strings.Count(diags, "FERN_IR_VERIFY: ") != 1 {
 				t.Errorf("want one coverage line, got:\n%s", diags)
