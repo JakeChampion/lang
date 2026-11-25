@@ -5218,6 +5218,10 @@ function send_builtin_type(name: string, c: ast.ExprCall, s: Scope): typeinfo.Ty
 }
 
 function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
+  return bounded_type(call_result_type(c, s));
+}
+
+function call_result_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (c.args.len() == 0) {
     match (c.callee) {
       ast.ExprLambda(lm) => {
@@ -6434,7 +6438,7 @@ function check_expr(e: ast.Expr, s: Scope): typeinfo.Type {
       return check_unary_expr(u, s);
     },
     ast.ExprCall(c) => {
-      return bounded_type(check_call_expr(c, s));
+      return check_call_expr(c, s);
     },
     ast.ExprTuple(t) => {
       let elems: typeinfo.Type[] = [];
@@ -14660,7 +14664,7 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   match (e) {
     ast.ExprCall(c) => {
-      out = call_diags_call(c, s, out, t_unknown("no destination"));
+      out = call_diags_call(c, s, check_call_expr(c, s), t_unknown("no destination"));
     },
     ast.ExprBinary(b) => {
       out = call_diags_binary(b, s, out);
@@ -15101,8 +15105,9 @@ function array_builtin_arity(method: string, view: boolean): i32 {
   return -1;
 }
 
-function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: typeinfo.Type): util.Diag[] {
-  let (large, found) = too_large_diags(bounded_type(check_call_expr(c, s)), c.args, c.line, c.col, s, out);
+function call_diags_call(c: ast.ExprCall, s: Scope, result: typeinfo.Type, dest: typeinfo.Type): util.Diag[] {
+  let out: util.Diag[] = [];
+  let (large, found) = too_large_diags(result, c.args, c.line, c.col, s, out);
   if (found) {
     return large;
   }
@@ -15584,6 +15589,10 @@ function operand_diags_typed(e: ast.Expr, s: Scope): (util.Diag[], typeinfo.Type
   }
   if let ast.ExprUnary(u) = e {
     return unary_diags_typed(u, s);
+  }
+  if let ast.ExprCall(c) = e {
+    let result = check_call_expr(c, s);
+    return (call_diags_call(c, s, result, t_unknown("no destination")), result);
   }
   return (call_diags(e, s), check_expr(e, s));
 }
@@ -17123,7 +17132,7 @@ function receiver_dest(mfa: ast.ExprFieldAccess, receiver: typeinfo.Type, dest: 
 
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprCall(c) = e {
-    return call_diags_call(c, s, [], dest);
+    return call_diags_call(c, s, check_call_expr(c, s), dest);
   }
   if let ast.ExprIdent(id) = e {
     if let typeinfo.TypeFunc(df) = dest {

@@ -529,6 +529,22 @@ function pick(name: string): Case {
         let b12: ssa.SBlock = block(12, [1], [], ret(2));
         return Case { f: func(2, 19, [b0, b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "unique-test-of-a-literal-phi-feeds-a-reuse" || name == "unique-test-of-a-literal-phi-feeds-a-reuse-unreleased") {
+        // v5 is a literal on one path and a fresh box on the other. A literal
+        // is never unique, so where the test is true v5 holds 1 unit. Where it
+        // is false, v5 is released, and the token v9 is null. The reuse takes
+        // the token. Without the release, v5 keeps its unit on that path.
+        let shared: ssa.SInst[] = [call(7, "__fern_rc_dec", [5]), const_int(8, 0)];
+        if (name == "unique-test-of-a-literal-phi-feeds-a-reuse-unreleased") { shared = [const_int(8, 0)]; }
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 0), inst(9, 2, [0, 1], 0, "eq")], brif(2, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [inst(57, 3, [], 0, "&arr|")], br(3));
+        let b2: ssa.SBlock = block(2, [0], [fresh_box(4)], br(3));
+        let b3: ssa.SBlock = block(3, [1, 2], [inst(8, 5, [3, 4], 0, ""), call(6, "__fern_rc_is_unique", [5])], brif(6, 4, 5));
+        let b4: ssa.SBlock = block(4, [3], [], br(6));
+        let b5: ssa.SBlock = block(5, [3], shared, br(6));
+        let b6: ssa.SBlock = block(6, [4, 5], [inst(8, 9, [5, 8], 0, ""), const_int(10, 2), call(11, "__fern_alloc_reuse", [9, 10])], ret(11));
+        return Case { f: func(1, 12, [b0, b1, b2, b3, b4, b5, b6]), modes: [rccertify.value_mode()], returns_unit: true };
+    }
     if (name == "loop-takes-a-field-under-each-arms-token" || name == "loop-takes-a-field-under-each-arms-token-unretained") {
         // The loop carries v2. Each arm gives v2 to take, then reads the
         // field of a fresh record under the record's reuse token: retained
@@ -931,6 +947,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"pair-word-settled-past-its-token-test", nil, 0},
 		{"loop-box-copied-under-its-null-token", nil, 0},
 		{"loop-reuses-its-carried-box", nil, 0},
+		{"unique-test-of-a-literal-phi-feeds-a-reuse", nil, 0},
+		{"unique-test-of-a-literal-phi-feeds-a-reuse-unreleased", []string{"leaked where it dies of v5"}, 1},
 		{"loop-takes-a-field-under-each-arms-token", nil, 0},
 		{"loop-takes-a-field-under-each-arms-token-unretained", nil, 1},
 		{"push-joins-its-parameter", nil, 0},
