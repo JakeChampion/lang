@@ -27,9 +27,17 @@ pub struct SignTested { func: ssasem.Func, changed: boolean }
 pub struct ParamFacts { nonneg: boolean[], max: i64[], below: i32[], lens: i32[], known: Known }
 
 // The facts of the whole program: the fields that each record fills with an
-// array of a known length, and what each function in `ix` gives back.
-// `bodies[j]` is true when the program has the body of function j.
-pub struct Known { fields: FieldLen[], rets: RetLen[], ix: util.NameIndex, bodies: boolean[] }
+// array of a known length or of small elements, and the length and the
+// elements of what each function in `ix` gives back. `bodies[j]` is true
+// when the program has the body of function j.
+pub struct Known { fields: FieldLen[], rets: RetLen[], elem_rets: ElemMax[], ix: util.NameIndex, bodies: boolean[] }
+
+// Each element of an array is at least 0 and at most `max`, and at most the
+// value of the parameter `k` when `k` is not -1. A `max` of -1 gives no
+// bound. A `max` of ELEMS_NONE adds no bound of its own.
+pub struct ElemMax { max: i64, k: i32 }
+
+const ELEMS_NONE: i64 = -2i64;
 
 // The length of the array that a function gives back: at least `n` elements
 // (RET_CONST), the value of the parameter `k` (RET_PARAM), or the length of
@@ -48,12 +56,13 @@ const RET_LEN_OF: i32 = 3;
 const RET_SAME: i32 = 4;
 
 pub function no_known(): Known {
-  return Known { fields: [], rets: [], ix: util.name_index([]), bodies: [] };
+  return Known { fields: [], rets: [], elem_rets: [], ix: util.name_index([]), bodies: [] };
 }
 
 // Each record of type `ty` in the program holds an array of at least `len`
-// elements in its field `slot`.
-pub struct FieldLen { ty: typeinfo.Type, slot: i32, len: i32 }
+// elements in its field `slot`, or -1, and each element of that array is at
+// least 0 and at most `elems`, or -1.
+pub struct FieldLen { ty: typeinfo.Type, slot: i32, len: i32, elems: i64 }
 
 pub function no_facts(): ParamFacts {
   return ParamFacts { nonneg: [], max: [], below: [], lens: [], known: no_known() };
@@ -900,6 +909,15 @@ function field_len(fields: FieldLen[], ty: typeinfo.Type, slot: i32): i32 {
   return -1;
 }
 
+function field_elems(fields: FieldLen[], ty: typeinfo.Type, slot: i32): i64 {
+  for fl in fields {
+    if (fl.slot == slot && semtypes.equal(fl.ty, ty)) {
+      return fl.elems;
+    }
+  }
+  return -1i64;
+}
+
 function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): boolean {
   if (steps <= 0) {
     return false;
@@ -1125,6 +1143,12 @@ function bounded_max(g: Graph, v: i32, steps: i32): i64 {
   if (d.kind_tag == ssasem.cast() && d.args.len() == 1 && g.i32s[v]) {
     let a = bounded_max(g, d.args[0], steps - 1);
     return if (a >= 0i64 && a <= 2147483647i64) { a } else { -1i64 };
+  }
+  if (d.kind_tag == ssasem.array_get() && d.args.len() == 2 && d.str == "" && g.i32s[v]) {
+    let e = elems(g, d.args[0], typeinfo.unchecked(), -1, [], steps - 1, false);
+    if (e.max >= 0i64 && e.k < 0 && (fallback < 0i64 || e.max < fallback)) {
+      return e.max;
+    }
   }
   if (d.kind_tag != ssa.BINARY || d.args.len() != 2) {
     return fallback;
@@ -2038,15 +2062,173 @@ function const_through_cast(defs: ssa.SInst[], v: i32): i32 {
 // when the program has the body of function j, and `host[j]` when the host
 // gives the parameters of function j.
 pub function known_facts(funcs: ssasem.Func[], ix: util.NameIndex, bodies: boolean[], host: boolean[]): Known {
-  let known = Known { fields: [], rets: funcs.map((f: ssasem.Func): RetLen => no_ret()), ix: ix, bodies: bodies };
+  let known = Known { fields: [], rets: funcs.map((f: ssasem.Func): RetLen => no_ret()), elem_rets: funcs.map((f: ssasem.Func): ElemMax => no_elems()), ix: ix, bodies: bodies };
   for round in 0..4 {
     let rets = result_lens(funcs, known);
-    if (same_rets(rets, known.rets)) {
+    let elem_rets = result_elems(funcs, known);
+    if (same_rets(rets, known.rets) && same_elems(elem_rets, known.elem_rets)) {
       break;
     }
-    known = Known { ...known, rets: rets };
+    known = Known { ...known, rets: rets, elem_rets: elem_rets };
   }
   return Known { ...known, fields: field_lens(funcs, known, host) };
+}
+
+// The elements of what each function gives back, with the summaries of
+// `known` at its calls.
+function result_elems(funcs: ssasem.Func[], known: Known): ElemMax[] {
+  let out: ElemMax[] = [];
+  for c in 0..funcs.len() {
+    let f = funcs[c];
+    if (!known.bodies[c] || !typeinfo.is_array(f.result)) {
+      out = out.append(no_elems());
+      continue;
+    }
+    let g = defs_graph(f, known);
+    let e = ElemMax { max: ELEMS_NONE, k: -1 };
+    for blk in f.graph.blocks {
+      if (blk.term.kind_tag == ssa.TERM_RET) {
+        e = joined_elems(e, elems(g, blk.term.value, typeinfo.unchecked(), -1, [], 24, false));
+      }
+    }
+    out = out.append(if (e.max == ELEMS_NONE && e.k < 0) { no_elems() } else { e });
+  }
+  return out;
+}
+
+function no_elems(): ElemMax {
+  return ElemMax { max: -1i64, k: -1 };
+}
+
+function joined_elems(a: ElemMax, b: ElemMax): ElemMax {
+  if (a.max == -1i64 || b.max == -1i64 || a.k >= 0 && b.k >= 0 && a.k != b.k) {
+    return no_elems();
+  }
+  return ElemMax { max: if (a.max > b.max) { a.max } else { b.max }, k: if (a.k >= 0) { a.k } else { b.k } };
+}
+
+function same_elems(a: ElemMax[], b: ElemMax[]): boolean {
+  for i in 0..a.len() {
+    if (a[i].max != b[i].max || a[i].k != b[i].k) {
+      return false;
+    }
+  }
+  return a.len() == b.len();
+}
+
+// The elements of the array `v`: a literal, a zeroed allocation, `with`
+// writes, appends and fill kernels of bounded values, a move kernel, the
+// inputs of a phi, a call that `known` sums up, and a field of `known`. A read of the field `slot` of a
+// record of type `ty` adds no bound, as with `len_bound`.
+function elems(g: Graph, v: i32, ty: typeinfo.Type, slot: i32, assume: i32[], steps: i32, ranged: boolean): ElemMax {
+  v = ssa.copy_root(g.defs, v);
+  if (steps <= 0 || v < 0 || v >= g.defs.len()) {
+    return no_elems();
+  }
+  let d = g.defs[v];
+  let at = if (v < g.home.len()) { g.home[v] } else { -1 };
+  if (d.kind_tag == ssasem.with() && d.args.len() == 3 && d.str == "") {
+    return joined_elems(elems(g, d.args[0], ty, slot, assume, steps - 1, ranged), value_elems(g, at, d.args[2], steps - 1, ranged));
+  }
+  if (d.kind_tag == ssasem.append() && d.args.len() == 2) {
+    return joined_elems(elems(g, d.args[0], ty, slot, assume, steps - 1, ranged), value_elems(g, at, d.args[1], steps - 1, ranged));
+  }
+  if (d.kind_tag == ssasem.call() && d.args.len() >= 1 && (ssasem.is_unique_check(d.str) || d.str.starts_with("__fern_arr_move_"))) {
+    return elems(g, d.args[0], ty, slot, assume, steps - 1, ranged);
+  }
+  if (d.kind_tag == ssasem.call() && d.args.len() == 4 && d.str.starts_with("__fern_arr_fill_")) {
+    return joined_elems(elems(g, d.args[0], ty, slot, assume, steps - 1, ranged), value_elems(g, at, d.args[3], steps - 1, ranged));
+  }
+  if (d.kind_tag == ssa.PHI && d.args.len() > 0) {
+    if (assumed(assume, v)) {
+      return ElemMax { max: ELEMS_NONE, k: -1 };
+    }
+    let inner = assume.append(v);
+    let e = ElemMax { max: ELEMS_NONE, k: -1 };
+    for o in d.args {
+      e = joined_elems(e, elems(g, o, ty, slot, inner, steps - 1, ranged));
+    }
+    return e;
+  }
+  if (d.kind_tag == ssasem.array_new()) {
+    let e = ElemMax { max: ELEMS_NONE, k: -1 };
+    for o in d.args {
+      e = joined_elems(e, value_elems(g, at, o, steps - 1, ranged));
+    }
+    return e;
+  }
+  if (d.kind_tag == ssasem.call() && ssasem.sized_alloc(d.str)) {
+    return if (d.str == "__alloc_u8_uninit") { no_elems() } else { ElemMax { max: 0i64, k: -1 } };
+  }
+  if (d.kind_tag == ssasem.call()) {
+    let e = ret_elems(g, d);
+    if (e.k < 0 || e.max == -1i64) {
+      return e;
+    }
+    let m = if (e.k < d.args.len()) { value_max(g, at, d.args[e.k], steps - 1, ranged) } else { -1i64 };
+    return if (m < 0i64) { no_elems() } else { joined_elems(ElemMax { max: e.max, k: -1 }, ElemMax { max: m, k: -1 }) };
+  }
+  if (d.kind_tag == ssasem.record_get() && d.args.len() == 1) {
+    let c = ssa.copy_root(g.defs, d.args[0]);
+    if (slot >= 0 && d.imm == slot && same_type(g, c, ty)) {
+      return ElemMax { max: ELEMS_NONE, k: -1 };
+    }
+    return if (c >= 0 && c < g.values.len()) { ElemMax { max: field_elems(g.known.fields, g.values[c], d.imm), k: -1 } } else { no_elems() };
+  }
+  return no_elems();
+}
+
+// The bound of a value that an array stores at the block `b`: an integer
+// parameter, or a value with a bound.
+function value_elems(g: Graph, b: i32, x: i32, steps: i32, ranged: boolean): ElemMax {
+  x = ssa.copy_root(g.defs, x);
+  if (x >= 0 && x < g.defs.len() && g.defs[x].kind_tag == ssa.PARAM && g.i32s[x]) {
+    return ElemMax { max: ELEMS_NONE, k: g.defs[x].imm };
+  }
+  let m = value_max(g, b, x, steps, ranged);
+  return if (m >= 0i64) { ElemMax { max: m, k: -1 } } else { no_elems() };
+}
+
+// A bound of the value `x` at the block `b`, or -1: the bound of
+// `bounded_max`, or a constant that a dominating fact holds `x` at or
+// below, when `x` is not negative and `ranged` holds. The graph of
+// `defs_graph` gives only constants. `bounded_max` reads elements with
+// `ranged` false, because `nonneg` starts its own `bounded_max`.
+function value_max(g: Graph, b: i32, x: i32, steps: i32, ranged: boolean): i64 {
+  if (steps <= 0 || x < 0 || x >= g.defs.len()) {
+    return -1i64;
+  }
+  if (g.unsigned_max.len() != g.defs.len()) {
+    return if (is_const(g, x) && const_value(g, x) >= 0) { const_value(g, x) as i64 } else { -1i64 };
+  }
+  let m = bounded_max(g, x, if (steps < depth()) { steps } else { depth() });
+  if (m >= 0i64 || !ranged || b < 0 || b >= g.up.len() || !nonneg(g, b, x, [], depth())) {
+    return m;
+  }
+  let best = -1i64;
+  let c = g.up[b];
+  while (c >= 0) {
+    for k in g.first[c]..g.first[c] + g.count[c] {
+      let r = g.rels[k];
+      if (same(g, r.lo, x) && is_const(g, r.hi)) {
+        let top = const_value(g, r.hi) as i64 - (if (r.strict) { 1i64 } else { 0i64 });
+        if (top >= 0i64 && (best < 0i64 || top < best)) {
+          best = top;
+        }
+      }
+    }
+    c = g.above[c];
+  }
+  return best;
+}
+
+// The elements of what the function that `d` calls gives back.
+function ret_elems(g: Graph, d: ssa.SInst): ElemMax {
+  let j = if (util.has_str(g.shadows, d.str)) { -1 } else { g.known.ix.find(d.str) };
+  if (j < 0 || j >= g.known.elem_rets.len() || j >= g.known.bodies.len() || !g.known.bodies[j]) {
+    return no_elems();
+  }
+  return g.known.elem_rets[j];
 }
 
 // What each function gives back, with the summaries of `known` at its calls.
@@ -2154,8 +2336,10 @@ function same_rets(a: RetLen[], b: RetLen[]): boolean {
 }
 
 // The array fields that each record of the program fills with at least a
-// known number of elements. A record keeps the length of its field when it
-// stores the same field of a record of its own type, after `with` writes.
+// known number of elements, or with elements below a known bound. A record
+// keeps the length of its field when it stores the same field of a record
+// of its own type, after `with` writes. It keeps the bound of the elements
+// when those writes store values below the bound.
 // A type has no facts when a value of it can come from outside the records
 // that the program builds: a zero value, a call to a body that the program
 // does not have, a parameter that the host gives, or an unknown op.
@@ -2170,6 +2354,7 @@ function field_lens(funcs: ssasem.Func[], known: Known, host: boolean[]): FieldL
     }
     let f = funcs[c];
     let g = defs_graph(f, known);
+    let ranged = false;
     for blk in f.graph.blocks {
       for ins in blk.insts {
         if (ins.kind_tag == ssasem.hole_fill() && (ins.args.len() < 3 || !has_value(f, ins.args[2]) || typeinfo.is_array(f.values[ins.args[2]]))) {
@@ -2184,7 +2369,11 @@ function field_lens(funcs: ssasem.Func[], known: Known, host: boolean[]): FieldL
             if (!has_value(f, ins.args[k])) {
               lost = record_names(t, lost, 16);
             } else if (typeinfo.is_array(f.values[ins.args[k]])) {
-              rows = stored(rows, t, k, len_bound(g, ins.args[k], t, k, [], 24));
+              if (!ranged) {
+                g = graph_with(f, ParamFacts { ...no_facts(), known: known });
+                ranged = true;
+              }
+              rows = stored(rows, t, k, len_bound(g, ins.args[k], t, k, [], 24), elems(g, ins.args[k], t, k, [], 24, true));
             }
           }
         } else if (ins.kind_tag == ssa.PARAM && host[c] || !carries(ins, ix, bodies, f.shadows)) {
@@ -2193,7 +2382,8 @@ function field_lens(funcs: ssasem.Func[], known: Known, host: boolean[]): FieldL
       }
     }
   }
-  return rows.filter((r: FieldLen): boolean => r.len >= 0 && !util.has_str(lost, semrecords.name_of(r.ty)));
+  let kept = rows.filter((r: FieldLen): boolean => (r.len >= 0 || r.elems >= 0i64) && !util.has_str(lost, semrecords.name_of(r.ty)));
+  return kept.map((r: FieldLen): FieldLen => FieldLen { ...r, len: if (r.len < 0) { -1 } else { r.len }, elems: if (r.elems < 0i64) { -1i64 } else { r.elems } });
 }
 
 // Whether `f` reads a field of `known`, or calls a function whose result
@@ -2201,12 +2391,12 @@ function field_lens(funcs: ssasem.Func[], known: Known, host: boolean[]): FieldL
 pub function uses_known(f: ssasem.Func, known: Known): boolean {
   for blk in f.graph.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && has_value(f, ins.args[0]) && field_len(known.fields, f.values[ins.args[0]], ins.imm) >= 0) {
+      if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && has_value(f, ins.args[0]) && (field_len(known.fields, f.values[ins.args[0]], ins.imm) >= 0 || field_elems(known.fields, f.values[ins.args[0]], ins.imm) >= 0i64)) {
         return true;
       }
       if (ins.kind_tag == ssasem.call() && !util.has_str(f.shadows, ins.str)) {
         let j = known.ix.find(ins.str);
-        if (j >= 0 && j < known.rets.len() && known.rets[j].kind != RET_NONE) {
+        if (j >= 0 && j < known.rets.len() && (known.rets[j].kind != RET_NONE || j < known.elem_rets.len() && known.elem_rets[j].max >= 0i64)) {
           return true;
         }
       }
@@ -2243,17 +2433,17 @@ function same_type(g: Graph, v: i32, ty: typeinfo.Type): boolean {
   return v >= 0 && v < g.values.len() && semtypes.equal(g.values[v], ty);
 }
 
-function stored(rows: FieldLen[], ty: typeinfo.Type, slot: i32, n: i32): FieldLen[] {
-  if (n == SAME_FIELD) {
-    return rows;
-  }
+// A row holds SAME_FIELD and ELEMS_NONE until a store gives it a value.
+function stored(rows: FieldLen[], ty: typeinfo.Type, slot: i32, n: i32, e: ElemMax): FieldLen[] {
+  let top = if (e.k >= 0) { -1i64 } else { e.max };
   for i in 0..rows.len() {
     let r = rows[i];
     if (r.slot == slot && semtypes.equal(r.ty, ty)) {
-      return rows.with(i, FieldLen { ...r, len: if (n < 0 || r.len < 0) { -1 } else if (n < r.len) { n } else { r.len } });
+      let len = if (n == SAME_FIELD) { r.len } else if (r.len == SAME_FIELD) { n } else if (n < 0 || r.len < 0) { -1 } else if (n < r.len) { n } else { r.len };
+      return rows.with(i, FieldLen { ...r, len: len, elems: joined_elems(ElemMax { max: r.elems, k: -1 }, ElemMax { max: top, k: -1 }).max });
     }
   }
-  return rows.append(FieldLen { ty: ty, slot: slot, len: n });
+  return rows.append(FieldLen { ty: ty, slot: slot, len: n, elems: top });
 }
 
 // Whether `ins` only moves values that the program built: it makes no record
