@@ -635,7 +635,9 @@ no key names the box (`kept_or_same_twin`). A
 push (`arr_push`) also grows its array in place or returns a new box. A push
 onto a box, or onto a value that a test found to be that box, gives a twin
 of that box. A store of null can clear the slot that the box was read from.
-Then the unit of the slot goes to the value that is the box on that path. A twin holds no unit if it is the
+Then the unit of the slot goes to the value that is the box on that path. A
+load and a store name one array slot when their indices are one value, or
+two constants that are equal (`index_key`). A twin holds no unit if it is the
 box of the parameter, and one unit if it is a new box. A test of the twin
 against the parameter decides the side on each edge, and a join meets the
 two sides apart. An edge where the test selects a side that the twin does
