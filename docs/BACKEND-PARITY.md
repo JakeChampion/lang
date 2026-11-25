@@ -366,7 +366,7 @@ inside a codegen switch:
 | backend | baseline | what it buys |
 | ------- | -------- | ------------ |
 | arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, the carry-less multiply `pmull` / `pmull2` in its `.1q` form, the AES rounds `aese` / `aesmc`, and the SHA-256 instructions `sha256h` / `sha256h2` / `sha256su0` / `sha256su1` (the SHA-512 ones, FEAT_SHA512, are not in the baseline). This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
-| x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `rorx` (BMI2), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
+| x86-64 | **x86-64-v3 plus AES-NI and the SHA extensions** — Intel Ice Lake 2019 (servers: Ice Lake-SP 2021), AMD Zen 2017 | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `rorx` (BMI2), `pshufb` (SSSE3), the SSE4.1 `roundsd` and `pblendw`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, `sha256rnds2` / `sha256msg1` / `sha256msg2` / `sha1rnds4` / `sha1nexte` / `sha1msg1` / `sha1msg2`, and the **AVX2** 32-byte loops the byte kernels already emit. |
 | wasm | core wasm 2.0, fixed-width SIMD included, plus the tail calls of wasm 3.0 | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. `return_call` and `return_call_indirect` let a call in tail position end its frame. wasmtime enables tail calls by default, as do Chrome 112, Firefox 121 and Safari 18.2. |
 
 The wasm baseline leaves out the other post-MVP core proposals. Each one waits for a consumer or is rejected:
@@ -421,14 +421,19 @@ software that never branches on or indexes by a secret: a bitsliced AES over
 `i64`, four blocks a pass, and a GHASH that multiplies a bit at a time under
 masks (`compiler/wasm_aes.fern`).
 
-**The SHA extensions are not taken on x86-64.** Intel's client parts gained
-them only with Ice Lake (2019), so taking them would move the floor off every
-Haswell-to-Comet-Lake part. SHA-256 runs a kernel of SSSE3 and BMI2 there
-(`__fern_sha256_hw_blocks`: the message schedule in xmm registers, the rounds
-on `rorx`, #12210), the SHA-256 instructions on arm64, where the crypto
-baseline has them (`__sha256_hw`, #10615), and std/crypto's generated rounds
-on wasm. SHA-1 runs the SHA-1 instructions on arm64 (`__sha1_hw`) and the
-generated rounds on x86-64 and wasm.
+**The SHA extensions are a raise, and they drop hardware.** Intel client
+parts have them from Ice Lake (2019). Intel server parts have them from Ice
+Lake-SP (2021), and AMD parts from Zen (2017). Thus Haswell to Comet Lake client
+parts and Skylake-SP to Cascade Lake server parts cannot run the x86-64
+output. The owner took this raise for #17029. On the same machine,
+PBKDF2-SHA256 with 200 000 iterations takes 21 ms on the SHA extensions and
+29 ms in OpenSSL 3.0. The SSSE3 kernel that they replace took 73 ms.
+
+SHA-256 runs `sha256rnds2`, `sha256msg1` and `sha256msg2` on x86-64
+(`__fern_sha256_hw_blocks`) and the SHA-256 instructions on arm64
+(`__sha256_hw`, #10615). SHA-1 runs `sha1rnds4`, `sha1nexte`, `sha1msg1` and
+`sha1msg2` on x86-64 (`__fern_sha1_hw_blocks`) and the SHA-1 instructions on
+arm64. Wasm runs the generated rounds of std/crypto for both.
 
 `std/crypto`'s `Sha1x8` hashes eight
 messages at once (`__sha1x8_hw_blocks`). On x86-64 its kernel runs the eight
@@ -438,8 +443,11 @@ the generated rounds.
 
 `std/crypto`'s `Sha256x8` does the same for SHA-256
 (`__sha256x8_hw_blocks`), on a state of eight words for each lane. On x86-64
-its kernel runs the eight lanes in the 32-bit lanes of the AVX2 registers. On
-arm64 it runs the lanes one after another on the SHA-256 instructions. On wasm
+and arm64 its kernel runs the lanes one after another on the SHA-256
+instructions. That is faster than eight lanes in the AVX2 registers: on
+x86-64 one lane hashes 1 MiB in 593 us, and eight AVX2 lanes took 672 us for
+the same bytes. SHA-1 keeps the AVX2 kernel, which takes 297 us for 1 MiB
+against 542 us for one lane on `sha1rnds4`. On wasm
 `__sha256x8_hw` is false, and `Sha256x8` runs each lane through the generated
 rounds.
 

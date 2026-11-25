@@ -189,7 +189,15 @@ func TestSelfHostSHA1HW(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("x86-64-linux", func(t *testing.T) {
-		sha1HWCheck(t, runX86_64Bin(cli.runner, cli.x86Binary(t, src)), false)
+		sha1HWCheck(t, runX86_64Bin(cli.runner, cli.x86Binary(t, src)), true)
+	})
+	t.Run("x86-64-linux-gas", func(t *testing.T) {
+		gcc, runner := x86_64Tooling(t)
+		asm, err := os.ReadFile(cli.emit(t, src, "x86-64-linux"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sha1HWCheck(t, runX86_64Bin(runner, e2eharness.BuildBin(t, gcc, t.TempDir(), "prog", string(asm))), true)
 	})
 	t.Run("arm64-linux", func(t *testing.T) {
 		qemu := e2eharness.Arm64Runner(t)

@@ -2242,6 +2242,7 @@ pub function is_sha_blocks_op(tag: i32): boolean {
 pub function kernel_need(tag: i32): string {
   return match (tag) {
     410 => "sha256",
+    441 => "sha1",
     579 => "sha256",
     553 => "sha1x8",
     554 => "chacha20",

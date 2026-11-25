@@ -537,14 +537,16 @@ function x86_sse_any_rr(own buf: i32[], pfx: i32, opcode: i32, reg: i32, rm: i32
 }
 
 function x86_sse_3a_imm(own buf: i32[], w: i32, opcode: i32, reg: i32, rm: i32, imm: i32): i32[] {
-  buf = buf.append(102);
+  if (opcode < NO_66) {
+    buf = buf.append(102);
+  }
   let rex = x86_rex(w, reg, 0, rm);
   if (w == 1 || rex != 64) {
     buf = buf.append(rex);
   }
   buf = buf.append(15);
   buf = buf.append(58);
-  buf = buf.append(opcode);
+  buf = buf.append(opcode & 255);
   buf = buf.append(x86_modrm(3, reg, rm));
   return buf.append(imm & 255);
 }
@@ -2613,6 +2615,10 @@ function x86_gas_cvt2si(mnem: string): Option[i32] {
   }
 }
 
+// A row of the 0F 38 or 0F 3A table at NO_66 or above has no 66 prefix, as
+// the SHA extensions have none.
+const NO_66: i32 = 256;
+
 function x86_gas_imm3a_op(mnem: string): Option[i32] {
   match (mnem) {
     "roundss" => {
@@ -2641,6 +2647,12 @@ function x86_gas_imm3a_op(mnem: string): Option[i32] {
     },
     "palignr" => {
       return Some(15);
+    },
+    "pblendw" => {
+      return Some(14);
+    },
+    "sha1rnds4" => {
+      return Some(NO_66 + 204);
     },
     _ => {
       return None;
@@ -2787,6 +2799,24 @@ function x86_gas_sse38_op(mnem: string): Option[i32] {
     },
     "aesimc" => {
       return Some(219);
+    },
+    "sha1nexte" => {
+      return Some(NO_66 + 200);
+    },
+    "sha1msg1" => {
+      return Some(NO_66 + 201);
+    },
+    "sha1msg2" => {
+      return Some(NO_66 + 202);
+    },
+    "sha256rnds2" => {
+      return Some(NO_66 + 203);
+    },
+    "sha256msg1" => {
+      return Some(NO_66 + 204);
+    },
+    "sha256msg2" => {
+      return Some(NO_66 + 205);
     },
     _ => {
       return None;
@@ -5247,25 +5277,29 @@ function x86_gas_sse38(own a: X86Asm, mnem: string, op: i32, src: string, dst: s
     if (!x86_gas_mem_ok(m)) {
       return x86_gas_bad(a, mnem + " " + src);
     }
-    buf_push_byte(a.code, 102);
+    if (op < NO_66) {
+      buf_push_byte(a.code, 102);
+    }
     util.push_bytes(a.code, x86_gas_mem_rex([], 32, xd, m, false));
     buf_push_byte(a.code, 15);
     buf_push_byte(a.code, 56);
-    buf_push_byte(a.code, op);
+    buf_push_byte(a.code, op & 255);
     return x86_gas_membytes(a, xd, m, 0);
   }
   let xs = x86_gas_xmm(src);
   if (xs < 0) {
     return x86_gas_bad(a, mnem + " " + src + ", " + dst);
   }
-  buf_push_byte(a.code, 102);
+  if (op < NO_66) {
+    buf_push_byte(a.code, 102);
+  }
   let rex = x86_rex(0, xd, 0, xs);
   if (rex != 64) {
     buf_push_byte(a.code, rex);
   }
   buf_push_byte(a.code, 15);
   buf_push_byte(a.code, 56);
-  buf_push_byte(a.code, op);
+  buf_push_byte(a.code, op & 255);
   buf_push_byte(a.code, x86_modrm(3, xd, xs));
   return a;
 }
