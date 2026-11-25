@@ -136,19 +136,17 @@ func TestWASMMatchScrutineeReclaim(t *testing.T) {
 		{"statement-call", matchScrutineeStmtBumpSrc, true},
 		{"literal", matchScrutineeLiteralBumpSrc, false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			small := runWasm(t, tc.makeSrc("50"))
-			large := runWasm(t, tc.makeSrc("5000"))
-			if small != large {
-				t.Errorf("match-scrutinee bump should be bounded: N=50 -> %d, N=5000 -> %d", small, large)
-			}
-			if tc.boxed && small <= 0 {
-				t.Errorf("boxed scrutinee: heap growth = %d, want positive", small)
-			}
-			if !tc.boxed && small != 0 {
-				t.Errorf("literal scrutinee: heap growth = %d, want zero", small)
-			}
-		})
+		small := runWasm(t, tc.makeSrc("50"))
+		large := runWasm(t, tc.makeSrc("5000"))
+		if tc.boxed && small <= 0 {
+			t.Errorf("%s: heap growth = %d, want positive", tc.name, small)
+		}
+		if !tc.boxed && small != 0 {
+			t.Errorf("%s: heap growth = %d, want zero", tc.name, small)
+		}
+		if small != large {
+			t.Errorf("match-scrutinee bump should be bounded: N=50 -> %d, N=5000 -> %d", small, large)
+		}
 	}
 	checkMatchScrutineeSafe(t, func(t *testing.T, src string) (string, int) {
 		return "", runWasm(t, src)
