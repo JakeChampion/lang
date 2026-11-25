@@ -29,6 +29,9 @@ var gatedBuiltins = map[string]string{
 
 	"rlimit_nofile":      "rlimit",
 	"disable_core_dumps": "rlimit",
+	"secret_map":         "rlimit",
+	"secret_lock":        "rlimit",
+	"secret_unmap":       "rlimit",
 
 	"priority":     "sched",
 	"set_priority": "sched",

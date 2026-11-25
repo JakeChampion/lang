@@ -1679,6 +1679,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	i64 := ast.NumberType{Width: 64, Signed: true}
+	c.info.FuncSigs["secret_map"] = &ast.FuncType{Params: []ast.Type{i64}, Result: i64}
+	c.info.FuncSigs["secret_lock"] = &ast.FuncType{Params: []ast.Type{i64, i64}, Result: i64}
+	c.info.FuncSigs["secret_unmap"] = &ast.FuncType{Params: []ast.Type{i64, i64}, Result: i64}
 	c.info.FuncSigs["process_alive"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.BoolType{},
@@ -9753,6 +9757,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__port_in8": true, "__port_in16": true, "__port_in32": true, "__port_out8": true, "__port_out16": true, "__port_out32": true,
 	"__memcpy": true, "__memset": true, "__str_bytes": true, "__bytes_data": true, "__account_entry": true,
 	"string_from_bytes_unchecked": true, "string_from_bytes_range_unchecked": true, "share_unchecked": true, "map_file_unchecked": true,
+	"secret_map": true, "secret_lock": true, "secret_unmap": true,
 	"__fd_close": true, "__tcp_close_unchecked": true, "__socket_from_fd": true,
 	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
 	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,

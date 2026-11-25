@@ -76,7 +76,23 @@ Its erase path must read none.
 `erase` covers one array.
 It does not erase a copy that the program made before the call.
 It does not erase a register or a spill slot that held a word of the secret, or a kernel buffer that carried it.
-A process that must not leave a secret in a core dump calls `disable_core_dumps`.
+A process that must not leave a secret in a core dump calls `disable_core_dumps`, or `secret.disable_dumps` from `std/crypto/secret`.
+
+### Secret pages
+
+`std/crypto/secret` keeps secret bytes in pages of their own, outside the heap.
+`secret.new(n)` maps from 1 to 1048576 bytes.
+On Linux and Android the kernel marks the pages `MADV_DONTDUMP`, so a core dump leaves them out.
+Then `new` locks the pages with `mlock`, so the kernel does not write them to swap or zram.
+
+When the kernel refuses the lock, the pages stay usable, `locked()` is `false`, and `lock_errno()` gives the errno.
+A process past its `RLIMIT_MEMLOCK` without `CAP_IPC_LOCK` gets this result.
+On macOS the pages are locked but have no dump mark, so a process calls `secret.disable_dumps` as well.
+
+The drop of the last holder writes zeroes over the bytes and unmaps the pages.
+`read` copies bytes into the heap, and the caller must erase that copy.
+The two interpreters serve the pages from their own heap and answer the lock with `ENOSYS`.
+A wasm target gets `Unsupported`.
 
 ### Private keys
 
@@ -129,6 +145,10 @@ It reads a block that the bump hands out again after `__heap_release_to`. The re
 - `TestSelfHostEraseZeroesStorage` compiles one program for x86-64-linux and arm64-linux. It releases a 48-byte `u8[]` secret and a six-word `u64[]` secret. Each control run must read at least 48 secret bytes back, and each erase run must read 0. Both targets pass, the arm64 one under QEMU.
 - `TestSelfHostHeapLimit` keeps 256 one-megabyte arrays live. Under `-heap-limit 64M` the program must exit 125 with the cause after its 32nd array and before its 64th, on both targets. Without the flag every array fits. Seven refusals cover `0`, `512K`, `32G`, a 20-digit size, `64MB`, a bare `M`, and `wasm32-wasi`. Five accepted sizes cover both ends of the range in bytes and with suffixes.
 - `TestSelfHostCPULimit` compiles a program that prints one line and then spins, for x86-64-linux and arm64-linux, with `-cpu-limit 1`. The kernel must kill it with `SIGKILL` after the line. A control program with the same flag must end with its own status 7, and `fern -manifest` must print `cpu_limit: 1`. Six refusals cover `0`, `2s`, a value above the range, a 20-digit value, `wasm32-wasi` and `arm64-darwin`.
+- `TestSelfHostSecretPages` compiles one program for x86-64-linux and arm64-linux. It maps 8192 secret bytes, writes and reads them, and must see the pages locked. On the native host it must see one more mapping with the `dd` flag of `/proc/self/smaps` and 8 kB more `VmLck`.
+After the drop, `VmLck` must fall by 8 kB. After `secret.disable_dumps`, `PR_GET_DUMPABLE` must answer 0. 
+- Under `prlimit --memlock=0:0` without `CAP_IPC_LOCK`, the same program must keep the pages usable and report `EPERM` or `ENOMEM`. `TestInterpSecretPages` and `TestSelfHostInterpSecretPages` run the module under the Go oracle and the self-host interpreter.
+`TestSecretPagesRefusedOffNativeHosts` checks the E066 refusal on the wasm and freestanding targets.
 - The `std/crypto` suite calls `erase` on a digest, on an empty array, on a literal, and on `u32[]`, `i64[]`, `u64[]` and `f64[]` arrays. It passes natively on x86-64, on arm64 under QEMU, on wasm32-wasi, under the self-host interpreter, and under the Go oracle.
 
 ```sh
@@ -141,4 +161,6 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 - A quota per allocation site, per package, or per request is not defined. The arena quota and the processor time quota are one number each per executable.
 - There is no quota for child processes. `RLIMIT_NPROC` counts the processes of a user, not of a program, and the kernel does not apply it to root.
 - The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
+- The secret pages cover only the bytes that a program keeps in them. A cipher of `std/crypto` takes its key as a `u8[]`.
+That key lives in the heap while the cipher holds it, and the heap can go to swap.
 - The Go oracle and the self-host interpreter run `erase` on their own heaps and ignore `-heap-limit`, which is a compile flag of the native backends.

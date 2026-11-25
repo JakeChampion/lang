@@ -13176,6 +13176,14 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
   } else if (o.kind_tag == ir.K_PRCTL_QUERY) {
     s = s.write("    call __fn___fern_prctl_query\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("prctl_query");
+  } else if (o.kind_tag == ir.K_SECRET_MAP) {
+    s = s.write("    call __fn___fern_secret_map\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("secret_map");
+  } else if (o.kind_tag == ir.K_SECRET_LOCK || o.kind_tag == ir.K_SECRET_UNMAP) {
+    let helper = ir.kind_name(o.kind_tag);
+    s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
+    s = s.write("    call __fn___fern_" + helper + "\n    addq $16, %rsp\n    pushq %rax\n");
+    s = s.need(helper);
   } else if (o.kind_tag == ir.K_CT_MARK) {
     s = s.write("    call __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("ct_mark");
@@ -15532,6 +15540,12 @@ function emit_entry_runtime_part_8(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("prctl_query")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_prctl_query", s);
+  }
+  for helper in ["secret_map", "secret_lock", "secret_unmap"] {
+    if (s.has_need(helper)) {
+      s = s.write("    .text\n");
+      s = emit_runtime("__fern_" + helper, s);
+    }
   }
   return s;
 }

@@ -172,6 +172,42 @@ func builtinRawMemset(ip *Interp, args []Value) (Value, error) {
 	return Void{}, nil
 }
 
+// The oracle serves secret pages from the raw arena. The arena is a Go slice
+// that can move, so the oracle cannot lock it and answers ENOSYS.
+func builtinSecretMap(ip *Interp, args []Value) (Value, error) {
+	a, err := rawArgs("secret_map", args, 1)
+	if err != nil {
+		return nil, err
+	}
+	if a[0] <= 0 {
+		return Number(-22), nil
+	}
+	return Number(ip.raw.alloc(a[0])), nil
+}
+
+func builtinSecretLock(_ *Interp, args []Value) (Value, error) {
+	if _, err := rawArgs("secret_lock", args, 2); err != nil {
+		return nil, err
+	}
+	return Number(-38), nil
+}
+
+func builtinSecretUnmap(ip *Interp, args []Value) (Value, error) {
+	a, err := rawArgs("secret_unmap", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	dst, err := ip.raw.span("secret_unmap", a[0], a[1])
+	if err != nil {
+		return nil, err
+	}
+	clear(dst)
+	if err := ip.raw.release("secret_unmap", a[0], a[1]); err != nil {
+		return nil, err
+	}
+	return Number(0), nil
+}
+
 func rawLoad(name string, width int64, decode func([]byte) int64) func(*Interp, []Value) (Value, error) {
 	return func(ip *Interp, args []Value) (Value, error) {
 		a, err := rawArgs(name, args, 1)
@@ -230,6 +266,9 @@ func registerRawMemory(i *Interp) {
 	}
 	i.Builtins["__alloc"] = &Builtin{Fn: builtinRawAlloc}
 	i.Builtins["__free"] = &Builtin{Fn: builtinRawFree}
+	i.Builtins["secret_map"] = &Builtin{Fn: builtinSecretMap}
+	i.Builtins["secret_lock"] = &Builtin{Fn: builtinSecretLock}
+	i.Builtins["secret_unmap"] = &Builtin{Fn: builtinSecretUnmap}
 	i.Builtins["__memcpy"] = &Builtin{Fn: builtinRawMemcpy}
 	i.Builtins["__memset"] = &Builtin{Fn: builtinRawMemset}
 	i.Builtins["__load_u8"] = &Builtin{Fn: rawLoad("__load_u8", 1, func(b []byte) int64 { return int64(b[0]) })}
