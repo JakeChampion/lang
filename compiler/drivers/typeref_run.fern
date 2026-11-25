@@ -109,7 +109,7 @@ function main(): i32 {
     + " elemfn=" + b2s(parser.ref_is_fn_value(parser.elem_type_ref(fa))) + "\n";
   let fg: parser.TypeRef = parser.parse_type_ref("((((T) => U)))");
   out = out + "struct groupedfn fn=" + b2s(parser.ref_is_fn_value(fg))
-    + " params=" + parser.ref_fn_param_spellings(fg)
+    + " params=" + parser.ref_fn_param_spellings(fg).join(",")
     + " ret=" + parser.render_type_ref(parser.ref_fn_result(fg)) + "\n";
 
   if (parser.ref_is_fn_value(parser.parse_type_ref("((() => U)[])"))) {
@@ -144,25 +144,25 @@ function main(): i32 {
     bad += 1;
   }
 
-  out = out + "tag fn=" + parser.fn_tag_spelling("fn", "boolean", "T") + "\n";
-  out = out + "tag fn0=" + parser.fn_tag_spelling("fn", "U", "") + "\n";
-  out = out + "tag fn2=" + parser.fn_tag_spelling("fn", "(string, i32)", "T,Map[string, U]") + "\n";
-  out = out + "tag fnarr=" + parser.fn_tag_spelling("fn[]", "U", "T") + "\n";
-  out = out + "tag fnview=" + parser.fn_tag_spelling("[fn]", "U", "T") + "\n";
-  out = out + "tag opaque=" + parser.fn_tag_spelling("fn", "", "") + "\n";
-  out = out + "tag plain=" + parser.fn_tag_spelling("i32[]", "", "") + "\n";
-  let tagged = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", "T"));
+  out = out + "tag fn=" + parser.fn_tag_spelling("fn", "boolean", ["T"]) + "\n";
+  out = out + "tag fn0=" + parser.fn_tag_spelling("fn", "U", []) + "\n";
+  out = out + "tag fn2=" + parser.fn_tag_spelling("fn", "(string, i32)", ["T", "Map[string, U]"]) + "\n";
+  out = out + "tag fnarr=" + parser.fn_tag_spelling("fn[]", "U", ["T"]) + "\n";
+  out = out + "tag fnview=" + parser.fn_tag_spelling("[fn]", "U", ["T"]) + "\n";
+  out = out + "tag opaque=" + parser.fn_tag_spelling("fn", "", []) + "\n";
+  out = out + "tag plain=" + parser.fn_tag_spelling("i32[]", "", []) + "\n";
+  let tagged = parser.parse_type_ref(parser.fn_tag_spelling("fn", "boolean", ["T"]));
   if (!parser.ref_is_fn_value(tagged) || parser.ref_ungroup(tagged).args[0].base != "T") {
     bad += 1;
   }
-  let tagarr = parser.parse_type_ref(parser.fn_tag_spelling("fn[]", "U", "T"));
+  let tagarr = parser.parse_type_ref(parser.fn_tag_spelling("fn[]", "U", ["T"]));
   if (parser.ref_is_fn_value(tagarr) || tagarr.array_depth != 1) {
     bad += 1;
   }
   if (!parser.ref_is_fn_value(parser.elem_type_ref(tagarr))) {
     bad += 1;
   }
-  let tagview = parser.parse_type_ref(parser.fn_tag_spelling("[fn]", "U", "T"));
+  let tagview = parser.parse_type_ref(parser.fn_tag_spelling("[fn]", "U", ["T"]));
   if (!tagview.is_view || !parser.ref_is_fn_value(tagview.args[0])) {
     bad += 1;
   }

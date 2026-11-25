@@ -517,6 +517,15 @@ pub function has_str(xs: string[], s: string): boolean {
   return false;
 }
 
+pub function any_str(xs: string[], pred: (string) => boolean): boolean {
+  for x in xs {
+    if (pred(x)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function base_type_name(t: string): string {
   for i in 0..t.len() {
     if (t[i] == b'[') {

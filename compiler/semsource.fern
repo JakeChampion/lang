@@ -255,11 +255,11 @@ function generic_decl(fd: parser.FuncDecl): boolean {
   if (fd.type_params.len() > 0 || fd.all_type_params.len() > 0) {
     return true;
   }
-  if (spelled_typevar(fd.ret_type) || spelled_typevar(fd.ret_fn_ret) || spelled_typevar(fd.ret_fn_param_types)) {
+  if (spelled_typevar(fd.ret_type) || spelled_typevar(fd.ret_fn_ret) || util.any_str(fd.ret_fn_param_types, (t: string): boolean => spelled_typevar(t))) {
     return true;
   }
   for p in fd.params {
-    if (spelled_typevar(p.type_name) || spelled_typevar(p.fn_ret) || spelled_typevar(p.fn_param_types)) {
+    if (spelled_typevar(p.type_name) || spelled_typevar(p.fn_ret) || util.any_str(p.fn_param_types, (t: string): boolean => spelled_typevar(t))) {
       return true;
     }
   }

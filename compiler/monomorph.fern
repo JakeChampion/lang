@@ -12,10 +12,10 @@ struct RStmtOne { rstmt: ast.Stmt, renv: parser.MEnv, rins2: parser.Insts }
 
 struct RStmts { rstmts: ast.Stmt[], rins3: parser.Insts }
 
-function fn_spelling_params(t: string): string {
+function fn_spelling_params(t: string): string[] {
   let r = parser.parse_type_ref(t);
   if (!parser.ref_is_fn_value(r)) {
-    return "";
+    return [];
   }
   return parser.ref_fn_param_spellings(r);
 }
@@ -61,7 +61,7 @@ function fn_value_inst_key(fd: parser.FuncDecl, expected: string, funcs: parser.
   }
   let fret = fd.ret_type;
   if (fret == "fn") {
-    fret = "(" + fd.ret_fn_param_types + ") => " + fd.ret_fn_ret;
+    fret = "(" + fd.ret_fn_param_types.join(",") + ") => " + fd.ret_fn_ret;
   }
   if (parser.type_str_vars(ret, []).len() == 0) {
     binds = parser.bind_unify(fret, ret, fd.type_params, binds, funcs);
@@ -1088,7 +1088,7 @@ pub function register_array_method_generics(mod: parser.Module): parser.Module {
   for i in 0..mod.funcs.len() {
     let fd = mod.funcs[i];
     if (is_concrete_array_method(fd)) {
-      let params: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+      let params: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
       for param in fd.params {
         params = params.append(param);
       }
@@ -1099,7 +1099,7 @@ pub function register_array_method_generics(mod: parser.Module): parser.Module {
       if (parser.spelling_is_view(fd.receiver_type)) {
         prefix = "__viewm_";
       }
-      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
       for j in 0..fd.params.len() {
         nparams = nparams.append(fd.params[j]);
       }
@@ -1172,7 +1172,7 @@ pub function register_map_method_generics(mod: parser.Module): parser.Module {
     let fd = mod.funcs[i];
     if (is_generic_map_method(fd)) {
       let tps = map_receiver_typevars(fd.receiver_type);
-      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
       for j in 0..fd.params.len() {
         nparams = nparams.append(fd.params[j]);
       }
@@ -1243,11 +1243,11 @@ function smm_own_typevars(fd: parser.FuncDecl, recv_vars: string[]): string[] {
   for i in 0..fd.params.len() {
     all = parser.type_str_vars(fd.params[i].type_name, all);
     all = parser.type_str_vars(fd.params[i].fn_ret, all);
-    all = parser.type_str_vars(fd.params[i].fn_param_types, all);
+    all = parser.type_list_vars(fd.params[i].fn_param_types, all);
   }
   all = parser.type_str_vars(fd.ret_type, all);
   all = parser.type_str_vars(fd.ret_fn_ret, all);
-  all = parser.type_str_vars(fd.ret_fn_param_types, all);
+  all = parser.type_list_vars(fd.ret_fn_param_types, all);
   let own: string[] = [];
   for j in 0..all.len() {
     if (!util.has_str(recv_vars, all[j])) {
@@ -1351,7 +1351,7 @@ pub function register_struct_method_generics(mod: parser.Module): parser.Module 
         tps = tps.append(own[oi]);
         bnames = bnames.append(parser.declared_bound(fd, own[oi]));
       }
-      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: "", line: 0, col: 0 }];
+      let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
       for j in 0..fd.params.len() {
         nparams = nparams.append(fd.params[j]);
       }
@@ -1603,7 +1603,7 @@ function carries_erased_var(pd: ast.ParamDecl, evars: string[]): boolean {
     return false;
   }
   for v in evars {
-    if (parser.type_mentions_var(pd.fn_ret, v) || parser.type_mentions_var(pd.fn_param_types, v)) {
+    if (parser.type_mentions_var(pd.fn_ret, v) || util.any_str(pd.fn_param_types, (t: string): boolean => parser.type_mentions_var(t, v))) {
       return true;
     }
   }
@@ -1615,7 +1615,7 @@ function erased_vars_of(fd: parser.FuncDecl): string[] {
   for pd in fd.params {
     vs = parser.type_str_vars(pd.type_name, vs);
     if (parser.is_fn_contract_tag(pd.type_name)) {
-      vs = parser.type_str_vars(pd.fn_param_types, parser.type_str_vars(pd.fn_ret, vs));
+      vs = parser.type_list_vars(pd.fn_param_types, parser.type_str_vars(pd.fn_ret, vs));
     }
   }
   let out: string[] = [];
@@ -1990,8 +1990,8 @@ function lane_map_decl(key: string): parser.FuncDecl {
     parser.s_while(parser.e_binary("<", i, len), tail),
     parser.s_return(out),
   ];
-  let param = ast.ParamDecl { name: "xs", type_name: arr, own: false, send: false, has_default: false, default_value: parser.e_number("0", "", false), fn_ret: "", fn_param_types: "", line: 0, col: 0 };
-  return parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "__lanes_map__" + parser.sanitize_key(key), receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [param], ret_own: false, ret_type: arr, body: body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
+  let param = ast.ParamDecl { name: "xs", type_name: arr, own: false, send: false, has_default: false, default_value: parser.e_number("0", "", false), fn_ret: "", fn_param_types: [], line: 0, col: 0 };
+  return parser.FuncDecl { bound_modules: [], stdlib: "", no_inline: false, always_inline: false, name: "__lanes_map__" + parser.sanitize_key(key), receiver_name: "", receiver_type: "", receiver_own: false, type_params: [], params: [param], ret_own: false, ret_type: arr, body: body, line: 0, col: 0, import_iface: "", import_wit: "", import_weak: false, all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: [], is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: false };
 }
 
 function cloned_per_instance(fd: parser.FuncDecl, structs: parser.StructDecl[], enums: parser.EnumDecl[]): boolean {
@@ -2042,44 +2042,32 @@ function has_func_named(a: parser.FuncDecl[], b: parser.FuncDecl[], name: string
 
 struct FRes { ffn: parser.FuncDecl, fins: parser.Insts }
 
-function mg_ty_list(list: string, gstructs: parser.StructDecl[], ins: parser.Insts): parser.TyIns {
-  if (list.len() == 0) {
-    return parser.TyIns { ty: "", mins: ins };
-  }
-  let parts = parser.split_top_commas(list);
+struct TysIns { tys: string[], mins: parser.Insts }
+
+function mg_ty_list(list: string[], gstructs: parser.StructDecl[], ins: parser.Insts): TysIns {
   let cur = ins;
-  let out = "";
-  for i in 0..parts.len() {
-    let r = parser.mg_ty(parts[i], gstructs, cur);
+  let out: string[] = [];
+  for t in list {
+    let r = parser.mg_ty(t, gstructs, cur);
     cur = r.mins;
-    if (i > 0) {
-      out += ",";
-    }
-    out += r.ty;
+    out = out.append(r.ty);
   }
-  return parser.TyIns { ty: out, mins: cur };
+  return TysIns { tys: out, mins: cur };
 }
 
 function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: parser.StructDecl[], ins: parser.Insts): parser.TyIns {
   return parser.mg_ty(replace_ident(ty, base, mang, true), gstructs, ins);
 }
 
-function to_concrete_struct_ty_list(list: string, base: string, mang: string, gstructs: parser.StructDecl[], ins: parser.Insts): parser.TyIns {
-  if (list.len() == 0) {
-    return parser.TyIns { ty: "", mins: ins };
-  }
-  let parts = parser.split_top_commas(list);
-  let out = "";
+function to_concrete_struct_ty_list(list: string[], base: string, mang: string, gstructs: parser.StructDecl[], ins: parser.Insts): TysIns {
+  let out: string[] = [];
   let cur = ins;
-  for i in 0..parts.len() {
-    if (i > 0) {
-      out += ",";
-    }
-    let r = to_concrete_struct_ty(parts[i], base, mang, gstructs, cur);
+  for t in list {
+    let r = to_concrete_struct_ty(t, base, mang, gstructs, cur);
     cur = r.mins;
-    out += r.ty;
+    out = out.append(r.ty);
   }
-  return parser.TyIns { ty: out, mins: cur };
+  return TysIns { tys: out, mins: cur };
 }
 
 function infer_lit_key(gd: parser.StructDecl, fnames: string[], fvals: ast.Expr[], env: parser.MEnv, funcs: parser.MFns): string {
@@ -2212,7 +2200,7 @@ function ms_lambda(lm: ast.ExprLambda, dest: string, env: parser.MEnv, gstructs:
     pcur = pr.mins;
     let pl = mg_ty_list(lm.params[pi].fn_param_types, gstructs, pcur);
     pcur = pl.mins;
-    nparams = nparams.append(ast.ParamDecl { ...lm.params[pi], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
+    nparams = nparams.append(ast.ParamDecl { ...lm.params[pi], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.tys });
   }
   let lrr = parser.mg_ty(lm.ret_fn_ret, gstructs, pcur);
   pcur = lrr.mins;
@@ -2235,7 +2223,7 @@ function ms_lambda(lm: ast.ExprLambda, dest: string, env: parser.MEnv, gstructs:
   for cap in lm.captures {
     caps = caps.append(ast.TypedBinding { name: cap.name, ty: typeinfo.renamed_nominals(cap.ty, struct_clone) });
   }
-  return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.ty, body: bodyr.rstmts, use_infer: false, captures: caps }, rins: pcur };
+  return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.tys, body: bodyr.rstmts, use_infer: false, captures: caps }, rins: pcur };
 }
 
 // member_lit_dest is the type of a literal of the struct `name` whose
@@ -2744,7 +2732,7 @@ function ms_stmt(st: ast.Stmt, env: parser.MEnv, gstructs: parser.StructDecl[], 
       let ninit = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs, funcs);
       let vr = parser.mg_ty(v.fn_ret, gstructs, iv.rins);
       let vl = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.ty, destr: destr, header: v.header }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.tys, destr: destr, header: v.header }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
     },
     ast.StmtReturn(r) => {
       let rv = ms_expr_to(r.value, ret_ty, env, gstructs, funcs, ins);
@@ -2830,7 +2818,7 @@ function ms_func(fn: parser.FuncDecl, gstructs: parser.StructDecl[], funcs: pars
     cur = pr.mins;
     let pl = mg_ty_list(fn.params[i].fn_param_types, gstructs, cur);
     cur = pl.mins;
-    nparams = nparams.append(ast.ParamDecl { ...fn.params[i], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
+    nparams = nparams.append(ast.ParamDecl { ...fn.params[i], type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.tys });
   }
   let rt = parser.mg_ty(fn.ret_type, gstructs, cur);
   cur = rt.mins;
@@ -2843,7 +2831,7 @@ function ms_func(fn: parser.FuncDecl, gstructs: parser.StructDecl[], funcs: pars
   let br = ms_stmts(fn.body, parser.env_from_decl(fn), gstructs, funcs, cur, rt.ty);
   cur = br.rins3;
   return FRes {
-    ffn: parser.FuncDecl { ...fn, receiver_type: rcv.ty, params: nparams, ret_type: rt.ty, ret_fn_ret: rfr.ty, ret_fn_param_types: rfl.ty, body: br.rstmts },
+    ffn: parser.FuncDecl { ...fn, receiver_type: rcv.ty, params: nparams, ret_type: rt.ty, ret_fn_ret: rfr.ty, ret_fn_param_types: rfl.tys, body: br.rstmts },
     fins: cur,
   };
 }
@@ -2871,16 +2859,16 @@ function clone_struct_method(m: parser.FuncDecl, base: string, key: string, gstr
   for p in m.params {
     let pt = to_concrete_struct_ty(parser.subst_ty(replace_struct_ident(p.type_name, bare_base, base), tparams, cts), base, mang, gstructs, cur);
     let pr = to_concrete_struct_ty(parser.subst_ty(p.fn_ret, tparams, cts), base, mang, gstructs, pt.mins);
-    let pl = to_concrete_struct_ty_list(parser.subst_ty_list(p.fn_param_types, tparams, cts), base, mang, gstructs, pr.mins);
+    let pl = to_concrete_struct_ty_list(parser.subst_ty_each(p.fn_param_types, tparams, cts), base, mang, gstructs, pr.mins);
     cur = pl.mins;
-    nparams = nparams.append(ast.ParamDecl { ...p, type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
+    nparams = nparams.append(ast.ParamDecl { ...p, type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.tys });
   }
   let rt = to_concrete_struct_ty(parser.subst_ty(replace_struct_ident(m.ret_type, bare_base, base), tparams, cts), base, mang, gstructs, cur);
   let rr = to_concrete_struct_ty(parser.subst_ty(m.ret_fn_ret, tparams, cts), base, mang, gstructs, rt.mins);
-  let rl = to_concrete_struct_ty_list(parser.subst_ty_list(m.ret_fn_param_types, tparams, cts), base, mang, gstructs, rr.mins);
+  let rl = to_concrete_struct_ty_list(parser.subst_ty_each(m.ret_fn_param_types, tparams, cts), base, mang, gstructs, rr.mins);
   let notp: string[] = [];
   return FRes {
-    ffn: parser.FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt.ty, ret_fn_ret: rr.ty, ret_fn_param_types: rl.ty, body: parser.const_reads(m, parser.subst_stmts(method_bound_rewritten(m, tparams, cts, mod.trait_reqs, funcs), tparams, cts), tparams, cts), bound_traits: [] },
+    ffn: parser.FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt.ty, ret_fn_ret: rr.ty, ret_fn_param_types: rl.tys, body: parser.const_reads(m, parser.subst_stmts(method_bound_rewritten(m, tparams, cts, mod.trait_reqs, funcs), tparams, cts), tparams, cts), bound_traits: [] },
     fins: rl.mins,
   };
 }
@@ -2905,7 +2893,7 @@ function ms_deferred_enums(mod: parser.Module, gstructs: parser.StructDecl[]): s
       continue;
     }
     for f in sd.fields {
-      if (ms_names_gstruct(f.type_name, gstructs) || ms_names_gstruct(f.fn_ret, gstructs) || ms_names_gstruct(f.fn_param_types, gstructs)) {
+      if (ms_names_gstruct(f.type_name, gstructs) || ms_names_gstruct(f.fn_ret, gstructs) || util.any_str(f.fn_param_types, (t: string): boolean => ms_names_gstruct(t, gstructs))) {
         out = out.append(sd.enum_owner);
         break;
       }
@@ -3022,7 +3010,7 @@ function ms_names_gstruct(ty: string, gstructs: parser.StructDecl[]): boolean {
   if (ty.len() == 0) {
     return false;
   }
-  return mg_ty_list(ty, gstructs, parser.Insts { inames: [], itypes: [], iargs: [] }).mins.inames.len() > 0;
+  return parser.mg_ty(ty, gstructs, parser.Insts { inames: [], itypes: [], iargs: [] }).mins.inames.len() > 0;
 }
 
 function ms_deferred_owner(sd_owner: string, receiver_type: string, deferred: string[]): boolean {
@@ -3143,7 +3131,7 @@ function ms_module(mod: parser.Module): parser.Module {
         let ffr = parser.mg_ty(sd.fields[fj].fn_ret, gstructs, ft.mins);
         let ffl = mg_ty_list(sd.fields[fj].fn_param_types, gstructs, ffr.mins);
         ins = ffl.mins;
-        nf = nf.append(parser.StructFieldDecl { ...sd.fields[fj], type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.ty });
+        nf = nf.append(parser.StructFieldDecl { ...sd.fields[fj], type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.tys });
       }
       nstructs = nstructs.append(parser.StructDecl { name: sd.name, fields: nf, type_params: [], const_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, secret: sd.secret, value_type: sd.value_type, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
     }
@@ -3209,9 +3197,9 @@ function ms_module(mod: parser.Module): parser.Module {
         let subbed = ms_enum_clone_ty(parser.subst_ty(gd.fields[cfi].type_name, gd.type_params, cts), mod.enums);
         let ft2 = parser.mg_ty(subbed, gstructs, ins);
         let gfr = parser.mg_ty(ms_enum_clone_ty(parser.subst_ty(gd.fields[cfi].fn_ret, gd.type_params, cts), mod.enums), gstructs, ft2.mins);
-        let gfl = mg_ty_list(ms_enum_clone_ty(parser.subst_ty_list(gd.fields[cfi].fn_param_types, gd.type_params, cts), mod.enums), gstructs, gfr.mins);
+        let gfl = mg_ty_list(parser.subst_ty_each(gd.fields[cfi].fn_param_types, gd.type_params, cts).map((t: string): string => ms_enum_clone_ty(t, mod.enums)), gstructs, gfr.mins);
         ins = gfl.mins;
-        cf = cf.append(parser.StructFieldDecl { ...gd.fields[cfi], type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
+        cf = cf.append(parser.StructFieldDecl { ...gd.fields[cfi], type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.tys });
       }
       nstructs = nstructs.append(parser.StructDecl { name: mang, fields: cf, type_params: [], const_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, secret: gd.secret, value_type: gd.value_type, variant_field_names: gd.variant_field_names, is_pub: true, is_package: false, opaque: gd.opaque, module: gd.module });
       let cms = ms_clone_methods(nfuncs, mod, base, key, gstructs, sfns, ins);
@@ -3484,31 +3472,17 @@ function me_rewrite_ref(t: parser.TypeRef, enums: parser.EnumDecl[]): parser.Typ
   return parser.TypeRef { ...t, args: args };
 }
 
-function me_rewrite_list(list: string, enums: parser.EnumDecl[]): string {
-  if (list.len() == 0) {
-    return list;
-  }
-  let out = "";
-  let changed = false;
-  for seg in parser.split_top_commas(list) {
-    let r = me_rewrite_ty(seg, enums);
-    if (r != seg) {
-      changed = true;
-    }
-    if (out.len() > 0) {
-      out += ", ";
-    }
-    out += r;
-  }
-  if (!changed) {
-    return list;
+function me_rewrite_list(list: string[], enums: parser.EnumDecl[]): string[] {
+  let out: string[] = [];
+  for seg in list {
+    out = out.append(me_rewrite_ty(seg, enums));
   }
   return out;
 }
 
-struct MeSlot { ty: string, fn_ret: string, fn_params: string }
+struct MeSlot { ty: string, fn_ret: string, fn_params: string[] }
 
-function me_rewrite_slot(ty: string, fn_ret: string, fn_params: string, enums: parser.EnumDecl[]): MeSlot {
+function me_rewrite_slot(ty: string, fn_ret: string, fn_params: string[], enums: parser.EnumDecl[]): MeSlot {
   return MeSlot { ty: me_rewrite_ty(ty, enums), fn_ret: me_rewrite_ty(fn_ret, enums), fn_params: me_rewrite_list(fn_params, enums) };
 }
 
@@ -3532,12 +3506,9 @@ function me_collect_ref(t: parser.TypeRef, enums: parser.EnumDecl[], ins: parser
   return cur;
 }
 
-function me_collect_slot(ty: string, fn_ret: string, fn_params: string, enums: parser.EnumDecl[], ins: parser.Insts): parser.Insts {
+function me_collect_slot(ty: string, fn_ret: string, fn_params: string[], enums: parser.EnumDecl[], ins: parser.Insts): parser.Insts {
   let cur = me_collect_anno(ty, enums, me_collect_anno(fn_ret, enums, ins));
-  if (fn_params.len() == 0) {
-    return cur;
-  }
-  for seg in parser.split_top_commas(fn_params) {
+  for seg in fn_params {
     cur = me_collect_anno(seg, enums, cur);
   }
   return cur;
@@ -3676,7 +3647,7 @@ function me_ident(id: ast.ExprIdent, expected: string, env: parser.MEnv, enums: 
 function me_block_at(c: ast.ExprCall, expected: string, enums: parser.EnumDecl[]): ast.Expr {
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c) && me_rewrite_ty(expected, enums) != expected) {
-      return ast.ExprLambda { ...lm, ret_type: expected, ret_fn_ret: "", ret_fn_param_types: "" };
+      return ast.ExprLambda { ...lm, ret_type: expected, ret_fn_ret: "", ret_fn_param_types: [] };
     }
   }
   return c.callee;
@@ -4174,14 +4145,14 @@ function clone_enum_method(m: parser.FuncDecl, ed: parser.EnumDecl, cts: string[
     let p = m.params[i];
     let pt = enum_self_ty(parser.subst_ty(p.type_name, tps, cts), ed.name, recv);
     let pr = enum_self_ty(parser.subst_ty(p.fn_ret, tps, cts), ed.name, recv);
-    let pps = parser.subst_ty_list(p.fn_param_types, tps, cts);
+    let pps = parser.subst_ty_each(p.fn_param_types, tps, cts);
     cur = me_collect_slot(pt, pr, pps, mod.enums, cur);
     nparams = nparams.append(ast.ParamDecl { ...p, type_name: pt, fn_ret: pr, fn_param_types: pps });
   }
   let rt = enum_self_ty(parser.subst_ty(m.ret_type, tps, cts), ed.name, recv);
   cur = me_collect_anno(rt, mod.enums, cur);
   let rfr = enum_self_ty(parser.subst_ty(m.ret_fn_ret, tps, cts), ed.name, recv);
-  let rfps = parser.subst_ty_list(m.ret_fn_param_types, tps, cts);
+  let rfps = parser.subst_ty_each(m.ret_fn_param_types, tps, cts);
   cur = me_collect_slot("", rfr, rfps, mod.enums, cur);
   let env = parser.me_env_from_params(nparams);
   if (m.receiver_name.len() > 0) {
@@ -4384,17 +4355,14 @@ function me_use_ref(r: parser.TypeRef, own u: MeUses): MeUses {
   return u;
 }
 
-function me_use_list(list: string, own u: MeUses): MeUses {
-  if (list.len() == 0) {
-    return u;
-  }
-  for seg in parser.split_top_commas(list) {
+function me_use_list(list: string[], own u: MeUses): MeUses {
+  for seg in list {
     u = me_use_spelling(parser.spelling_without_own(seg), u);
   }
   return u;
 }
 
-function me_use_slot(ty: string, fn_ret: string, fn_params: string, own u: MeUses): MeUses {
+function me_use_slot(ty: string, fn_ret: string, fn_params: string[], own u: MeUses): MeUses {
   u = me_use_spelling(ty, u);
   u = me_use_spelling(fn_ret, u);
   return me_use_list(fn_params, u);
@@ -4540,18 +4508,11 @@ pub function monomorphize_enums(mod: parser.Module): parser.Module {
             ins = me_collect_anno(sub_ret, menums, ins);
             let f_ty = me_rewrite_ty(subbed, menums);
             let f_ret = me_rewrite_ty(sub_ret, menums);
-            let f_ptys = "";
-            let pts: string[] = [];
-            if (vs.fields[fj2].fn_param_types.len() > 0) {
-              pts = parser.split_top_commas(vs.fields[fj2].fn_param_types);
-            }
-            for pt0 in pts {
+            let f_ptys: string[] = [];
+            for pt0 in vs.fields[fj2].fn_param_types {
               let pt = parser.subst_ty(pt0, ed.type_params, cts);
               ins = me_collect_anno(pt, menums, ins);
-              if (f_ptys.len() > 0) {
-                f_ptys += ",";
-              }
-              f_ptys += me_rewrite_ty(pt, menums);
+              f_ptys = f_ptys.append(me_rewrite_ty(pt, menums));
             }
             if (parser.pk_is_fn_spelling(f_ty)) {
               f_ret = me_rewrite_ty(parser.fn_spelling_ret(f_ty), menums);

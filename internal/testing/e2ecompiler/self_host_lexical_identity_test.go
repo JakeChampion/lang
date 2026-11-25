@@ -56,7 +56,7 @@ function inspect(source: string): string {
         let original = fd.params[pi];
         let renamed = resolved.func.params[pi];
         if (original.type_name != renamed.type_name || original.own != renamed.own ||
-            original.fn_ret != renamed.fn_ret || original.fn_param_types != renamed.fn_param_types) {
+            original.fn_ret != renamed.fn_ret || original.fn_param_types.join(",") != renamed.fn_param_types.join(",")) {
             return "changed parameter contract";
         }
         pi = pi + 1;

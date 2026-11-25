@@ -40,6 +40,17 @@ pub function first[T](xs: T[]): Option[T] {
   return Some(xs[0]);
 }
 
+// count returns the number of keys that test accepts.
+pub function count(m: Map[string, i32], test: (Map[string, i32], string) => boolean): i32 {
+  let n = 0;
+  for k in m.keys() {
+    if (test(m, k)) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
 function hidden(): i32 {
   return 0;
 }

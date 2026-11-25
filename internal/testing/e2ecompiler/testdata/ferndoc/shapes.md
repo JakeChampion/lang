@@ -72,6 +72,14 @@ pub function first[T](xs: T[]): Option[T]
 
 first returns the first element, or None for an empty array.
 
+## `count`
+
+```fern
+pub function count(m: Map[string, i32], test: (Map[string, i32], string) => boolean): i32
+```
+
+count returns the number of keys that test accepts.
+
 ## Implementations
 
 | Trait | Implementing types |
