@@ -99,7 +99,12 @@ not read again there (`child_kept_across`). The plan holds that old read
 across the new one, and an update of it then copies. It does not re-read a
 record that another block updates (`updated_elsewhere`): that block can
 take the first read only when no block reads the slot again. A `length`
-does not spend.
+does not spend. A child that lives out of the block can still let a
+re-read occur (`child_held_out`). This is so when a block below spends
+that child, because the plan then takes it. A spliced chain needs this:
+its payload lives past the block that stores the element back. A
+projection that the block only measures gives the plan nothing to take.
+So its parent is not read again for it (`used_through`).
 `semcse.fern` then merges a block's repeated reads of one slot of one value,
 which the re-reads at a block's head most often make, so the slot has one
 holder for the plan to hold or take where its box is consumed. Last,
