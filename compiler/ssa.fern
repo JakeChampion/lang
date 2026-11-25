@@ -9991,7 +9991,7 @@ function gather_carries(f: SFunc): SFunc {
   let nblocks: SBlock[] = [];
   for blk in f.blocks {
     if (block_has_carry(blk)) {
-      nblocks = nblocks.append(SBlock { ...blk, insts: chained(carries_after_sums(consts_first(blk.insts)), uses) });
+      nblocks = nblocks.append(SBlock { ...blk, insts: consts_to_chains(chained(carries_after_sums(consts_first(blk.insts)), uses), uses, f.nvals) });
     } else {
       nblocks = nblocks.append(blk);
     }
@@ -10037,6 +10037,100 @@ function consts_first(a: SInst[]): SInst[] {
     }
   }
   return out;
+}
+
+// Each constant operand of a carry goes down again, to the start of the
+// chain that first reads it. A chain starts at a HEAD, or at an instruction
+// outside a chain that follows another one.
+function consts_to_chains(a: SInst[], uses: i32[], nvals: i32): SInst[] {
+  let roles = block_carry_roles(a, uses, __alloc_i32(nvals));
+  let lead = first_body_inst(a);
+  let anchor = util.minus_ones(a.len());
+  let moves = false;
+  for i in lead..a.len() {
+    let c = a[i];
+    if (!is_const_inst(c) || !carry_read(a, c.result)) {
+      continue;
+    }
+    let r = first_reader(a, i + 1, c.result);
+    if (r < 0) {
+      continue;
+    }
+    while (r > i + 1 && !chain_start(a, roles, r, lead)) {
+      r -= 1;
+    }
+    if (chain_start(a, roles, r, lead) && !only_consts(a, i + 1, r)) {
+      anchor = anchor.with(i, r);
+      moves = true;
+    }
+  }
+  if (!moves) {
+    return a;
+  }
+  let first = util.minus_ones(a.len());
+  let next = util.minus_ones(a.len());
+  let j = a.len() - 1;
+  while (j >= lead) {
+    if (anchor[j] >= 0) {
+      next = next.with(j, first[anchor[j]]);
+      first = first.with(anchor[j], j);
+    }
+    j -= 1;
+  }
+  let out: SInst[] = [];
+  for k in 0..a.len() {
+    let m = first[k];
+    while (m >= 0) {
+      out = out.append(a[m]);
+      m = next[m];
+    }
+    if (anchor[k] < 0) {
+      out = out.append(a[k]);
+    }
+  }
+  return out;
+}
+
+function first_reader(a: SInst[], from: i32, v: i32): i32 {
+  for k in from..a.len() {
+    if (listed(a[k].args, v)) {
+      return k;
+    }
+  }
+  return -1;
+}
+
+function is_const_inst(ins: SInst): boolean {
+  return ins.kind_tag == CONST_INT || ins.kind_tag == CONST_I64;
+}
+
+function only_consts(a: SInst[], from: i32, to: i32): boolean {
+  for k in from..to {
+    if (!is_const_inst(a[k])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function carry_read(a: SInst[], v: i32): boolean {
+  for ins in a {
+    if (ins.kind_tag == CARRY && listed(ins.args, v)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function chain_start(a: SInst[], roles: i32[], r: i32, lead: i32): boolean {
+  if (is_const_inst(a[r])) {
+    return false;
+  }
+  let role = carry_role(roles, a[r]);
+  if (role == CARRY_HEAD) {
+    return true;
+  }
+  return role == 0 && (r == lead || carry_role(roles, a[r - 1]) == 0);
 }
 
 function first_body_inst(a: SInst[]): i32 {

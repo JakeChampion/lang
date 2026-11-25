@@ -8741,10 +8741,14 @@ function ssa_r8(r: string): string {
 
 function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.EmitState): asmcore.EmitState {
   if (!const_text_u32(text)) {
-    if (wide64) {
+    let c = util.lit_to_i64(text);
+    if (wide64 && (c > 0i64 || c < 0i64 - 2147483648i64)) {
       return s.write("    movabsq $" + text + ", " + d + "\n");
     }
-    return ssa_mov_ir(s, 64, util.lit_to_i64(text), text, d);
+    if (wide64) {
+      return ssa_mov_ir(s, 64, c, util.i64_to_string(c), d);
+    }
+    return ssa_mov_ir(s, 64, c, text, d);
   }
   let v = util.lit_to_i64(text);
   if (v == 0i64) {
