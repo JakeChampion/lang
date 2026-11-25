@@ -552,11 +552,6 @@ function trees_below(versions: Version[], dirmask: i32): string[] {
 function collect(st_in: State, dir: string, e: Entry): State {
   let st = st_in;
   let before = st.mask;
-  for v in e.versions {
-    if (kind_of(v.mode) < 0) {
-      return State { ...st, fatal: gap("an entry of a tree with the mode " + v.mode) };
-    }
-  }
   let filemask = e.mask & (7 ^ e.dirmask);
   let base = e.versions[0];
   let one = e.versions[1];
