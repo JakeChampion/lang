@@ -149,6 +149,12 @@ size of the jobs. As in pigz, the compression is a queue of jobs, and a
 of whole blocks, so a small input still runs on each process. Each later
 job is two times as large as the job before it, up to 2 MiB.
 
+When the input is a regular file, its size is known. Then a job is at most
+the rest of the input divided by 2n, in whole blocks, and at least the size
+of a first job. So the last jobs are small, and no process waits at the end
+for one large job. The standard input and a symbolic link keep the jobs
+above.
+
 A `worker.pool` of n processes compresses the jobs. Each process stays up
 for the whole run, and it gets each job and gives back its output through
 a pipe. So a job does not start a process. The parent gives a job to an

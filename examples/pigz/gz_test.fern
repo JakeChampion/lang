@@ -481,6 +481,26 @@ function test_combine(): test.TestOutcome {
   return test.assert_eq_array([crc.to_string(), adler.to_string()], ["373007178", "2881871880"]);
 }
 
+function test_fitted(): test.TestOutcome {
+  let mib = 1048576i64;
+  let block = 131072;
+  let big = 8388608;
+  let sizes = [
+    layout.fitted(big, block, 4, -1i64),
+    layout.fitted(big, block, 4, 1024i64 * mib),
+    layout.fitted(big, block, 4, 40i64 * mib),
+    layout.fitted(big, block, 4, 40i64 * mib + 100000i64),
+    layout.fitted(2097152, block, 4, 40i64 * mib),
+    layout.fitted(big, block, 4, 4i64 * mib),
+    layout.fitted(big, 2097152, 4, 60i64 * mib),
+  ];
+  let got: string[] = [];
+  for n in sizes {
+    got = got.append(n.to_string());
+  }
+  return test.assert_eq_array(got, ["8388608", "8388608", "5242880", "5242880", "2097152", "1048576", "6291456"]);
+}
+
 function main(): i32 {
   let r = test.new("pigz");
   r = r.it("options and file names in any order", test_parse);
@@ -496,5 +516,6 @@ function main(): i32 {
   r = r.it("the lines of a listing", test_list);
   r = r.it("a zip header gives its name and its time as pigz does", test_zip_header);
   r = r.it("the checks of two runs combine", test_combine);
+  r = r.it("the jobs near the end of a known input are small", test_fitted);
   return r.finish();
 }
