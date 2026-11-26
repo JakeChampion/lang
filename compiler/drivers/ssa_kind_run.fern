@@ -30,6 +30,20 @@ function unary_loads_match(): boolean {
     && !ssa.is_unary_load(unary(0, "load_i32"));
 }
 
+// A lifted binary op holds its kind in `ir_kind` only, and the printer shows
+// the kind name and the payload. A semantic op keeps its operator.
+function lifted_binary_holds_no_name(): boolean {
+  let add = ssa.binary_inst(2, [0, 1], 64, ir.K_ADD);
+  let named = ssa.lifted_inst(ssa.BINARY, 3, [0, 1], 64, "eq");
+  let semantic = ssa.lifted_inst(ssa.BINARY, 4, [0, 1], 0, "+");
+  let lane = ssa.SInst { ir_kind: ir.K_VREPLACE, kind_tag: ssa.BINARY, result: 5, args: [0, 1], imm: 0, str: ":3" };
+  let f = ssa.SFunc { name: "f", nparams: 0, nvals: 6, blocks: [ssa.SBlock { id: 0, preds: [], insts: [add, named, semantic, lane], term: ssa.t_ret(2) }], entry: 0, takes_env: false };
+  let text = ssa.print_func(f);
+  return add.str == "" && named.str == "" && named.ir_kind == ir.K_EQ && semantic.str == "+" && semantic.ir_kind == 0
+    && util.index_of_sub(text, "v2 = binary add v0 v1") >= 0 && util.index_of_sub(text, "v3 = binary eq v0 v1") >= 0
+    && util.index_of_sub(text, "v4 = binary + v0 v1") >= 0 && util.index_of_sub(text, "v5 = binary vreplace:3 v0 v1") >= 0;
+}
+
 function main(): i32 {
   let n = ssa.kind_count();
 
@@ -111,6 +125,10 @@ function main(): i32 {
   }
   if (!unary_loads_match()) {
     print("unary load kind mismatch");
+    return 1;
+  }
+  if (!lifted_binary_holds_no_name()) {
+    print("lifted binary op holds a name");
     return 1;
   }
   return failures + tfailures;

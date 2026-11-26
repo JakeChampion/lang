@@ -15,7 +15,7 @@ The Opus packet API reuses the Fern CELT implementation.
 | ULC2 | Yes | Yes | Example library under `examples/ulc`, with block APIs, transient windows, and VBR/CBR/ABR encoding. |
 | Opus | Yes | Partial | SILK, hybrid, and CELT packets, multistream channel maps, loss concealment, and forward error correction. Ogg files decode at 48 kHz with gain and exact sample boundaries. The CELT encoder uses 48 kHz fullband mono or stereo. |
 | Ogg | Pages | No | Incremental pages and packets, checksums, interleaved streams, and chained streams. The Opus and Vorbis layers supply file playback. |
-| MP3 | Yes | Partial | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. The encoder writes MPEG-1 constant-bitrate long-block frames after an Info frame with gapless fields. |
+| MP3 | Yes | Partial | Indexed-bitrate and free-format MPEG-1/2/2.5 Layer III, mono/stereo, long/short/mixed blocks, bit reservoir, and recognized Xing/LAME gapless metadata. The encoder writes MPEG-1 constant-bitrate long-block frames, with mid-side stereo, after an Info frame with gapless fields. |
 | MP1 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer I raw streams, all six sample rates and four channel modes, with protected-frame CRC checks. |
 | MP2 | Yes | No | Indexed-bitrate and free-format MPEG-1/2 Layer II at all six sample rates. Mono, stereo, dual channel, joint stereo, and protected frames. Raw frames and complete compatible streams. |
 | AAC-LC | Yes | No | Raw access units and ADTS with or without CRC protection, 1024 samples per block, all 13 ADTS rates, and declared channel configurations 1 through 7. |
@@ -413,7 +413,8 @@ It also supports mid-side stereo, intensity stereo, noise substitution, and temp
 Packet errors consume the decoder. The caller can create a new one from its retained configuration.
 `Decoder.reset` clears overlap and noise state while retaining transform storage.
 
-HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames return `Unsupported`.
+HE-AAC/SBR/PS, coupling-channel elements, a program configuration that sets the layout, and 960-sample frames return `Unsupported`.
+The decoder accepts a program configuration element in a raw data block when it describes the declared layout and its element tags.
 Protected ADTS frames verify the header CRC and the CRC of each raw data block. A mismatch returns `Checksum`.
 FDK AAC writes the protected test frames and their CRCs (`scripts/gen-aac-crc-vectors.py`).
 These remaining AAC tasks stay open under [#14517](https://github.com/JakeChampion/lang/issues/14517).
@@ -565,7 +566,7 @@ This is a first encoder with a limited scope:
 
 - No psychoacoustic model, scalefactors, or short blocks. The quantization noise follows the spectrum, and a transient can spread before its attack.
 - No bit reservoir. Each frame holds its own main data. The granules of one frame share its bytes.
-- Two channels are independent left and right channels. No mid-side or intensity stereo.
+- No intensity stereo. A stereo frame uses mid-side stereo when that halves the product of the two channel energies. Otherwise it uses left and right.
 - No ID3 tag.
 
 The stream starts with an Info frame. Its LAME tag gives the encoder delay (`encoder.DELAY`, 1057 samples) and the final padding.
@@ -575,7 +576,7 @@ The stream starts with an Info frame. Its LAME tag gives the encoder delay (`enc
 
 `tests/stdlib/mp3_encoder_test.fern` decodes each supported rate with `std/audio/mp3`.
 It checks the frame headers, the frame sizes, the signal-to-noise ratio of two tones, and the bit counts of the Huffman plan.
-`scripts/check-mp3-encoder-interop` decodes the same streams with FFmpeg 6.1. Both decoders give each input sample and no other, and they agree to better than 120 dB.
+`scripts/check-mp3-encoder-interop` decodes the same streams and two mid-side streams with FFmpeg 6.1. Both decoders give each input sample and no other, and they agree to better than 120 dB.
 
 On x86-64, 30 seconds of 44.1 kHz stereo at 128 kbit/s encode in 1.3 s.
 FFmpeg 6.1 takes 0.5 s with libmp3lame and 0.24 s with libshine for the same input.
@@ -1161,10 +1162,10 @@ Each line names the issue that owns the work.
 
 - MPEG Layers I and II: decoder CPU performance ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
-- AAC: HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
+- AAC: HE-AAC/SBR/PS, coupling-channel elements, a program configuration that sets the layout (channel configuration 0), and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: decode timeline gaps, composition offsets, and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
 - ALAC: native ARM64 and Android measurements, and ARM64 Android qualification ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
-- Encoders: AAC and Vorbis have no encoder. The MP3 encoder has no psychoacoustic model, short blocks, bit reservoir, or joint stereo. The Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
+- Encoders: AAC and Vorbis have no encoder. The MP3 encoder has no psychoacoustic model, short blocks, bit reservoir, or intensity stereo. The Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
 - Conformance: independent corpora and malformed-stream qualification for each decoder ([#14520](https://github.com/JakeChampion/lang/issues/14520)).
 - Performance: reference baselines ([#14515](https://github.com/JakeChampion/lang/issues/14515)) and the measured CPU and allocation gaps ([#14516](https://github.com/JakeChampion/lang/issues/14516), [#16437](https://github.com/JakeChampion/lang/issues/16437)).
 - Android: the playback and measurement harness, with physical-device memory, power, thermal, and sustained-playback measurements ([#14514](https://github.com/JakeChampion/lang/issues/14514)).

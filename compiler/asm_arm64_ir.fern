@@ -5968,7 +5968,7 @@ function ssa_frameless(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], early: EarlyHo
   for ins in blk.insts {
     let k = ins.kind_tag;
     let plain = k == ssa.PARAM || k == ssa.CONST_INT || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LD_AT || k == ssa.SHAPE_ADDR || k == ssa.LINE;
-    if (!plain && !(k == ssa.BINARY && util.has_str(["add", "sub", "and", "or", "xor", "eq", "ne", "lt_s", "lt_u", "le_s", "le_u", "gt_s", "gt_u", "ge_s", "ge_u"], ins.str))) {
+    if (!plain && !ssa.no_trap_int_binary(ins)) {
       return false;
     }
     if (k != ssa.PARAM && ins.result >= 0 && ssa_taken_home(early.late, reg_of[ins.result])) {
@@ -6166,8 +6166,10 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("random_i32");
     s = s.write("    bl __fn___fern_random_i32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_PROC_FORK) {
-    s = s.need("proc_fork");
-    s = s.write("    bl __fn___fern_proc_fork\n    str x0, [sp, #-16]!\n");
+    s = s.need("proc_fork").need("heap");
+    s = s.write("    bl __fn___fern_proc_fork\n");
+    s = arm64_fork_mark(s);
+    s = s.write("    str x0, [sp, #-16]!\n");
   } else if (ir.is_proc_wait_op(o.kind_tag)) {
     s = emit_proc_wait(s, ir.kind_name(o.kind_tag));
   } else if (o.kind_tag == ir.K_WORKER_REGION) {
@@ -6955,9 +6957,51 @@ function emit_arm64_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitS
   s = s.write(keep.name + ":\n");
   s = s.write("    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    str x0, [x2]\n");
   s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    str x1, [x2]\n");
+  s = s.write("    adrp x2, __fern_fork_mark\n    add x2, x2, :lo12:__fern_fork_mark\n    str xzr, [x2]\n");
   s = arm64_zero_freelist(s);
   s = arm64_zero_words(s, "__fern_large_freelist", 2560);
   s = s.write("    str xzr, [sp, #-16]!\n");
+  return s;
+}
+
+// After a fork, the pages of a block below __fern_fork_mark are shared with
+// the other process, and each write to one of them copies a page. macOS
+// keeps no such record.
+function fork_reclaim(s: asmcore.EmitState): boolean {
+  return s.has_need("proc_fork") && s.runtime_target != "arm64-darwin" && asmcore.process_entry(s);
+}
+
+// x0 holds the result of the fork. Each process that the fork gives records
+// the bump cursor, because each block below it can share its pages.
+function arm64_fork_mark(s: asmcore.EmitState): asmcore.EmitState {
+  if (!fork_reclaim(s)) {
+    return s;
+  }
+  let failed = asmcore.fresh_label(s);
+  s = failed.state;
+  s = s.write("    tbnz w0, #31, " + failed.name + "\n");
+  s = s.write("    adrp x1, __fern_heap_ptr\n    add x1, x1, :lo12:__fern_heap_ptr\n    ldr x1, [x1]\n");
+  s = s.write("    adrp x2, __fern_fork_mark\n    add x2, x2, :lo12:__fern_fork_mark\n    str x1, [x2]\n");
+  return s.write(failed.name + ":\n");
+}
+
+// x2 holds a large block that the allocator takes from its free list, and x0
+// its size in bytes. When the block is below __fern_fork_mark, MADV_DONTNEED
+// gives back its whole 64 KiB parts after the first, so that a write to them
+// takes a fault for a zero page in place of a copy. The parts are whole pages
+// for a page of 4, 16 or 64 KiB. The first part keeps the link of the free
+// list. All registers keep their values.
+function emit_large_reclaim(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .text\n__fern_large_reclaim:\n");
+  s = s.write("    stp x0, x1, [sp, #-48]!\n    stp x2, x3, [sp, #16]\n    str x8, [sp, #32]\n");
+  s = s.write("    adrp x1, __fern_fork_mark\n    add x1, x1, :lo12:__fern_fork_mark\n    ldr x1, [x1]\n");
+  s = s.write("    cmp x2, x1\n    b.hs .Lreclaim_kept\n");
+  s = s.write("    add x1, x2, x0\n    lsr x1, x1, #16\n    lsl x1, x1, #16\n");
+  s = s.write("    lsr x3, x2, #16\n    add x3, x3, #1\n    lsl x3, x3, #16\n");
+  s = s.write("    cmp x1, x3\n    b.ls .Lreclaim_kept\n");
+  s = s.write("    sub x1, x1, x3\n    mov x0, x3\n    mov x2, #4\n    mov x8, #233\n").svc(233);
+  s = s.write(".Lreclaim_kept:\n");
+  s = s.write("    ldr x8, [sp, #32]\n    ldp x2, x3, [sp, #16]\n    ldp x0, x1, [sp], #48\n    ret\n");
   return s;
 }
 
@@ -10637,6 +10681,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    .align 8\n");
   s = s.write("__fern_large_freelist: .skip 20480\n");
   s = s.write("    .align 3\n");
+  s = s.write("__fern_fork_mark: .quad 0\n");
+  s = s.write("    .align 3\n");
   s = s.write("__fern_freelist_shadow: .skip 524288\n");
   s = s.write("    .align 3\n");
   s = s.write("__fern_large_freelist_shadow: .skip 20480\n");
@@ -10695,7 +10741,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    lsl x0, x3, #3\n");
   s = s.write("    adrp x1, __fern_freelist\n");
   s = s.write("    add x1, x1, :lo12:__fern_freelist\n");
-  s = alloc_take(s, "x3");
+  s = alloc_take(s, "x3", false);
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
   s = s.write(".Lalloc_large:\n");
@@ -10706,7 +10752,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = arm64_large_class(s, "x0", "x3", "x1");
   s = s.write("    adrp x1, __fern_large_freelist\n");
   s = s.write("    add x1, x1, :lo12:__fern_large_freelist\n");
-  s = alloc_take(s, "x3");
+  s = alloc_take(s, "x3", fork_reclaim(s));
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
   // __fern_arr_box calls this entry when the list of its size class is
@@ -11649,19 +11695,21 @@ function arm64_large_class(s: asmcore.EmitState, n: string, cls: string, t: stri
 // Takes a block of the class in `cls` from the list at x1 into x0, leaving
 // to .Lalloc_nofl when the list is empty; x0 holds the byte count on entry
 // and keeps it on that exit. Under -harden the block is one of the first
-// eight, otherwise the head.
-function alloc_take(s: asmcore.EmitState, cls: string): asmcore.EmitState {
+// eight, otherwise the head. With `reclaim`, the block goes to
+// __fern_large_reclaim with x2 holding it and x0 its size.
+function alloc_take(s: asmcore.EmitState, cls: string, reclaim: boolean): asmcore.EmitState {
+  let call = if (reclaim) { "    bl __fern_large_reclaim\n" } else { "" };
   if (s.harden) {
     s = s.write("    str x0, [sp, #-16]!\n");
     s = s.write("    add x0, x1, " + cls + ", lsl #3\n");
     s = s.write("    bl __fern_freelist_take\n");
     s = s.write("    mov x2, x0\n");
     s = s.write("    ldr x0, [sp], #16\n");
-    s = s.write("    cbz x2, .Lalloc_nofl\n");
+    s = s.write("    cbz x2, .Lalloc_nofl\n" + call);
     return s.write("    mov x0, x2\n");
   }
   s = s.write("    ldr x2, [x1, " + cls + ", lsl #3]\n");
-  s = s.write("    cbz x2, .Lalloc_nofl\n");
+  s = s.write("    cbz x2, .Lalloc_nofl\n" + call);
   s = s.write("    ldr x0, [x2]\n");
   s = s.write("    str x0, [x1, " + cls + ", lsl #3]\n");
   // The first word of a raw block held the address of the next free block.
@@ -12984,6 +13032,9 @@ function emit_rt_collections_and_proc_part_15(s: asmcore.EmitState, darwin: bool
     } else {
       s = emit_runtime("__fern_proc_fork", s);
     }
+  }
+  if (fork_reclaim(s)) {
+    s = emit_large_reclaim(s);
   }
   if (darwin && s.has_need("pipe")) {
     s = s.write(".globl __fn___fern_pipe\n");

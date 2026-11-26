@@ -147,14 +147,17 @@ The output does not depend on the count of processes above 1, or on the
 size of the jobs. As in pigz, the compression is a queue of jobs, and a
 `std/worker` worker compresses each job. The first n jobs are about 1 MiB
 of whole blocks, so a small input still runs on each process. Each later
-job is two times as large as the job before it, up to 8 MiB. A worker is
-a process, and its start takes about 3 ms of kernel time. A large job makes
-that time a small part of the job.
+job is two times as large as the job before it, up to 2 MiB.
 
-Up to n jobs run at a time. The parent starts a job when any job ends
-(`worker.wait_any`). It writes the output of each job in order. At most
-2n jobs are between the next job to write and the last job that started.
-So a slow job does not stop the other processes.
+A `worker.pool` of n processes compresses the jobs. Each process stays up
+for the whole run, and it gets each job and gives back its output through
+a pipe. So a job does not start a process. The parent gives a job to an
+idle process when any job ends, and it writes the output of each job in
+order. At most 2n jobs are between the next job to write and the last job
+that started. So a slow job does not stop the other processes.
+
+With `-R`, a worker of `worker.spawn` compresses each group of jobs, and
+the parent starts a group when any group ends (`worker.wait_any`).
 
 On macOS and on wasm32-wasi, `std/worker` runs the workers inline
 (#15584).

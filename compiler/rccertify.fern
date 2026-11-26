@@ -439,6 +439,8 @@ struct Walk {
   openers: i32[][],
   held: i32,
   reused: boolean[],
+  // A join of a reused box and the box, where the token is the box.
+  rejoined: boolean[],
   phis: i32[],
   outer: Outer,
   splits: Splits,
@@ -1534,7 +1536,7 @@ function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, l
     if (!same_slot(w, st, k, ld) || stores_back(w, st, k, ld)) {
       continue;
     }
-    if (st.zero[k] && !spent_before(w, bi, pos, st.block[k], st.at[k], w.root[ld.result])) {
+    if (st.zero[k] && !into_reused(w, st, k, ld) && !spent_before(w, bi, pos, st.block[k], st.at[k], w.root[ld.result])) {
       continue;
     }
     if (st.block[k] == bi) {
@@ -1546,6 +1548,18 @@ function overwritten(w: Walk, st: Stores, dom: ssadeps.Dom, bi: i32, pos: i32, l
     }
   }
   return false;
+}
+
+// Whether store k writes a reused box and the load reads the box it
+// replaces. No take matches such a store (`matches_store`), so null in it is
+// a field of the new value that overwrites the slot.
+function into_reused(w: Walk, st: Stores, k: i32, ld: ssa.SInst): boolean {
+  let base = w.f.blocks[st.block[k]].insts[st.at[k]].args[0];
+  return a_reuse(w, base) && !a_reuse(w, ld.args[0]);
+}
+
+function a_reuse(w: Walk, v: i32): boolean {
+  return is_reused(w, v) || v >= 0 && v < w.rejoined.len() && w.rejoined[v];
 }
 
 function escapes(w: Walk, ld: ssa.SInst, lb: i32, lp: i32, mode: i32): boolean {
@@ -2057,7 +2071,7 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
     return false;
   }
   // A reused box has the root of the box it replaces, and a slot of one is not a slot of the other.
-  if (is_reused(w, ld.args[0]) != is_reused(w, st.args[0])) {
+  if (a_reuse(w, ld.args[0]) != a_reuse(w, st.args[0])) {
     return false;
   }
   if (st.kind_tag == ssa.ST_AT) {
@@ -2067,11 +2081,15 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
 }
 
 function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i32, st: ssa.SInst): i32 {
-  let pick = pick_loads(w, dom, after, Picked { used: -1, any: -1 }, sb, si, sb, si, st);
+  let pick = pick_loads(w, dom, after, Picked { used: -1, any: -1, spent: -1 }, sb, si, sb, si, st);
   let lb = sb;
   while (dom.idom[lb] >= 0 && dom.idom[lb] != lb) {
     lb = dom.idom[lb];
     pick = pick_loads(w, dom, after, pick, lb, w.f.blocks[lb].insts.len(), sb, si, st);
+  }
+  // The store overwrites the slot of the nearest load where the code spends that load first.
+  if (pick.spent >= 0 && (pick.any < 0 || nearer(w, dom, sb, pick.any, pick.spent) == pick.spent)) {
+    return -1;
   }
   if (pick.used >= 0) {
     return w.root[pick.used];
@@ -2082,14 +2100,19 @@ function taken_root(w: Walk, dom: ssadeps.Dom, after: boolean[], sb: i32, si: i3
   return -1;
 }
 
-struct Picked { used: i32, any: i32 }
+struct Picked { used: i32, any: i32, spent: i32 }
 
 function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
   let after = after0;
   let avoided = !after0[lb];
   for li in 0..stop {
     let ld = w.f.blocks[lb].insts[li];
-    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st) && !spent_before(w, lb, li, sb, si, w.root[ld.result])) {
+    if (!is_load(ld) || ld.result < 0 || ld.result >= w.f.nvals || !matches_store(w, ld, st)) {
+      continue;
+    }
+    if (spent_before(w, lb, li, sb, si, w.root[ld.result])) {
+      pick = Picked { ...pick, spent: nearer(w, dom, sb, pick.spent, ld.result) };
+    } else {
       pick = Picked { ...pick, any: nearer(w, dom, sb, pick.any, ld.result) };
       if (!avoided) {
         after = reached_avoiding(w, sb, lb);
@@ -2104,21 +2127,40 @@ function pick_loads(w: Walk, dom: ssadeps.Dom, after0: boolean[], own pick: Pick
 }
 
 // Whether the code between the load at (lb, li) and the store at (sb, si)
-// spends `root`. Then null in the slot is the `None` of a niche option that
-// overwrites the slot, and not a take of the load.
+// spends the unit of the load: it spends `root` more times than it retains
+// it. Then null in the slot is the `None` of a niche option that overwrites
+// the slot, and not a take of the load.
 function spent_before(w: Walk, lb: i32, li: i32, sb: i32, si: i32, root: i32): boolean {
-  let t = Touch { touched: __alloc_bool(w.f.nvals) };
-  let insts = w.f.blocks[lb].insts;
-  let end = if (lb == sb) { si } else { insts.len() };
-  for k in li + 1..end {
-    t = touch_inst(t, w, insts[k]);
-  }
+  let c = Spends { t: Touch { touched: __alloc_bool(w.f.nvals) }, net: 0 };
+  let end = if (lb == sb) { si } else { w.f.blocks[lb].insts.len() };
+  c = net_spends(c, w, lb, li + 1, end, root);
   if (lb != sb) {
-    for k in 0..si {
-      t = touch_inst(t, w, w.f.blocks[sb].insts[k]);
-    }
+    c = net_spends(c, w, sb, 0, si, root);
   }
-  return t.touched[root];
+  return c.net > 0;
+}
+
+// The spends of a root less its retains, and the marks of `touch_inst`.
+struct Spends { t: Touch, net: i32 }
+
+// Adds the spends of `root` less its retains in insts [from, to) of block b.
+function net_spends(own c: Spends, w: Walk, b: i32, from: i32, to: i32, root: i32): Spends {
+  let insts = w.f.blocks[b].insts;
+  for k in from..to {
+    c = spent_net(c, w, insts[k], root);
+  }
+  return c;
+}
+
+function spent_net(own c: Spends, w: Walk, ins: ssa.SInst, root: i32): Spends {
+  if (is_call(ins, "__fern_rc_inc") && ins.args.len() == 1 && ins.args[0] >= 0 && w.root[ins.args[0]] == root) {
+    return Spends { ...c, net: c.net - 1 };
+  }
+  let t = touch_inst(c.t, w, ins);
+  if (!t.touched[root]) {
+    return Spends { t: t, net: c.net };
+  }
+  return Spends { t: Touch { touched: t.touched.with(root, false) }, net: c.net + 1 };
 }
 
 function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
@@ -4289,7 +4331,7 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
     uses = ssa.use_counts(f);
     paired = returns_pair(f, irops);
   }
-  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] }, insts: ssa.inst_defs(f), token_loads: [] };
+  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, rejoined: hold.rejoined, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] }, insts: ssa.inst_defs(f), token_loads: [] };
   w = Walk { ...w, splits: splits_of(w) };
   w = Walk { ...w, carried: carried_of(w) };
   let rg = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
@@ -4711,10 +4753,10 @@ struct Pruned { dropped: i32[], terms: ssa.STerm[], phis: i32[] }
 
 struct PrunedFunc { f: ssa.SFunc, phis: i32[], hold: Hold }
 
-struct Hold { box: i32, from: i32, reused: boolean[] }
+struct Hold { box: i32, from: i32, reused: boolean[], rejoined: boolean[] }
 
 function no_hold(): Hold {
-  return Hold { box: -1, from: -1, reused: [] };
+  return Hold { box: -1, from: -1, reused: [], rejoined: [] };
 }
 
 function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
@@ -4779,7 +4821,7 @@ function prune_token(w: Walk, tok: i32, hold: boolean): PrunedFunc {
     return PrunedFunc { f: fa, phis: pr.phis, hold: no_hold() };
   }
   let ops = box_ops(w, fa, box);
-  return PrunedFunc { f: ops.f, phis: pr.phis, hold: Hold { box: box, from: f.blocks[w.defs.block[tok]].id, reused: ops.reused } };
+  return PrunedFunc { f: ops.f, phis: pr.phis, hold: Hold { box: box, from: f.blocks[w.defs.block[tok]].id, reused: ops.reused, rejoined: rejoined(w, ops) } };
 }
 
 function fixed_phis(w: Walk, pr: Pruned, reach: boolean[], box: i32): i32[] {
@@ -4858,6 +4900,32 @@ function box_ops(w: Walk, f: ssa.SFunc, box: i32): BoxOps {
     }
   }
   return ops;
+}
+
+// The joins that pruning made copies of the box, where an input is a reused box.
+function rejoined(w: Walk, ops: BoxOps): boolean[] {
+  let out = __alloc_bool(ops.f.nvals);
+  for b in ops.f.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.COPY && ins.result >= 0 && joins_reused(w, ops.reused, ins.result)) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+function joins_reused(w: Walk, reused: boolean[], v: i32): boolean {
+  let d = def_in(w, v);
+  if (d.kind_tag != ssa.PHI) {
+    return false;
+  }
+  for a in d.args {
+    if (a >= 0 && a < reused.len() && reused[a]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function box_ops_in(own ops: BoxOps, bi: i32, root: i32[], box: i32, unique: boolean): BoxOps {

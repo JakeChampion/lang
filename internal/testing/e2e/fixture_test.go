@@ -40,6 +40,17 @@ var allBackends = []string{"interp", "x86_64", "x86_64_android", "arm64", "arm64
 
 func (f *fixtureSpec) rejectionCase() bool { return f.compileError || f.loweringError }
 
+// pinsSelfHostOnlyCode reports a rejection case that the self-host check leg
+// alone can confirm.
+func (f *fixtureSpec) pinsSelfHostOnlyCode() bool {
+	for _, w := range f.wantErrors {
+		if e2eharness.NamesSelfHostOnlyCode(w) {
+			return true
+		}
+	}
+	return false
+}
+
 func loadFixture(t *testing.T, dir string) *fixtureSpec {
 	t.Helper()
 	f := &fixtureSpec{
@@ -165,6 +176,9 @@ func TestFernFixtures(t *testing.T) {
 		f := loadFixture(t, dir)
 		t.Run(name, func(t *testing.T) {
 			if f.compileError {
+				if f.pinsSelfHostOnlyCode() {
+					return
+				}
 				t.Run("check", func(t *testing.T) {
 					errText, failed := runFixtureCompileError(f.mainPath)
 					if !failed {

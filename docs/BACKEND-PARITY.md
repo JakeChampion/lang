@@ -671,7 +671,8 @@ The native targets exit 125 when the arena runs out (`.Lalloc_oom` in
 heap arena (errno N)` when its first mmap fails (`.Lalloc_map_fail`).
 `-heap-limit SIZE` sets the reservation of a native executable, from `1M` to
 `16G`, and the same exit 125 reports the smaller arena when it is full
-(`docs/security/ERASURE-AND-QUOTAS.md`). Wasm refuses the flag with exit 2. On wasm the equivalent event is
+(`docs/security/ERASURE-AND-QUOTAS.md`). On wasm the flag sets the maximum of
+the linear memory, from `1M` to `4G`. On wasm the equivalent event is
 `memory.grow` returning -1, and `$__fern_alloc` raises `unreachable` there —
 so the failure is attributable to the allocator, with its caller chain, but
 the process dies as a trap rather than carrying a status

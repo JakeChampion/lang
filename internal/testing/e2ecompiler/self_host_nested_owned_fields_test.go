@@ -36,7 +36,6 @@ func TestSelfHostNestedOwnedFields(t *testing.T) {
 					cmd := mvsDriverCommand(t, target, bin)
 					cmd.Stdin = strings.NewReader(string(source))
 					for label, ds := range map[string][]driverDiag{
-						"Go":   goCheckerDiags(t, dir, string(source)),
 						"Fern": driverDiags(runCheckerDriver(t, cmd, name)),
 					} {
 						if strings.HasPrefix(name, "diag_") != (len(ds) > 0) {

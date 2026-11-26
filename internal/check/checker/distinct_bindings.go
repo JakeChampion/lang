@@ -2,7 +2,6 @@ package checker
 
 import (
 	"strconv"
-	"strings"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
@@ -28,27 +27,6 @@ func resolveBindings(fn *ast.FuncDecl) *bindingRenamer {
 func (r *bindingRenamer) restore() {
 	for i := len(r.undo) - 1; i >= 0; i-- {
 		*r.undo[i].slot = r.undo[i].name
-	}
-}
-
-func (c *checker) distinctOwnedBindings(fn *ast.FuncDecl) func() {
-	before := len(c.errors)
-	r := resolveBindings(fn)
-	return func() {
-		var names []string
-		for _, undo := range r.undo {
-			symbol, source := strconv.Quote(*undo.slot), strconv.Quote(undo.name)
-			names = append(names, symbol, source, symbol[:len(symbol)-1]+".", source[:len(source)-1]+".")
-		}
-		if len(names) > 0 {
-			replace := strings.NewReplacer(names...)
-			for _, err := range c.errors[before:] {
-				if err, ok := err.(*Error); ok {
-					err.Msg = replace.Replace(err.Msg)
-				}
-			}
-		}
-		r.restore()
 	}
 }
 

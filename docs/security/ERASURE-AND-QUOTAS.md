@@ -125,9 +125,15 @@ The size is digits with an optional `K`, `M` or `G` suffix, from `1M` to `16G`, 
 The reservation is the quota: when the bump pointer reaches its end, the runtime prints `fern: out of memory (heap arena exhausted)` and exits 125, as it does at the default size.
 The flag changes only the reservation, so the size classes, the free lists, and the box ceiling are unchanged.
 
-The flag is refused for a target without the native arena, and a size outside the range or with other text is refused.
+On `wasm32-wasi` and `wasm32-wasi-http` the flag sets the maximum of the linear memory, from `1M` to `4G`.
+The maximum is the size in whole 64 KiB pages. When `memory.grow` fails at the maximum, the allocator prints the same cause and traps.
+The compiler refuses a size below the memory that the module starts with, which holds its static data.
+
+The build manifest has the value as `heap_limit`, and 0 means a memory without a maximum.
+
+The flag is refused for a target without the native arena or a linear memory, such as a freestanding target or a kernel image.
+A size outside the range or with other text is refused.
 Each refusal prints its reason and exits 2.
-Wasm grows linear memory instead, and its trap is unchanged.
 
 The quota bounds the arena alone.
 The 1 GiB stack reservation, the signal stack, the kernel's own buffers, and memory that a foreign library maps are outside it.
@@ -150,7 +156,8 @@ The build manifest has the value as `cpu_limit`, and 0 means no limit.
 - `TestSelfHostHardenScrubsReleasedBlocks` compiles one program for x86-64-linux and arm64-linux, in the release build and under `-harden`. It releases a 48-byte secret and a 600000-byte secret and reads each one back through raw allocations of its size. It reads the first word of a block that it frees and takes back.
 It reads a block that the bump hands out again after `__heap_release_to`. The release build must read each secret, the link and the rewound bytes back, and the hardened build must read zero in each case. On the compiler before the change, every hardened case read the bytes back.
 - `TestSelfHostEraseZeroesStorage` compiles one program for x86-64-linux and arm64-linux. It releases a 48-byte `u8[]` secret and a six-word `u64[]` secret. Each control run must read at least 48 secret bytes back, and each erase run must read 0. Both targets pass, the arm64 one under QEMU.
-- `TestSelfHostHeapLimit` keeps 256 one-megabyte arrays live. Under `-heap-limit 64M` the program must exit 125 with the cause after its 32nd array and before its 64th, on both targets. Without the flag every array fits. Seven refusals cover `0`, `512K`, `32G`, a 20-digit size, `64MB`, a bare `M`, and `wasm32-wasi`. Five accepted sizes cover both ends of the range in bytes and with suffixes.
+- `TestSelfHostHeapLimit` keeps 256 one-megabyte arrays live. Under `-heap-limit 64M` the program must stop with the cause after its 32nd array and before its 64th, on x86-64, on arm64 and on wasm32-wasi. A native program must exit 125, and a wasm program must trap. Without the flag every array fits.
+- `TestSelfHostHeapLimit` also checks the refusals. They cover `0`, `512K`, `32G`, a 20-digit size, `64MB`, a bare `M`, `8G` and `512K` on wasm32-wasi, and a freestanding target. A wasm module with 1.2 MB of static data must refuse `-heap-limit 1M`. Accepted sizes cover both ends of each range in bytes and with suffixes, and `fern -manifest` must print the wasm value.
 - `TestSelfHostCPULimit` compiles a program that prints one line and then spins, for x86-64-linux and arm64-linux, with `-cpu-limit 1`. The kernel must kill it with `SIGKILL` after the line. A control program with the same flag must end with its own status 7, and `fern -manifest` must print `cpu_limit: 1`. Six refusals cover `0`, `2s`, a value above the range, a 20-digit value, `wasm32-wasi` and `arm64-darwin`.
 - `TestSelfHostSecretPages` compiles one program for x86-64-linux and arm64-linux. It maps 8192 secret bytes, writes and reads them, and must see the pages locked. On the native host it must see one more mapping with the `dd` flag of `/proc/self/smaps` and 8 kB more `VmLck`.
 After the drop, `VmLck` must fall by 8 kB. After `secret.disable_dumps`, `PR_GET_DUMPABLE` must answer 0. 
@@ -170,4 +177,5 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostEraseZeroesStorage|Test
 - The sanitizer's quarantine keeps a released block until its byte budget evicts it, so under `-sanitize` an erased block stays mapped for a time. That is SEC-024 ([QUARANTINE.md](QUARANTINE.md)).
 - The secret pages cover only the bytes that a program keeps in them. A cipher of `std/crypto` takes its key as a `u8[]`.
 That key lives in the heap while the cipher holds it, and the heap can go to swap.
-- The Go oracle and the self-host interpreter run `erase` on their own heaps and ignore `-heap-limit`, which is a compile flag of the native backends.
+- The Go oracle and the self-host interpreter run `erase` on their own heaps. They ignore `-heap-limit`, which is a compile flag of the native and wasm backends.
+- On wasm the quota bounds the linear memory of the guest. Memory that the host runtime uses for its own state is outside it.

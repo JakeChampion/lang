@@ -94,7 +94,7 @@ function commit_reference(st: Rev, hash: string): Rev {
     return fail(s);
   }
   if (kind != "commit") {
-    return error(s, "object " + at + " is a " + kind + ", not a commit");
+    return error(s, "object " + hash + " is a " + kind + ", not a commit");
   }
   return found(s, at);
 }

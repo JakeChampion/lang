@@ -494,7 +494,8 @@ function view_keep(r: Rec, k: i32): Rec {
     if (text_view(r).len() > k) { return r; }
     return Rec { text: "x" + "", n: k };
 }
-struct Sealer { key: u8[], n: i32 }
+// Five fields keep a Sealer whole at a call.
+struct Sealer { key: u8[], n: i32, a: i32, b: i32, c: i32 }
 @noinline
 function sealed_len(s: Sealer, nonce: [u8]): i32 {
     let Ok(k) = chacha20poly1305.key(s.key) else { return s.n; };
@@ -504,7 +505,7 @@ function sealed_len(s: Sealer, nonce: [u8]): i32 {
 @noinline
 function sealer_or_new(s: Sealer, k: i32): Sealer {
     if (k > 0) { return s; }
-    return Sealer { key: __alloc_u8(32), n: k };
+    return Sealer { key: __alloc_u8(32), n: k, a: 0, b: 0, c: 0 };
 }
 @noinline
 function reads_only(n: Node): i32 {
@@ -597,7 +598,7 @@ function main(): i32 {
     let w: i32 = 0;
     while (c.pos < 3) { w = w + reads_only(c.peek()); c = c.advance(); }
     if (w != 6) { return 6; }
-    let sl: Sealer = sealer_or_new(Sealer { key: __alloc_u8(32), n: 4 }, 1);
+    let sl: Sealer = sealer_or_new(Sealer { key: __alloc_u8(32), n: 4, a: 0, b: 0, c: 0 }, 1);
     if (sealed_len(sl, __alloc_u8(12)) != 32) { return 11; }
     let one: i32[] = [1];
     let slot: Slot = slot_or_new(Slot { tab: cell_new(one), n: 2 }, 1);
