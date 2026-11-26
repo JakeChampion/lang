@@ -178,6 +178,17 @@ var hardenFrameHelpers = []struct {
 	{"__fern_oob_abort_leaf:", false},
 }
 
+const hardenTaskSrc = `import "std/async";
+function main(): i32 {
+    let f: async.Future[i32] = async.spawn((): i32 => 41 + 1);
+    match (async.block_on(f)) {
+        Some(v) => { print("task " + v.to_string() + "\n"); },
+        None => { print("task failed\n"); },
+    }
+    return 0;
+}
+`
+
 const hardenAbortSrc = `@noinline
 function pick(xs: i32[], i: i32): i32 {
   return xs[i];
@@ -238,6 +249,9 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		}
 		if !btiNote(t, hard) {
 			t.Fatal("the -harden image has no PT_GNU_PROPERTY asking for BTI")
+		}
+		if noteFeatures(t, hard)&2 == 0 {
+			t.Error("the -harden image signs its return addresses, but its PT_GNU_PROPERTY has no PAC bit")
 		}
 		for _, bin := range []string{plain, hard} {
 			if out := runHardened(t, qemu, bin); out != hardenWant {
@@ -319,6 +333,9 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		linked := link("linked", text)
 		if !btiNote(t, linked) {
 			t.Fatal("the linked -harden image has no PT_GNU_PROPERTY asking for BTI")
+		}
+		if noteFeatures(t, linked)&2 == 0 {
+			t.Error("the linked -harden image has no PAC bit in its PT_GNU_PROPERTY")
 		}
 		if out := runHardened(t, qemu, linked); out != hardenWant {
 			t.Errorf("printed %q, want %q", out, hardenWant)
@@ -507,6 +524,50 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		t.Logf("PAC runtime frame controls passed (%s)", mode)
 	})
 
+	t.Run("profile-frames", func(t *testing.T) {
+		// The task, leak-check and sanitizer helpers are hand-written frames too.
+		task := filepath.Join(dir, "task.fern")
+		if err := os.WriteFile(task, []byte(hardenTaskSrc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct {
+			name, src, helper, want string
+			flags, env              []string
+		}{
+			{"task", task, "__fern_task_close_drop:", "task 42", nil, nil},
+			{"leak-check", src, "__fern_lc_report:", hardenWant, nil, []string{"FERN_LEAKCHECK=1"}},
+			{"sanitize", src, "__fern_san_class:", hardenWant, []string{"-sanitize"}, nil},
+		} {
+			build := func(out string, extra ...string) {
+				t.Helper()
+				args := append(append(append([]string{"-harden"}, tc.flags...), extra...), "-target", "arm64-linux", "-o", out, tc.src, stdlib)
+				cmd := exec.Command(cli, args...)
+				cmd.Env = append(os.Environ(), tc.env...)
+				if msg, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s: compile: %v\n%s", tc.name, err, msg)
+				}
+			}
+			asm := filepath.Join(dir, tc.name+".s")
+			bin := filepath.Join(dir, tc.name)
+			build(asm, "-emit", "asm")
+			build(bin)
+			raw, err := os.ReadFile(asm)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "\n"+tc.helper+"\n") {
+				t.Fatalf("%s: the program does not link %s", tc.name, strings.TrimSuffix(tc.helper, ":"))
+			}
+			for _, fault := range unsignedFrames(string(raw)) {
+				t.Errorf("%s: -harden frame without a signature: %s", tc.name, fault)
+			}
+			out, _ := runArm64Bin(qemu, bin).CombinedOutput()
+			if got := strings.TrimSpace(string(out)); !strings.HasPrefix(got, tc.want) {
+				t.Errorf("%s: printed %q, want it to start with %q", tc.name, got, tc.want)
+			}
+		}
+	})
+
 	t.Run("refusals", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"-harden", "-target", "arm64-darwin", "-emit", "asm", "-o", filepath.Join(dir, "x.s"), src, stdlib},
@@ -637,6 +698,13 @@ func cpuEnforces(qemu, flag string) bool {
 
 func btiNote(t *testing.T, path string) bool {
 	t.Helper()
+	return noteFeatures(t, path)&1 != 0
+}
+
+// noteFeatures is the GNU_PROPERTY_AARCH64_FEATURE_1_AND word of the image's
+// PT_GNU_PROPERTY note: bit 0 is BTI and bit 1 is PAC. It is 0 with no note.
+func noteFeatures(t *testing.T, path string) uint32 {
+	t.Helper()
 	f, err := elf.Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -651,12 +719,12 @@ func btiNote(t *testing.T, path string) bool {
 			t.Fatal(err)
 		}
 		for off := 16; off+12 <= len(b); off += 8 + int((binary.LittleEndian.Uint32(b[off+4:])+7)&^7) {
-			if binary.LittleEndian.Uint32(b[off:]) == 0xc0000000 && binary.LittleEndian.Uint32(b[off+8:])&1 != 0 {
-				return true
+			if binary.LittleEndian.Uint32(b[off:]) == 0xc0000000 {
+				return binary.LittleEndian.Uint32(b[off+8:])
 			}
 		}
 	}
-	return false
+	return 0
 }
 
 func runHardened(t *testing.T, qemu, bin string) string {

@@ -8631,9 +8631,8 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(rt_unframe(s));
   s = s.write("    ret\n");
   s = emit_lc_write(s);
-  s = s.write(".Llc_wrnum:\n");
-  s = s.write("    sub sp, sp, #48\n");
-  s = s.write("    str x30, [sp]\n");
+  s = s.write(".Llc_wrnum:\n" + rt_pac(s, "paciasp"));
+  s = s.write("    str x30, [sp, #-48]!\n");
   s = s.write("    add x3, sp, #32\n");
   s = s.write("    mov x4, #10\n");
   s = s.write("    mov x5, #0\n");
@@ -8658,8 +8657,7 @@ function emit_lc_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    sub x2, x2, x3\n");
   s = s.write("    mov x1, x3\n");
   s = s.write("    bl .Llc_write\n");
-  s = s.write("    ldr x30, [sp]\n");
-  s = s.write("    add sp, sp, #48\n");
+  s = s.write("    ldr x30, [sp], #48\n" + rt_pac(s, "autiasp"));
   s = s.write("    ret\n");
   return s;
 }
@@ -8675,9 +8673,9 @@ function emit_lc_write(s: asmcore.EmitState): asmcore.EmitState {
     s = s.svc(64);
     return s.write("    ret\n");
   }
-  s = s.write("    stp x29, x30, [sp, #-16]!\n    stp x10, x11, [sp, #-16]!\n    mov x29, sp\n");
+  s = s.write(rt_frame(s) + "    stp x10, x11, [sp, #-16]!\n    mov x29, sp\n");
   s = s.write("    sub sp, sp, #32\n    str x1, [sp, #0]\n    str x2, [sp, #16]\n    bl " + s.log_provider + "\n    add sp, sp, #32\n");
-  return s.write("    ldp x10, x11, [sp], #16\n    ldp x29, x30, [sp], #16\n    ret\n");
+  return s.write("    ldp x10, x11, [sp], #16\n" + rt_unframe(s) + "    ret\n");
 }
 
 function rc_poison(): i32 {
@@ -8889,10 +8887,10 @@ function san_redzone_on(s: asmcore.EmitState): boolean {
 // x1 words to the words of their size class, as the allocator rounds them.
 // It keeps every other register.
 function emit_san_class(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_san_class:\n    stp x29, x30, [sp, #-32]!\n    stp x2, x3, [sp, #16]\n    mov x2, #0x10000\n    cmp x1, x2\n    b.hs .Lsan_class_large\n");
+  s = s.write("__fern_san_class:\n" + rt_frame_of(s, 32) + "    stp x2, x3, [sp, #16]\n    mov x2, #0x10000\n    cmp x1, x2\n    b.hs .Lsan_class_large\n");
   s = s.write("    str x1, [sp, #-16]!\n    bl __fern_capw\n    ldr x1, [sp], #16\n    b .Lsan_class_done\n.Lsan_class_large:\n    lsl x1, x1, #3\n");
   s = arm64_large_class(s, "x1", "x2", "x3");
-  return s.write("    lsr x1, x1, #3\n.Lsan_class_done:\n    ldp x2, x3, [sp, #16]\n    ldp x29, x30, [sp], #32\n    ret\n");
+  return s.write("    lsr x1, x1, #3\n.Lsan_class_done:\n    ldp x2, x3, [sp, #16]\n" + rt_unframe_of(s, 32) + "    ret\n");
 }
 
 // The allocation side of the redzone. The block takes its class and six
@@ -8924,7 +8922,7 @@ function emit_san_redzone_alloc(s: asmcore.EmitState): asmcore.EmitState {
 // the words of the whole block, so that the quarantine hands the block to the
 // free list that the allocation takes from.
 function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    cbz x1, .Lquar_redzone_ok\n    str x30, [sp, #-16]!\n    mov x12, x1\n    bl __fern_san_class\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
+  s = s.write("    cbz x1, .Lquar_redzone_ok\n" + rt_save_lr(s, "") + "    mov x12, x1\n    bl __fern_san_class\n    add x9, x0, x1, lsl #3\n" + rc_poison_into("w10") + "    orr x10, x10, x10, lsl #32\n");
   s = s.write(".Lquar_slack:\n    cmp x12, x1\n    b.hs .Lquar_slack_ok\n    ldr x11, [x0, x12, lsl #3]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    add x12, x12, #1\n    b .Lquar_slack\n.Lquar_slack_ok:\n");
   s = s.write("    ldr x11, [x9]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n    ldr x11, [x9, #8]\n    cmp x11, x10\n    b.ne __fern_san_abort_hbo\n");
   s = s.write("    add x9, x0, x1, lsl #3\n    add x9, x9, #16\n    ldr x10, [x9]\n    ldr x11, [x9, #8]\n    cbz x11, .Lsan_unlink_head\n");
@@ -8934,7 +8932,7 @@ function san_redzone_check(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lsan_unlink:\n    cbz x11, .Lsan_unlink_first\n    str x10, [x11]\n    b .Lsan_unlink_back\n");
   s = s.write(".Lsan_unlink_first:\n    adrp x12, __fern_san_live\n    add x12, x12, :lo12:__fern_san_live\n    str x10, [x12]\n");
   s = s.write(".Lsan_unlink_back:\n    cbz x10, .Lsan_unlink_done\n    str x11, [x10, #8]\n.Lsan_unlink_done:\n");
-  return s.write("    add x1, x1, #6\n    ldr x30, [sp], #16\n.Lquar_redzone_ok:\n");
+  return s.write("    add x1, x1, #6\n" + rt_restore_lr(s, "") + ".Lquar_redzone_ok:\n");
 }
 
 // A raw release: x0 is the block and x1 the request in bytes. The bytes of
@@ -12133,7 +12131,7 @@ function emit_task_close_drop(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.has_need("task")) {
     return s.write("    ret\n");
   }
-  s = s.write("    stp x29, x30, [sp, #-16]!\n    adrp x9, __fern_task_state\n    add x9, x9, :lo12:__fern_task_state\n    ldr x0, [x9, #56]\n    cbz x0, .Ltask_close_drop_done\n    str xzr, [x9, #56]\n    ldr x1, [x0]\n    add x1, x1, #1\n    lsl x1, x1, #3\n");
+  s = s.write(rt_frame(s) + "    adrp x9, __fern_task_state\n    add x9, x9, :lo12:__fern_task_state\n    ldr x0, [x9, #56]\n    cbz x0, .Ltask_close_drop_done\n    str xzr, [x9, #56]\n    ldr x1, [x0]\n    add x1, x1, #1\n    lsl x1, x1, #3\n");
   if (s.leak_check) {
     s = lc_rt_req_free(s);
   }
@@ -12141,7 +12139,7 @@ function emit_task_close_drop(s: asmcore.EmitState): asmcore.EmitState {
   if (s.leak_check) {
     s = lc_rt_uncount(s, "__fern_lc_free_bytes", "__fern_lc_free_count");
   }
-  return s.write(".Ltask_close_drop_done:\n    ldp x29, x30, [sp], #16\n    ret\n");
+  return s.write(".Ltask_close_drop_done:\n" + rt_unframe(s) + "    ret\n");
 }
 
 function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
