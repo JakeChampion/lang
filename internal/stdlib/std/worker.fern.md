@@ -26,6 +26,7 @@ A `Worker` is `@must_consume`: a program joins every worker it spawns (E067).
 `join` consumes the worker and returns its result. A second join is refused (E051).
 `poll` never waits. It consumes the worker and returns `Finished` with the result, or `Running` with the worker, which the caller polls or joins later.
 `wait_any` takes a list of workers and waits until one of them finishes. It returns the index of that worker in the list, its result, and the other workers in their order. A process worker wakes the call when it ends, so the call does not poll. The list must not be empty.
+`pool` starts a set of workers that run one handler from bytes to bytes. Each worker of a pool is a process that stays up between inputs, so an input costs a copy through a pipe and not a fork. `submit` gives an input to an idle worker and returns a ticket, `wait_pool` returns the ticket and the output of the next input that finished, and `close` ends the workers, and a worker of a pool also ends with the program. On an engine with no processes, `submit` runs the handler before it returns.
 A worker that exits with a signal or without a result stops the program with exit 134. A call of `exit` in a worker body is such a worker. A body on the `Inline` scheduler runs in the process of the program, and the program stops the same way: `exit_status` gives each `exit` the status 134 while such a body runs. A native program takes that path when the kernel refuses the fork.
 A process worker ends when its parent ends: it gets SIGTERM. On Linux and Android the kernel sends it. macOS has no such signal, so a watchdog process sends it. The watchdog waits for the exit of the parent or of the worker, with kqueue.
 
@@ -73,6 +74,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<13 pub function (own w: Worker[T: Send]) poll(): Polled[T]>>
 
 <<17 pub function wait_any[T: Send](own ws: Worker[T][]): Waited[T]>>
+
+<<18 pub function pool(n: i32, send handler: (u8[]) => u8[]): Pool>>
 
 <<7 function __wait_worker(pid: i32): i32>>
 
@@ -345,6 +348,7 @@ pub function (own w: Worker[T: Send]) poll(): Polled[T] {
 ```fern
 <<16 dependencies>>=
 import "std/async";
+import "std/result";
 import "std/signal";
 ```
 
@@ -443,6 +447,253 @@ function __join_first[T: Send](own ws: Worker[T][]): Waited[T] {
     exit(134);
   };
   return Waited { index: 0, value: v, rest: rest };
+}
+```
+
+### `18 pub function pool(n: i32, send handler: (u8[]) => u8[]): Pool`
+
+A pool keeps one pipe to each worker and one pipe back. A message on a pipe is its length in 8 bytes, little-endian, and then its bytes. A worker reads an input, runs the handler, and writes the output. It ends at the end of its input pipe, so `close` closes the pipes and then waits for each worker.
+
+A worker closes the pipes of the workers that started before it. Otherwise a copy of their input pipes would stay open, and they would not see the end of their input. A worker ends when its parent ends, as a worker of `spawn` does.
+
+The parent gives an input only to an idle worker, and a worker writes its output only after it has read all of its input. So the parent cannot wait on a worker that waits on the parent.
+
+```fern
+<<18 pub function pool(n: i32, send handler: (u8[]) => u8[]): Pool>>=
+/// Workers that run one handler from bytes to bytes. Each input that
+/// `submit` gives gets a ticket, and `wait_pool` returns its output. A
+/// worker of a pool ends at `close`, or when the program ends.
+pub struct Pool { pids: i32[], tos: Writer[], froms: Reader[], busy: i32[], next: i32, handler: (u8[]) => u8[], done_tickets: i32[], done: u8[][] }
+
+/// Starts `n` workers that run `handler`. On an engine with no processes,
+/// the pool has no worker and `submit` runs the handler itself.
+pub function pool(n: i32, send handler: (u8[]) => u8[]): Pool {
+  let p = Pool { pids: [], tos: [], froms: [], busy: [], next: 0, handler: handler, done_tickets: [], done: [] };
+  if (!(target_os() == "linux" || target_os() == "android" || target_os() == "darwin")) {
+    return p;
+  }
+  for k in 0..n {
+    match (__pool_spawn(p.tos, p.froms, p.handler)) {
+      Some(slot) => {
+        p = Pool { ...p, pids: p.pids.append(slot.pid), tos: p.tos.append(slot.to), froms: p.froms.append(slot.from), busy: p.busy.append(-1) };
+      },
+      None => {
+        return p;
+      }
+    }
+  }
+  return p;
+}
+
+struct __Slot { pid: i32, to: Writer, from: Reader }
+
+// A new worker of a pool whose other workers read `tos` and write `froms`.
+function __pool_spawn(tos: Writer[], froms: Reader[], handler: (u8[]) => u8[]): Option[__Slot] {
+  match (pipe()) {
+    Ok(job) => {
+      match (pipe()) {
+        Ok(res) => {
+          return __pool_fork(job.r, job.w, res.r, res.w, tos, froms, handler);
+        },
+        Err(_) => {
+          let _ = job.r.close();
+          let _ = job.w.close();
+          return None;
+        }
+      }
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// The worker reads `jr` and writes `rw`. The parent keeps `jw` and `rr`.
+function __pool_fork(own jr: Reader, own jw: Writer, own rr: Reader, own rw: Writer, tos: Writer[], froms: Reader[], handler: (u8[]) => u8[]): Option[__Slot] {
+  let region = 0i64;
+  unsafe {
+    region = __worker_region(4096i64);
+  }
+  let parent = __stat_pid(false);
+  let pid = -1;
+  if (region > 0i64) {
+    pid = proc_fork();
+  }
+  if (pid == 0) {
+    let linked = reactor_ctl(-1, 6, 0, 0);
+    let now = __stat_pid(true);
+    unsafe {
+      __fd_close(jw.fd);
+      __fd_close(rr.fd);
+      for w in tos {
+        __fd_close(w.fd);
+      }
+      for r in froms {
+        __fd_close(r.fd);
+      }
+    }
+    if (!(linked == -3 || parent > 0 && now > 0 && now != parent)) {
+      __pool_serve(jr, rw, handler);
+    }
+    unsafe {
+      __worker_exit(region, 0 as usize);
+    }
+    return None;
+  } else {
+    if (region > 0i64) {
+      __unmap_region(region, 4096i64, false);
+    }
+    let _ = jr.close();
+    let _ = rw.close();
+    if (pid < 0) {
+      let _ = jw.close();
+      let _ = rr.close();
+      return None;
+    }
+    return Some(__Slot { pid: pid, to: jw, from: rr });
+  }
+}
+
+// The loop of a worker of a pool: an input, the handler, an output, until
+// the end of the input pipe.
+function __pool_serve(own from: Reader, own to: Writer, handler: (u8[]) => u8[]): void {
+  while (true) {
+    let Some(input) = __pool_read(from) else {
+      return;
+    };
+    if (!__pool_write(to, handler(input))) {
+      return;
+    }
+  }
+}
+
+/// The number of workers of the pool that have no input. A pool with no
+/// worker is always idle.
+pub function (p: Pool) idle(): i32 {
+  if (p.pids.len() == 0) {
+    return 1;
+  }
+  let n = 0;
+  for t in p.busy {
+    if (t < 0) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/// The number of inputs that the pool has and that `wait_pool` has not
+/// returned.
+pub function (p: Pool) pending(): i32 {
+  let n = p.done.len();
+  for t in p.busy {
+    if (t >= 0) {
+      n += 1;
+    }
+  }
+  return n;
+}
+
+/// Gives `input` to an idle worker and returns the pool and the ticket of
+/// the input. The pool must have an idle worker.
+pub function submit(own p: Pool, own input: u8[]): (Pool, i32) {
+  let ticket = p.next;
+  if (p.pids.len() == 0) {
+    let out = p.handler(input);
+    return (Pool { ...p, next: ticket + 1, done_tickets: p.done_tickets.append(ticket), done: p.done.append(out) }, ticket);
+  }
+  for k in 0..p.busy.len() {
+    if (p.busy[k] < 0) {
+      if (!__pool_write(p.tos[k], input)) {
+        eprint("worker: a worker of a pool ended");
+        exit(134);
+      }
+      return (Pool { ...p, next: ticket + 1, busy: p.busy.with(k, ticket) }, ticket);
+    }
+  }
+  eprint("worker: submit to a pool with no idle worker");
+  exit(134);
+}
+
+/// Waits until an input of the pool finishes, and returns the pool, the
+/// ticket of the input and its output. The pool must have an input.
+pub function wait_pool(own p: Pool): (Pool, i32, u8[]) {
+  if (p.done.len() > 0) {
+    let out = p.done[0];
+    let ticket = p.done_tickets[0];
+    return (Pool { ...p, done_tickets: p.done_tickets.drop(1), done: p.done.drop(1) }, ticket, out);
+  }
+  let fds: i32[] = [];
+  let slots: i32[] = [];
+  for k in 0..p.busy.len() {
+    if (p.busy[k] >= 0) {
+      fds = fds.append(p.froms[k].fd);
+      slots = slots.append(k);
+    }
+  }
+  if (fds.len() == 0) {
+    eprint("worker: wait_pool of a pool with no input");
+    exit(134);
+  }
+  let hit = poll(fds, -1);
+  while (hit < 0) {
+    hit = poll(fds, -1);
+  }
+  let k = slots[hit];
+  let Some(out) = __pool_read(p.froms[k]) else {
+    eprint("worker: a worker of a pool ended");
+    exit(134);
+  };
+  return (Pool { ...p, busy: p.busy.with(k, -1) }, p.busy[k], out);
+}
+
+/// Ends the workers of the pool and waits for each of them.
+pub function close(own p: Pool): void {
+  for w in p.tos {
+    let _ = w.close();
+  }
+  for r in p.froms {
+    let _ = r.close();
+  }
+  for pid in p.pids {
+    let _ = __wait_worker(pid);
+  }
+}
+
+// A message of the pipe `fd`: its length in 8 bytes, then its bytes. None
+// at the end of the pipe.
+function __pool_read(r: Reader): Option[u8[]] {
+  let Some(head) = __pool_read_n(r, 8) else {
+    return None;
+  };
+  let n = 0i64;
+  for k in 0..8 {
+    n |= head[k] as i64 << (8 * k) as i64;
+  }
+  return __pool_read_n(r, n as i32);
+}
+
+function __pool_read_n(r: Reader, n: i32): Option[u8[]] {
+  let out: u8[] = [];
+  while (out.len() < n) {
+    let Ok(chunk) = r.read_chunk_bytes(n - out.len()) else {
+      return None;
+    };
+    if (chunk.len() == 0) {
+      return None;
+    }
+    out = if (out.len() == 0) { chunk } else { out.concat(chunk) };
+  }
+  return Some(out);
+}
+
+function __pool_write(w: Writer, bytes: u8[]): boolean {
+  let n = bytes.len() as i64;
+  let head: u8[] = [];
+  for k in 0..8 {
+    head = head.append((n >> (8 * k) as i64 & 255i64) as u8);
+  }
+  return w.write_bytes(head).is_ok() && w.write_bytes(bytes).is_ok();
 }
 ```
 
