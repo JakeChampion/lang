@@ -1,0 +1,18 @@
+// A bare literal of a variant that two enums declare needs a position that
+// expects one of the enums, or the enum named in the literal.
+enum A {
+  Rect { w: i32, h: i32 },
+  NoA,
+}
+
+enum B {
+  Rect { w: string, h: string },
+  NoB,
+}
+
+function main(): i32 {
+  let z = Rect { w: 1, h: 1 };
+  let ok: A = Rect { w: 1, h: 1 };
+  let named = B.Rect { w: "a", h: "b" };
+  return 0;
+}

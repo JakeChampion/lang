@@ -6899,6 +6899,15 @@ function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
 }
 
 function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
+  if let Some(vsig) = variant_lit_sig(sl, s) {
+    if (sl.enum_owner.len() == 0 && s.variant_ambiguous(sl.type_name)) {
+      return t_unknown("ambiguous variant `" + sl.type_name + "`");
+    }
+    let Some(c) = variant_lit_call(sl, vsig) else {
+      return t_unknown("variant " + sl.type_name + " literal does not name each field once");
+    };
+    return variant_ctor_type(s, vsig.enum_owner, sl.type_name, c);
+  }
   let Some(ssig) = s.lookup_struct(sl.type_name) else {
     return t_unknown("undefined struct: " + sl.type_name);
   };
@@ -6958,6 +6967,101 @@ function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
     return t_unknown("struct " + sl.type_name + " fields disagree on a type argument");
   }
   return typeinfo.TypeStruct { name: sl.type_name, args: largs };
+}
+
+// The variant a literal builds, or None for a struct literal.
+function variant_lit_sig(sl: ast.ExprStructLit, s: Scope): Option[StructSig] {
+  if (sl.enum_owner.len() > 0) {
+    return s.lookup_owned_struct(sl.type_name, sl.enum_owner);
+  }
+  let Some(sig) = s.lookup_struct(sl.type_name) else {
+    return None;
+  };
+  if (sig.enum_owner.len() == 0) {
+    return None;
+  }
+  return Some(sig);
+}
+
+// A literal of a named-field variant is checked as its constructor call, with
+// the payloads in declared order. It still evaluates them in written order.
+function variant_lit_call(sl: ast.ExprStructLit, sig: StructSig): Option[ast.ExprCall] {
+  if (sl.has_base || sig.variant_field_names.len() == 0 || sl.field_names.len() != sig.field_names.len()) {
+    return None;
+  }
+  let args: ast.Expr[] = [];
+  for name in sig.field_names {
+    let at = util.index_of_str(sl.field_names, name);
+    if (at < 0) {
+      return None;
+    }
+    args = args.append(sl.field_values[at]);
+  }
+  let callee: ast.Expr = ast.ExprIdent { name: sl.type_name, line: sl.line, col: sl.col, ty: "", builtin: false };
+  return Some(ast.ExprCall { callee: callee, args: args, line: sl.line, col: sl.col, type_args: [], ty: "" });
+}
+
+function variant_field_label(sig: StructSig, payload: string): string {
+  let at = util.index_of_str(sig.field_names, payload);
+  if (at >= 0 && at < sig.variant_field_names.len()) {
+    return sig.variant_field_names[at];
+  }
+  return payload;
+}
+
+function variant_lit_diags(sl: ast.ExprStructLit, sig: StructSig, s: Scope): util.Diag[] {
+  let shown = shown_variant(s, sl.type_name);
+  let out = enum_access_diags(s.lookup_union(sig.enum_owner), s, sl.line, sl.col);
+  if (sl.enum_owner.len() == 0 && s.variant_ambiguous(sl.type_name)) {
+    out = out.append(dg_at("E036", "variant \"" + shown + "\" is declared in multiple enums — qualify the reference", sl.line, sl.col));
+    for value in sl.field_values {
+      out = util.append_diags(out, call_diags(value, s));
+    }
+    return out;
+  }
+  if (sig.variant_field_names.len() == 0) {
+    let how = shown;
+    if (sig.field_names.len() > 0) {
+      how = shown + "(...)";
+    }
+    out = out.append(dg_at("E043", "variant " + shown + " has no named fields: build it as " + how, sl.line, sl.col));
+  } else if (sl.has_base) {
+    out = out.append(dg_at("E043", "a " + shown + " literal cannot take a base: write each field", sl.line, sl.col));
+  } else {
+    let seen: string[] = [];
+    for name in sl.field_names {
+      if (util.index_of_str(sig.field_names, name) < 0) {
+        out = out.append(dg_at("E043", "variant " + shown + " has no field \"" + name + "\"", sl.line, sl.col));
+      } else if (util.has_str(seen, name)) {
+        out = out.append(dg_at("E007", "duplicate field \"" + variant_field_label(sig, name) + "\" in variant literal", sl.line, sl.col));
+      } else {
+        seen = seen.append(name);
+      }
+    }
+    for name in sig.field_names {
+      if (!util.has_str(seen, name)) {
+        out = out.append(dg_at("E005", "missing field \"" + variant_field_label(sig, name) + "\" in this " + shown + " literal", sl.line, sl.col));
+      }
+    }
+  }
+  let Some(c) = variant_lit_call(sl, sig) else {
+    for value in sl.field_values {
+      out = util.append_diags(out, call_diags(value, s));
+    }
+    return out;
+  };
+  let whole = variant_ctor_type(s, sig.enum_owner, sl.type_name, c);
+  let payloads = instantiated_variant(sig, s, whole).field_types;
+  for i in 0..c.args.len() {
+    let pt = payloads[i];
+    let at = check_expr(c.args[i], s);
+    out = util.append_diags(out, dest_call_diags(c.args[i], pt, s));
+    out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
+    if (!is_unknown(at) && !is_unknown(pt) && !(view_free_settle(c.args[i], pt, s) && settles_to(c.args[i], pt, s)) && !coercible(at, pt, s)) {
+      out = out.append(dg_at("E036", "variant " + shown + " field \"" + sig.variant_field_names[i] + "\" type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
+    }
+  }
+  return out;
 }
 
 function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Type {
@@ -12027,6 +12131,11 @@ function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.D
   if (slit_forges_handle(sl, structs)) {
     out = out.append(dg_at("E099", "a " + sl.type_name + " cannot be built from a literal: only the call that opens it makes one", sl.line, sl.col));
   }
+  if let Some(vsig) = find_struct_sig(structs, sl.type_name) {
+    if (vsig.enum_owner.len() > 0) {
+      return out;
+    }
+  }
   if let Some(usig) = find_struct_sig(structs, sl.type_name) {
     for fi in 0..sl.field_names.len() {
       if (!util.has_str(usig.field_names, sl.field_names[fi])) {
@@ -16546,6 +16655,9 @@ function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col
 }
 
 function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
+  if let Some(vsig) = variant_lit_sig(sl, s) {
+    return util.append_diags(out, variant_lit_diags(sl, vsig, s));
+  }
   let found = s.lookup_struct(sl.type_name);
   let args = dest_args;
   if let Some(fsig) = found {
@@ -37318,23 +37430,40 @@ function variant_bare_name(name: string): string {
 
 function rescope_pattern(p: ast.Pattern, whole: typeinfo.Type, s: Scope): ast.Pattern {
   if let ast.PatVariant(pv) = p {
-    if (variant_pattern_qualified(pv.type_name)) {
+    let typeinfo.TypeUnion(u) = whole else {
       return p;
+    };
+    let named = rescoped_variant(pv, u.name, s);
+    if (!parser.is_record_pattern(named)) {
+      return ast.PatVariant(named);
     }
-    if let typeinfo.TypeUnion(u) = whole {
-      let members = enum_members(s, u.name, pv.type_name);
-      if (util.has_str(members, pv.type_name)) {
-        return p;
-      }
-      let bare = variant_bare_name(pv.type_name);
-      for v in members {
-        if (variant_bare_name(v) == bare) {
-          return ast.PatVariant { ...pv, type_name: v };
-        }
-      }
+    let owner = u.name;
+    if (variant_pattern_qualified(named.type_name)) {
+      owner = variant_pattern_owner(named.type_name);
     }
+    if let Some(sig) = s.lookup_owned_struct(variant_pattern_name(named.type_name), owner) {
+      return ast.PatVariant(parser.resolve_record_pattern(named, sig.variant_field_names));
+    }
+    return ast.PatVariant(named);
   }
   return p;
+}
+
+function rescoped_variant(pv: ast.PatVariant, owner: string, s: Scope): ast.PatVariant {
+  if (variant_pattern_qualified(pv.type_name)) {
+    return pv;
+  }
+  let members = enum_members(s, owner, pv.type_name);
+  if (util.has_str(members, pv.type_name)) {
+    return pv;
+  }
+  let bare = variant_bare_name(pv.type_name);
+  for v in members {
+    if (variant_bare_name(v) == bare) {
+      return ast.PatVariant { ...pv, type_name: v };
+    }
+  }
+  return pv;
 }
 
 function enum_members(s: Scope, name: string, variant: string): string[] {
@@ -37665,6 +37794,11 @@ struct SharedScan { coll: util.NameIndex, found: boolean }
 function shared_scan_at(e: ast.Expr, own a: SharedScan): SharedScan {
   if let ast.ExprIdent(id) = e {
     if (!a.found && a.coll.has(variant_bare_name(id.name))) {
+      return SharedScan { ...a, found: true };
+    }
+  }
+  if let ast.ExprStructLit(sl) = e {
+    if (!a.found && sl.enum_owner.len() == 0 && a.coll.has(variant_bare_name(sl.type_name))) {
       return SharedScan { ...a, found: true };
     }
   }
@@ -38020,7 +38154,11 @@ function member_payload_dests(member: string, want: typeinfo.Type, c: ast.ExprCa
 
 function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
   let none = t_unknown("no expected type");
+  sl = qualified_variant_lit(sl, want, s);
   let found = s.lookup_struct(sl.type_name);
+  if (sl.enum_owner.len() > 0) {
+    found = s.lookup_owned_struct(sl.type_name, sl.enum_owner);
+  }
   let args: typeinfo.Type[] = [];
   if let typeinfo.TypeStruct(ws) = want {
     args = ws.args;
@@ -38036,6 +38174,33 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
     values = values.append(qualify_expr(sl.field_values[k], fdest, s, coll));
   }
   return ast.ExprStructLit { ...sl, field_values: values, base: qualify_expr(sl.base, none, s, coll) };
+}
+
+// A bare variant literal that two enums declare builds the variant of the enum
+// its position expects.
+function qualified_variant_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope): ast.ExprStructLit {
+  let typeinfo.TypeUnion(du) = want else {
+    return sl;
+  };
+  if (sl.enum_owner.len() > 0 || sl.has_base) {
+    return sl;
+  }
+  let member = dest_variant(sl.type_name, want, s);
+  if (member.len() == 0) {
+    return sl;
+  }
+  let Some(sig) = s.lookup_owned_struct(member, du.name) else {
+    return sl;
+  };
+  let names = sl.field_names;
+  if (sig.variant_field_names.len() == sig.field_names.len()) {
+    names = [];
+    for name in sl.field_names {
+      let at = util.index_of_str(sig.variant_field_names, name);
+      names = names.append(if (at >= 0) { sig.field_names[at] } else { name });
+    }
+  }
+  return ast.ExprStructLit { ...sl, type_name: member, enum_owner: du.name, field_names: names };
 }
 
 struct LitArgSite { line: i32, col: i32, arg: i32 }

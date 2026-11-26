@@ -1,0 +1,15 @@
+pub enum Shape {
+  Rect { w: i32, h: i32 },
+  Dot,
+}
+
+pub function area(s: Shape): i32 {
+  return match (s) {
+    Rect { w, h } => w * h,
+    Dot => 0,
+  };
+}
+
+pub function square(n: i32): Shape {
+  return Rect { h: n, w: n };
+}

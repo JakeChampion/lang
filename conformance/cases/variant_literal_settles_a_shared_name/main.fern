@@ -1,0 +1,57 @@
+// Two enums declare the variant Rect with different fields. A bare literal
+// builds the variant of the enum its position expects, and `B.Rect { … }`
+// names the enum.
+enum A {
+  Rect { w: i32, h: i32 },
+  NoA,
+}
+
+enum B {
+  Rect { h: string, w: string },
+  NoB,
+}
+
+enum Tree[T] {
+  Node { value: T, kids: Tree[T][] },
+  Leaf,
+}
+
+function a(x: A): i32 {
+  return match (x) {
+    Rect { w, h } => w * 10 + h,
+    NoA => 0,
+  };
+}
+
+function b(x: B): string {
+  return match (x) {
+    Rect { w, h } => w + h,
+    NoB => "",
+  };
+}
+
+function count[T](t: Tree[T]): i32 {
+  return match (t) {
+    Node { value, kids } => {
+      let n = 1;
+      for k in kids {
+        n = n + count(k);
+      }
+      n
+    },
+    Leaf => 0,
+  };
+}
+
+function main(): i32 {
+  let x: A = Rect { w: 1, h: 2 };
+  print(a(x).to_string());
+  let y: B = Rect { w: "p", h: "q" };
+  print(b(y));
+  print(b(Rect { h: "s", w: "r" }));
+  print(b(B.Rect { w: "t", h: "u" }));
+  print(a(A.Rect { h: 4, w: 3 }).to_string());
+  let t = Node { value: "root", kids: [Node { value: "a", kids: [] }, Leaf, Node { kids: [Leaf], value: "b" }] };
+  print(count(t).to_string());
+  return 0;
+}
