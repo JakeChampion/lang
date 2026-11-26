@@ -121,8 +121,8 @@ selfhost/x86-64-linux/byte_copy_append.emit	1362
 selfhost/x86-64-linux/byte_copy_with.emit	1641
 selfhost/x86-64-linux/call_overhead.emit	370
 selfhost/x86-64-linux/closure_call.emit	1065
-selfhost/x86-64-linux/deflate_decode.emit	13652
-selfhost/x86-64-linux/deflate_encode.emit	7282
+selfhost/x86-64-linux/deflate_decode.emit	13805
+selfhost/x86-64-linux/deflate_encode.emit	7417
 selfhost/x86-64-linux/enum_match.emit	1036
 selfhost/x86-64-linux/http_hello.emit	16292
 selfhost/x86-64-linux/int_loop.emit	298
@@ -161,7 +161,7 @@ selfhost/wasm32-wasi/perceus_rbtree.emit	3763
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3065
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3479
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4400
-selfhost/x86-64-linux/video_qtrle.emit 5499
+selfhost/x86-64-linux/video_qtrle.emit 5555
 selfhost/arm64-linux/video_qtrle.emit 6203
 selfhost/wasm32-wasi/video_qtrle.emit 6194
 selfhost/x86-64-linux/hex_encode.emit	2132
