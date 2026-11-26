@@ -1223,12 +1223,13 @@ function rc_held_checks(): i32 {
   if (leak.checked != 1 || leak.problems.len() != 1 || !util.contains(leak.problems[0].msg, "leaks on the decline path")) {
     return 27;
   }
-  let ungated = "a path brings the held token from no uniqueness gate";
+  let ungated = "a path to the carried reuse has no uniqueness gate";
   if (!rc_only_skip(held_reuse(1, 2), ungated)) {
     return 28;
   }
+  let rewritten = "carried donor is written before the reuse call";
   let rebound: ir.Op[] = [ir.op_load_local(5), ir.op_store_local(1)];
-  if (!rc_only_skip(insert_ops(held_reuse(1, 1), 13, rebound), ungated)) {
+  if (!rc_only_skip(insert_ops(held_reuse(1, 1), 13, rebound), rewritten)) {
     return 29;
   }
   let gated_arm = concat_ops([ir.op_const_i32(1), ir.op_if(0)], insert_ops(held_reuse(1, 1), 13, [ir.op_else(), ir.op_const_i32(0), ir.op_store_local(1), ir.op_end()]));
@@ -1236,7 +1237,7 @@ function rc_held_checks(): i32 {
     return 52;
   }
   let other_arm = concat_ops([ir.op_const_i32(1), ir.op_if(0)], insert_ops(held_reuse(1, 1), 13, [ir.op_else(), ir.op_load_local(5), ir.op_store_local(1), ir.op_end()]));
-  if (!rc_only_skip(other_arm, ungated)) {
+  if (!rc_only_skip(other_arm, rewritten)) {
     return 53;
   }
   return 0;

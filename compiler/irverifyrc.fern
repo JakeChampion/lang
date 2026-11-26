@@ -564,22 +564,6 @@ function held_skip(why: string): Held {
   return Held { ok: false, why: why, donor: -1, problems: none };
 }
 
-// The donor of `load D; store X; const 0; store D; load X` at tok_at, or -1.
-function held_donor(ops: ir.Op[], tok_at: i32): i32 {
-  if (tok_at < 4) {
-    return -1;
-  }
-  let x = ops[tok_at].i32_imm;
-  let d = ops[tok_at - 4].i32_imm;
-  if (ops[tok_at - 4].kind_tag != ir.K_LOAD_LOCAL || d == x
-    || ops[tok_at - 3].kind_tag != ir.K_STORE_LOCAL || ops[tok_at - 3].i32_imm != x
-    || ops[tok_at - 2].kind_tag != ir.K_CONST_I32 || ops[tok_at - 2].i32_imm != 0
-    || ops[tok_at - 1].kind_tag != ir.K_STORE_LOCAL || ops[tok_at - 1].i32_imm != d) {
-    return -1;
-  }
-  return d;
-}
-
 // The gate of donor d at the if at i: `load d; is_unique; if`, with a decline
 // arm that ends with `const 0; store d`.
 function hold_gate(ops: ir.Op[], i: i32, d: i32): IfSpan {
@@ -1011,10 +995,8 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[], sigs: rcsigs.Table): Rc
       r = RcResult { ...r, sites: r.sites + 1 };
       let s = read_site(ops, i);
       let tok_at = token_arg_slot(ops, i);
-      let d = -1;
-      if (!s.ok && tok_at >= 0) {
-        d = held_donor(ops, tok_at);
-      }
+      let mv = if (s.ok) { -1 } else { carried_donor(ops, i) };
+      let d = if (mv >= 0) { ops[mv].i32_imm } else { -1 };
       if (d >= 0) {
         if (flow.next.len() == 0) {
           flow = flow_graph(ops);
@@ -1027,10 +1009,10 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[], sigs: rcsigs.Table): Rc
           }
           r = RcResult { ...r, checked: r.checked + 1, problems: acc };
           claims = claims.append(claim_of(ops, i, d));
-        } else {
-          r = RcResult { ...r, skips: r.skips.append(h.why) };
+          continue;
         }
-      } else if (s.ok) {
+      }
+      if (s.ok) {
         let ps = site_problems(fn_name, i, s);
         let cs = count_problems(fn_name, ops, i, s, sigs);
         let acc = r.problems;
@@ -1043,7 +1025,6 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[], sigs: rcsigs.Table): Rc
         r = RcResult { ...r, checked: r.checked + 1, problems: acc };
         claims = claims.append(claim_of(ops, i, s.gate));
       } else {
-        let mv = carried_donor(ops, i);
         let why = s.why;
         if (mv >= 0) {
           if (!have_preds) {
