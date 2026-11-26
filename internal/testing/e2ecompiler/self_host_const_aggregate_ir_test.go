@@ -11,16 +11,16 @@ import (
 
 var constAggBlockLabel = regexp.MustCompile(`(?m)^\.K\d+:$`)
 
-// Passing each literal whole keeps it materialized for the constant-pool check.
-const constAggReuseSrc = `struct P { x: i32, y: i32 }
+// Five fields exceed the split-return limit, keeping both literals in the constant pool.
+const constAggReuseSrc = `struct P { x: i32, y: i32, z: i32, w: i32, v: i32 }
 @noinline function keep(p: P): P { return p; }
 function main(): i32 {
     let cond: i32 = 1;
     let r: i32 = 0;
     if (cond > 0) {
-        let a: P = keep(P { x: 10, y: 20 });
+        let a: P = keep(P { x: 10, y: 20, z: 0, w: 0, v: 0 });
         let s: i32 = a.x + a.y;
-        let b: P = keep(P { x: 3, y: 4 });
+        let b: P = keep(P { x: 3, y: 4, z: 0, w: 0, v: 0 });
         r = s + b.x + b.y;
     }
     return r;
