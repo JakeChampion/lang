@@ -828,6 +828,10 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	}
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
 	g.git("init", "-q", "--object-format="+run.format, "module")
+	// The bare superproject has neither a checkout nor a module store.
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	g.git("clone", "--bare", "-q", dir, bare)
+	gitCompareEnv(t, oracle, port, dir, []string{"GIT_DIR=" + bare}, "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
 	// With an initialized checkout, two independent additions have no base
 	// gitlink, even when the checkout lacks both commits.
 	addLeft := g.git("commit-tree", "-p", "base", "-m", "add module on left", tree)
@@ -868,6 +872,15 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 		t.Fatal(err)
 	}
 	g.write(".gitmodules", "[submodule \"Library\"]\n path = module\n url = ./remote\n")
+	// A store belonging to another submodule does not supply this one.
+	otherStore := filepath.Join(dir, ".git", "modules", "OtherLibrary")
+	if err := os.Rename(storedGit, otherStore); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	if err := os.Rename(otherStore, storedGit); err != nil {
+		t.Fatal(err)
+	}
 	for _, commit := range []string{"module-merge", reversed} {
 		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", commit)
 	}

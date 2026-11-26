@@ -763,37 +763,32 @@ function module_config(parent: refs.Repo): config.Config {
   return config.empty();
 }
 
+enum ModuleLookup { AvailableModule(refs.Repo), MissingModule, UnknownModule }
+
 // A checked-out submodule takes precedence over its named module store.
-function submodule_at(parent: refs.Repo, path: string): Option[refs.Repo] {
-  if (parent.top == "") { return None; }
-  if let Some(sub) = refs.checkout_at(parent.top + "/" + path) { return Some(sub); }
-  if (parent.config.flag("extensions.submodulepathconfig", false)) { return None; }
+function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
   let modules = parent.dir + "/modules";
-  if (stat(modules).is_err()) { return None; }
+  let configured = parent.config.flag("extensions.submodulepathconfig", false);
+  if (parent.top == "") {
+    return if (!configured && missing_or_empty_dir(modules)) { MissingModule } else { UnknownModule };
+  }
+  if let Some(sub) = refs.checkout_at(parent.top + "/" + path) { return AvailableModule(sub); }
+  if (configured) { return UnknownModule; }
+  let unavailable = if (missing_or_empty_dir(parent.top + "/" + path + "/.git")) { MissingModule } else { UnknownModule };
+  if (missing_or_empty_dir(modules)) { return unavailable; }
   let dir = "";
   for e in module_config(parent).entries {
     if (e.value != path || !e.name.starts_with("submodule.") || !e.name.ends_with(".path") || e.name.len() <= 15) { continue; }
     let name = objects.part(e.name, 10, e.name.len() - 5);
     for part in name.replace("\\", "/").split("/") {
-      if (part == "" || part == "." || part == "..") { return None; }
+      if (part == "" || part == "." || part == "..") { return UnknownModule; }
     }
-    if (dir != "") { return None; }
+    if (dir != "") { return UnknownModule; }
     dir = modules + "/" + name;
   }
-  return refs.stored_module(dir);
-}
-
-// Git can find the submodule in the worktree or in its module store.
-// A configured gitdir can live elsewhere. Leave that lookup to the
-// submodule history merge.
-function submodule_absent(repo: refs.Repo, path: string): boolean {
-  if (repo.top == "" || repo.config.flag("extensions.submodulepathconfig", false)) {
-    return false;
-  }
-  if (!missing_or_empty_dir(repo.top + "/" + path + "/.git")) {
-    return false;
-  }
-  return missing_or_empty_dir(repo.dir + "/modules");
+  if (dir == "") { return UnknownModule; }
+  if let Some(sub) = refs.stored_module(dir) { return AvailableModule(sub); }
+  return if (missing_or_empty_dir(dir)) { unavailable } else { UnknownModule };
 }
 
 enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Diverged, Unresolved }
@@ -941,7 +936,8 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
     // Git first opens the checkout, then tries its stored module. When
     // both are absent it records a conflict and keeps the first parent.
     if let Some(repo) = st.o.repo {
-      if let Some(sub) = submodule_at(repo, path) {
+      let found = submodule_at(repo, path);
+      if let AvailableModule(sub) = found {
         if (o.hash == no_version(st.store).hash) {
           st = message(st, path, "Failed to merge submodule " + path + " (no merge base)");
           return (st, false, if (st.depth > 0) { o } else { a });
@@ -970,7 +966,7 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
           Unresolved => {}
         }
       }
-      if (submodule_absent(repo, path)) {
+      if let MissingModule = found {
         st = message(st, path, "Failed to merge submodule " + path + " (not checked out)");
         return (st, false, if (st.depth > 0) { o } else { a });
       }
