@@ -9057,13 +9057,13 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_variant(structs, "InvalidUtf8", ["string"], "IoError");
   structs = add_builtin_variant(structs, "Interrupted", none, "IoError");
   structs = add_builtin_variant(structs, "Unsupported", none, "IoError");
+  structs = add_builtin_variant(structs, "Other", ["string", "string", "i32"], "IoError");
   structs = add_builtin_variant(structs, "BodyText", ["string"], "Body");
   structs = add_builtin_variant(structs, "BodyBytes", ["u8[]"], "Body");
   structs = add_builtin_variant(structs, "BodyStream", ["ByteStream"], "Body");
   structs = add_builtin_variant(structs, "BodyFile", ["string"], "Body");
   structs = add_builtin_variant(structs, "BodyChunks", ["ChunkProducer"], "Body");
   structs = add_builtin_variant(structs, "BodyFileRanges", ["string", "i64[]", "u8[][]"], "Body");
-  structs = add_builtin_variant(structs, "Other", ["string", "string", "i32"], "IoError");
   structs = add_builtin_variant(structs, "StreamTooLarge", none, "StreamFault");
   structs = add_builtin_variant(structs, "StreamFramingTooLarge", none, "StreamFault");
   structs = add_builtin_variant(structs, "StreamTimeout", none, "StreamFault");
