@@ -22271,7 +22271,7 @@ struct LuFacts { checked_locals: string[], occ: LuOcc[], vars: LuVar[], assigns:
 
 // fresh names the fresh locals once lu_fresh_names has decided them; until
 // then fresh_known is false and lu_fresh_init_in decides from the facts.
-struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, flow: LuFlow }
+struct LuFn { checked_params: string[], ret_own: boolean, facts: LuFacts, decls: util.NameIndex, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, looped: string[], fresh: string[], fresh_known: boolean, flow: LuFlow }
 
 // A match or an if outside every loop, with the occurrences in each arm. One
 // run takes one arm, so an occurrence in one arm is not after one in another.
@@ -22605,23 +22605,27 @@ function lu_occ_count(fx: LuFn, name: string): i32 {
 
 function lu_decl_count(fx: LuFn, name: string): i32 {
   let n = 0;
-  for v in fx.facts.vars {
-    if (v.name == name) {
+  let i = fx.decls.chain(name);
+  while (i >= 0) {
+    if (fx.decls.names[i] == name) {
       n += 1;
     }
+    i = fx.decls.next[i];
   }
   return n;
 }
 
 function lu_init_of(fx: LuFn, name: string): Option[ast.Expr] {
   let init: Option[ast.Expr] = None;
-  for v in fx.facts.vars {
-    if (v.name == name) {
+  let i = fx.decls.chain(name);
+  while (i >= 0) {
+    if (fx.decls.names[i] == name) {
       if let Some(_) = init {
         return None;
       }
-      init = Some(v.init);
+      init = Some(fx.facts.vars[i].init);
     }
+    i = fx.decls.next[i];
   }
   return init;
 }
@@ -22661,13 +22665,15 @@ function lu_fresh_init_in(fx: LuFn, name: string, seen: string[]): boolean {
     return util.has_str(fx.fresh, name);
   }
   let found = false;
-  for v in fx.facts.vars {
-    if (v.name == name) {
-      if (!lu_fresh_value(fx, v.init)) {
+  let i = fx.decls.chain(name);
+  while (i >= 0) {
+    if (fx.decls.names[i] == name) {
+      if (!lu_fresh_value(fx, fx.facts.vars[i].init)) {
         return false;
       }
       found = true;
     }
+    i = fx.decls.next[i];
   }
   return found && lu_only_fresh_assigns(fx, name, seen);
 }
@@ -26880,7 +26886,11 @@ function lu_direct_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts
 }
 
 function lu_function(fn: parser.FuncDecl, facts: LuFacts, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): LuFn {
-  return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
+  let decls: string[] = [];
+  for v in facts.vars {
+    decls = decls.append(v.name);
+  }
+  return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, decls: util.name_index(decls), params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
 }
 
 // `fn` is resolved with lu_resolved, so each lambda in its body is resolved too.
