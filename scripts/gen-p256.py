@@ -41,7 +41,9 @@ def mont_mul(name, p, n0, special):
             m = g.let("%s * %s" % (t[0], lit(n0)), "m")
             c, _ = g.mac(t[0], m, lit(pl[0]), None)
         for j in range(1, 4):
-            if pl[j] == 0:
+            if special and j == 1:
+                c, t[0] = shifted_mac(g, t[1], m)
+            elif pl[j] == 0:
                 t[j - 1], k = g.add(t[j], c)
                 c = k
             else:
@@ -51,6 +53,12 @@ def mont_mul(name, p, n0, special):
         t[5] = None
     # t < 2p: subtract p, keep t when that borrows past the top limb.
     return finish(g, name, "a: Fe, b: Fe", t[:5], pl)
+
+# (hi, lo) = x + m * 2^32. With P-256's p, the limb product m * (2^32 - 1)
+# and the carry m of the limb below make this sum, and two shifts give it.
+def shifted_mac(g, x, m):
+    lo, k = g.add(x, g.let("%s << 32u64" % m, "lo"))
+    return g.let("(%s >> 32u64) + %s" % (m, k), "hi"), lo
 
 # The Montgomery square a * a / R mod p: the eight limbs of a * a with each
 # cross product once, doubled, then four rounds that each clear a low limb.
@@ -86,7 +94,9 @@ def mont_sq(name, p, n0, special):
             m = g.let("%s * %s" % (t[i], lit(n0)), "m")
             c, _ = g.mac(t[i], m, lit(pl[0]), None)
         for j in range(1, 4):
-            if pl[j] == 0:
+            if special and j == 1:
+                c, t[i + j] = shifted_mac(g, t[i + j], m)
+            elif pl[j] == 0:
                 t[i + j], c = g.add(t[i + j], c)
             else:
                 c, t[i + j] = g.mac(t[i + j], m, lit(pl[j]), c)

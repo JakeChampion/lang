@@ -428,14 +428,9 @@ function local_bases(data: string, offsets: i64[], wanted: i32[], a: i32, local:
   return (all, all_names);
 }
 
-// The index of the packfile `data`. `first` gives the names of the objects
-// in parts that are in order and that cover the packfile: a caller with
-// workers gives each part to one worker. `local` gives an object of the
-// repository for a thin pack, or None.
-pub function build_with(data: string, o: Options, first: (string, i64[]) => string[][], local: (string) => Option[objects.Object]): Result[Built, string] {
-  let raw = o.width;
-  let n = data.len();
-  if (n < 12) {
+// The object count in a supported pack header.
+pub function header_count(data: string): Result[i32, string] {
+  if (data.len() < 12) {
     return Err("fatal: early EOF");
   }
   if (data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
@@ -445,7 +440,17 @@ pub function build_with(data: string, o: Options, first: (string, i64[]) => stri
     let v = data[4] as i64 << 24 | data[5] as i64 << 16 | data[6] as i64 << 8 | data[7] as i64;
     return Err("fatal: pack version " + v.to_string() + " unsupported");
   }
-  let count = data[8] as i32 << 24 | data[9] as i32 << 16 | data[10] as i32 << 8 | data[11] as i32;
+  return Ok(data[8] as i32 << 24 | data[9] as i32 << 16 | data[10] as i32 << 8 | data[11] as i32);
+}
+
+// The index of the packfile `data`. `first` gives the names of the objects
+// in parts that are in order and that cover the packfile: a caller with
+// workers gives each part to one worker. `local` gives an object of the
+// repository for a thin pack, or None.
+pub function build_with(data: string, o: Options, first: (string, i64[]) => string[][], local: (string) => Option[objects.Object]): Result[Built, string] {
+  let raw = o.width;
+  let n = data.len();
+  let count = header_count(data)?;
   let offsets = offsets_of(data, count, raw)?;
   let end = offsets[count] as i32;
   if (end + raw > n) {
