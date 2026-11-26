@@ -485,6 +485,9 @@ function ref_diag(cx: VisCtx, r: astwalk.QualRef, out: util.Diag[]): util.Diag[]
   };
   let key = module_key(cx.loaded[mi]) + "." + r.name;
   if (!cx.declared.has(key)) {
+    if (r.call && r.args > 0 && flatten.is_method_path(cx.loaded[mi].mod, r.name)) {
+      return out;
+    }
     return out.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r, missing_kind(r)));
   }
   if (!cx.priv.has(key)) {
@@ -665,7 +668,7 @@ function check_written_type(tn: string, cx: VisCtx, line: i32, col: i32, acc: ut
   }
   if let Some(mi) = loaded_index(cx, q) {
     if (!cx.pkg.has(owner_ident(cx.src, q) + "." + base) && !cx.declared.has(module_key(cx.loaded[mi]) + "." + base) && !declares_trait_or_resource(cx.loaded[mi].mod, base)) {
-      let r = astwalk.QualRef { qual: q, name: base, line: line, col: col, call: false };
+      let r = astwalk.QualRef { qual: q, name: base, line: line, col: col, call: false, args: 0 };
       return acc.append(missing_member(cx.loaded[mi].mod, cx.loaded[mi].name, r, "type"));
     }
   }

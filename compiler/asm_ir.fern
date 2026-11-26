@@ -9252,12 +9252,14 @@ function ssa_vint_unary(ins: ssa.SInst, b: i32, reg_of: i32[], s: asmcore.EmitSt
   return ssa_fput(reg_of, ins.result, d, s);
 }
 
-// A lane and the lane above it make one wide lane. The lane above is zero,
-// or the sign of the lane: the compare 0 > a.
+// The low half of the lanes widens with one move that extends each lane by
+// zeros or by its sign. The high half moves down first.
 function x86_lane_widen(b: i32, w: i32, a: string, d: string): string {
-  let pair = (if (b == ir.K_VIWIDENLOS || b == ir.K_VIWIDENLOU) { "vpunpckl" } else { "vpunpckh" }) + (if (w == 8) { "bw" } else { "wd" });
-  let sign = if (b == ir.K_VIWIDENLOS || b == ir.K_VIWIDENHIS) { "    vpcmpgt" + ssa_vint_sfx(w) + " " + a + ", %xmm0, %xmm0\n" } else { "" };
-  return "    vpxor %xmm0, %xmm0, %xmm0\n" + sign + "    " + pair + " %xmm0, " + a + ", " + d + "\n";
+  let ext = "    vpmov" + (if (b == ir.K_VIWIDENLOS || b == ir.K_VIWIDENHIS) { "sx" } else { "zx" }) + (if (w == 8) { "bw" } else { "wd" });
+  if (b == ir.K_VIWIDENLOS || b == ir.K_VIWIDENLOU) {
+    return ext + " " + a + ", " + d + "\n";
+  }
+  return "    vpunpckhqdq " + a + ", " + a + ", " + d + "\n" + ext + " " + d + ", " + d + "\n";
 }
 
 // The ops that change the shape of integer lanes. `ins.imm` is the width

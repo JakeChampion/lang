@@ -3549,6 +3549,14 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
 }
 
 function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
+  let ext = x86_vex_extend_op(mnem);
+  if (ext >= 0) {
+    let xd = x86_gas_xmm(dst);
+    if (xd < 0) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    return x86_gas_vex_rm(a, mnem, 2, 1, 0, ext, xd, src, false, false);
+  }
   if (mnem == "vmovupd" || mnem == "vmovdqu") {
     return x86_gas_vex_move(a, mnem, src, dst);
   }
@@ -3653,7 +3661,25 @@ function x86_vex_store_delta(mnem: string): i32 {
 }
 
 function x86_gas_is_vex_two(mnem: string): boolean {
-  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vpbroadcastd" || mnem == "vbroadcastsd" || mnem == "vbroadcasti128" || mnem == "vpmovmskb" || mnem == "vmovmskpd" || mnem == "vmovq";
+  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vpbroadcastd" || mnem == "vbroadcastsd" || mnem == "vbroadcasti128" || mnem == "vpmovmskb" || mnem == "vmovmskpd" || mnem == "vmovq"
+    || x86_vex_extend_op(mnem) >= 0;
+}
+
+// The 0F38 opcode of each widening move of the low lanes, or -1.
+function x86_vex_extend_op(mnem: string): i32 {
+  if (mnem == "vpmovsxbw") {
+    return 32;
+  }
+  if (mnem == "vpmovsxwd") {
+    return 35;
+  }
+  if (mnem == "vpmovzxbw") {
+    return 48;
+  }
+  if (mnem == "vpmovzxwd") {
+    return 51;
+  }
+  return -1;
 }
 
 // The opcode of each VEX three-operand integer and FMA instruction: 256 plus

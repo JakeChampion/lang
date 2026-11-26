@@ -10,7 +10,7 @@ import "std/string";
 
 pub struct ImportedEnum { name: string, prefix: string }
 
-pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: util.NameIndex, enumnames: string[], imported_enums: ImportedEnum[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[], type_params: string[], own_variants: string[] }
+pub struct RewriteCtx { modnames: string[], modprefixes: string[], prefix: string, declnames: string[], declnames_mangled: string[], dn_head: i32[], dn_next: i32[], locals: util.NameIndex, enumnames: string[], imported_enums: ImportedEnum[], ivar_names: string[], ivar_mangled: string[], variant_scope: string[], reexport_keys: string[], reexport_targets: string[], type_params: string[], own_variants: string[], method_paths: util.NameIndex }
 
 function imported_enum_prefix(name: string, ctx: RewriteCtx): string {
   for en in ctx.imported_enums {
@@ -874,6 +874,28 @@ function rewrite_pattern(p: ast.Pattern, ctx: RewriteCtx): ast.Pattern {
   }
 }
 
+// The method call `a.f(…)` for a call `m.f(a, …)` that is_method_path accepts.
+function method_path_call(c: ast.ExprCall, ctx: RewriteCtx): Option[ast.Expr] {
+  let ast.ExprFieldAccess(fa) = c.callee else {
+    return None;
+  };
+  let ast.ExprIdent(id) = fa.obj else {
+    return None;
+  };
+  if (c.args.len() == 0 || parser.is_named_marker(c.args[0]) || ctx.locals.has(id.name) || !is_in(id.name, ctx.modnames)) {
+    return None;
+  }
+  if (!ctx.method_paths.has(util.mangled(resolve_prefix(id.name, ctx), fa.field))) {
+    return None;
+  }
+  let rest: ast.Expr[] = [];
+  for i in 1..c.args.len() {
+    rest = rest.append(c.args[i]);
+  }
+  let callee = ast.ExprFieldAccess { ...fa, obj: c.args[0], ty: "" };
+  return Some(ast.ExprCall { ...c, callee: callee, args: rest });
+}
+
 pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
@@ -913,6 +935,9 @@ pub function rewrite_expr(e: ast.Expr, ctx: RewriteCtx): ast.Expr {
       return ast.ExprFieldAccess { ...fa, obj: obj };
     },
     ast.ExprCall(c) => {
+      if let Some(m) = method_path_call(c, ctx) {
+        return rewrite_expr(m, ctx);
+      }
       let args: ast.Expr[] = [];
       let i = 0;
       while (i < c.args.len()) {
@@ -1244,7 +1269,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix,
       declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: util.name_index(param_names(fd)),
       enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope,
-      reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants,
+      reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants, method_paths: ctx.method_paths,
     };
     let bound_modules: string[] = [];
     for module in fd.bound_modules {
@@ -1310,7 +1335,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
   for pv in mod.marks {
     marks = marks.append(parser.FuncMark { ...pv, func_name: mangle_bare(pv.func_name, ctx) });
   }
-  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, exports: exports, marks: marks, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: util.name_index([]), enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
+  return parser.Module { ...mod, funcs: funcs, structs: structs, aliases: aliases, exports: exports, marks: marks, top_stmts: rewrite_block(mod.top_stmts, RewriteCtx { type_params: [], modnames: ctx.modnames, modprefixes: ctx.modprefixes, prefix: ctx.prefix, declnames: ctx.declnames, declnames_mangled: ctx.declnames_mangled, dn_head: ctx.dn_head, dn_next: ctx.dn_next, locals: util.name_index([]), enumnames: ctx.enumnames, imported_enums: ctx.imported_enums, ivar_names: ctx.ivar_names, ivar_mangled: ctx.ivar_mangled, variant_scope: ctx.variant_scope, reexport_keys: ctx.reexport_keys, reexport_targets: ctx.reexport_targets, own_variants: ctx.own_variants, method_paths: ctx.method_paths }), enums: mangle_enum_decls(mod.enums, ctx), impls: mangle_impls(mod.impls, ctx), trait_reqs: mangle_trait_reqs(mod.trait_reqs, ctx) };
 }
 
 function rewrite_trait_ref(spelling: string, ctx: RewriteCtx): string {
@@ -1399,7 +1424,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
   return out;
 }
 
-pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[]): parser.Module {
+pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[], method_paths: util.NameIndex): parser.Module {
   let empty: string[] = [];
   let own = collect_decl_names(mod);
   let ivn: string[] = [];
@@ -1411,7 +1436,7 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
     }
   }
   let shadows = builtin_shadows(mod);
-  let ctx = RewriteCtx { type_params: [], modnames: path_aliased_names(mod, mod_names(mod)), modprefixes: path_aliased_prefixes(mod, import_prefixes(mod, ids, pfxs)), prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty };
+  let ctx = RewriteCtx { type_params: [], modnames: path_aliased_names(mod, mod_names(mod)), modprefixes: path_aliased_prefixes(mod, import_prefixes(mod, ids, pfxs)), prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty, method_paths: method_paths };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1447,7 +1472,7 @@ pub function qualify_entry_builtins(mod: parser.Module): parser.Module {
     return mod;
   }
   let empty: string[] = [];
-  let ctx = RewriteCtx { type_params: [], modnames: empty, modprefixes: empty, prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: [], ivar_names: empty, ivar_mangled: empty, variant_scope: empty, reexport_keys: empty, reexport_targets: empty, own_variants: empty };
+  let ctx = RewriteCtx { type_params: [], modnames: empty, modprefixes: empty, prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: [], ivar_names: empty, ivar_mangled: empty, variant_scope: empty, reexport_keys: empty, reexport_targets: empty, own_variants: empty, method_paths: util.name_index(empty) };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1488,11 +1513,11 @@ function unique_prefix(base: string, used: string[]): string {
   return cand;
 }
 
-pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[]): parser.Module {
-  return rewrite_module_bodies(mod, module_ctx(mod, prefix, ids, pfxs, scope, ivar_names, ivar_mangled, reexport_keys, reexport_targets, imported));
+pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[], method_paths: util.NameIndex): parser.Module {
+  return rewrite_module_bodies(mod, module_ctx(mod, prefix, ids, pfxs, scope, ivar_names, ivar_mangled, reexport_keys, reexport_targets, imported, method_paths));
 }
 
-function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[]): RewriteCtx {
+function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[], method_paths: util.NameIndex): RewriteCtx {
   let decls = collect_decl_names(mod);
   return RewriteCtx {
     type_params: [],
@@ -1511,6 +1536,7 @@ function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: str
     reexport_keys: reexport_keys,
     reexport_targets: reexport_targets,
     own_variants: variant_names(mod),
+    method_paths: method_paths,
   };
 }
 
@@ -1557,7 +1583,7 @@ function inherit_trait_defaults(mod: parser.Module, own: string, defaults: Trait
 
 struct RenamedImports { mods: parser.Module[], defaults: TraitDefaultIn[] }
 
-function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: string[], pfxs: string[], graph: ImportGraph, ivar_names: string[], ivar_mangled: string[], rx: ReexportTable): RenamedImports {
+function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: string[], pfxs: string[], graph: ImportGraph, ivar_names: string[], ivar_mangled: string[], rx: ReexportTable, method_paths: util.NameIndex): RenamedImports {
   let imported = imported_enums(imports, pfxs);
   let ctxs: RewriteCtx[] = [];
   let closures: i32[][] = [];
@@ -1565,7 +1591,7 @@ function rename_imports(entry: parser.Module, imports: LoadedModule[], ids: stri
   for i in 0..imports.len() {
     let closure = import_closure(imports[i].mod, graph, ids, pfxs);
     closures = closures.append(closure);
-    let cx = module_ctx(imports[i].mod, pfxs[i], ids, pfxs, prefixes_at(closure, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported);
+    let cx = module_ctx(imports[i].mod, pfxs[i], ids, pfxs, prefixes_at(closure, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported, method_paths);
     ctxs = ctxs.append(cx);
     defaults = module_trait_defaults(imports[i].mod, cx, defaults);
   }
@@ -1726,7 +1752,8 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
   let rx = build_reexports(imports, ids, pfxs);
   let graph = import_graph(imports, ids, pfxs);
   let inferred = mangled_substituted_consts(imports, pfxs, entry);
-  let renamed = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
+  let paths = method_paths(imports, pfxs);
+  let renamed = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx, paths);
   let mclaims: string[] = [];
   for i in 0..imports.len() {
     let pfx = pfxs[i];
@@ -1754,7 +1781,7 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
       trait_decls = trait_decls.append(m.trait_decls[mdi]);
     }
   }
-  let flat = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
+  let flat = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs), paths), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
   let e = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   funcs = util.append_all(funcs, e.funcs);
   structs = util.append_all(structs, e.structs);
@@ -1830,6 +1857,57 @@ function merged_const_table(funcs: parser.FuncDecl[], inferred: string[]): parse
 }
 
 pub struct ReexportTable { keys: string[], targets: string[] }
+
+// A call `m.f(a, …)` is the method call `a.f(…)` when module m has a public
+// method f and no other member f. Then `xs |> m.f()` reaches a method.
+pub function is_method_path(mod: parser.Module, name: string): boolean {
+  let method = false;
+  for fd in mod.funcs {
+    if (fd.name == name) {
+      if (fd.receiver_name.len() == 0) {
+        return false;
+      }
+      method = method || fd.is_pub;
+    }
+  }
+  if (!method) {
+    return false;
+  }
+  for sd in mod.structs {
+    if (sd.name == name) {
+      return false;
+    }
+  }
+  for en in mod.enums {
+    if (en.name == name) {
+      return false;
+    }
+  }
+  for al in mod.aliases {
+    if (al.name == name) {
+      return false;
+    }
+  }
+  for im in mod.imports {
+    if (im.is_reexport && util.has_str(im.reexport_names, name)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The mangled names `m.f` that is_method_path accepts.
+function method_paths(imports: LoadedModule[], pfxs: string[]): util.NameIndex {
+  let keys: string[] = [];
+  for i in 0..imports.len() {
+    for fd in imports[i].mod.funcs {
+      if (fd.receiver_name.len() > 0 && !util.has_str(keys, util.mangled(pfxs[i], fd.name)) && is_method_path(imports[i].mod, fd.name)) {
+        keys = keys.append(util.mangled(pfxs[i], fd.name));
+      }
+    }
+  }
+  return util.name_index(keys);
+}
 
 pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: string[]): ReexportTable {
   let keys: string[] = [];
@@ -1912,7 +1990,8 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let inferred = mangled_substituted_consts(imports, pfxs, entry);
   let mods: parser.Module[] = [];
   let all_funcs: parser.FuncDecl[] = [];
-  let renamed = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx);
+  let paths = method_paths(imports, pfxs);
+  let renamed = rename_imports(entry, imports, ids, pfxs, graph, ivar_names, ivar_mangled, rx, paths);
   let mclaims: string[] = [];
   for i in 0..imports.len() {
     let pfx = pfxs[i];
@@ -1921,7 +2000,7 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
     mods = mods.append(md.mod);
     all_funcs = util.append_all(all_funcs, md.mod.funcs);
   }
-  let flat = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
+  let flat = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs), paths), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
   let e = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   all_funcs = util.append_all(all_funcs, e.funcs);
   let table = merged_const_table(all_funcs, inferred);

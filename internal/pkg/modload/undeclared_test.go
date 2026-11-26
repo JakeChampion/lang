@@ -187,9 +187,19 @@ pub function both(v: i32): i32 { return v; }
 		notSubstr string
 	}{
 		{
-			name: "method written module-qualified names the receiver form",
-			src:  `import "./lib";` + "\n" + `function main(): i32 { return lib.doubled(2); }`,
+			name: "method written module-qualified with no receiver names the receiver form",
+			src:  `import "./lib";` + "\n" + `function main(): i32 { return lib.doubled(); }`,
 			want: "lib.doubled is a method — call it on the value: `x.doubled(…)`",
+		},
+		{
+			name: "method written module-qualified takes its first argument as the receiver",
+			src:  `import "./lib";` + "\n" + `function main(): i32 { return lib.doubled(2); }`,
+			want: "",
+		},
+		{
+			name: "a pipe reaches a method",
+			src:  `import "./lib";` + "\n" + `function main(): i32 { return 2 |> lib.doubled(); }`,
+			want: "",
 		},
 		{
 			name:      "a typo near a method does not suggest a module call",

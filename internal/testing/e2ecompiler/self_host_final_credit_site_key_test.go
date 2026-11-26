@@ -70,11 +70,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			name: "structarr_collide",
-			src: `struct N { a: i32, b: i32 }
+			src: `struct N { a: i32, b: i32, s: string }
 function round(i: i32): i32 {
-    let keep: N[] = [N { a: i, b: i + 1 }, N { a: i + 2, b: i + 3 }];
+    let keep: N[] = [N { a: i, b: i + 1, s: "n" }, N { a: i + 2, b: i + 3, s: "n" }];
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: N[] = [N { a: i, b: i }]; t = t + o.len(); }
+    if (i % 2 == 0) { let o: N[] = [N { a: i, b: i, s: "n" }]; t = t + o.len(); }
     if (i % 2 == 1) { let o: N[] = keep; t = t + o.len(); }
     return t + keep.len();
 }
@@ -83,11 +83,11 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			name: "structarr_renamed",
-			src: `struct N { a: i32, b: i32 }
+			src: `struct N { a: i32, b: i32, s: string }
 function round(i: i32): i32 {
-    let keep: N[] = [N { a: i, b: i + 1 }, N { a: i + 2, b: i + 3 }];
+    let keep: N[] = [N { a: i, b: i + 1, s: "n" }, N { a: i + 2, b: i + 3, s: "n" }];
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: N[] = [N { a: i, b: i }]; t = t + o.len(); }
+    if (i % 2 == 0) { let o: N[] = [N { a: i, b: i, s: "n" }]; t = t + o.len(); }
     if (i % 2 == 1) { let u: N[] = keep; t = t + u.len(); }
     return t + keep.len();
 }
@@ -96,12 +96,12 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			name: "structarra_collide",
-			src: `struct N { a: i32, b: i32 }
+			src: `struct N { a: i32, b: i32, s: string }
 function round(i: i32): i32 {
     let keep: N[] = [];
-    keep = keep.append(N { a: i, b: i + 1 });
+    keep = keep.append(N { a: i, b: i + 1, s: "n" });
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: N[] = []; o = o.append(N { a: i, b: i }); t = t + o.len(); }
+    if (i % 2 == 0) { let o: N[] = []; o = o.append(N { a: i, b: i, s: "n" }); t = t + o.len(); }
     if (i % 2 == 1) { let o: N[] = keep; t = t + o.len(); }
     return t + keep.len();
 }
@@ -110,12 +110,12 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			name: "structarra_renamed",
-			src: `struct N { a: i32, b: i32 }
+			src: `struct N { a: i32, b: i32, s: string }
 function round(i: i32): i32 {
     let keep: N[] = [];
-    keep = keep.append(N { a: i, b: i + 1 });
+    keep = keep.append(N { a: i, b: i + 1, s: "n" });
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: N[] = []; o = o.append(N { a: i, b: i }); t = t + o.len(); }
+    if (i % 2 == 0) { let o: N[] = []; o = o.append(N { a: i, b: i, s: "n" }); t = t + o.len(); }
     if (i % 2 == 1) { let u: N[] = keep; t = t + u.len(); }
     return t + keep.len();
 }
@@ -229,9 +229,9 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			name: "credited_structarr",
-			src: `struct N { a: i32, b: i32 }
+			src: `struct N { a: i32, b: i32, s: string }
 function round(i: i32): i32 {
-    let o: N[] = [N { a: i, b: i + 1 }];
+    let o: N[] = [N { a: i, b: i + 1, s: "n" }];
     return o.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -239,10 +239,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			name: "credited_structarra",
-			src: `struct N { a: i32, b: i32 }
+			src: `struct N { a: i32, b: i32, s: string }
 function round(i: i32): i32 {
     let o: N[] = [];
-    o = o.append(N { a: i, b: i + 1 });
+    o = o.append(N { a: i, b: i + 1, s: "n" });
     return o.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
