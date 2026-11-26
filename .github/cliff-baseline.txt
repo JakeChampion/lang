@@ -78,5 +78,5 @@
 # and the aarch64 lane does not yet build a self-host compiler for it. An
 # unbaselined arch reports UNBASELINED rather than failing.
 
-x86_64/checker.cliff_bytes	58530296
-x86_64/checker.cliff_count	1019935
+x86_64/checker.cliff_bytes	58532792
+x86_64/checker.cliff_count	1019921
