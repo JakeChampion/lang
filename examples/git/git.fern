@@ -21,6 +21,7 @@ import "core/cmp";
 import "core/map";
 import "std/crypto";
 import "std/hex";
+import "std/hash/crc32";
 import "std/linediff";
 import "./color";
 import "./combine";
@@ -4108,11 +4109,22 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
   let text = data;
   let src = pack.memory(text, (name: u8[]): i64 => pack.offset_of(ix, name), a);
   let cache = pack.cache_new();
+  let bytes = data.as_bytes();
+  let pack_end = (data.len() - a) as i64;
+  let crcs_ok = true;
   let chains: i32[] = [];
   let out: u8[] = [];
   for k in 0..order.len() {
     let name = pack.hex_name_at(ix, order[k]);
     let offset = pack.offset_at(ix, order[k]);
+    let end = if (k + 1 < order.len()) { pack.offset_at(ix, order[k + 1]) } else { pack_end };
+    if (offset < 12 || offset >= end || end > pack_end) {
+      eprint("fatal: sha1 file '" + idx_path + "' validation error");
+      return false;
+    }
+    if (ix.version == 2 && crc32.of(bytes[offset as i32:end as i32]) as i64 != pack.crc_at(ix, order[k])) {
+      crcs_ok = false;
+    }
     let (made, kept) = pack.object_cached(src, offset, cache);
     cache = kept;
     let Ok(o) = made else {
@@ -4132,7 +4144,6 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
       chains = chains.append(0);
     }
     chains = chains.with(depth, chains[depth] + 1);
-    let end = if (k + 1 < order.len()) { pack.offset_at(ix, order[k + 1]) } else { (data.len() - a) as i64 };
     let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(pack.whole(text, a), offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
     if (depth > 0) {
       let base = at_offset(ix, order, chain[1]);
@@ -4155,7 +4166,7 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
   let pack_sum = hex.encode(data.as_bytes()[data.len() - a:data.len()]);
   let recorded_pack = hex.encode(array.slice(idx, end - 2 * a, end - a));
   let index_sum = objects.digest(a, array.slice(idx, 0, end - a));
-  if (pack_sum != recorded_pack || index_sum != array.slice(idx, end - a, end)) {
+  if (!crcs_ok || pack_sum != recorded_pack || index_sum != array.slice(idx, end - a, end)) {
     eprint("fatal: sha1 file '" + idx_path + "' validation error");
     return false;
   }

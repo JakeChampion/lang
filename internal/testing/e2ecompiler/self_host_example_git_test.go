@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -630,6 +631,18 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			changedIndex := bytes.Clone(originalIndex)
 			changedIndex[len(changedIndex)-1] ^= 1
 			rewriteFile(t, idx, changedIndex)
+			compare("", "verify-pack", idx)
+			compare("", "verify-pack", "-v", idx)
+			rewriteFile(t, idx, originalIndex)
+
+			// A valid index checksum must not hide a bad CRC for an object.
+			width := run.digits / 2
+			count := int(binary.BigEndian.Uint32(originalIndex[1028:1032]))
+			badCRC := bytes.Clone(originalIndex)
+			badCRC[1032+count*width] ^= 1
+			trailer := len(badCRC) - width
+			copy(badCRC[trailer:], gitValidationHash(run.format, badCRC[:trailer]))
+			rewriteFile(t, idx, badCRC)
 			compare("", "verify-pack", idx)
 			compare("", "verify-pack", "-v", idx)
 			rewriteFile(t, idx, originalIndex)
