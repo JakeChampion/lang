@@ -77,17 +77,33 @@ makes into `a`, because `with` does not change the length. Only a write uses
 this proof. `semhoist` can move a read above a write, but it does not move a
 write, and a read that it moves runs earlier.
 
-`compiler/semversion.fern` makes two versions of a counted loop. The header
-of the loop tests `i < hi`, each pass adds 1 to `i`, and the loop leaves only
-from its header. A checked access `a[i + c]` in the loop is a candidate when
-the length of `a` cannot change in the loop. Before the loop, one test
-computes `lo + c` and `a.len() - hi - c` in 64 bits for each candidate.
+`compiler/semversion.fern` makes two versions of a loop with one entry and
+one latch. A counter of the loop is a header phi that the latch changes by a
+constant step, up or down. A test of the counter with `<`, `<=`, `>` or `>=`
+against a value from before the loop bounds the counter. Each path to the
+latch and to the access must go through the true edge of that test. Then
+the test holds at each access, and a step cannot move the counter out of the
+i32 range unseen. A loop can have more than one counter, and it can leave
+from any block.
+
+A checked access is a candidate when its index is a counter plus constants
+and values from before the loop. The length of its array also must not change
+in the loop. An access in the header is not a candidate, because the header runs
+before the test. Before the loop, one test computes in 64 bits the lowest
+index of each candidate and the room between its highest index and the
+length. When a step can move a counter out of the i32 range, the test also
+computes the room that the range leaves.
 
 When the OR of these values is not negative, the copy of the loop runs, and
 its candidates have no checks. Otherwise the loop with the checks runs, so a
-loop that leaves the array aborts at the same access. The copy doubles the
-code of the loop. Thus a loop of more than 160 instructions keeps one version,
-and so does each loop of a `-size` build.
+loop that leaves the array aborts at the same access. Each exit of the loop
+joins the values of the two versions.
+
+The copy doubles the code of the loop. Thus a loop of more than 160
+instructions keeps one version, and so does each loop of a `-size` build. The
+copies of one function add at most as many instructions as the function has.
+A loop also keeps one version when a block after it has a variant
+projection. The guard of that projection can be a test in the loop.
 
 ## Allocation size (#8457)
 
