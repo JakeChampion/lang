@@ -97,6 +97,8 @@ func sedUTF8Cases() []invocation {
 		{"ÉΣ\n", []string{"s/.*/\\L&/"}},
 		{"éaé\n", []string{"y/éa/EÀ/"}},
 		{"éa\n", []string{"y/éa/E/"}},
+		{"éa\n", []string{"y/éa/E/J"}},
+		{"éa\n", []string{"y/éa/E/ ; p"}},
 		{"aéa\n", []string{"s/./X/2"}},
 		{"éé\n", []string{"s/\\(.\\)\\1/X/"}},
 		{"a\xff\n", []string{"s/[\\xff]/X/"}},
