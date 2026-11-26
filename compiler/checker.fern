@@ -5238,7 +5238,7 @@ function call_result_type(c: ast.ExprCall, s: Scope): typeinfo.Type {
               bts = mx_if_branch_types(f, s);
             },
             ast.StmtMatch(m) => {
-              bts = mx_match_arm_types(m, s);
+              bts = mx_match_arm_types(m, s, check_expr(m.scrutinee, s));
             },
             _ => {}
           }
@@ -11663,7 +11663,7 @@ function mx_body_result_types(body: ast.Stmt[], s: Scope): typeinfo.Type[] {
       return mx_if_branch_types(f, cur);
     },
     ast.StmtMatch(m) => {
-      return mx_match_arm_types(m, cur);
+      return mx_match_arm_types(m, cur, check_expr(m.scrutinee, cur));
     },
     _ => {
       return out;
@@ -11701,10 +11701,10 @@ function mx_body_result_exprs(body: ast.Stmt[]): ast.Expr[] {
   }
 }
 
-function mx_match_arm_types(m: ast.StmtMatch, s: Scope): typeinfo.Type[] {
+function mx_match_arm_types(m: ast.StmtMatch, s: Scope, whole: typeinfo.Type): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
   for arm in m.arms {
-    let armScope = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
+    let armScope = annotate_arm_scope(arm, s, whole);
     for ty in mx_body_result_types(arm.body, armScope) {
       out = out.append(ty);
     }
@@ -11765,9 +11765,10 @@ function mx_iife_arms(c: ast.ExprCall, lm: ast.ExprLambda, want: typeinfo.Type, 
     let arms = mx_body_result_exprs(lm.body);
     match (lm.body[0]) {
       ast.StmtMatch(m) => {
-        let mts = mx_match_arm_types(m, s);
+        let whole = check_expr(m.scrutinee, s);
+        let mts = mx_match_arm_types(m, s, whole);
         let enum_match = false;
-        if let typeinfo.TypeUnion(_) = check_expr(m.scrutinee, s) {
+        if let typeinfo.TypeUnion(_) = whole {
           enum_match = true;
         }
         out = util.append_diags(out, mx_e031(mx_arm_types(mts, arms, want, s), arms, unions, enums, false, !enum_match, expr_line(m.scrutinee), expr_col(m.scrutinee)));
@@ -13925,8 +13926,9 @@ function vb_settles(body: ast.Stmt[], want: typeinfo.Type, s: Scope): boolean {
       return vb_settles(f.then_body, want, cur) && vb_settles(f.else_body, want, cur);
     },
     ast.StmtMatch(m) => {
+      let whole = check_expr(m.scrutinee, cur);
       for arm in m.arms {
-        if (!vb_settles(arm.body, want, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)))) {
+        if (!vb_settles(arm.body, want, annotate_arm_scope(arm, cur, whole))) {
           return false;
         }
       }
@@ -36657,8 +36659,9 @@ function vb_assigned_stores(stmts: ast.Stmt[], name: string, s: Scope, acc: VbSt
         out = vb_assigned_stores(fr.body, name, for_body_scope(fr, cur), out);
       },
       ast.StmtMatch(m) => {
+        let whole = check_expr(m.scrutinee, cur);
         for arm in m.arms {
-          out = vb_assigned_stores(arm.body, name, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)), out);
+          out = vb_assigned_stores(arm.body, name, annotate_arm_scope(arm, cur, whole), out);
         }
       },
       ast.StmtDefer(d) => {
@@ -39312,8 +39315,9 @@ function lit_value_branch(stmt: ast.Stmt, want: typeinfo.Type, s: Scope, st: Lit
   }
   if let ast.StmtMatch(m) = stmt {
     st = lit_arg(m.scrutinee, s, st);
+    let whole = check_expr(m.scrutinee, s);
     for arm in m.arms {
-      let cur = annotate_arm_scope(arm, s, check_expr(m.scrutinee, s));
+      let cur = annotate_arm_scope(arm, s, whole);
       if (arm.has_guard) {
         st = lit_expr(arm.guard, cur, st);
       }
