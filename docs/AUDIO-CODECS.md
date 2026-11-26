@@ -1109,20 +1109,10 @@ These tests establish the measured conformance scope. They do not establish comp
 
 ## Performance baseline
 
-The first whole-file QOA benchmark used x86-64 Linux and the pinned stage0 compiler from `bootstrap/stage0.lock`.
-Each process decoded a 10,004-frame stereo file 1,000 times.
-Five trials alternated Fern and C process order and checked equal output sums.
-
-| Decoder | Median elapsed time |
-| --- | ---: |
-| Fern | 0.1691 s |
-| QOA C reference, `cc -O3 -fwrapv` | 0.06444 s |
-
-Fern took approximately 2.62 times the reference time on this workload.
-Fern writes `i32` samples and validates the static frame chain. The reference writes 16-bit samples.
-
-The benchmark includes process startup and allocation. It does not isolate the decode kernel.
-Use `scripts/bench-audio` to reproduce the comparison. Its report identifies the compiler by SHA-256.
+`scripts/bench-audio` compares QOA frame decode with the pinned C reference.
+Both decoders write each frame into one reusable buffer. The timed region excludes the process start and the file read.
+The script measures silence, impulse, speech, music, and noise inputs, and records time, allocations per frame, and peak RSS.
+The [2026-11-26 report](benchmarks/qoa-decode-2026-11-26/README.md) measures 2.12 to 2.40 times the C time on x86-64.
 
 The MP3 benchmark uses a one-second, 48 kHz stereo track and normalized float output.
 Each process decodes the complete track 100 times. Five trials alternate implementation order.

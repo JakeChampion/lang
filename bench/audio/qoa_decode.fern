@@ -1,19 +1,106 @@
 import "std/audio/qoa";
 import "std/audio/pcm";
+import "std/bench";
 import "std/io";
+import "std/i32";
+
+function hash(samples: [i32], count: i32, value: u32): u32 {
+  for i in 0..count {
+    value = (value ^ samples[i] as u32) * 16777619u32;
+  }
+  return value;
+}
+
+struct Pass { output: i32[], frames: i64, observed: i32, checksum: u32 }
+
+// Decodes every frame of the file into the reusable output of the state.
+function pass(own state: Pass, input: [u8], hashed: boolean): Result[Pass, pcm.AudioError] {
+  let Pass { output, frames, observed, checksum } = state;
+  let limits = pcm.default_limits();
+  let at = 8;
+  while (at < input.len()) {
+    let frame = qoa.decode_frame_into(input, at, output, limits)?;
+    output = frame.samples;
+    frames += frame.frames as i64;
+    observed ^= output[0];
+    if (hashed) {
+      checksum = hash(output, frame.frames * frame.format.channels, checksum);
+    }
+    at += frame.bytes_read;
+  }
+  return Ok(Pass { output: output, frames: frames, observed: observed, checksum: checksum });
+}
+
+function peak_rss(): i32 {
+  let Ok(status) = read_file("/proc/self/status") else {
+    return 0;
+  };
+  for line in status.split("\n") {
+    if (line.starts_with("VmHWM:")) {
+      for part in line.split(" ") {
+        let value = i32.parse_i32_radix(part, 10).unwrap_or(0);
+        if (value > 0) {
+          return value;
+        }
+      }
+    }
+  }
+  return 0;
+}
 
 function main(): i32 {
-  let a = args();
-  let Ok(input) = io.read_input_bytes(a[1]) else {
+  let argv = args();
+  if (argv.len() != 3) {
     return 1;
-  };
-  let total = 0;
-  for _ in 0..1000 {
-    let Ok(block) = qoa.decode(input, pcm.default_limits()) else {
-      return 2;
-    };
-    total += block.samples[0] + block.samples[block.samples.len() - 1];
   }
-  print(total.to_string());
+  let rounds = i32.parse_i32_radix(argv[2], 10).unwrap_or(0);
+  if (rounds < 1 || rounds > 100000) {
+    return 1;
+  }
+  let Ok(input) = io.read_input_bytes(argv[1]) else {
+    return 2;
+  };
+  let Ok(header) = qoa.inspect(input, pcm.default_limits()) else {
+    return 3;
+  };
+  let channels = header.format.channels;
+  let expected = header.frames as i64;
+  let state = Pass { output: pcm.zeros(5120 * channels), frames: 0i64, observed: 0, checksum: 2166136261u32 };
+  for _ in 0..4 {
+    let Ok(next) = pass(state, input, false) else {
+      return 4;
+    };
+    state = next;
+  }
+  if (state.frames != expected * 4i64) {
+    return 5;
+  }
+  state = Pass { ...state, frames: 0i64 };
+  let allocs = bench.alloc_count();
+  let fresh = bench.bump_bytes();
+  let started = monotonic_ns();
+  for _ in 0..rounds {
+    let Ok(next) = pass(state, input, false) else {
+      return 4;
+    };
+    state = next;
+  }
+  let elapsed = monotonic_ns() - started;
+  let allocated = bench.allocs_after(allocs);
+  let bytes = bench.fresh_bytes_after(fresh);
+  if (state.frames != expected * (rounds as i64)) {
+    return 5;
+  }
+  let samples = state.frames * (channels as i64);
+  let Ok(last) = pass(state, input, true) else {
+    return 4;
+  };
+  print("samples=" + samples.to_string());
+  print("checksum=" + last.checksum.to_string());
+  print("wall_ns=" + elapsed.to_string());
+  print("allocs=" + allocated.to_string());
+  print("fresh_bytes=" + bytes.to_string());
+  print("peak_rss_kb=" + peak_rss().to_string());
+  print("observed=" + last.observed.to_string());
   return 0;
 }
