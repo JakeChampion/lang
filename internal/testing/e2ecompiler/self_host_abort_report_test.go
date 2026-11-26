@@ -35,6 +35,7 @@ var abortReportCases = []struct{ name, src, cause string }{
 	{"raw_double_free", `function main(): i32 { unsafe { let p: usize = __alloc(64); __free(p, 64); __free(p, 64); return 0; } }`, "fern: release of memory that is already free"},
 	{"raw_free_outside_heap", `function main(): i32 { unsafe { __free(4096 as usize, 64); return 0; } }`, "fern: release of memory outside the heap"},
 	{"raw_double_free_large", `function main(): i32 { unsafe { let p: usize = __alloc(1048576); __free(p, 1048576); __free(p, 1048576); return 0; } }`, "fern: release of memory that is already free"},
+	{"raw_double_free_interleaved", `function main(): i32 { unsafe { let p: usize = __alloc(64); let q: usize = __alloc(64); __free(p, 64); __free(q, 64); __free(p, 64); return 0; } }`, "fern: release of memory that is already free"},
 }
 
 func mapSnapshotPastEndSrc(field string) string {

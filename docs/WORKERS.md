@@ -226,7 +226,7 @@ them.
 | Builtin | Role |
 |---|---|
 | `__worker_region(size)` | Maps a shared anonymous region that the fork inherits at the same address. The interpreters return zero. |
-| `__heap_adopt(start, end)` | Moves the cursor and the end into the region and clears both free lists. A range outside the heap moves its base too, and keeps the old bounds as the parent's image. A raw free of a block in the image does nothing, because the kernel reclaims the image at exit. |
+| `__heap_adopt(start, end)` | Puts the raw-free bitmap at the start of the region, moves the cursor and the end into the rest of it, and clears both free lists. A range outside the heap moves its base too, and keeps the old bounds as the parent's image. A raw free of a block in the image does nothing, because the kernel reclaims the image at exit. |
 | `__send_root(v)` | Gives up `v` and returns the address of its root box. |
 | `__send_release(v)` | Releases `v` where it is written, not at its last use. |
 | `__send_adopt(addr)` | Takes the box at `addr` as a value of the declared type. |

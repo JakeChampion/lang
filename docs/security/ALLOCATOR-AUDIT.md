@@ -47,28 +47,43 @@ An unmapped address ended the program by signal, and a mapped one gave the calle
 `TestSelfHostRawFreeOutsideHeap` pins the abort and the control on both targets.
 
 A raw block has no count. A second `__free` of it linked the block to itself, and the next two allocations of its class returned one address.
-`__free` now compares the block with the head of its free list before the push, on the small lists and on the large lists.
-A block that is the head aborts with `fern: release of memory that is already free`, status 134.
+A raw free now sets the bit of its block in the raw-free bitmap.
+A user `__alloc` clears the bit of the block that it hands out.
+A raw free of a block whose bit is set aborts with `fern: release of memory that is already free`, status 134.
 
-The check costs one load and one compare on the raw free path. The typed releases keep their count and do not pay it.
-`TestSelfHostRawDoubleFree` pins the abort and a control that frees two blocks of one class in turn, on both targets.
+The check is the same in every profile and for every size class.
+The number of frees between the two frees of a block does not change the result.
+A second free after the block went to a typed value aborts too, because only a user `__alloc` clears the bit.
 
-The head compare does not see a second free when a free of another block of the class comes between the two.
-Under `-harden` the raw free walks the first 64 blocks of its list instead, and a match aborts with the same cause.
-The walk decodes each link with the check that `__fern_freelist_take` makes, so a corrupt link on the way aborts as a corrupt link.
-A large free walks its list the same way, whether the block is raw or typed.
-The release build keeps the head compare.
-`TestSelfHostHardenRawInterleavedDoubleFree` pins the abort after three frees of one class, for a small class and a large class on both targets.
+The bitmap has one bit for each word of the heap.
+A hosted arena maps the bitmap after its end, with `MAP_NORESERVE`.
+The kernel backs a page of the bitmap only when a raw free or a raw allocation touches it.
+`__fern_heap_init` and `__heap_adopt` put the bitmap at the start of their region, and the heap starts after it.
+The bitmap thus takes 1/64 of a region that an embedder or a worker gives.
+A program with no user `__alloc` has no bitmap and no bitmap check, but `__heap_adopt` keeps the first 1/64 of its region in each program.
 
-The WebAssembly runtime makes the same two checks in `$__fern_raw_free`.
+`__fern_rawmap_lo` is the first address that the bitmap covers. A block below it is a block from before an adopt, and its free does not read the bitmap.
+The bitmap is not zeroed. Each bit that a free reads belongs to a block that a user `__alloc` handed out, and that allocation cleared the bit.
+
+Only `__free` and `__alloc` touch the bitmap.
+The typed allocations and releases do not, so the cost is on the raw paths alone: a load and a bit operation on each side.
+The interpreters enforce the same contract: a `__free` takes a block from `__alloc`.
+
+The WebAssembly runtime has no memory that the host backs on first touch, so its bitmap has two levels.
+A directory of 4096 words in the static data holds the address of a 16 KiB leaf for each MiB of memory.
+The first raw free in a MiB takes its leaf from the heap cursor, so the leaf holds zeros.
+`$__fern_user_free` and `$__fern_user_alloc` are the user entries. The runtime frees its own blocks through `$__fern_raw_free`, which does not read the bitmap.
 The two interpreters keep a table of the raw blocks a program took, and a release is checked against that table.
-The `raw_free_outside_heap`, `raw_double_free` and `raw_double_free_large` rows of the abort report suite pin the cause line on every target and in both interpreters.
 
-Under `-sanitize` the raw free quarantines the block instead.
-A second raw free of a block in the quarantine aborts with the double-free cause, with or without other frees between the two.
-The free compares the first word of the block with the quarantine's poison word, and on a match it walks the quarantine list.
-So a live block whose first word holds the poison value is still freed.
-A block that the quarantine has already evicted to a free list is not found.
+`TestSelfHostRawDoubleFree` pins the abort on both native targets, in the release build, under `-harden` and under `-sanitize`.
+It covers a second free in a row and a second free after other frees of the class.
+Each case runs for a small class and a large class.
+It covers a second free with 200 frees of the class between the two, and a second free after a typed value took the block.
+Its controls free each block once after its reuse, and free live blocks whose first word holds the quarantine poison or a free list address.
+The `raw_free_outside_heap`, `raw_double_free`, `raw_double_free_large` and `raw_double_free_interleaved` rows of the abort report suite pin the cause line on every target and in both interpreters.
+
+Under `-sanitize` the raw free quarantines the block after the bitmap check.
+A block that the quarantine evicted to a free list keeps its bit, so its second free aborts too.
 
 Under `-sanitize` each block also carries a redzone.
 `__fern_alloc` takes the size class of the request and two words more, and fills the two words after the end of the class with the poison pattern.
@@ -79,12 +94,11 @@ The `redzone` case of `TestSelfHostQuarantinePolicy` pins the report for a raw b
 It pins a clean run for a write at the last byte of a block.
 `TestSanitizeTypedBoxOverflowReported` pins the same report for a byte array.
 
-A block of one or two words has no room for the quarantine's three words, so the free keeps it out of every list.
-A second free of such a block is not found, and the block is not used again.
+A block of one or two words has no room for the quarantine's three words.
+The free keeps it out of every list, and the block is not used again.
+The bitmap finds a second free of such a block.
 `__fern_box_free` releases small typed boxes through the same path.
 The poison in the count word of such a box reports a later use, so the free cannot give the block to its free list.
-
-Before this change, a second raw free quarantined the block again without a report, and the leak census showed one more free than allocations.
 
 A write through a dangling raw pointer to the header word of a freed box forges the free list link.
 In the release build the next allocation of that class takes the freed box, and the one after it returns the forged address.
@@ -136,9 +150,8 @@ The encoding therefore did not hold against the raw floor.
 | A representable large allocation succeeds | `TestLargeButRepresentableAllocationStillWorks` |
 | The arena's exit statuses and their lockstep on both backends | `TestArenaExhaustedExitCodeIsNot137`, `TestArenaExhaustedExitCodeSelfHostLockstep`, `TestX86_64ArenaCheckpoint`, `TestArm64ArenaCheckpoint` |
 | A freed large block is a donor for the next request of its class | `TestSelfHostAllocReuseLargeDonor` |
-| A second raw free of the same block in a row aborts, small and large, on both backends | `TestSelfHostRawDoubleFree`, `TestSelfHostAbortReports*` (`raw_double_free`, `raw_double_free_large`) |
-| Under `-harden` a second raw free after other frees of the class aborts, small and large, on both backends | `TestSelfHostHardenRawInterleavedDoubleFree` |
-| Under `-sanitize` a second raw free of a quarantined block aborts, small and large, on both backends, and a live block that holds the poison value frees | `TestSelfHostSanitizeRawDoubleFree` |
+| A second raw free of the same block aborts, small and large, on every target | `TestSelfHostRawDoubleFree`, `TestSelfHostAbortReports*` (`raw_double_free`, `raw_double_free_large`, `raw_double_free_interleaved`) |
+| In each profile a second raw free after other frees of the class, or after a typed value took the block, aborts, small and large, on both backends | `TestSelfHostRawDoubleFree` |
 | Under `-harden` a released block holds zeros and a taken block has no link word, small and large, on both backends | `TestSelfHostHardenScrubsReleasedBlocks` |
 | A freed block above one gigabyte is reused, on both backends | `TestSelfHostAllocReuseAboveOneGigabyte` |
 | A request whose bump wraps the address space aborts with the size cause, on both backends; the probe calls the allocator from patched assembly, because no checked entry passes such a size | `TestSelfHostAllocRefusesWrappedBump` |
@@ -150,7 +163,6 @@ The encoding therefore did not hold against the raw floor.
 | Gap | Consequence |
 |---|---|
 | Free list link inside the freed block | In the release build a raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address. `-harden` encodes the link and aborts on a bad one, and `-sanitize` quarantines freed blocks and detects the touch (SEC-023) |
-| A raw double free with another free of the same class between the two | In the release build `__free` compares the block with the head of its list alone, so a free of another block of the class between the two frees hides the second. `-harden` walks the first 64 blocks of the list, so only a second free with 64 or more frees of the class between them links the block twice. `-sanitize` aborts while the block is in its quarantine (SEC-023) |
 | No zeroing on free in the release build | A secret stays in the arena until the block is reused and zero-filled. `-harden` zeroes each block before its push and clears the link word at the take. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
 | Alignment above 8 bytes | No entry takes an alignment; lane values and SIMD kernels use unaligned loads and stores by design |
