@@ -27,7 +27,7 @@ const LARGE_PACK: i64 = 1073741824;
 // `trees` holds the trees that the store read last, with their entries.
 // `held` holds the objects that a command makes and does not write. Each
 // copy of a store shares them.
-pub struct Store { objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32, multi: midx.Midx[], multi_packs: i32[], trees: Cell[Trees], held: Cell[Map[string, objects.Object]] }
+pub struct Store { abbrev: i32, objects: string, width: i32, packs: Packed[], shallow: string[], loose: string[], listed: boolean, hot: i32, multi: midx.Midx[], multi_packs: i32[], trees: Cell[Trees], held: Cell[Map[string, objects.Object]] }
 
 // The last trees that a diff read: a walk of the history compares the tree
 // of each commit with the tree of its parent, which the next commit of
@@ -98,7 +98,7 @@ pub function open(dir: string, a: i32, multi: boolean): Store {
   let names = match (read_dir(dir + "/pack")) {
     Ok(ns) => ns,
     Err(_) => {
-      return Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }), held: cell_new(no_objects()) };
+      return Store { abbrev: 0, objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }), held: cell_new(no_objects()) };
     },
   };
   for n in names {
@@ -111,7 +111,7 @@ pub function open(dir: string, a: i32, multi: boolean): Store {
       }
     }
   }
-  let s = Store { objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }), held: cell_new(no_objects()) };
+  let s = Store { abbrev: 0, objects: dir, width: a, packs: packs, shallow: shallow, loose: [], listed: false, hot: 0, multi: [], multi_packs: [], trees: cell_new(Trees { names: [], lists: [] }), held: cell_new(no_objects()) };
   if (!multi) {
     return s;
   }
@@ -138,6 +138,9 @@ pub function open(dir: string, a: i32, multi: boolean): Store {
 // The least length of a short name, as git sets it: half of the bits of
 // the count of packed objects, and 7 or more.
 pub function short_length(s: Store): i32 {
+  if (s.abbrev > 0) {
+    return s.abbrev;
+  }
   let count = 0;
   for p in s.packs {
     count += p.ix.count;

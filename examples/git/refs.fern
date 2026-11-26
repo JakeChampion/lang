@@ -2,6 +2,7 @@
 // full and short hashes, `HEAD`, and the refs.
 import "std/array";
 import "std/option";
+import "std/result";
 import "std/string";
 import "core/cmp";
 import "core/map";
@@ -15,7 +16,7 @@ import "./store";
 // end, or "". `top` is the top of the worktree, or "" for a bare
 // repository that `GIT_DIR` names. `algo` is the hash of the names of the objects.
 // `packed` holds the refs of the file `packed-refs`.
-pub struct Repo { dir: string, common: string, prefix: string, shown: string, top: string, config: config.Config, width: i32, packed: Map[string, string] }
+pub struct Repo { abbrev: Result[i32, string], dir: string, common: string, prefix: string, shown: string, top: string, config: config.Config, width: i32, packed: Map[string, string] }
 
 pub function (r: Repo) objects(): string {
   return r.common + "/objects";
@@ -23,7 +24,8 @@ pub function (r: Repo) objects(): string {
 
 // The object store of the repository.
 pub function (r: Repo) store(): store.Store {
-  return store.open(r.objects(), r.width, r.config.flag("core.multipackindex", true));
+  let s = store.open(r.objects(), r.width, r.config.flag("core.multipackindex", true));
+  return store.Store { ...s, abbrev: r.abbrev.unwrap_or(0) };
 }
 
 function is_dir(path: string): boolean {
@@ -132,7 +134,7 @@ function repo_at(dir: string, prefix: string, shown: string, top: string): Resul
     return Err("error: invalid value for 'extensions.objectformat': '" + format + "'");
   }
   let cfg = config.read(common + "/config", config_name(dir, common, top));
-  return Ok(Repo { dir: dir, common: common, prefix: prefix, shown: shown, top: top, config: cfg, width: width, packed: packed_refs(common, width) });
+  return Ok(Repo { abbrev: cfg.abbrev(width), dir: dir, common: common, prefix: prefix, shown: shown, top: top, config: cfg, width: width, packed: packed_refs(common, width) });
 }
 
 // Open the repository at this exact worktree. A submodule can have a

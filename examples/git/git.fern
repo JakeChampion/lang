@@ -90,7 +90,13 @@ function put_line(text: string): void {
 // The repository, or the exit status after its message.
 function repo_or_fail(): (refs.Repo[], i32) {
   return match (refs.find()) {
-    Ok(r) => ([r], 0),
+    Ok(r) => match (r.abbrev) {
+      Ok(_) => ([r], 0),
+      Err(message) => {
+        eprint(message);
+        ([], 128)
+      },
+    },
     Err(message) => {
       eprint(message);
       ([], 128)
@@ -174,6 +180,10 @@ function hash_object(argv: string[]): i32 {
     }
     repo = found;
   } else if let Ok(r) = refs.find() {
+    if let Err(message) = r.abbrev {
+      eprint(message);
+      return 128;
+    }
     repo = [r];
   }
   if (a.stdin) {
@@ -3728,6 +3738,10 @@ function index_pack(argv: string[]): i32 {
   let repo: refs.Repo[] = [];
   let level = 1;
   if let Ok(r) = refs.find() {
+    if let Err(message) = r.abbrev {
+      eprint(message);
+      return 128;
+    }
     repo = [r];
     match (zlib_level(r)) {
       Ok(v) => {
@@ -4005,7 +4019,7 @@ function pack_path(file: string): string {
   if (file.ends_with(".idx")) {
     return objects.part(file, 0, file.len() - 4) + ".pack";
   }
-  return file;
+  return if (file.ends_with(".pack")) { file } else { file + ".pack" };
 }
 
 // The places of the index in the order of the offsets in the packfile.
@@ -4058,13 +4072,13 @@ function checksums_ok(a: i32, data: string, idx: u8[]): boolean {
 // each object in the order of the packfile, and the lengths of the chains.
 function verify_one(a: i32, file: string, verbose: boolean): boolean {
   let path = pack_path(file);
+  let idx_path = objects.part(path, 0, path.len() - 5) + ".idx";
   let Ok(data) = unsafe { map_file_unchecked(path) } else {
-    eprint("fatal: Cannot open existing pack file '" + file + "'");
+    eprint("fatal: Cannot open existing pack file '" + idx_path + "'");
     return false;
   };
-  let idx_path = objects.part(path, 0, path.len() - 5) + ".idx";
   let Ok(idx) = read_file_bytes(idx_path) else {
-    eprint("fatal: Cannot open existing pack idx file for '" + file + "'");
+    eprint("fatal: Cannot open existing pack idx file for '" + idx_path + "'");
     return false;
   };
   let Ok(ix) = pack.index_of(idx, a, idx_path) else {
@@ -4135,13 +4149,16 @@ function verify_pack(argv: string[]): i32 {
   if (files.len() == 0) {
     return usage();
   }
-  let algo = match (refs.find()) {
-    Ok(r) => r.width,
-    Err(_) => objects.SHA1,
+  let (algo, error) = match (refs.find()) {
+    Ok(r) => (r.width, match (r.abbrev) { Ok(_) => "", Err(msg) => msg }),
+    Err(_) => (objects.SHA1, ""),
   };
   let status = 0;
   for file in files {
-    if (!verify_one(algo, file, verbose)) {
+    if (error != "") {
+      eprint(error);
+    }
+    if (error != "" || !verify_one(algo, file, verbose)) {
       if (verbose) {
         put_line(pack_path(file) + ": bad");
       }
