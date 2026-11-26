@@ -5,7 +5,7 @@
 //   $ git cat-file (-t | -s | -p | -e) NAME
 //   $ git cat-file (--batch | --batch-check)       # names on the standard input
 //   $ git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...
-//   $ git verify-pack [-v] FILE.idx...
+//   $ git verify-pack [-v] [--object-format=HASH] FILE.idx...
 //   $ git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE
 //
 // The port reads loose objects and packfiles, and writes loose objects.
@@ -52,7 +52,7 @@ import "./store";
 import "./walk";
 import "./ws";
 
-const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
+const USAGE: string = "usage: git hash-object [-w] [-t KIND] [--stdin] [FILE...]\n   or: git cat-file (-t | -s | -p | -e) NAME\n   or: git cat-file (--batch | --batch-check)\n   or: git rev-parse [--verify] [--short[=N]] [--git-dir] NAME...\n   or: git verify-pack [-v] [--object-format=HASH] FILE.idx...\n   or: git ls-tree [-r] [-t] [-d] [-l] [--name-only] [--full-tree] TREE\n   or: git log [-n N] [--oneline] [--format=FORMAT] [NAME]\n   or: git index-pack [-o FILE.idx] FILE.pack";
 
 function fatal(message: string): i32 {
   eprint("fatal: " + message);
@@ -3543,7 +3543,16 @@ function index_names(data: string, offsets: i64[], raw: i32): string[][] {
 
 const INDEX_PACK_USAGE: string = "usage: git index-pack [-v] [-o <index-file>] [--keep | --keep=<msg>] [--[no-]rev-index] [--verify] [--strict[=<msg-id>=<severity>...]] [--fsck-objects[=<msg-id>=<severity>...]] (<pack-file> | --stdin [--fix-thin] [<pack-file>])";
 
-struct PackArgs { verbose: boolean, verify: boolean, stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, format: string, bad: string, checking: checkpack.Policy, failure: string }
+// An explicit --object-format must name a hash, even in a repository.
+function pack_hash_width(name: string): Result[i32, string] {
+  let width = objects.width_of(name);
+  if (width == 0 || name == "") {
+    return Err("unknown hash algorithm '" + name + "'");
+  }
+  return Ok(width);
+}
+
+struct PackArgs { verbose: boolean, verify: boolean, stdin: boolean, thin: boolean, rev: boolean, out: string, file: string, keep: string, keeps: boolean, version: i32, limit: i64, width: i32, bad: string, checking: checkpack.Policy, failure: string }
 
 // The number at the start of `text` in base 10, or in the base that the C
 // function `strtoul` gives for base 0 when `c` is true: 0x for 16 and 0
@@ -3571,7 +3580,7 @@ function number_of(text: string, c: boolean): (i64, i32) {
 }
 
 function pack_args(argv: string[]): PackArgs {
-  let a = PackArgs { verbose: false, verify: false, stdin: false, thin: false, rev: true, out: "", file: "", keep: "", keeps: false, version: 2, limit: 2147483647, format: "", bad: "", checking: checkpack.policy(), failure: "" };
+  let a = PackArgs { verbose: false, verify: false, stdin: false, thin: false, rev: true, out: "", file: "", keep: "", keeps: false, version: 2, limit: 2147483647, width: 0, bad: "", checking: checkpack.policy(), failure: "" };
   let i = 0;
   while (i < argv.len()) {
     let x = argv[i];
@@ -3624,7 +3633,14 @@ function pack_args(argv: string[]): PackArgs {
         return PackArgs { ...a, bad: x };
       }
     } else if (x.starts_with("--object-format=")) {
-      a = PackArgs { ...a, format: objects.part(x, 16, x.len()) };
+      match (pack_hash_width(objects.part(x, 16, x.len()))) {
+        Ok(width) => {
+          a = PackArgs { ...a, width: width };
+        },
+        Err(message) => {
+          return PackArgs { ...a, failure: message };
+        }
+      }
     } else if (x.starts_with("-") || a.file.len() > 0) {
       return PackArgs { ...a, bad: "usage" };
     } else {
@@ -3762,23 +3778,14 @@ function index_pack(argv: string[]): i32 {
     eprint(INDEX_PACK_USAGE);
     return 129;
   }
-  let algo = objects.SHA1;
-  if (a.format.len() > 0) {
-    algo = objects.width_of(a.format);
-    if (algo == 0) {
-      return fatal("unknown hash algorithm '" + a.format + "'");
-    }
-  }
-  if (repo.len() > 0 && a.format.len() == 0) {
-    algo = repo[0].width;
-  }
+  let algo = if (a.width > 0) { a.width } else if (repo.len() > 0) { repo[0].width } else { objects.SHA1 };
   if (a.thin && !a.stdin) {
     return fatal("the option '--fix-thin' requires '--stdin'");
   }
   if (a.stdin && repo.len() == 0) {
     return fatal("--stdin requires a git repository");
   }
-  if (a.stdin && a.format.len() > 0) {
+  if (a.stdin && a.width > 0) {
     return fatal("options '--object-format' and '--stdin' cannot be used together");
   }
   if (a.verify && a.file.len() == 0) {
@@ -4081,8 +4088,13 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
     eprint("fatal: Cannot open existing pack idx file for '" + idx_path + "'");
     return false;
   };
-  let Ok(ix) = pack.index_of(idx, a, idx_path) else {
-    return false;
+  let ix = match (pack.index_of(idx, a, idx_path)) {
+    Ok(found) => found,
+    Err(message) => {
+      eprint("error: " + message);
+      eprint("fatal: Cannot open existing pack idx file for '" + idx_path + "'");
+      return false;
+    },
   };
   if (!checksums_ok(a, data, idx)) {
     return false;
@@ -4139,12 +4151,33 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
 function verify_pack(argv: string[]): i32 {
   let verbose = false;
   let files: string[] = [];
-  for x in argv {
-    if (x == "-v" || x == "--verbose") {
+  let format: Option[string] = None;
+  let i = 0;
+  while (i < argv.len()) {
+    let x = argv[i];
+    i += 1;
+    if (x == "--") {
+      files = files.concat(array.slice(argv, i, argv.len()));
+      break;
+    } else if (x == "-v" || x == "--verbose") {
       verbose = true;
-    } else if (x.starts_with("-") && x != "--") {
+    } else if (x == "--object-format") {
+      if (i == argv.len()) {
+        eprint("error: option `object-format' requires a value");
+        return 129;
+      }
+      format = Some(argv[i]);
+      i += 1;
+    } else if (x.starts_with("--object-format=")) {
+      format = Some(objects.part(x, 16, x.len()));
+    } else if (x == "--no-object-format") {
+      format = None;
+    } else if (x.starts_with("--no-object-format=")) {
+      eprint("error: option `no-object-format' takes no value");
+      return 129;
+    } else if (x.starts_with("-")) {
       return usage();
-    } else if (x != "--") {
+    } else {
       files = files.append(x);
     }
   }
@@ -4155,6 +4188,18 @@ function verify_pack(argv: string[]): i32 {
     Ok(r) => (r.width, match (r.abbrev) { Ok(_) => "", Err(msg) => msg }),
     Err(_) => (objects.SHA1, ""),
   };
+  if let Some(name) = format {
+    match (pack_hash_width(name)) {
+      Ok(width) => {
+        algo = width;
+      },
+      Err(message) => {
+        if (error == "") {
+          error = "fatal: " + message;
+        }
+      }
+    }
+  }
   let status = 0;
   for file in files {
     if (error != "") {

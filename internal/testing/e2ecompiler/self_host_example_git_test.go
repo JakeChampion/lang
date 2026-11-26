@@ -442,6 +442,13 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 		t.Run(run.target+"-"+run.format, func(t *testing.T) {
 			top := t.TempDir()
 			idx := gitPackedFixture(t, oracle, top, run)
+			outside := t.TempDir()
+			gitCompare(t, oracle, port, outside, "", "index-pack", "--object-format=")
+			gitCompare(t, oracle, port, outside, "", "index-pack", "--object-format=unknown", "--object-format="+run.format, "p.pack")
+			gitCompare(t, oracle, port, outside, "", "verify-pack", "-v", "--object-format", run.format, idx)
+			gitCompare(t, oracle, port, outside, "", "verify-pack", "--object-format="+run.format, idx)
+			gitCompare(t, oracle, port, outside, "", "verify-pack", "-v", "--object-format=unknown", idx, idx)
+			gitCompare(t, oracle, port, top, "", "verify-pack", "--object-format=unknown", "--no-object-format", idx)
 			compare := func(stdin string, args ...string) string {
 				t.Helper()
 				wantOut, wantErr, wantCode := oracle.run(t, top, stdin, args...)
