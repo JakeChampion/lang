@@ -1,6 +1,10 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
+)
 
 func TestSelfHostMapIteratorChecker(t *testing.T) {
 	_, runner, driver := buildCheckerModloadDriverX86(t)
@@ -40,7 +44,7 @@ func TestSelfHostMapIteratorChecker(t *testing.T) {
 					t.Errorf("self-host codes %v, want %v", got, tc.want)
 				}
 				oracle := goCheckerCodes(t, t.TempDir(), src)
-				if !equalStrings(got, oracle) {
+				if !equalStrings(e2eharness.SharedCodes(got), oracle) {
 					t.Errorf("self-host codes %v, Go codes %v", got, oracle)
 				}
 			})

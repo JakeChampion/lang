@@ -1794,41 +1794,6 @@ type MatchArm struct {
 	Body            *Block
 }
 
-func MatchTakesPointerPayload(arms []*MatchArm) bool {
-	for _, a := range arms {
-		if a.ScalarBinding != "" || armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
-			return true
-		}
-	}
-	return false
-}
-
-func MatchExprTakesPointerPayload(arms []*MatchExprArm) bool {
-	for _, a := range arms {
-		if a.ScalarBinding != "" || armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
-			return true
-		}
-	}
-	return false
-}
-
-func armTakesPointer(bindings []string, types []Type, at string, tuple []TuplePatElem, payloads []*TuplePatElem) bool {
-	if at != "" || len(tuple) > 0 {
-		return true
-	}
-	for _, sub := range payloads {
-		if sub != nil {
-			return true
-		}
-	}
-	for i, n := range bindings {
-		if n != "" && n != "_" && i < len(types) && types[i] != nil && IsPointerType(types[i]) {
-			return true
-		}
-	}
-	return false
-}
-
 type MatchExpr struct {
 	Origin      string
 	P           Position

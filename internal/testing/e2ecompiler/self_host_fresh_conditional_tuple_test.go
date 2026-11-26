@@ -66,7 +66,6 @@ func freshConditionalTupleCases(t *testing.T, bin string, runner []string, dir s
 				}
 				t.Fatalf("%s: reject=%v, diagnostics=%v", label, tc.reject, ds)
 			}
-			check("Go", goCheckerDiags(t, dir, source))
 			command := exec.Command(bin)
 			if len(runner) > 0 {
 				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)

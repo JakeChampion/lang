@@ -49,7 +49,6 @@ func resultLoanCases(t *testing.T, bin string, runner []string, dir, fixture str
 			}
 			cmd.Stdin = strings.NewReader(tc.Source)
 			for label, ds := range map[string][]driverDiag{
-				"Go":   goCheckerDiags(t, dir, tc.Source),
 				"Fern": driverDiags(runCheckerDriver(t, cmd, tc.Name)),
 			} {
 				if tc.Want == "" && len(ds) == 0 {

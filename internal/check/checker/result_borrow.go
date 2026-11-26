@@ -112,31 +112,6 @@ func (c *checker) paramBorrowScope(fn *ast.FuncDecl, ownedResult bool) (borrowSc
 	return b, true
 }
 
-// cellLoanParams names each own Cell parameter that a `set` call gives a
-// borrowed payload, directly or through an alias.
-func (c *checker) cellLoanParams(fn *ast.FuncDecl) map[string]bool {
-	out := map[string]bool{}
-	var cells []string
-	for _, p := range fn.Params {
-		if st, ok := p.Type.(ast.StructType); ok && p.Own && st.Name == "Cell" {
-			cells = append(cells, p.Name)
-		}
-	}
-	if len(cells) == 0 || fn.Body == nil {
-		return out
-	}
-	b, ok := c.paramBorrowScope(fn, false)
-	if !ok {
-		return out
-	}
-	for _, name := range cells {
-		if b.locals[name] {
-			out[name] = true
-		}
-	}
-	return out
-}
-
 func (c *checker) resultBlockBorrows(body *ast.Block, b borrowScope) bool {
 	found := false
 	ast.Walk(body, func(n ast.Node) bool {
@@ -610,38 +585,6 @@ func (c *checker) lambdaRetainsCapture(lm *ast.Lambda, b borrowScope) bool {
 	return found
 }
 
-// An actual callback that returns its own input or a fresh value cannot lend
-// a capture. Keep other borrowed arguments conservative at direct own calls.
-func (c *checker) callbacksReturnOwned(call *ast.Call) bool {
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	sig := c.info.FuncSigs[id.Name]
-	if sig == nil {
-		return false
-	}
-	flags := c.ownFuncs[id.Name]
-	found := false
-	for i, arg := range call.Args {
-		if !c.paramCanLend(sig, flags, i) {
-			continue
-		}
-		if i >= len(sig.Params) {
-			return false
-		}
-		if _, callback := sig.Params[i].(*ast.FuncType); !callback {
-			return false
-		}
-		lm, literal := arg.(*ast.Lambda)
-		if !literal || c.argMayBorrow(lm) {
-			return false
-		}
-		found = true
-	}
-	return found
-}
-
 func (c *checker) argMayBorrow(e ast.Expr) bool {
 	// A variant that no call gives payloads to holds nothing to lend.
 	if v, ok := c.info.EnumConstructions[e]; ok && len(v.Payloads) == 0 {
@@ -756,45 +699,6 @@ func (c *checker) scopedCallFresh(call *ast.Call) bool {
 	return true
 }
 
-// A call scrutinee is owned when its result is fresh: a variant, a fresh
-// method, a function with no borrowed parameter that can hold a
-// handle, or a function whose body returns a handle-bearing value with no borrow.
-func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
-	if call, ok := tag.(*ast.Call); ok {
-		if c.callValueCallees[call] {
-			return inferred(tag)
-		}
-		if freshAssociatedResult(call) {
-			return true
-		}
-		if _, isVariant := c.info.EnumConstructions[call]; isVariant {
-			return true
-		}
-		id, isIdent := call.Callee.(*ast.Ident)
-		if !isIdent {
-			return c.freshMethodResult(call)
-		}
-		if call.Method != nil && c.freshMethodResult(call) {
-			return true
-		}
-		sig, known := c.info.FuncSigs[id.Name]
-		if !known || sig.Result == nil || !ast.IsPointerType(sig.Result) {
-			return false
-		}
-		if call.Method != nil {
-			return !c.signatureResultBorrows(id.Name)
-		}
-		return !c.signatureResultBorrows(id.Name) || c.resultAnalysed[id.Name] && !c.resultBorrows[id.Name] && !c.holdsNoHandle(sig.Result)
-	}
-	return inferred(tag)
-}
-
-// isOnceFunc reports a `once` function type.
-func isOnceFunc(t ast.Type) bool {
-	ft, ok := t.(*ast.FuncType)
-	return ok && ft.Once
-}
-
 // holdsNoHandle reports a type that cannot hold a handle: a number, a
 // boolean, a char, a string, a function, or an array, slice, tuple, option,
 // result, struct or enum whose parts are all such types. Reader, Writer and
@@ -873,116 +777,6 @@ func (c *checker) structLitOwned(sl *ast.StructLit, owned func(ast.Expr) bool) b
 		}
 	}
 	return true
-}
-
-// arrayUpdateOwned says call is `with`, `append` or `truncate` on an array,
-// and the result owns its elements: they hold no handle, or the receiver
-// and the new element are owned.
-func (c *checker) arrayUpdateOwned(call *ast.Call, recvOwned, owned func(ast.Expr) bool) bool {
-	id, ok := call.Callee.(*ast.Ident)
-	if !ok || call.Method == nil || len(call.Args) == 0 {
-		return false
-	}
-	elem := -1
-	switch id.Name {
-	case "__method_Array_set":
-		elem = 2
-	case "__method_Array_push":
-		elem = 1
-	case "__method_Array_truncate":
-	default:
-		return false
-	}
-	array, ok := call.Method.Receiver.(ast.ArrayType)
-	if !ok {
-		return false
-	}
-	if c.holdsNoHandle(array.Elem) {
-		return true
-	}
-	return recvOwned(call.Args[0]) && (elem < 0 || elem < len(call.Args) && owned(call.Args[elem]))
-}
-
-// replacedReads maps a read `b.f` to the literal `S { ...b, f: v }` that
-// holds it in v. It does this only when v names the root of b in that read
-// alone. The literal drops b.f, so the read takes what b held there: it is
-// owned when b is. Inside v, the reads that an inner literal with base b.f
-// replaces belong to the inner literal.
-func replacedReads(body ast.Node) map[*ast.FieldAccess]*ast.StructLit {
-	var lits []*ast.StructLit
-	ast.Walk(body, func(n ast.Node) bool {
-		if sl, ok := n.(*ast.StructLit); ok && sl.Base != nil {
-			lits = append(lits, sl)
-		}
-		return true
-	})
-	out := map[*ast.FieldAccess]*ast.StructLit{}
-	for i := len(lits) - 1; i >= 0; i-- {
-		sl := lits[i]
-		root := accessRoot(sl.Base)
-		if root == "" {
-			continue
-		}
-		for _, f := range sl.Fields {
-			var read *ast.FieldAccess
-			mentions := 0
-			ast.Walk(f.Value, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.Lambda:
-					// A lambda can run later, so it takes no field.
-					ast.Walk(x, func(m ast.Node) bool {
-						if id, ok := m.(*ast.Ident); ok && id.Name == root {
-							mentions += 2
-						}
-						return true
-					})
-					return false
-				case *ast.FieldAccess:
-					if inner := out[x]; inner != nil && sameAccess(x.Target, inner.Base) {
-						return false
-					}
-					if x.Field == f.Name && sameAccess(x.Target, sl.Base) {
-						read = x
-						mentions++
-						return false
-					}
-				case *ast.Ident:
-					if x.Name == root {
-						mentions++
-					}
-				}
-				return true
-			})
-			if read != nil && mentions == 1 {
-				out[read] = sl
-			}
-		}
-	}
-	return out
-}
-
-// accessRoot is the local that a name or a field path of it starts from.
-func accessRoot(e ast.Expr) string {
-	switch x := e.(type) {
-	case *ast.Ident:
-		return x.Name
-	case *ast.FieldAccess:
-		return accessRoot(x.Target)
-	}
-	return ""
-}
-
-// sameAccess says a and b name the same local or the same field path of it.
-func sameAccess(a, b ast.Expr) bool {
-	switch x := a.(type) {
-	case *ast.Ident:
-		y, ok := b.(*ast.Ident)
-		return ok && x.Name == y.Name
-	case *ast.FieldAccess:
-		y, ok := b.(*ast.FieldAccess)
-		return ok && x.Field == y.Field && sameAccess(x.Target, y.Target)
-	}
-	return false
 }
 
 // noHandleIn decides t inside a declaration whose type parameters in free

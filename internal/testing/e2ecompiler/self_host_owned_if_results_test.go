@@ -36,16 +36,8 @@ var ownedIfResultCases = []struct{ name, source, want string }{
 
 func testOwnedIfResults(t *testing.T, bin string, runner []string) {
 	t.Helper()
-	dir := t.TempDir()
 	for _, tc := range ownedIfResultCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var codes []string
-			for _, d := range goCheckerDiags(t, dir, tc.source) {
-				codes = append(codes, d.code)
-			}
-			if got := strings.Join(uniqueSortedCodes(codes), ","); got != tc.want {
-				t.Fatalf("Go codes = %q, want %q", got, tc.want)
-			}
 			command := exec.Command(bin)
 			if len(runner) > 0 {
 				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)

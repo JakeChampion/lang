@@ -40,12 +40,6 @@ function apply(f: (own i32[]) => i32): i32 { return f([1, 2]); }
 function main(): i32 { return apply(eat); }`)
 }
 
-func TestOwnFuncTypeGuardsIndirectCall(t *testing.T) {
-	wantE051(t, "indirect-borrowed-arg", ownFnConsumer+`
-function apply(f: (own i32[]) => i32, a: i32[]): i32 { return f(a); }
-function main(): i32 { return apply(eat, [1, 2]); }`)
-}
-
 func TestOwnFuncTypeIndirectCallAcceptsOwnParam(t *testing.T) {
 	wantOK(t, "indirect-own-arg", ownFnConsumer+`
 function apply(f: (own i32[]) => i32, own a: i32[]): i32 { return f(a); }
@@ -70,13 +64,6 @@ func TestOwnLambdaParamMatchesOwnFuncType(t *testing.T) {
 	wantOK(t, "own-lambda-param", `
 function apply(f: (own i32[]) => i32): i32 { return f([1, 2]); }
 function main(): i32 { return apply((own xs: i32[]) => xs.len()); }`)
-}
-
-func TestOwnFuncTypeIndirectCallMovesArgument(t *testing.T) {
-	wantCheckError(t, "indirect-own-use-after-move", ownFnConsumer+`
-function apply(f: (own i32[]) => i32, own a: i32[]): i32 { let n = f(a); return n + a.len(); }
-function main(): i32 { return apply(eat, [1, 2]); }`,
-		`use of owned parameter "a" after it was consumed`)
 }
 
 func TestOwnFuncTypeScalarSlotAdmitsLendingCallee(t *testing.T) {

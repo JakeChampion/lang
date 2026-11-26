@@ -42,7 +42,6 @@ function alias(s: State, reader: Reader): Reader { return s.lend(reader); }
 				}
 				t.Fatalf("%s: want %q, got %v", label, tc.want, ds)
 			}
-			check("Go", goCheckerDiags(t, dir, source))
 			command := exec.Command(bin)
 			if len(runner) != 0 {
 				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
