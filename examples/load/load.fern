@@ -706,10 +706,10 @@ function earlier(a: i64, b: i64): i64 {
 
 // The wait of the reactor: to the end of -z, to the next timeout, or to the
 // next request of -q when a connection waits for it.
-function timeout(r: Run): Option[Duration] {
+function timeout(r: Run): Option[time.Duration] {
   let now = monotonic_ns();
   let until = earlier(r.deadline, r.check);
-  let left: Option[Duration] = None;
+  let left: Option[time.Duration] = None;
   if (until > 0) {
     left = Some(time.duration_nanos(until - now));
   }

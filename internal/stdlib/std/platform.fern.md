@@ -57,7 +57,7 @@ pub trait Platform {
 
   function now(self: Self): time.Timestamp;
 
-  function instant(self: Self): Instant;
+  function instant(self: Self): time.Instant;
 
   function env(self: Self, name: string): Option[string];
 
@@ -67,7 +67,7 @@ pub trait Platform {
 
   function random_i32(self: Self): i32;
 
-  function sleep(self: Self, d: Duration): void;
+  function sleep(self: Self, d: time.Duration): void;
 
   function http(self: Self, req: fetch.Request): Result[HttpResponse, fetch.FetchError];
 
@@ -75,14 +75,14 @@ pub trait Platform {
 
   function peer(self: Self): Option[net.SocketAddr];
 
-  function deadline(self: Self): Option[Instant];
+  function deadline(self: Self): Option[time.Instant];
 
   function cancelled(self: Self): boolean;
 
   function trace(self: Self): Option[trace.Context];
 }
 
-pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[Instant], trace: Option[trace.Context] }
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar], allow: Option[fetch.Allow], peer: Option[net.SocketAddr], deadline: Option[time.Instant], trace: Option[trace.Context] }
 ```
 
 ### `4 pub function host(): Host`
@@ -113,7 +113,7 @@ pub function (h: Host) with_allow(a: fetch.Allow): Host {
   return Host { ...h, allow: Some(a) };
 }
 
-pub function (h: Host) with_deadline(at: Instant): Host {
+pub function (h: Host) with_deadline(at: time.Instant): Host {
   return Host { ...h, deadline: Some(at) };
 }
 
@@ -136,7 +136,7 @@ pub function traced(req: fetch.Request, span: Option[trace.Context], random: () 
   return req;
 }
 
-pub function passed(deadline: Option[Instant], now: Instant): boolean {
+pub function passed(deadline: Option[time.Instant], now: time.Instant): boolean {
   match (deadline) {
     Some(at) => {
       return now.cmp(at) >= 0;
@@ -162,7 +162,7 @@ impl Platform for Host {
     return clock.now();
   }
 
-  function instant(self: Host): Instant {
+  function instant(self: Host): time.Instant {
     return clock.instant();
   }
 
@@ -182,7 +182,7 @@ impl Platform for Host {
     return random_i32();
   }
 
-  function sleep(self: Host, d: Duration): void {
+  function sleep(self: Host, d: time.Duration): void {
     let none: i32[] = [];
     let woke = async.wait_any(none, Some(clock.instant().add(d)));
   }
@@ -199,7 +199,7 @@ impl Platform for Host {
     return self.peer;
   }
 
-  function deadline(self: Host): Option[Instant] {
+  function deadline(self: Host): Option[time.Instant] {
     return self.deadline;
   }
 

@@ -4,6 +4,7 @@ import "testing"
 
 const stdPlatformProg = `
 import "std/platform" as platform;
+import "std/time";
 function main(): i32 {
     let plat: platform.Host = platform.host();
     if (plat.reactor != 0) { return 1; }
@@ -15,8 +16,8 @@ function main(): i32 {
     if (plat.now().unix_millis() < floor) { return 2; }
 
     // Monotonic clock: non-decreasing between two readings.
-    let t0: Instant = plat.instant();
-    let t1: Instant = plat.instant();
+    let t0: time.Instant = plat.instant();
+    let t1: time.Instant = plat.instant();
     if (t1.cmp(t0) < 0) { return 3; }
 
     // A variable nothing sets reads as None rather than "".

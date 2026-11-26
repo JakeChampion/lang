@@ -108,11 +108,11 @@ pub function wait(subscription: Subscription): boolean {
   return wait_for(subscription, None);
 }
 
-pub function wait_for(subscription: Subscription, timeout: Option[Duration]): boolean {
+pub function wait_for(subscription: Subscription, timeout: Option[time.Duration]): boolean {
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
-  let until = timeout.map((d: Duration): Instant => clock.instant().add(d));
+  let until = timeout.map((d: time.Duration): time.Instant => clock.instant().add(d));
   let ready = async.wait_any([subscription.listener.sock.fd, 1], until);
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;

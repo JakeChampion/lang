@@ -95,7 +95,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<33 pub enum Recv>>
 
-<<34 pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError]>>
+<<34 pub function read_deadline(sock: Socket, max: i32, deadline: time.Duration): Result[Recv, NetError]>>
 
 <<35 pub enum Shutdown>>
 
@@ -1522,20 +1522,20 @@ pub function write_rest(sock: Socket, data: u8[]): Result[u8[], NetError] {
 pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
 ```
 
-### `34 pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError]`
+### `34 pub function read_deadline(sock: Socket, max: i32, deadline: time.Duration): Result[Recv, NetError]`
 
 ```fern
-<<34 pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError]>>=
-pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError] {
+<<34 pub function read_deadline(sock: Socket, max: i32, deadline: time.Duration): Result[Recv, NetError]>>=
+pub function read_deadline(sock: Socket, max: i32, deadline: time.Duration): Result[Recv, NetError] {
   return read_watched(sock, max, deadline, 1);
 }
 
-pub function read_watched(sock: Socket, max: i32, wait: Duration, interest: i32): Result[Recv, NetError] {
+pub function read_watched(sock: Socket, max: i32, wait: time.Duration, interest: i32): Result[Recv, NetError] {
   return read_watched_until(sock, max, wait, interest, -1);
 }
 
 // A readable cancellation descriptor ends the wait.
-pub function read_watched_until(sock: Socket, max: i32, wait: Duration, interest: i32, cancel: i32): Result[Recv, NetError] {
+pub function read_watched_until(sock: Socket, max: i32, wait: time.Duration, interest: i32, cancel: i32): Result[Recv, NetError] {
   let until = monotonic_ns() + wait.as_nanos();
   let read = [sock.fd, async.counted(sock.fd, interest)];
   let set = if (cancel >= 0) { [cancel, 1].concat(read) } else { read };

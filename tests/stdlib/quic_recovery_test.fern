@@ -6,9 +6,9 @@ import "std/time";
 
 const MS: i64 = 1000000;
 
-const START: Instant = Instant { sec: 0, nsec: 0 };
+const START: time.Instant = time.Instant { sec: 0, nsec: 0 };
 
-function at_ns(ns: i64): Instant {
+function at_ns(ns: i64): time.Instant {
   return START.add(time.duration_nanos(ns));
 }
 

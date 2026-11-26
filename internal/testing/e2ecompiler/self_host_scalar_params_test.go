@@ -21,13 +21,13 @@ const scalarParamsLib = `import "std/time";
 pub struct Mix { a: i32, b: i64, c: f64, d: boolean }
 
 pub trait Waiter {
-  function wait(self: Self, timeout: Option[Duration]): i64;
+  function wait(self: Self, timeout: Option[time.Duration]): i64;
 }
 
 pub struct Real { k: i64 }
 
 impl Waiter for Real {
-  function wait(self: Real, timeout: Option[Duration]): i64 {
+  function wait(self: Real, timeout: Option[time.Duration]): i64 {
     match (timeout) {
       Some(d) => {
         return d.sec * 1000 + (d.nsec / 1000000) as i64 + self.k;
@@ -51,7 +51,7 @@ impl Waiter for Real {
   return sum_mix(m) * scale as f64;
 }
 
-@noinline pub function millis(t: Option[Duration]): i64 {
+@noinline pub function millis(t: Option[time.Duration]): i64 {
   match (t) {
     Some(d) => {
       return d.sec * 1000 + (d.nsec / 1000000) as i64;
@@ -62,11 +62,11 @@ impl Waiter for Real {
   }
 }
 
-@noinline pub function millis_plus(t: Option[Duration], extra: i64): i64 {
+@noinline pub function millis_plus(t: Option[time.Duration], extra: i64): i64 {
   return millis(t) + extra;
 }
 
-@noinline pub function retried(t: Option[Duration], left: i32): i64 {
+@noinline pub function retried(t: Option[time.Duration], left: i32): i64 {
   if (left > 0) {
     return retried(t, left - 1);
   }
@@ -84,16 +84,16 @@ impl Waiter for Real {
   }
 }
 
-@noinline pub function (d: Duration) whole_seconds(): i64 {
+@noinline pub function (d: time.Duration) whole_seconds(): i64 {
   return d.sec;
 }
 
-@noinline pub function later(now: Instant, d: Duration): Instant {
+@noinline pub function later(now: time.Instant, d: time.Duration): time.Instant {
   let nsec: i64 = now.nsec as i64 + d.nsec as i64;
-  return Instant { sec: now.sec + d.sec + nsec / 1000000000, nsec: (nsec % 1000000000) as i32 };
+  return time.Instant { sec: now.sec + d.sec + nsec / 1000000000, nsec: (nsec % 1000000000) as i32 };
 }
 
-@noinline pub function wait_on[W: Waiter](w: W, t: Option[Duration]): i64 {
+@noinline pub function wait_on[W: Waiter](w: W, t: Option[time.Duration]): i64 {
   return w.wait(t);
 }
 
@@ -135,7 +135,7 @@ impl Bump for S0 {
   return b.bumped(by);
 }
 
-@noinline pub function both(a: Option[Duration], b: Option[Duration]): i64 {
+@noinline pub function both(a: Option[time.Duration], b: Option[time.Duration]): i64 {
   let n: i64 = 0;
   if let Some(d) = a {
     n = n + d.as_millis();
@@ -153,8 +153,8 @@ import "./lib";
 
 function main(): i32 {
   let mixes: lib.Mix[] = [lib.Mix { a: 1, b: 20000000000, c: 0.5, d: true }, lib.Mix { a: 0 - 3, b: 0 - 4, c: 2.25, d: false }];
-  let xs: Option[Duration][] = [None, Some(time.duration_millis(7))];
-  let ys: Option[Duration][] = [Some(time.duration_millis(3)), None, None];
+  let xs: Option[time.Duration][] = [None, Some(time.duration_millis(7))];
+  let ys: Option[time.Duration][] = [Some(time.duration_millis(3)), None, None];
   let total: f64 = 0.0;
   let n: i64 = 0;
   let a0: i64 = bench.alloc_count();
@@ -172,7 +172,7 @@ function main(): i32 {
     n = n + lib.doubled(Some(i as i64));
     n = n + lib.doubled(None);
     n = n + time.duration_millis(2500).whole_seconds();
-    let t: Instant = lib.later(Instant { sec: 10, nsec: 900000000 }, time.duration_millis(250));
+    let t: time.Instant = lib.later(time.Instant { sec: 10, nsec: 900000000 }, time.duration_millis(250));
     n = n + t.sec + t.nsec as i64;
     n = n + lib.wait_on(lib.Real { k: 3 }, Some(time.duration_millis(40)));
     n = n + lib.wait_on(lib.Real { k: 3 }, None);

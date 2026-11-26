@@ -273,7 +273,7 @@ import "std/time";
 function main(): i32 {
   board.gic_init();
   let none: i32[] = [];
-  match (async.wait_any(none, Some(Instant { sec: 1i64, nsec: 0 }))) {
+  match (async.wait_any(none, Some(time.Instant { sec: 1i64, nsec: 0 }))) {
     TimedOut => {
       print("timed out");
     },

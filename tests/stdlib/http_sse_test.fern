@@ -5,7 +5,7 @@ import "std/time";
 import "std/array";
 import "std/option";
 
-function retry_ms(r: Option[Duration]): i64 {
+function retry_ms(r: Option[time.Duration]): i64 {
   match (r) {
     Some(d) => {
       return d.as_millis();

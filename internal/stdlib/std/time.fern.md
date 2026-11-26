@@ -28,7 +28,7 @@ import "std/time";
 function main(): i32 {
   let budget = time.duration_seconds(2).add(time.duration_millis(500));
   if (budget.as_millis() != 2500 || budget.mul(2).as_seconds() != 5) { return 1; }
-  let start = Instant { sec: 100, nsec: 0 };
+  let start = time.Instant { sec: 100, nsec: 0 };
   let deadline = start.add(budget);
   if (deadline.since(start).cmp(budget) != 0) { return 2; }
   return 0;
@@ -219,6 +219,9 @@ A negative duration therefore has a negative `sec` and a non-negative `nsec`.
 
 ```fern
 <<durations>>=
+// A signed span of time. `nsec` is 0 to 999,999,999.
+pub struct Duration { sec: i64, nsec: i32 }
+
 pub const DURATION_ZERO: Duration = Duration { sec: 0, nsec: 0 };
 
 pub const DURATION_MAX: Duration = Duration { sec: 9223372036854775807, nsec: 999999999 };
@@ -315,6 +318,43 @@ function __cmp_parts(a_sec: i64, a_nsec: i32, b_sec: i64, b_nsec: i32): i32 {
   return 0;
 }
 
+pub function (a: Duration) eq(b: Duration): boolean {
+  return a.sec == b.sec && a.nsec == b.nsec;
+}
+
+pub function (a: Duration) cmp(b: Duration): i32 {
+  return __cmp_parts(a.sec, a.nsec, b.sec, b.nsec);
+}
+
+// The largest units first, down to whole milliseconds, as in `1h30m` or `-250ms`.
+pub function (d: Duration) to_string(): string {
+  let ms = d.as_millis();
+  if (ms == 0) {
+    return "0s";
+  }
+  let out = "";
+  if (ms < 0) {
+    out = "-";
+    ms = -ms;
+  }
+  let units: i64[] = [3600000, 60000, 1000, 1];
+  let names: string[] = ["h", "m", "s", "ms"];
+  for i in 0..4 {
+    let n = ms / units[i];
+    ms %= units[i];
+    if (n > 0) {
+      out = out + n.to_string() + names[i];
+    }
+  }
+  return out;
+}
+
+impl cmp.Eq for Duration {}
+
+impl cmp.Ord for Duration {}
+
+impl cmp.Display for Duration {}
+
 pub function (d: Duration) is_zero(): boolean {
   return d.sec == 0 && d.nsec == 0;
 }
@@ -408,6 +448,21 @@ function __duration_bound(sign: i64): Duration {
 
 ```fern
 <<monotonic instants>>=
+// A reading of a monotonic clock. `nsec` is 0 to 999,999,999.
+pub struct Instant { sec: i64, nsec: i32 }
+
+pub function (a: Instant) eq(b: Instant): boolean {
+  return a.sec == b.sec && a.nsec == b.nsec;
+}
+
+pub function (a: Instant) cmp(b: Instant): i32 {
+  return __cmp_parts(a.sec, a.nsec, b.sec, b.nsec);
+}
+
+impl cmp.Eq for Instant {}
+
+impl cmp.Ord for Instant {}
+
 pub function (i: Instant) add(d: Duration): Instant {
   let r = Duration { sec: i.sec, nsec: i.nsec }.add(d);
   return Instant { sec: r.sec, nsec: r.nsec };

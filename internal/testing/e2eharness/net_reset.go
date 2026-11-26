@@ -36,7 +36,7 @@ function main(): i32 {
         Err(e) => { return fail(2); }
     }
     let addr: net.SocketAddr = net.socket_addr(net.ipv4_loopback(), port);
-    let wait: Duration = time.duration_seconds(5 as i64);
+    let wait: time.Duration = time.duration_seconds(5 as i64);
 
     let Some(c) = dial(addr) else {
         return fail(3);

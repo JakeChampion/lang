@@ -181,7 +181,7 @@ import "std/option";
 import "std/string";
 
 import "std/rand";
-function now(): Instant {
+function now(): time.Instant {
   return clock.instant();
 }
 
@@ -301,7 +301,7 @@ function main(): i32 {
   let a: Asked = Asked { reqs: reqs, ids: [], answers: ["", "", "", "", "", "", "", "", "", ""], got: 0, sent: false };
   let c: h3q.Conn = h3q.client(q, h3.config()).with_max_body(4194304 as i64);
   let buf: u8[] = __alloc_u8(65536);
-  let started: Instant = now();
+  let started: time.Instant = now();
   while (a.got < reqs.len() && !c.done() && clock.elapsed(started).cmp(time.duration_seconds(budget)) < 0) {
     let c2: h3q.Conn = c.transmit(now());
     let out: u8[][] = c2.datagrams();

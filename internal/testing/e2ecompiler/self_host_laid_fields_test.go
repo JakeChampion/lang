@@ -16,23 +16,23 @@ import (
 // Whole.d is used whole and so stays a box.
 const laidFieldsLib = `import "std/time";
 
-pub struct Wait { task: i32, set: i32[], timeout: Option[Duration] }
+pub struct Wait { task: i32, set: i32[], timeout: Option[time.Duration] }
 
-pub struct Sent { pn: i64, at: Instant, size: i32 }
+pub struct Sent { pn: i64, at: time.Instant, size: i32 }
 
-pub struct Two { a: Option[i64], b: Option[Duration], c: i32 }
+pub struct Two { a: Option[i64], b: Option[time.Duration], c: i32 }
 
-pub struct Whole { d: Duration, n: i32 }
+pub struct Whole { d: time.Duration, n: i32 }
 
-pub function from_nanos(ns: i64): Instant {
-  return Instant { sec: ns / 1000000000, nsec: (ns % 1000000000) as i32 };
+pub function from_nanos(ns: i64): time.Instant {
+  return time.Instant { sec: ns / 1000000000, nsec: (ns % 1000000000) as i32 };
 }
 
-pub function nanos_of(i: Instant): i64 {
+pub function nanos_of(i: time.Instant): i64 {
   return i.sec * 1000000000 + i.nsec as i64;
 }
 
-@noinline function timeout_of(ms: i32): Option[Duration] {
+@noinline function timeout_of(ms: i32): Option[time.Duration] {
   if (ms < 0) {
     return None;
   }
@@ -84,7 +84,7 @@ pub function nanos_of(i: Instant): i64 {
   return Two { ...t, c: t.c + 1 };
 }
 
-@noinline pub function keep(d: Duration): Duration[] {
+@noinline pub function keep(d: time.Duration): time.Duration[] {
   return [d];
 }
 `

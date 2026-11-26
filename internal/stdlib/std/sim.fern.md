@@ -47,11 +47,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 impl async.Driver for Sim>>
 
-<<8 pub function (s: Sim) advance_to(to: Instant): boolean>>
+<<8 pub function (s: Sim) advance_to(to: time.Instant): boolean>>
 
-<<9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32>>
+<<9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[time.Instant][]): i32>>
 
-<<10 pub function future_at[T](at: Instant, v: T): async.Future[T]>>
+<<10 pub function future_at[T](at: time.Instant, v: T): async.Future[T]>>
 
 <<11 impl worker.Scheduler for Sim>>
 ```
@@ -83,7 +83,7 @@ pub struct Sim { clock_ns: Cell[i64], rng: Cell[i64], watched: Cell[string], rea
 // A worker of the simulation: its task, the root of its thunk while it is
 // parked, its wait, and the root of its result once it is done. A worker
 // that is running has no root yet.
-pub struct WorkerSlot { id: i32, root: i64, set: i32[], until: Option[Instant], done: boolean }
+pub struct WorkerSlot { id: i32, root: i64, set: i32[], until: Option[time.Instant], done: boolean }
 ```
 
 ### `4 pub function new(seed: i64): Sim`
@@ -96,22 +96,22 @@ pub function new(seed: i64): Sim {
 }
 
 // The virtual instant `offset` after the simulation starts.
-pub function at(offset: Duration): Instant {
-  return Instant { sec: offset.sec, nsec: offset.nsec };
+pub function at(offset: time.Duration): time.Instant {
+  return time.Instant { sec: offset.sec, nsec: offset.nsec };
 }
 
 // The virtual time since the simulation started.
-pub function (s: Sim) elapsed(): Duration {
+pub function (s: Sim) elapsed(): time.Duration {
   return time.duration_nanos(s.clock_ns.get());
 }
 
-pub function (s: Sim) ready_at(fd: i32, at: Instant, bits: i32): i32 {
+pub function (s: Sim) ready_at(fd: i32, at: time.Instant, bits: i32): i32 {
   s.readiness.set(s.readiness.get() + fd.to_string() + ":" + __ms_of(at).to_string() + ":" + bits.to_string() + ";");
   return 0;
 }
 
 // Readiness tokens and table rows hold virtual times in whole milliseconds.
-function __ms_of(at: Instant): i32 {
+function __ms_of(at: time.Instant): i32 {
   return (time.instant_nanos(at) / 1000000) as i32;
 }
 ```
@@ -199,7 +199,7 @@ pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
 ```fern
 <<7 impl async.Driver for Sim>>=
 // The virtual instant the simulation is at.
-pub function (s: Sim) now(): Instant {
+pub function (s: Sim) now(): time.Instant {
   return time.instant_from_nanos(s.clock_ns.get());
 }
 
@@ -218,7 +218,7 @@ impl async.Driver for Sim {
     self.readiness.set(kept);
     return 0;
   }
-  function wait_into(self: Sim, own events: i32[], timeout: Option[Duration]): i32[] {
+  function wait_into(self: Sim, own events: i32[], timeout: Option[time.Duration]): i32[] {
     let timeout_ms = time.timeout_millis(timeout);
     let room = events.len() / 2;
     if (room <= 0) {
@@ -279,7 +279,7 @@ impl async.Driver for Sim {
 }
 ```
 
-### `8 pub function (s: Sim) advance_to(to: Instant): boolean`
+### `8 pub function (s: Sim) advance_to(to: time.Instant): boolean`
 
 Inside a task, the clock moves only when the scheduler resumes the task. So
 `advance_to` parks until `to`, and `run_tasks` moves the clock to the earliest
@@ -287,9 +287,9 @@ instant that some task waits for. A pair in a wait set never becomes ready
 under the simulation: a task waits only for a deadline or a cancellation.
 
 ```fern
-<<8 pub function (s: Sim) advance_to(to: Instant): boolean>>=
+<<8 pub function (s: Sim) advance_to(to: time.Instant): boolean>>=
 // False when the calling task is cancelled before `to`.
-pub function (s: Sim) advance_to(to: Instant): boolean {
+pub function (s: Sim) advance_to(to: time.Instant): boolean {
   if (async.in_task()) {
     let none: i32[] = [];
     if let async.Wake.Cancelled = async.wait_any(none, Some(to)) {
@@ -304,7 +304,7 @@ pub function (s: Sim) advance_to(to: Instant): boolean {
 }
 
 // Task `i` is cancelled at `cancel_at[i]` when that is present.
-pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at: Option[Instant][]): async.TaskStatus[T][] {
+pub function run_tasks[T](drv: Sim, entries: (() => T)[], cancel_at: Option[time.Instant][]): async.TaskStatus[T][] {
   let tasks: async.Task[T][] = [];
   let out: async.TaskStatus[T][] = [];
   for e in entries {
@@ -356,11 +356,11 @@ pub function block_on[T](drv: Sim, own f: async.Future[T]): Option[T] {
 }
 ```
 
-### `9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32`
+### `9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[time.Instant][]): i32`
 
 ```fern
-<<9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32>>=
-function __cancel_at(cancel_at: Option[Instant][], i: i32): Option[Instant] {
+<<9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[time.Instant][]): i32>>=
+function __cancel_at(cancel_at: Option[time.Instant][], i: i32): Option[time.Instant] {
   if (i < cancel_at.len()) {
     return cancel_at[i];
   }
@@ -369,7 +369,7 @@ function __cancel_at(cancel_at: Option[Instant][], i: i32): Option[Instant] {
 
 // The virtual nanosecond a wait is due at, never before the clock: -1 when
 // nothing is due.
-function __wait_due(w: async.Wait, now_ns: i64, cancel: Option[Instant]): i64 {
+function __wait_due(w: async.Wait, now_ns: i64, cancel: Option[time.Instant]): i64 {
   let due = -1;
   for at in [w.until, cancel] {
     if let Some(i) = at {
@@ -385,7 +385,7 @@ function __wait_due(w: async.Wait, now_ns: i64, cancel: Option[Instant]): i64 {
   return due;
 }
 
-function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32 {
+function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[time.Instant][]): i32 {
   let now_ns = drv.clock_ns.get();
   let best = -1;
   let ties: i32[] = [];
@@ -412,7 +412,7 @@ function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[I
 }
 
 // A cancellation due at the same instant as the deadline wins.
-function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cancel: Option[Instant]): async.TaskStatus[T] {
+function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cancel: Option[time.Instant]): async.TaskStatus[T] {
   let Suspended(w) = st else {
     return st;
   };
@@ -427,17 +427,17 @@ function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cance
 }
 ```
 
-### `10 pub function future_at[T](at: Instant, v: T): async.Future[T]`
+### `10 pub function future_at[T](at: time.Instant, v: T): async.Future[T]`
 
 ```fern
-<<10 pub function future_at[T](at: Instant, v: T): async.Future[T]>>=
-pub function future_at[T](at: Instant, v: T): async.Future[T] {
+<<10 pub function future_at[T](at: time.Instant, v: T): async.Future[T]>>=
+pub function future_at[T](at: time.Instant, v: T): async.Future[T] {
   let done = Ready(v);
   return __pend(at, done);
 }
 
 // Ready at `at`, after `resuspends` further waits `step` apart.
-pub function future_chain[T](at: Instant, step: Duration, resuspends: i32, v: T): async.Future[T] {
+pub function future_chain[T](at: time.Instant, step: time.Duration, resuspends: i32, v: T): async.Future[T] {
   let f = Ready(v);
   for back in 0..resuspends + 1 {
     f = __pend(at.add(step.mul(resuspends - back)), f);
@@ -445,7 +445,7 @@ pub function future_chain[T](at: Instant, step: Duration, resuspends: i32, v: T)
   return f;
 }
 
-function __pend[T](at: Instant, next: async.Future[T]): async.Future[T] {
+function __pend[T](at: time.Instant, next: async.Future[T]): async.Future[T] {
   let none: i32[] = [];
   return Pending(async.Wait { set: none, until: Some(at) }, (wake: async.Wake): async.Future[T] => next);
 }

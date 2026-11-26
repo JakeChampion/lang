@@ -22,6 +22,7 @@ import "./library_cache";
 import "./player_status";
 import "./travel";
 import "./myo_audio";
+import "std/time";
 
 enum Job {
   Load(string),

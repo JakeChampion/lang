@@ -68,7 +68,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<25 function __driven_read_failed(sh: Shared, at: i32, d: Driven, e: net.NetError): Option[i32]>>
 
-<<26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]>>
+<<26 pub function (sh: Shared) expired(now: time.Instant, idle: time.Duration): i32[]>>
 
 <<27 function __mail_answered(sh: Shared, fd: i32, events: h2.Event[], streams: i32): i32>>
 
@@ -359,7 +359,7 @@ impl http.ToResponse for FetchError {
   }
 }
 
-pub struct Timeouts { connect: Duration, inactivity: Duration, total: Duration }
+pub struct Timeouts { connect: time.Duration, inactivity: time.Duration, total: time.Duration }
 ```
 
 ### `8 pub function timeouts(): Timeouts`
@@ -721,22 +721,22 @@ function __asks_codings(req: Request): boolean {
 ```fern
 <<14 pub trait Transport>>=
 pub trait Transport {
-  function now(self: Self): Instant;
+  function now(self: Self): time.Instant;
   function wall(self: Self): time.Timestamp;
   function random_bytes(self: Self, n: i32): u8[];
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
-  function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError];
+  function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout: time.Duration): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: u8[]): i32;
-  function read(self: Self, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError];
+  function read(self: Self, conn: i32, max: i32, wait: time.Duration): Result[net.Recv, net.NetError];
   function close(self: Self, conn: i32): i32;
   function idle(self: Self): Idle;
   function socket(self: Self, conn: i32): Option[Socket];
   function datagram_open(self: Self, addrs: net.IpAddr[], port: i32): Result[i32, net.NetError];
   function datagram_send(self: Self, conn: i32, data: u8[]): i32;
-  function datagram_recv(self: Self, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError];
+  function datagram_recv(self: Self, conn: i32, max: i32, wait: time.Duration): Result[net.Recv, net.NetError];
 }
 
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[u8[]]], socks: Cell[Option[Socket][]], alternatives: Cell[Alternative[]], tickets: Cell[Resumable[]] }
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: time.Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[u8[]]], socks: Cell[Option[Socket][]], alternatives: Cell[Alternative[]], tickets: Cell[Resumable[]] }
 
 // Resumable is the last session ticket an HTTP/3 server at `place` issued.
 // A ticket is used once, so a resumed session cannot be linked to the one
@@ -746,7 +746,7 @@ pub struct Resumable { place: __Place, ticket: quic.Ticket }
 // Alternative is an origin's HTTP/3 endpoint: the UDP port an Alt-Svc field
 // or offer_h3 named. `until` None holds as long as the pool. `answered` is
 // the address whose server last finished a handshake.
-pub struct Alternative { host: string, port: i32, h3_port: i32, until: Option[Instant], answered: Option[net.IpAddr] }
+pub struct Alternative { host: string, port: i32, h3_port: i32, until: Option[time.Instant], answered: Option[net.IpAddr] }
 ```
 
 ### `15 pub function (p: Idle) proxy_env(): ProxyEnv`
@@ -770,7 +770,7 @@ pub function (p: Idle) proxy_env(): ProxyEnv {
 
 ```fern
 <<16 pub struct Kept>>=
-pub struct Kept { place: __Place, fd: i32, since: Instant, tls: Option[client.Session], h2: Option[h2.Conn], h3: Option[h3q.Parked], heard: HeaderMap }
+pub struct Kept { place: __Place, fd: i32, since: time.Instant, tls: Option[client.Session], h2: Option[h2.Conn], h3: Option[h3q.Parked], heard: HeaderMap }
 ```
 
 ### `17 pub function idle(): Idle`
@@ -781,7 +781,7 @@ pub function idle(): Idle {
   return idle_limited(64, time.duration_seconds(90 as i64));
 }
 
-pub function idle_limited(max: i32, idle: Duration): Idle {
+pub function idle_limited(max: i32, idle: time.Duration): Idle {
   let none: Kept[] = [];
   let no_socks: Option[Socket][] = [];
   let no_alts: Alternative[] = [];
@@ -932,7 +932,7 @@ pub function shared_of(pool: Idle): Shared {
 <<20 pub struct Shared>>=
 pub struct Shared { rows: Cell[Driven[]], mail: Cell[Mail[]], next: Cell[i32], dialing: Cell[string[]], socks: Cell[Option[Socket][]] }
 
-pub struct Driven { key: string, fd: i32, tls: client.Session, h2: h2.Conn, out: u8[], wire: u8[], streams: i32, since: Instant, watched: boolean, writing: boolean }
+pub struct Driven { key: string, fd: i32, tls: client.Session, h2: h2.Conn, out: u8[], wire: u8[], streams: i32, since: time.Instant, watched: boolean, writing: boolean }
 
 pub struct Mail { id: i32, fd: i32, stream: i32, key: string, answer: Option[Result[Answer, FetchError]] }
 
@@ -955,7 +955,7 @@ pub function (sh: Shared) owns(fd: i32): boolean {
   return __driven_at(sh.rows.get(), fd) >= 0;
 }
 
-pub function (sh: Shared) adopt(key: string, fd: i32, tls: client.Session, hc: h2.Conn, now: Instant): void {
+pub function (sh: Shared) adopt(key: string, fd: i32, tls: client.Session, hc: h2.Conn, now: time.Instant): void {
   sh.rows.set(sh.rows.get().append(Driven { key: key, fd: fd, tls: tls, h2: hc, out: [], wire: [], streams: 0, since: now, watched: false, writing: false }));
 }
 
@@ -1291,12 +1291,12 @@ function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]
 }
 ```
 
-### `26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]`
+### `26 pub function (sh: Shared) expired(now: time.Instant, idle: time.Duration): i32[]`
 
 ```fern
-<<26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]>>=
+<<26 pub function (sh: Shared) expired(now: time.Instant, idle: time.Duration): i32[]>>=
 // Drops and returns the idle connections quiet for longer than `idle`, and those the peer is closing.
-pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[] {
+pub function (sh: Shared) expired(now: time.Instant, idle: time.Duration): i32[] {
   let rows = sh.rows.get();
   let kept: Driven[] = [];
   let gone: i32[] = [];
@@ -1590,7 +1590,7 @@ pub function (p: Idle) offer_h3(host: string, port: i32, h3_port: i32): void {
 
 // note_alt_svc applies an Alt-Svc field value the origin at `host` and
 // `port` sent, read at `now`.
-pub function (p: Idle) note_alt_svc(host: string, port: i32, value: string, now: Instant): void {
+pub function (p: Idle) note_alt_svc(host: string, port: i32, value: string, now: time.Instant): void {
   let read = alt_svc(host, value);
   if (read.clear) {
     __forget_h3(p, host, port);
@@ -1603,7 +1603,7 @@ pub function (p: Idle) note_alt_svc(host: string, port: i32, value: string, now:
 
 // h3_offered is the UDP port the origin at `host` and `port` serves HTTP/3
 // on at `now`, or 0 when it offers none.
-pub function (p: Idle) h3_offered(host: string, port: i32, now: Instant): i32 {
+pub function (p: Idle) h3_offered(host: string, port: i32, now: time.Instant): i32 {
   for a in p.alternatives.get() {
     if (a.port == port && a.host == host) {
       if let Some(until) = a.until {
@@ -1618,7 +1618,7 @@ pub function (p: Idle) h3_offered(host: string, port: i32, now: Instant): i32 {
   return 0;
 }
 
-function __offer_h3(p: Idle, host: string, port: i32, h3_port: i32, until: Option[Instant]): void {
+function __offer_h3(p: Idle, host: string, port: i32, h3_port: i32, until: Option[time.Instant]): void {
   let answered: Option[net.IpAddr] = None;
   if let Some(a) = __alternative(p, host, port) {
     if (a.h3_port == h3_port) {
@@ -1664,7 +1664,7 @@ function __forget_h3(p: Idle, host: string, port: i32): void {
 // alternative's UDP port, 0 when the value names none this client can use.
 // `max_age` is how long the alternative holds. `clear` says the origin
 // withdraws every alternative it named before.
-pub struct AltSvc { h3_port: i32, max_age: Duration, clear: boolean }
+pub struct AltSvc { h3_port: i32, max_age: time.Duration, clear: boolean }
 
 // alt_svc reads an Alt-Svc field value (RFC 7838 section 3) sent by the
 // origin at `host`. The first `h3` alternative on the origin's own host
@@ -1685,7 +1685,7 @@ pub function alt_svc(host: string, value: string): AltSvc {
   return none;
 }
 
-const ALT_SVC_DAY: Duration = Duration { sec: 86400, nsec: 0 };
+const ALT_SVC_DAY: time.Duration = time.Duration { sec: 86400, nsec: 0 };
 
 // TICKETS_KEPT bounds the session tickets a pool keeps, one for each origin.
 const TICKETS_KEPT: i32 = 64;
@@ -1716,7 +1716,7 @@ function __alt_h3_port(host: string, alternative: string): i32 {
   return port;
 }
 
-function __alt_max_age(parts: string[]): Duration {
+function __alt_max_age(parts: string[]): time.Duration {
   for i in 1..parts.len() {
     let p = parts[i].trim();
     if (p.starts_with("ma=")) {
@@ -1804,7 +1804,7 @@ pub function sockets_with(pool: Idle): Sockets {
 ```fern
 <<33 impl Transport for Sockets>>=
 impl Transport for Sockets {
-  function now(self: Sockets): Instant {
+  function now(self: Sockets): time.Instant {
     return clock.instant();
   }
   function wall(self: Sockets): time.Timestamp {
@@ -1834,7 +1834,7 @@ impl Transport for Sockets {
     }
     return Ok(Lookup { dial: names.synthesized(plain), named: plain, judged: carried });
   }
-  function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError] {
+  function connect(self: Sockets, addrs: net.IpAddr[], port: i32, timeout: time.Duration): Result[i32, net.NetError] {
     match (dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: timeout })) {
       Ok(sock) => {
         return Ok(__keep_sock(self.pool.socks, sock));
@@ -1854,7 +1854,7 @@ impl Transport for Sockets {
     }
     return -9;
   }
-  function read(self: Sockets, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+  function read(self: Sockets, conn: i32, max: i32, wait: time.Duration): Result[net.Recv, net.NetError] {
     match (__sock_at(self.pool.socks, conn)) {
       Some(sock) => {
         return net.read_watched_until(sock, max, wait, self.pool.read_interest(conn), self.cancel);
@@ -1908,7 +1908,7 @@ impl Transport for Sockets {
     }
     return -1;
   }
-  function datagram_recv(self: Sockets, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+  function datagram_recv(self: Sockets, conn: i32, max: i32, wait: time.Duration): Result[net.Recv, net.NetError] {
     let Some(sock) = __sock_at(self.pool.socks, conn) else {
       return Err(net.Other(9));
     };
@@ -1934,7 +1934,7 @@ function __datagram_peer(sock: Socket, peer: net.SocketAddr): Result[void, net.N
 }
 
 // __datagram_watched is one datagram, or Elapsed once `wait` has passed.
-function __datagram_watched(sock: Socket, max: i32, wait: Duration, cancel: i32): Result[net.Recv, net.NetError] {
+function __datagram_watched(sock: Socket, max: i32, wait: time.Duration, cancel: i32): Result[net.Recv, net.NetError] {
   let until = monotonic_ns() + wait.as_nanos();
   let buf = __alloc_u8(max);
   let read = [sock.fd, async.counted(sock.fd, 1)];
@@ -2535,7 +2535,7 @@ function __shared_socket[T: Transport](tr: T, req: Request, t: __Target, started
   return Err(Protocol("unreachable"));
 }
 
-function __shared_adopted(sh: Shared, key: string, conn: __Conn, now: Instant): i32 {
+function __shared_adopted(sh: Shared, key: string, conn: __Conn, now: time.Instant): i32 {
   match (conn.h2) {
     Some(hc) => {
       match (conn.tls) {
@@ -2860,7 +2860,7 @@ function __take_h3[T: Transport](tr: T, at: __Place): __Conn {
   return __Conn { ...conn, h3: Some(h) };
 }
 
-function __h3_due(h: h3q.Conn, now: Instant): boolean {
+function __h3_due(h: h3q.Conn, now: time.Instant): boolean {
   let Some(at) = h.deadline() else {
     return false;
   };
@@ -3597,7 +3597,7 @@ function __tls_name(host: string): string {
   return __host_name(host);
 }
 
-function __connect_bound(timeouts: Timeouts): Duration {
+function __connect_bound(timeouts: Timeouts): time.Duration {
   if (timeouts.total.as_nanos() < timeouts.connect.as_nanos()) {
     return timeouts.total;
   }

@@ -362,20 +362,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		{
-			Name: "Instant",
-			Fields: []ast.Param{
-				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
-				{Name: "nsec", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name: "Duration",
-			Fields: []ast.Param{
-				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
-				{Name: "nsec", Type: ast.NumberType{}},
-			},
-		},
-		{
 			Name: "ProcessResult",
 			Fields: []ast.Param{
 				{Name: "stdout", Type: ast.StringType{}},

@@ -150,7 +150,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 | Method | What it gives |
 |---|---|
 | `log(msg)` | A line on the host's log (stderr natively) |
-| `now()` / `instant()` | Wall clock (a `time.Timestamp`) / monotonic clock (an `Instant`) |
+| `now()` / `instant()` | Wall clock (a `time.Timestamp`) / monotonic clock (a `time.Instant`) |
 | `config(name)` / `secret(name)` / `env(name)` | Configuration; `config` reads the environment natively and `wasi:config/store` under wasi-http |
 | `random_i32()` | A CSPRNG value |
 | `sleep(d)` | Wait; parks the handler under the server loop |

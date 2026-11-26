@@ -295,7 +295,7 @@ pub function socket(state: State, app: string, req: HttpRequest): Result[HttpRes
   }
 }
 
-function push_delay(room: Room, app: string): Option[Duration] {
+function push_delay(room: Room, app: string): Option[time.Duration] {
   if (app != "foundry") {
     return None;
   }

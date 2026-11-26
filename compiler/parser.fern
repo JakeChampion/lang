@@ -9184,8 +9184,6 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     hsf = hsf.append(bare_field("background", "Option[() => void]"));
     structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
-  structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
-  structs = add_builtin_struct2(structs, "Duration", "sec", "i64", "nsec", "i32");
   return structs;
 }
 
@@ -9205,16 +9203,6 @@ function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
     structs = structs.append(StructDecl { name: "ByteStream", fields: stf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
-}
-
-function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0: string, f1: string, t1: string): StructDecl[] {
-  if (struct_declared(structs, name)) {
-    return structs;
-  }
-  let fields: StructFieldDecl[] = [];
-  fields = fields.append(bare_field(f0, t0));
-  fields = fields.append(bare_field(f1, t1));
-  return structs.append(StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 pub struct MEnv { mnames: string[], mtypes: string[] }
@@ -13069,8 +13057,8 @@ pub function is_reserved_struct_name(name: string): boolean {
     return false;
   }
   let reserved: string[] = [
-    "BodySource", "ByteStream", "Cell", "ChunkProducer", "Dir", "DirEntry", "DirEntryBytes", "Duration", "FileStat",
-    "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
+    "BodySource", "ByteStream", "Cell", "ChunkProducer", "Dir", "DirEntry", "DirEntryBytes", "FileStat",
+    "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Map",
     "MountEntry", "Pipe", "ProcessResult",
     "Reader", "Socket", "WinSize", "Writer",
   ];

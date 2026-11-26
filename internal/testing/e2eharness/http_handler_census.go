@@ -75,18 +75,18 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	burst = strings.Replace(burst, answered, answered+"\n                        completed = completed + 1;", 1)
 	burst = strings.Replace(burst, burstReturn, "return (conns, flights, completed);", 1)
 	return src[:start] + body + burst + src[end:] + `
-function census_millis_timeout(ms: i32): Option[Duration] {
+function census_millis_timeout(ms: i32): Option[time.Duration] {
     if (ms < 0) { return None; }
     return Some(time.duration_millis(ms as i64));
 }
-function census_instant_nanos(i: Instant): i64 {
-    return i.since(Instant { sec: 0, nsec: 0 }).as_nanos();
+function census_instant_nanos(i: time.Instant): i64 {
+    return i.since(time.Instant { sec: 0, nsec: 0 }).as_nanos();
 }
-function census_instant_from_nanos(ns: i64): Instant {
-    return Instant { sec: 0, nsec: 0 }.add(time.duration_nanos(ns));
+function census_instant_from_nanos(ns: i64): time.Instant {
+    return time.Instant { sec: 0, nsec: 0 }.add(time.duration_nanos(ns));
 }
 function census_burn(n: i32, plat: platform.Platform): i32 {
-    let started: Instant = plat.instant();
+    let started: time.Instant = plat.instant();
     let x: i32 = 12345;
     while (plat.instant().since(started).as_nanos() < n as i64) {
         let i: i32 = 0;

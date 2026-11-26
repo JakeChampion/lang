@@ -216,7 +216,7 @@ The pieces:
 | `grpc.next_message(buffered)` | Splits one length-prefixed message off the front: `Ok(Some((message, rest)))`, `Ok(None)` when incomplete |
 | `grpc.response(messages, code, msg)` | A 200 with the framed messages and `grpc-status` / `grpc-message` trailers |
 | `grpc.error(code, msg)` | A trailers-only error response |
-| `grpc.timeout(req.headers)` | The client's `grpc-timeout` as a `Duration` |
+| `grpc.timeout(req.headers)` | The client's `grpc-timeout` as a `time.Duration` |
 | `grpc.frame(message)` | Frame one message, for streaming responses |
 | `protobuf.decode(bytes)` | Every field, by number and wire type |
 | `protobuf.varint` / `bytes` / `repeated` | Read a field by number |

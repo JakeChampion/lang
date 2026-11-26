@@ -209,7 +209,7 @@ What a script can say:
 | `sim_fetch.raw(text)` / `raw_bytes(bs)` | Exact bytes on the wire, malformed or not |
 | `sim_fetch.reset()` | The connection resets |
 | `sim_fetch.silent()` | The server accepts and never answers |
-| `.after(d)` | Wait a `Duration` before the first byte |
+| `.after(d)` | Wait a `time.Duration` before the first byte |
 | `.in_chunks(size, every)` | Dribble the response out, a chunk each `every` |
 | `.kept()` / `.held()` | Keep the connection open for reuse, or open but idle |
 | `.cut(n)` | Only the first `n` bytes arrive |

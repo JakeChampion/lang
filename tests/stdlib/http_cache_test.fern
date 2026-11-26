@@ -48,7 +48,7 @@ function eval(method: string, fields: string[]): string {
   return shown(cache.evaluate(req(method, fields), current(), now()));
 }
 
-function opt(n: Option[Duration]): string {
+function opt(n: Option[time.Duration]): string {
   match (n) {
     Some(v) => {
       return v.as_seconds().to_string();

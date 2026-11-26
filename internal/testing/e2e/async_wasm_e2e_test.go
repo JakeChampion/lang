@@ -9,7 +9,7 @@ import "std/time";
 
 function start_timer(ns: i64, label: i32): async.Future[i32] {
     let none: i32[] = [];
-    let at: Instant = clock.instant().add(time.duration_nanos(ns));
+    let at: time.Instant = clock.instant().add(time.duration_nanos(ns));
     return Pending(async.Wait { set: none, until: Some(at) }, (wake: async.Wake): async.Future[i32] => Ready(label));
 }
 
@@ -33,7 +33,7 @@ import "std/time";
 
 function start_timer(ns: i64, label: i32): async.Future[i32] {
     let none: i32[] = [];
-    let at: Instant = clock.instant().add(time.duration_nanos(ns));
+    let at: time.Instant = clock.instant().add(time.duration_nanos(ns));
     return Pending(async.Wait { set: none, until: Some(at) }, (wake: async.Wake): async.Future[i32] => Ready(label));
 }
 
@@ -56,7 +56,7 @@ import "std/time";
 
 function start_timer(ns: i64, label: i32): async.Future[i32] {
     let none: i32[] = [];
-    let at: Instant = clock.instant().add(time.duration_nanos(ns));
+    let at: time.Instant = clock.instant().add(time.duration_nanos(ns));
     return Pending(async.Wait { set: none, until: Some(at) }, (wake: async.Wake): async.Future[i32] => Ready(label));
 }
 
@@ -81,7 +81,7 @@ import "std/string";
 
 function start_timer(ns: i64, label: string): async.Future[string] {
     let none: i32[] = [];
-    let at: Instant = clock.instant().add(time.duration_nanos(ns));
+    let at: time.Instant = clock.instant().add(time.duration_nanos(ns));
     return Pending(async.Wait { set: none, until: Some(at) }, (wake: async.Wake): async.Future[string] => Ready(label));
 }
 

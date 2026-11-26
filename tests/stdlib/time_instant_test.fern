@@ -15,7 +15,7 @@ function test_now_is_monotonic(): test.TestOutcome {
 }
 
 function test_add_sub_since(): test.TestOutcome {
-  let start = Instant { sec: 100, nsec: 900000000 };
+  let start = time.Instant { sec: 100, nsec: 900000000 };
   let deadline = start.add(time.duration_millis(250));
   if (deadline.sec != 101 || deadline.nsec != 150000000) {
     return test.fail("add did not carry");
@@ -27,21 +27,21 @@ function test_add_sub_since(): test.TestOutcome {
 }
 
 function test_compare(): test.TestOutcome {
-  let a = Instant { sec: 5, nsec: 1 };
-  let b = Instant { sec: 5, nsec: 2 };
-  if (a.cmp(b) != -1 || b.cmp(a) != 1 || a.cmp(a) != 0 || !a.eq(Instant { sec: 5, nsec: 1 })) {
+  let a = time.Instant { sec: 5, nsec: 1 };
+  let b = time.Instant { sec: 5, nsec: 2 };
+  if (a.cmp(b) != -1 || b.cmp(a) != 1 || a.cmp(a) != 0 || !a.eq(time.Instant { sec: 5, nsec: 1 })) {
     return test.fail("cmp or eq");
   }
   return test.assert_true(cmp.max(a, b).eq(b) && cmp.min(a, b).eq(a));
 }
 
 function test_arithmetic_saturates(): test.TestOutcome {
-  let late = Instant { sec: I64_MAX, nsec: 0 };
+  let late = time.Instant { sec: I64_MAX, nsec: 0 };
   let sum = late.add(time.duration_seconds(1));
   if (sum.sec != I64_MAX || sum.nsec != 999999999) {
     return test.fail("add past the end");
   }
-  let early = Instant { sec: 0 - I64_MAX, nsec: 0 };
+  let early = time.Instant { sec: 0 - I64_MAX, nsec: 0 };
   return test.assert_true(late.since(early).eq(time.DURATION_MAX) && early.since(late).eq(time.DURATION_MIN));
 }
 

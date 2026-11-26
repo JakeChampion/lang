@@ -13,7 +13,7 @@ import "std/clock";
 import "std/i32";
 import "std/time";
 
-function after(ms: i32): Option[Instant] {
+function after(ms: i32): Option[time.Instant] {
   return Some(clock.instant().add(time.duration_millis(ms as i64)));
 }
 

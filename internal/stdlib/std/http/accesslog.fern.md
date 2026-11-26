@@ -57,9 +57,9 @@ pub function logged[P: platform.Platform](req: HttpRequest, plat: P, next: (Http
   return Ok(resp);
 }
 
-pub function record[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took: Duration): string {
+pub function record[P: platform.Platform](req: HttpRequest, resp: HttpResponse, plat: P, took: time.Duration): string {
   let now = plat.now();
-  let at = Duration { sec: now.sec, nsec: now.nsec }.as_nanos();
+  let at = time.Duration { sec: now.sec, nsec: now.nsec }.as_nanos();
   let out = "{\"timeUnixNano\":\"" + at.to_string() + "\"," + __severity(resp.status) + ",\"body\":" + __quoted(req.method + " " + req.path + " " + resp.status.to_string());
   match (plat.trace()) {
     Some(span) => {

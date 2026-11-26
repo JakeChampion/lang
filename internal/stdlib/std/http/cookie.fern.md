@@ -117,10 +117,10 @@ import "std/option";
 <<3 pub enum SameSite>>=
 pub enum SameSite { Unset, Strict, Lax, CrossSite }
 
-pub struct SetCookie { name: string, value: string, path: string, domain: string, max_age: Option[Duration], expires: Option[time.Timestamp], secure: boolean, http_only: boolean, same_site: SameSite, partitioned: boolean }
+pub struct SetCookie { name: string, value: string, path: string, domain: string, max_age: Option[time.Duration], expires: Option[time.Timestamp], secure: boolean, http_only: boolean, same_site: SameSite, partitioned: boolean }
 
 // 400 days, the longest lifetime a browser keeps.
-pub const MAX_AGE_CAP: Duration = Duration { sec: 34560000, nsec: 0 };
+pub const MAX_AGE_CAP: time.Duration = time.Duration { sec: 34560000, nsec: 0 };
 
 pub const PAIR_CAP: i32 = 4096;
 
@@ -149,7 +149,7 @@ pub enum CookieError {
   BadValueByte(string),
   BadAttribute(string),
   TooLong(i32),
-  Lifetime(Duration),
+  Lifetime(time.Duration),
   Prefix(string),
 }
 ```

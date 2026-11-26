@@ -125,7 +125,7 @@ function test_derived_mocks_share_one_call_log(): test.TestOutcome {
 }
 
 function test_configuration_is_not_a_call_and_survives_reset(): test.TestOutcome {
-  let m = mock_platform.new().with_env("REGION", "eu-west").with_instant(Instant { sec: 0, nsec: 5 });
+  let m = mock_platform.new().with_env("REGION", "eu-west").with_instant(time.Instant { sec: 0, nsec: 5 });
   m.env("REGION");
   if (m.call_count() != 1) {
     return test.fail("calls: " + m.call_count().to_string());
@@ -137,7 +137,7 @@ function test_configuration_is_not_a_call_and_survives_reset(): test.TestOutcome
   if (m.call_count() != 0) {
     return test.fail("calls after reset: " + m.call_count().to_string());
   }
-  if (!m.instant().eq(Instant { sec: 0, nsec: 5 })) {
+  if (!m.instant().eq(time.Instant { sec: 0, nsec: 5 })) {
     return test.fail("the canned clock did not survive reset");
   }
   return test.pass();
@@ -304,7 +304,7 @@ function test_the_trace_answers_what_was_canned(): test.TestOutcome {
 function test_the_deadline_and_cancellation_answer_what_was_canned(): test.TestOutcome {
   let bare = mock_platform.new();
   let before = __bound(bare);
-  let bounded = bare.with_deadline(Instant { sec: 5, nsec: 0 }).with_cancelled(true);
+  let bounded = bare.with_deadline(time.Instant { sec: 5, nsec: 0 }).with_cancelled(true);
   let after = __bound(bounded);
   if (bare.call_count() != 4) {
     return test.fail("calls: " + bare.call_count().to_string());

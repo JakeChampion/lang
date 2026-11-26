@@ -83,7 +83,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 pub function contains[T: Eq](xs: T[], target: T): boolean>>
 
-<<time impls>>
 ```
 ### `module introduction`
 
@@ -1611,81 +1610,5 @@ pub function distinct[T: Eq](xs: T[]): T[] {
     }
   }
   return out;
-}
-```
-### `time impls`
-
-```fern
-<<time impls>>=
-impl Display for Duration {
-  function to_string(self: Duration): string {
-    let ms = __duration_millis(self);
-    if (ms == 0) {
-      return "0s";
-    }
-    let out = "";
-    if (ms < 0) {
-      out = "-";
-      ms = 0 - ms;
-    }
-    let units: i64[] = [3600000, 60000, 1000, 1];
-    let names: string[] = ["h", "m", "s", "ms"];
-    for i in 0..4 {
-      let n = ms / units[i];
-      ms %= units[i];
-      if (n > 0) {
-        out = out + n.to_string() + names[i];
-      }
-    }
-    return out;
-  }
-}
-
-// The duration in whole milliseconds, truncated toward zero.
-function __duration_millis(d: Duration): i64 {
-  if (d.sec < 0 && d.nsec > 0) {
-    return (d.sec + 1) *| 1000 -| ((1000000000 - d.nsec) / 1000000) as i64;
-  }
-  return d.sec *| 1000 +| (d.nsec / 1000000) as i64;
-}
-
-function __cmp_sec_nsec(a_sec: i64, a_nsec: i32, b_sec: i64, b_nsec: i32): i32 {
-  if (a_sec != b_sec) {
-    if (a_sec < b_sec) {
-      return -1;
-    }
-    return 1;
-  }
-  if (a_nsec != b_nsec) {
-    if (a_nsec < b_nsec) {
-      return -1;
-    }
-    return 1;
-  }
-  return 0;
-}
-
-impl Eq for Duration {
-  function eq(self: Duration, other: Duration): boolean {
-    return self.sec == other.sec && self.nsec == other.nsec;
-  }
-}
-
-impl Ord for Duration {
-  function cmp(self: Duration, other: Duration): i32 {
-    return __cmp_sec_nsec(self.sec, self.nsec, other.sec, other.nsec);
-  }
-}
-
-impl Eq for Instant {
-  function eq(self: Instant, other: Instant): boolean {
-    return self.sec == other.sec && self.nsec == other.nsec;
-  }
-}
-
-impl Ord for Instant {
-  function cmp(self: Instant, other: Instant): i32 {
-    return __cmp_sec_nsec(self.sec, self.nsec, other.sec, other.nsec);
-  }
 }
 ```

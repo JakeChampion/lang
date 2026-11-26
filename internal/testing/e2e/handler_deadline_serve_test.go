@@ -61,7 +61,7 @@ import "std/time";
 function bound(plat: platform.Host): string {
   match (plat.deadline()) {
     Some(at) => {
-      let left: Duration = at.since(plat.instant());
+      let left: time.Duration = at.since(plat.instant());
       if (!left.is_negative() && !left.is_zero() && left.cmp(time.duration_millis(1500)) <= 0) {
         return "bounded";
       }

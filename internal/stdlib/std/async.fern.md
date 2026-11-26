@@ -98,7 +98,7 @@ pub enum Future[T] {
 // nothing. `until` is an instant on the clock of whatever waits for the set.
 // An interest from `counted` also holds the close count of its descriptor
 // number.
-pub struct Wait { set: i32[], until: Option[Instant] }
+pub struct Wait { set: i32[], until: Option[time.Instant] }
 
 // `Woke` holds the index of the pair that became ready.
 pub enum Wake { Woke(i32), TimedOut, Cancelled }
@@ -112,8 +112,8 @@ pub trait Driver {
   function keeps(self: Self): boolean {
     return false;
   }
-  function wait_into(self: Self, own events: i32[], timeout: Option[Duration]): i32[];
-  function wait(self: Self, max: i32, timeout: Option[Duration]): i32[] {
+  function wait_into(self: Self, own events: i32[], timeout: Option[time.Duration]): i32[];
+  function wait(self: Self, max: i32, timeout: Option[time.Duration]): i32[] {
     let got = self.wait_into(event_room(max), timeout);
     return got.take(ready_pairs(got) * 2);
   }
@@ -426,7 +426,7 @@ impl Driver for RealDriver {
     }
     return __real_ctl(self, 2, fd, 0);
   }
-  function wait_into(self: RealDriver, own events: i32[], timeout: Option[Duration]): i32[] {
+  function wait_into(self: RealDriver, own events: i32[], timeout: Option[time.Duration]): i32[] {
     if (self.ring.get() < 0 as i64 && __real_reactor(self) < 0 || events.len() < 2) {
       return end_pairs(events, 0);
     }
@@ -600,18 +600,18 @@ function __race_woken[T](own fl: __Flat[T], wake: Wake): Future[(i32, T)] {
 // Ready with `Some(value)` for each of `fs` that is ready by `until`, and None
 // for each that is cancelled or still pending then. The pending ones are
 // cancelled at `until`. A deadline equal to an input's own deadline wins.
-pub function with_deadline[T](until: Instant, own fs: Future[T][]): Future[Option[T][]] {
+pub function with_deadline[T](until: time.Instant, own fs: Future[T][]): Future[Option[T][]] {
   return __deadline(until, __flat(__tree(fs, 0, fs.len())));
 }
 
-function __deadline[T](until: Instant, own fl: __Flat[T]): Future[Option[T][]] {
+function __deadline[T](until: time.Instant, own fl: __Flat[T]): Future[Option[T][]] {
   if (__sum(fl.tree).pending == 0) {
     return Ready(__slots(fl.tree));
   }
   return Pending(__union(fl, Some(until)), once (wake: Wake): Future[Option[T][]] => __deadline_woken(until, fl, wake));
 }
 
-function __deadline_woken[T](until: Instant, own fl: __Flat[T], wake: Wake): Future[Option[T][]] {
+function __deadline_woken[T](until: time.Instant, own fl: __Flat[T], wake: Wake): Future[Option[T][]] {
   if let Wake.Cancelled = wake {
     let dropped = __cancel_flat(fl);
     return Future.Cancelled;
@@ -641,7 +641,7 @@ enum __Tree[T] {
 
 // `span` counts the pair slots of each input. `until` counts the pending
 // inputs only.
-struct __Sum { count: i32, span: i32, pending: i32, ready: i32, until: Option[Instant] }
+struct __Sum { count: i32, span: i32, pending: i32, ready: i32, until: Option[time.Instant] }
 
 // The inputs and their wait set. The pairs of each input have fixed slots, in
 // input order, and a wake writes only the slots of the input that it reaches.
@@ -795,7 +795,7 @@ function __cancel_all[T](own t: __Tree[T]): i32 {
   return 0;
 }
 
-function __sooner(a: Option[Instant], b: Option[Instant]): Option[Instant] {
+function __sooner(a: Option[time.Instant], b: Option[time.Instant]): Option[time.Instant] {
   let Some(x) = a else {
     return b;
   };
@@ -808,14 +808,14 @@ function __sooner(a: Option[Instant], b: Option[Instant]): Option[Instant] {
   return a;
 }
 
-function __is_due(at: Option[Instant], due: Instant): boolean {
+function __is_due(at: Option[time.Instant], due: time.Instant): boolean {
   if let Some(x) = at {
     return x.cmp(due) == 0;
   }
   return false;
 }
 
-function __union[T](fl: __Flat[T], until: Option[Instant]): Wait {
+function __union[T](fl: __Flat[T], until: Option[time.Instant]): Wait {
   return Wait { set: fl.set, until: __sooner(until, __sum(fl.tree).until) };
 }
 
@@ -934,7 +934,7 @@ function __woke_leaf[T](span: i32, own f: Future[T], at: i32, base: i32, own set
 }
 
 // Each input whose deadline is `due`, the soonest one, gets the timeout.
-function __timed[T](own t: __Tree[T], due: Instant, base: i32, own set: i32[]): __Stepped[T] {
+function __timed[T](own t: __Tree[T], due: time.Instant, base: i32, own set: i32[]): __Stepped[T] {
   match (t) {
     Fork(s, l, r) => {
       if (!__is_due(s.until, due)) {
@@ -954,7 +954,7 @@ function __timed[T](own t: __Tree[T], due: Instant, base: i32, own set: i32[]): 
   }
 }
 
-function __timed_leaf[T](span: i32, own f: Future[T], due: Instant, base: i32, own set: i32[]): __Stepped[T] {
+function __timed_leaf[T](span: i32, own f: Future[T], due: time.Instant, base: i32, own set: i32[]): __Stepped[T] {
   match (f) {
     Pending(w, k) => {
       if (__is_due(w.until, due)) {
@@ -1253,7 +1253,7 @@ function __parked(id: i32): Wait {
     if (__task_timeout(id) < 0 || n < 2) {
       return Wait { set: set, until: None };
     }
-    return Wait { set: set.take(n - 2), until: Some(Instant { sec: set[n - 2] as i64, nsec: set[n - 1] }) };
+    return Wait { set: set.take(n - 2), until: Some(time.Instant { sec: set[n - 2] as i64, nsec: set[n - 1] }) };
   }
 }
 ```
@@ -1422,7 +1422,7 @@ pub function block_on[T](own f: Future[T]): Option[T] {
 // and its scheduler's clock decides `until`. Outside one the machine's
 // monotonic clock does, and nothing answers Cancelled. On a kernel target the
 // pairs name IRQ lines, and the machine's wait is the idle loop of chunk 32.
-pub function wait_any(set: i32[], until: Option[Instant]): Wake {
+pub function wait_any(set: i32[], until: Option[time.Instant]): Wake {
   if (has_hole(set)) {
     let c = compact(set);
     return __uncompacted(c.at, wait_any(c.set, until));
@@ -1454,7 +1454,7 @@ function __uncompacted(at: i32[], wake: Wake): Wake {
   return TimedOut;
 }
 
-function __host_wait_any(set: i32[], until: Option[Instant]): Wake {
+function __host_wait_any(set: i32[], until: Option[time.Instant]): Wake {
   let left = __host_left_ns(until);
   let woke = __block(set, __host_timeout_ms(until, left));
   // A wait has 2^31-1 ms at most. A deadline past that waits again.
@@ -1469,7 +1469,7 @@ function __host_wait_any(set: i32[], until: Option[Instant]): Wake {
 }
 
 // The nanoseconds from now to the deadline, or 0 for no deadline.
-function __host_left_ns(until: Option[Instant]): i64 {
+function __host_left_ns(until: Option[time.Instant]): i64 {
   if let Some(at) = until {
     return time.instant_nanos(at) - monotonic_ns();
   }
@@ -1477,14 +1477,14 @@ function __host_left_ns(until: Option[Instant]): i64 {
 }
 
 // The timeout of one wait: -1 waits with no limit.
-function __host_timeout_ms(until: Option[Instant], left: i64): i32 {
+function __host_timeout_ms(until: Option[time.Instant], left: i64): i32 {
   if let Some(_) = until {
     return __ms_until(left);
   }
   return -1;
 }
 
-function __park(set: i32[], until: Option[Instant]): Wake {
+function __park(set: i32[], until: Option[time.Instant]): Wake {
   if (has_hole(set)) {
     let c = compact(set);
     return __uncompacted(c.at, __park(c.set, until));
@@ -1731,7 +1731,7 @@ function __irq_woken(id: i32, wake: Wake): Future[i32] {
 
 // Woke(i) for the first pair of `set` whose line has fired, with its bit
 // cleared. With no pair the wait ends at once, as the hosted wait does.
-function __irq_wait_any(set: i32[], until: Option[Instant]): Wake {
+function __irq_wait_any(set: i32[], until: Option[time.Instant]): Wake {
   if let Some(at) = until {
     eprint("std/async: a kernel has no clock, so a wait cannot have a deadline\n");
     exit(134);

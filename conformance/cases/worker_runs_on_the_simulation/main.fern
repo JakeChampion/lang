@@ -11,7 +11,7 @@ import "std/time";
 import "std/worker";
 
 function waiter(s: sim.Sim, ms: i64, tag: string): worker.Worker[string] {
-    let at: Instant = sim.at(time.duration_millis(ms));
+    let at: time.Instant = sim.at(time.duration_millis(ms));
     return worker.spawn_on(s, (): string => {
         let none: i32[] = [];
         let woke: async.Wake = async.wait_any(none, Some(at));

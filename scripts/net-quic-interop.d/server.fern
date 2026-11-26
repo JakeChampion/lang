@@ -18,12 +18,12 @@ struct Server {
   connected: boolean,
 }
 
-function now(): Instant {
+function now(): time.Instant {
   return clock.instant();
 }
 
 // Whether a connection's next deadline has come.
-function passed(deadline: Option[Instant]): boolean {
+function passed(deadline: Option[time.Instant]): boolean {
   let Some(at) = deadline else {
     return false;
   };
@@ -31,7 +31,7 @@ function passed(deadline: Option[Instant]): boolean {
 }
 
 // When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
-function wait_until(deadline: Option[Instant]): Option[Instant] {
+function wait_until(deadline: Option[time.Instant]): Option[time.Instant] {
   let most = time.duration_millis(100);
   let Some(at) = deadline else {
     return Some(now().add(most));
@@ -87,7 +87,7 @@ function copied(buf: u8[], n: i32): u8[] {
   return out;
 }
 
-function wait_for(s: Server): Option[Instant] {
+function wait_for(s: Server): Option[time.Instant] {
   let Some(c) = s.current else {
     return Some(now().add(time.duration_millis(100)));
   };

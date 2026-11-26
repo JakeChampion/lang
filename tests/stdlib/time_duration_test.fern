@@ -6,7 +6,7 @@ const I64_MAX: i64 = 9223372036854775807;
 
 const I64_MIN: i64 = 0 - 9223372036854775807 - 1;
 
-function parts(d: Duration, sec: i64, nsec: i32): boolean {
+function parts(d: time.Duration, sec: i64, nsec: i32): boolean {
   return d.sec == sec && d.nsec == nsec;
 }
 

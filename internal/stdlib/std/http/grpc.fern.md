@@ -36,7 +36,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function is_grpc(req: HttpRequest): boolean>>
 
-<<5 function __unit(unit: i32, n: i64): Option[Duration]>>
+<<5 function __unit(unit: i32, n: i64): Option[time.Duration]>>
 
 <<6 pub function frame(message: u8[]): u8[]>>
 
@@ -124,7 +124,7 @@ pub function is_grpc(req: HttpRequest): boolean {
   return false;
 }
 
-pub function timeout(h: HeaderMap): Option[Duration] {
+pub function timeout(h: HeaderMap): Option[time.Duration] {
   match (h.get("grpc-timeout")) {
     Some(v) => {
       let b = v.bytes();
@@ -151,11 +151,11 @@ pub function timeout(h: HeaderMap): Option[Duration] {
 }
 ```
 
-### `5 function __unit(unit: i32, n: i64): Option[Duration]`
+### `5 function __unit(unit: i32, n: i64): Option[time.Duration]`
 
 ```fern
-<<5 function __unit(unit: i32, n: i64): Option[Duration]>>=
-function __unit(unit: i32, n: i64): Option[Duration] {
+<<5 function __unit(unit: i32, n: i64): Option[time.Duration]>>=
+function __unit(unit: i32, n: i64): Option[time.Duration] {
   if (unit == 72) {
     return Some(time.duration_nanos(n * (3600000000000 as i64)));
   }

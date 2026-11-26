@@ -139,7 +139,7 @@ whose last parameter is the handler it wraps**, and it answers the same
 
 ```fern
 function timed(req: HttpRequest, plat: platform.Host, next: (HttpRequest) => Result[HttpResponse, dyn http.ToResponse]): Result[HttpResponse, dyn http.ToResponse] {
-    let started: Instant = plat.instant();
+    let started: time.Instant = plat.instant();
     let resp: HttpResponse = http.respond(next(req));
     plat.log(req.path + " took " + plat.instant().since(started).to_string());
     return Ok(resp);

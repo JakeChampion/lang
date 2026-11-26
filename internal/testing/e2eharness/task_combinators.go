@@ -59,7 +59,7 @@ function body(): i32 {
       print("gather none");
     }
   }
-  let until: Instant = clock.instant().add(time.duration_millis(100));
+  let until: time.Instant = clock.instant().add(time.duration_millis(100));
   match (async.wait(async.with_deadline(until, [napping("x", 20, 7), napping("y", 500, 8)]))) {
     Some(d) => {
       print("deadline " + show_opt(d[0]) + " " + show_opt(d[1]));

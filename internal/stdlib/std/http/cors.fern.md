@@ -69,7 +69,7 @@ import "std/time";
 
 ```fern
 <<3 pub struct Policy>>=
-pub struct Policy { origins: string[], methods: string[], headers: string[], exposed: string[], credentials: boolean, max_age: Option[Duration] }
+pub struct Policy { origins: string[], methods: string[], headers: string[], exposed: string[], credentials: boolean, max_age: Option[time.Duration] }
 ```
 
 ### `4 pub function policy(origins: string[]): Policy`
@@ -101,7 +101,7 @@ pub function (p: Policy) with_credentials(): Policy {
 }
 
 // How long a browser may cache the preflight answer; it is sent in whole seconds.
-pub function (p: Policy) with_max_age(d: Duration): Policy {
+pub function (p: Policy) with_max_age(d: time.Duration): Policy {
   return Policy { ...p, max_age: Some(d) };
 }
 
