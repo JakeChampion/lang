@@ -317,6 +317,10 @@ in place of a loop that does the same work. Use `|>` to chain the calls.
 let doubled = xs |> array.map((v: i32) => v * 2);
 ```
 
+`|>` also reaches a method. When a module has a method `f` and no other
+member `f`, the call `m.f(x, …)` is the method call `x.f(…)`. Thus
+`xs |> array.sum()` and `xs.sum()` are the same call.
+
 Write the loop when the body does more than one thing. Also write it when a
 measurement shows that the loop is faster. A combinator that is slower than its loop is a
 compiler bug. Report it.

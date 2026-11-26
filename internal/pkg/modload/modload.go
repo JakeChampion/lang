@@ -1459,6 +1459,49 @@ func (r *rewriter) checkPublicFunc(mod *module, fn string, pos ast.Position) {
 	r.refuse(pos, "%s.%s is not exported (declare it as `pub function %s …` to make it accessible from other modules)", mod.name, fn, fn)
 }
 
+// isMethodPath reports whether a call `m.name(a, …)` is the method call
+// `a.name(…)`: m has a public method name and no other member name. Then
+// `xs |> m.name()` reaches a method.
+func (m *module) isMethodPath(name string) bool {
+	if !m.publicMethods[name] || m.allConsts[name] {
+		return false
+	}
+	for _, fn := range m.prog.Funcs {
+		if fn.Receiver == nil && fn.DeclName == name {
+			return false
+		}
+	}
+	for _, sd := range m.prog.Structs {
+		if sd.Name == name {
+			return false
+		}
+	}
+	for _, ed := range m.prog.Enums {
+		if ed.Name == name {
+			return false
+		}
+	}
+	for _, ud := range m.prog.Unions {
+		if ud.Name == name {
+			return false
+		}
+	}
+	_, rx := m.reexports[name]
+	_, rt := m.reexportTypes[name]
+	return !rx && !rt
+}
+
+// rewriteMethodPath makes the call `m.f(a, …)` the method call `a.f(…)`.
+func rewriteMethodPath(x *ast.Call, fa *ast.FieldAccess) {
+	x.Callee = &ast.FieldAccess{P: fa.P, Target: x.Args[0], Field: fa.Field, FieldPos: fa.FieldPos}
+	x.Args = x.Args[1:]
+	if len(x.ArgNames) > 0 {
+		x.ArgNames = x.ArgNames[1:]
+	}
+	x.IsPipe = false
+	x.PipeHole = 0
+}
+
 func (m *module) hasPlainFunction(name string) bool {
 	for _, fn := range m.prog.Funcs {
 		if fn.Receiver == nil && fn.AssocType == "" && fn.DeclName == name {
@@ -1699,6 +1742,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 						for i := range x.Args {
 							r.rewriteExpr(&x.Args[i])
 						}
+						return
+					}
+					if len(x.Args) > 0 && (len(x.ArgNames) == 0 || x.ArgNames[0] == "") && mod.isMethodPath(fa.Field) {
+						rewriteMethodPath(x, fa)
+						r.rewriteExpr(slot)
 						return
 					}
 					r.checkPublicFunc(mod, fa.Field, fa.P)
