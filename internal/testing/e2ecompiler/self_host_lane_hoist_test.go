@@ -11,7 +11,8 @@ import (
 // halves narrows two values with one constant limit for each. rows narrows
 // the 16 bytes at each step of a loop with a constant and an argument that do
 // not change in the loop. The outer loop of calling makes a call, and its
-// inner loop adds a splat.
+// inner loop adds a splat. The loop of once makes a call and reads each of
+// its splats one time.
 const laneHoistProg = `@noinline function halves(a: u16x8, b: u16x8): u8x16 {
   return __u16x8_narrow(a, b);
 }
@@ -46,6 +47,21 @@ const laneHoistProg = `@noinline function halves(a: u16x8, b: u16x8): u8x16 {
   return t;
 }
 
+@noinline function once(p: usize, n: i32): i32 {
+  let t = 0;
+  unsafe {
+    for i in 0..n {
+      let at = p + (i * 16) as usize;
+      let v = __u8x16_load_ptr(at);
+      if (__u8x16_bitmask(__u8x16_eq(v, __u8x16_splat(0 as u8))) != 0) {
+        t = tick(t);
+      }
+      __u8x16_store(at, v + __u8x16_splat(1 as u8));
+    }
+  }
+  return t;
+}
+
 function main(): i32 {
   let h = halves(__u16x8_splat(300), __u16x8_splat(7));
   if (__u8x16_lane(h, 0) != 255 as u8 || __u8x16_lane(h, 15) != 7 as u8) {
@@ -68,6 +84,10 @@ function main(): i32 {
     }
     if (calling(p, 3, 4) != 3 || __load_u8(p) != 3 || __load_u8(p + 63 as usize) != 239) {
       return 70;
+    }
+    __store_u8(p, 0);
+    if (once(p, 4) != 1 || __load_u8(p) != 1 || __load_u8(p + 63 as usize) != 240) {
+      return 71;
     }
     __free(p, 64);
   }
@@ -93,7 +113,8 @@ func loopBodies(body string) []string {
 // Two lane operations that are the same merge into one, and a lane value
 // that does not change in a loop is made one time in front of it, also when
 // it is made of constants only. A lane value read in an inner loop does not
-// move out of an outer loop that makes a call.
+// move out of an outer loop that makes a call, and one that the loop reads
+// one time does.
 func TestSelfHostLaneOperationsMergeAndHoist(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -131,6 +152,28 @@ func TestSelfHostLaneOperationsMergeAndHoist(t *testing.T) {
 		}
 		if strings.Contains(inner, tc.splat) || !strings.Contains(outer, tc.splat) {
 			t.Errorf("%s: calling makes its splat in the wrong loop:\n%s", tc.target, outer)
+		}
+	}
+	// Out of a loop with a call, a lane value is in a frame slot, and the loop
+	// loads it at each read. The loop of once reads each splat one time, so
+	// they move. A u8 splat is pshufb by a zero register on x86-64 and a dup
+	// of a general register on arm64. The arm64 bitmask makes its own dup.
+	for _, tc := range []struct {
+		target string
+		splat  *regexp.Regexp
+	}{{"x86-64-linux", regexp.MustCompile(`pshufb %xmm2, %xmm\d+`)}, {"arm64-linux", regexp.MustCompile(`dup v\d+\.16b, w\d+`)}} {
+		asm, err := os.ReadFile(cli.emit(t, src, tc.target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		loops := loopBodies(tailCallBody(t, string(asm), "once"))
+		if len(loops) == 0 {
+			t.Fatalf("%s: no loop in once:\n%s", tc.target, tailCallBody(t, string(asm), "once"))
+		}
+		for _, l := range loops {
+			if tc.splat.MatchString(l) {
+				t.Errorf("%s: the loop of once makes a splat:\n%s", tc.target, l)
+			}
 		}
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
