@@ -382,7 +382,7 @@ function __der_int(sig: [u8], at: i32, max: i32): Option[(bigint.BigInt, i32)] {
   return Some((__from_be(sig, at + 2, len), at + 2 + len));
 }
 
-function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: bigint.BigInt, s: bigint.BigInt): boolean {
+function __verify_rs(c: Params, key: PublicKey, table: Option[u64[]], hash: sha2.Hash, msg: [u8], r: bigint.BigInt, s: bigint.BigInt): boolean {
   let n = c.n;
   if (r.is_zero() || s.is_zero() || r.cmp(n) >= 0 || s.cmp(n) >= 0) {
     return false;
@@ -394,7 +394,14 @@ function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: b
   }
   match (key.curve) {
     P256 => {
-      return p256.verify_rs(__point_of(key), d[0:take], __be(r, 32), __be(s, 32));
+      match (table) {
+        Some(t) => {
+          return p256.verify_rs_table(t, d[0:take], __be(r, 32), __be(s, 32));
+        },
+        None => {
+          return p256.verify_rs(__point_of(key), d[0:take], __be(r, 32), __be(s, 32));
+        }
+      }
     },
     _ => {}
   }
@@ -423,6 +430,30 @@ function __verify_rs(c: Params, key: PublicKey, hash: sha2.Hash, msg: [u8], r: b
 ```fern
 <<12 pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean>>=
 pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
+  return __verify(key, None, hash, msg, sig);
+}
+
+// A public key with the multiples of its point that `p256.public_table`
+// makes. Its `verify` gives the result of `PublicKey.verify` in less time.
+// Only a P-256 key has a table.
+@value
+pub struct VerifyingKey { public: PublicKey, table: u64[] }
+
+pub function (key: PublicKey) verifying_key(): VerifyingKey {
+  match (key.curve) {
+    P256 => {
+      return VerifyingKey { public: key, table: p256.public_table(__point_of(key)) };
+    },
+    _ => {}
+  }
+  return VerifyingKey { public: key, table: [] };
+}
+
+pub function (key: VerifyingKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
+  return __verify(key.public, Some(key.table), hash, msg, sig);
+}
+
+function __verify(key: PublicKey, table: Option[u64[]], hash: sha2.Hash, msg: [u8], sig: [u8]): boolean {
   if (sig.len() < 8 || sig.len() > 129 || sig[0] != 48 as u8 || sig[1] as i32 != sig.len() - 2) {
     return false;
   }
@@ -431,7 +462,7 @@ pub function (key: PublicKey) verify(hash: sha2.Hash, msg: [u8], sig: [u8]): boo
     Some(r) => {
       match (__der_int(sig, r.1, c.bytes + 1)) {
         Some(s) => {
-          return s.1 == sig.len() && __verify_rs(c, key, hash, msg, r.0, s.0);
+          return s.1 == sig.len() && __verify_rs(c, key, table, hash, msg, r.0, s.0);
         },
         None => {
           return false;
@@ -563,6 +594,35 @@ pub function (key: PrivateKey) ecdh(peer: [u8]): Result[u8[], EcdsaError] {
 }
 
 pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], EcdsaError] {
+  let sig = __unchecked_signature(key, hash, msg)?;
+  return __checked_signature(key.public, None, hash, msg, sig);
+}
+
+// A private key with the verifying key of its public point. The self-check
+// of its `sign` uses the table of that key. Make one for a key that signs
+// many messages, such as the key of a TLS certificate.
+@value
+pub struct SigningKey { key: PrivateKey, check: VerifyingKey }
+
+pub function (key: PrivateKey) signing_key(): SigningKey {
+  return SigningKey { key: key, check: key.public.verifying_key() };
+}
+
+pub function (k: SigningKey) public_point(): u8[] {
+  return k.key.public_point();
+}
+
+// Consumes this key holder, as `PrivateKey.erase` does.
+pub function (own k: SigningKey) erase(): void {
+  k.key.erase();
+}
+
+pub function (k: SigningKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], EcdsaError] {
+  let sig = __unchecked_signature(k.key, hash, msg)?;
+  return __checked_signature(k.check.public, Some(k.check.table), hash, msg, sig);
+}
+
+function __unchecked_signature(key: PrivateKey, hash: sha2.Hash, msg: [u8]): Result[u8[], EcdsaError] {
   match (hash) {
     sha2.Sha512 => {
       return Err(SigningHash);
@@ -587,11 +647,11 @@ pub function (key: PrivateKey) sign(hash: sha2.Hash, msg: [u8]): Result[u8[], Ec
       sig = __sign_loop(hash, key.d, mont.to_bytes(s.fn, e), (k: u8[]): i64 => mont.in_range(s.fn, k), (k: u8[]): (u8[], u8[]) => __sign_with(s, key.d, e, k), n);
     }
   }
-  return __checked_signature(key.public, hash, msg, sig);
+  return Ok(sig);
 }
 
-function __checked_signature(public: PublicKey, hash: sha2.Hash, msg: [u8], own sig: u8[]): Result[u8[], EcdsaError] {
-  if (!public.verify(hash, msg, sig)) {
+function __checked_signature(public: PublicKey, table: Option[u64[]], hash: sha2.Hash, msg: [u8], own sig: u8[]): Result[u8[], EcdsaError] {
+  if (!__verify(public, table, hash, msg, sig)) {
     crypto.erase(sig);
     return Err(SignatureCheck);
   }
@@ -599,7 +659,7 @@ function __checked_signature(public: PublicKey, hash: sha2.Hash, msg: [u8], own 
 }
 ```
 
-The signer normalizes `s` to the low half of the group order. It verifies the final DER signature against the original message and the public key retained at construction before returning it. A failed self-check returns `SignatureCheck`.
+The signer normalizes `s` to the low half of the group order. It verifies the final DER signature against the original message and the public key retained at construction before returning it. A failed self-check returns `SignatureCheck`. A `SigningKey` makes the same check with its `VerifyingKey`. For P-256 that check uses a table of the public point, so it takes about half the time.
 
 ```fern test name=std-crypto-ecdsa-signature-check
 <<*>>
@@ -607,7 +667,7 @@ The signer normalizes `s` to the low half of the group order. It verifies the fi
 function main(): i32 {
   let Ok(key) = private_key(P256, __alloc_u8(32).with(31, 1u8)) else { return 1; };
   let Ok(sig) = key.sign(sha2.Sha256, "first".as_bytes()) else { return 2; };
-  match (__checked_signature(key.public, sha2.Sha256, "second".as_bytes(), sig)) {
+  match (__checked_signature(key.public, None, sha2.Sha256, "second".as_bytes(), sig)) {
     Err(SignatureCheck()) => { return 0; },
     _ => { return 3; }
   }

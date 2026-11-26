@@ -18,6 +18,7 @@ func TestSelfHostWycheproofNative(t *testing.T) {
 		"acvp_mldsa65_test.fern",
 		"wycheproof_ecdh_p256_test.fern",
 		"wycheproof_ecdsa_p256_test.fern",
+		"wycheproof_ecdsa_p256_table_test.fern",
 		"wycheproof_ecdsa_p256_sha512_test.fern",
 		"wycheproof_ecdsa_p384_sha384_test.fern",
 		"wycheproof_hkdf_sha256_test.fern",
