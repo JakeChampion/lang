@@ -182,3 +182,6 @@ selfhost/wasm32-wasi/gather_many.emit	6452
 selfhost/x86-64-linux/utf8_validate.emit	2633
 selfhost/arm64-linux/utf8_validate.emit	2882
 selfhost/wasm32-wasi/utf8_validate.emit	2231
+selfhost/x86-64-linux/draw_blend.emit	1905
+selfhost/arm64-linux/draw_blend.emit	2099
+selfhost/wasm32-wasi/draw_blend.emit	2061

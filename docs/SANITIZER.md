@@ -180,10 +180,11 @@ A double `__rc_dec` reports **use-after-free**, not over-release: the first
 `__rc_dec` frees and poisons the block, so the second touches the poison.
 
 `TestArm64DarwinSanitize` (the macos lane) builds the same probes for
-`arm64-darwin` and runs them on Apple Silicon. The Android targets share the
-Linux runtime, and no test runs a sanitized Android program. Each hosted
-target emits the misaligned-atomic and second-context checks, but only the
-Linux tests run them.
+`arm64-darwin` and runs them on Apple Silicon. It also runs each atomic at an
+address 4 bytes past a word, and an aligned control. The Android targets share
+the Linux runtime, and no test runs a sanitized Android program. Each hosted
+target emits the second-context check, but only the Linux tests run it, because
+the probe makes its thread with a raw Linux `clone`.
 
 The compiler takes `-sanitize` at compile time, and reads `FERN_SANITIZE=1`
 in the compiler process, not in the program it makes:
