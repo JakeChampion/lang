@@ -49,6 +49,26 @@ The base64 encoder runs 7.4 in place of 24.7.
 Time on a 4-core x86-64 container, for 220 MiB of input to the hex encoder:
 0.33 s with the scalar encoder and 0.08 s with lanes.
 
+## The frame blend of `std/android/draw` (2026-11-26)
+
+`blend_frame` blends 4 pixels in one step, as lanes of `u16x8`.
+A `Frame` holds its pixels in raw memory, so the step reads and writes them with `__u8x16_load_ptr` and `__u8x16_store`.
+`bench/draw_blend.fern` blends a layer of 512 by 256 pixels over a frame 64 times, with a different alpha each time.
+The counts are retired instructions of the function that holds the blend loop, on x86-64-linux, from callgrind.
+The scalar count is from the compiler of main at 59584e37.
+
+| Program | Pixels blended | Scalar | Lanes | Ratio |
+| --- | --: | --: | --: | --: |
+| `draw_blend` | 8,388,608 | 297,695,818 | 92,139,264 | 3.2 |
+
+For each pixel, the blend runs 11.0 instructions in place of 35.5.
+The whole program runs 116,782,626 instructions in place of 321,963,735, and it returns the same checksum.
+
+A step runs 44 instructions on x86-64, and its operations need about 22.
+The unsigned narrow holds each half to 255 before `packuswb`, and it makes that constant two times in each step.
+The compiler does not merge two lane operations that are the same.
+It also does not move a lane operation out of a loop (#17362).
+
 ## What the numbers do not show
 
 - A buffer of less than 16 bytes takes the scalar path, with one more test.

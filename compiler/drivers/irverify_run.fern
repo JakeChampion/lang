@@ -742,6 +742,7 @@ function lane_width_checks(): i32 {
     ir.op_lane_at("vextract", 32, 3), ir.op_lane_at("vreplace", 64, 1), ir.op_lane_at("vextract_bits", 64, 1),
     ir.op_lane("vand", 8), ir.op_lane("vor", 8), ir.op_lane("vselect", 16), ir.op_lane("vselect", 64),
     ir.op_lane("vget", 32), ir.op_lane("vset", 64), ir.Op { ...ir.op_lane("vget", 8), unsigned: true },
+    ir.op_lane("vload", 8), ir.op_lane("vstore", 16),
     ir.op_lane("viadd", 8), ir.op_lane("vimul", 16), ir.op_lane_at("viextractu", 8, 15), ir.op_lane_at("viextracts", 32, 3),
     ir.op_lane_at("vireplace", 32, 3), ir.op_lane("viwidenlos", 8), ir.op_lane("viwidenhiu", 16),
     ir.op_lane("vinarrows", 16), ir.op_lane("vinarrowu", 32), ir.op_lane("viswizzle", 8),

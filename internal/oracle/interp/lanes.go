@@ -546,7 +546,7 @@ var intLaneBinary = map[string]func(l Lanes, x, y int64) int64{
 // intLaneVerbs are the verbs of the builtins of the integer lane type of
 // `like`.
 func intLaneVerbs(like Lanes) []string {
-	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "shl", "shr"}
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "load_ptr", "store", "shl", "shr"}
 	if like.Width <= 16 {
 		verbs = append(verbs, "add_sat", "sub_sat")
 		if !like.Signed {
@@ -766,6 +766,42 @@ func (i *Interp) registerIntegerLanes(like Lanes) {
 			e[k] = Number(uint8(ls[0].Bits[k/size] >> (8 * (k % size))))
 		}
 		return i.writeElems(a, at, e[:]...)
+	}
+	builtins["load_ptr"] = func(args []Value) (Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("%sload_ptr: expected an address", p)
+		}
+		address, ok := args[0].(Number)
+		if !ok {
+			return nil, fmt.Errorf("%sload_ptr: expected an address", p)
+		}
+		bytes, err := i.raw.span(p+"load_ptr", int64(address), 16)
+		if err != nil {
+			return nil, err
+		}
+		out := like.like()
+		for k, b := range bytes {
+			out.Bits[k/size] |= uint64(b) << (8 * (k % size))
+		}
+		return out, nil
+	}
+	builtins["store"] = func(args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("%sstore: expected an address and a lane value", p)
+		}
+		address, ok := args[0].(Number)
+		ls, err := intLaneArgs(p+"store", like, args[1:], 1)
+		if !ok || err != nil {
+			return nil, fmt.Errorf("%sstore: expected an address and a lane value", p)
+		}
+		bytes, err := i.raw.span(p+"store", int64(address), 16)
+		if err != nil {
+			return nil, err
+		}
+		for k := range bytes {
+			bytes[k] = byte(ls[0].Bits[k/size] >> (8 * (k % size)))
+		}
+		return Void{}, nil
 	}
 	for _, verb := range intLaneVerbs(like) {
 		name := p + verb

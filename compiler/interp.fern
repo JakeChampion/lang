@@ -3028,6 +3028,38 @@ function integer_lanes_memory(heap: interpheap.Heap, verb: string, width: i32, k
   return v_err("lane load: expected an array");
 }
 
+// The 16 bytes at an address as an integer lane value, or a lane value
+// written to them.
+function integer_lanes_raw(verb: string, width: i32, kind: i32, args: Value[]): Value {
+  let address = vint_as_i64(args[0]) as usize;
+  let size = width / 8;
+  if (verb == "load_ptr") {
+    let bits: i64[] = [];
+    unsafe {
+      for i in 0..128 / width {
+        let x = 0i64;
+        for k in 0..size {
+          x = x | __load_u8(address + (i * size + k) as usize) as i64 << (8 * k) as i64;
+        }
+        bits = bits.append(x);
+      }
+    }
+    return VLanes { width: width, kind: kind, bits: bits };
+  }
+  let ls = lane_args([args[1]]);
+  if (ls.len() != 1 || ls[0].width != width) {
+    return v_err("lane store: expected a lane value");
+  }
+  unsafe {
+    for i in 0..ls[0].bits.len() {
+      for k in 0..size {
+        __store_u8(address + (i * size + k) as usize, (ls[0].bits[i] >> (8 * k) as i64) as i32);
+      }
+    }
+  }
+  return v_void();
+}
+
 // A builtin of one integer lane value: `lane`, a shift, `abs` or `bitmask`.
 function integer_lanes_single(verb: string, l: VLanes, args: Value[]): Value {
   if (verb == "lane") {
@@ -3055,6 +3087,9 @@ function call_integer_lane_builtin(heap: interpheap.Heap, name: string, args: Va
   }
   if (verb == "load" || verb == "load_view" || verb == "with") {
     return integer_lanes_memory(heap, verb, width, kind, args);
+  }
+  if (verb == "load_ptr" || verb == "store") {
+    return integer_lanes_raw(verb, width, kind, args);
   }
   if (util.has_str(["widen_lo", "widen_hi", "narrow", "narrow_u", "swizzle"], verb)) {
     return integer_lanes_shape(verb, lane_args(args));

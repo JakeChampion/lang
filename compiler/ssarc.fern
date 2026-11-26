@@ -7756,6 +7756,13 @@ function integer_lane_site(own r: irtables.LowerState, f: ssasem.Func, defs: ssa
   if (verb == "narrow" && !signed) {
     return unsigned_narrow_site(r, ins, w);
   }
+  if (verb == "load_ptr") {
+    return emit(r, ir.op_lane("vload", w));
+  }
+  if (verb == "store") {
+    r = emit(r, ir.op_lane("vstore", w));
+    return emit(r, ir.op_const_i32(0));
+  }
   let shape = irtables.lane_shape_builtin_op(verb, signed);
   if (shape != "") {
     return emit(r, ir.op_lane(shape, w));
