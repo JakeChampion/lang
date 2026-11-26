@@ -688,6 +688,10 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 					gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
 				}
 			}
+			// Renormalization compares the unchanged renamed blob by object ID.
+			g.git("config", "merge.renormalize", "true")
+			gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "rename-delete-1")
+			g.git("config", "--unset", "merge.renormalize")
 			// The value of `log.diffMerges` is the diff of `-m`.
 			for _, value := range []string{"remerge", "r", "off", "combined", "first-parent"} {
 				g.git("config", "log.diffMerges", value)

@@ -1634,9 +1634,15 @@ function process_entry(st_in: State, d_in: Dirs, path_in: string, ci_in: Info): 
   } else if (ci.filemask == 3 || ci.filemask == 5) {
     // One side changed the file and the other side deleted it.
     let side = if (ci.filemask == 5) { 2 } else { 1 };
-    // Git compares the normalized base and side for a modify/delete.
+    // Matching object IDs already establish equality without converting the blob.
     if (st.o.renormalize && ci.stages[0].mode == ci.stages[side].mode) {
-      return (State { ...st, fatal: gap("merge.renormalize") }, d);
+      if (ci.stages[0].hash != ci.stages[side].hash) {
+        return (State { ...st, fatal: gap("merge.renormalize") }, d);
+      }
+      if (!ci.path_conflict) {
+        ci = Info { ...ci, is_null: true, clean: true, df_conflict: false, result: none };
+        return (with_path(st, path, ci), record(d, path, ci));
+      }
     }
     ci = Info { ...ci, result: ci.stages[if (st.depth > 0) { 0 } else { side }], clean: false };
     let modify_branch = if (side == 1) { st.branch1 } else { st.branch2 };
