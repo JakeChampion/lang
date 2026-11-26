@@ -1,0 +1,61 @@
+// A variant with named fields is built by name. The literal evaluates its
+// fields in written order, as a record literal does, and the variant keeps
+// them in declared order.
+import "./shapes";
+
+enum Item {
+  Labelled { text: string, size: i32 },
+  Boxed { inner: Item[], depth: i32 },
+  Empty,
+}
+
+enum Pair[T] {
+  Both { left: T, right: T },
+  Neither,
+}
+
+function tick(n: i32): i32 {
+  print("eval " + n.to_string());
+  return n;
+}
+
+function weight(it: Item): i32 {
+  return match (it) {
+    Labelled { text, size } => text.len() * size,
+    Boxed { inner, depth } => {
+      let total = depth;
+      for i in inner {
+        total = total + weight(i);
+      }
+      total
+    },
+    Empty => 0,
+  };
+}
+
+function sum(p: Pair[i32]): i32 {
+  return match (p) {
+    Both { left, right } => left * 10 + right,
+    Neither => -1,
+  };
+}
+
+function main(): i32 {
+  let a = Labelled { text: "abc", size: 2 };
+  print(weight(a).to_string());
+  let b = Labelled { size: tick(3), text: if (tick(1) > 0) { "xy" } else { "" } };
+  print(weight(b).to_string());
+  let c: Item = Boxed { depth: 1, inner: [a, Empty, Labelled { text: "z", size: 5 }] };
+  print(weight(c).to_string());
+  print(sum(Both { right: tick(7), left: tick(8) }).to_string());
+  let pairs: Pair[string][] = [Both { left: "l", right: "r" }, Neither];
+  for p in pairs {
+    match (p) {
+      Both { left, right } => print(left + right),
+      Neither => print("neither"),
+    }
+  }
+  print(shapes.area(shapes.Rect { w: 2, h: 5 }).to_string());
+  print(shapes.area(shapes.square(3)).to_string());
+  return 0;
+}

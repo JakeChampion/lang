@@ -1448,7 +1448,11 @@ function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   return built_record(place_fields(written_fields(sl, sig, s), sig, base.id), ty, base.id + 1);
 }
 
-function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
+function record(e: ast.Expr, sl: ast.ExprStructLit, s: State, expected: typeinfo.Type): Value {
+  let whole = literal_union(e, s, expected);
+  if (names_variant(s, whole, sl.type_name)) {
+    return variant_record(sl, whole, s);
+  }
   if (sl.has_base) {
     return record_update(e, sl, s);
   }
@@ -1494,24 +1498,70 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
   }
   let ids: i32[] = [];
   for i in 0..args.len() {
-    let v = expr(args[i], s, shape.types[i]);
+    let v = payload_value(args[i], shape.types[i], s);
     s = v.s;
     if (!s.ok) {
       return v;
     }
-    // Convert the payload before the constructor stores it.
-    if (typeinfo.lossless_widen(s.values[v.id], shape.types[i])) {
-      v = define(s, ssasem.cast(), [v.id], 0, "", shape.types[i]);
-      s = v.s;
-    }
-    if (!semtypes.equal(s.values[v.id], shape.types[i])) {
-      return refused(s, "variant field type");
-    }
-    v = kept_view(unaliased_view(v));
-    s = v.s;
     ids = ids.append(v.id);
   }
   return variant_built(s, ids, shape.types, name, whole, layout);
+}
+
+function payload_value(arg: ast.Expr, ty: typeinfo.Type, s: State): Value {
+  let v = expr(arg, s, ty);
+  s = v.s;
+  if (!s.ok) {
+    return v;
+  }
+  // Convert the payload before the constructor stores it.
+  if (typeinfo.lossless_widen(s.values[v.id], ty)) {
+    v = define(s, ssasem.cast(), [v.id], 0, "", ty);
+    s = v.s;
+  }
+  if (!semtypes.equal(s.values[v.id], ty)) {
+    return refused(s, "variant field type");
+  }
+  return kept_view(unaliased_view(v));
+}
+
+// A variant literal evaluates its fields in written order, and the
+// constructor takes them in declared order.
+function variant_record(sl: ast.ExprStructLit, whole: typeinfo.Type, s: State): Value {
+  let name = literal_variant_name(s, whole, sl.type_name);
+  let layout = union_layout(s, typeinfo.union_name(whole));
+  if (layout != semrecords.layout_variant() || sl.has_base || !semtypes.concrete(whole, false)) {
+    return refused(s, "unsupported variant literal");
+  }
+  let Some(shape) = literal_payloads(s, whole, name, layout) else {
+    return refused(s, "unsupported variant literal");
+  };
+  let Some(sig) = checker.variant_sig(s.scope, name, typeinfo.union_name(whole)) else {
+    return refused(s, "unsupported variant literal");
+  };
+  if (sl.field_names.len() != shape.types.len() || sig.field_names.len() != shape.types.len()) {
+    return refused(s, "unsupported variant literal");
+  }
+  let ids: i32[] = [];
+  let at: i32[] = [];
+  for i in 0..sl.field_values.len() {
+    let slot = util.index_of_str(sig.field_names, sl.field_names[i]);
+    if (slot < 0 || util.index_of_i32(at, slot) >= 0) {
+      return refused(s, "unsupported variant literal");
+    }
+    let v = payload_value(sl.field_values[i], shape.types[slot], s);
+    s = v.s;
+    if (!s.ok) {
+      return v;
+    }
+    ids = ids.append(v.id);
+    at = at.append(slot);
+  }
+  let placed: i32[] = [];
+  for d in 0..shape.types.len() {
+    placed = placed.append(ids[util.index_of_i32(at, d)]);
+  }
+  return variant_built(s, placed, shape.types, name, whole, layout);
 }
 
 function width_bearing(e: ast.Expr): boolean {
@@ -4322,7 +4372,7 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
       return ident(e, id, s, expected);
     },
     ast.ExprStructLit(sl) => {
-      return record(e, sl, s);
+      return record(e, sl, s, expected);
     },
     ast.ExprArray(a) => {
       return array(e, a, s, expected);

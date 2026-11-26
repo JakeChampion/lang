@@ -3543,6 +3543,57 @@ function me_infer_variant_key(ed: parser.EnumDecl, vname: string, args: ast.Expr
   return parts[0];
 }
 
+// A literal of a variant of a generic enum builds the variant of the instance
+// that its payloads, or its expected type, settle.
+function me_variant_lit(s: ast.ExprStructLit, expected: string, env: parser.MEnv, enums: parser.EnumDecl[], structs: parser.StructDecl[], funcs: parser.MFns, ins: parser.Insts): Option[RExpr] {
+  let owner = parser.genum_index(enums, s.enum_owner);
+  if (owner < 0 || s.has_base) {
+    return None;
+  }
+  let ed = enums[owner];
+  let Some(vi) = parser.variant_struct_index(structs, s.type_name, ed.name) else {
+    return None;
+  };
+  let fields = structs[vi].fields.map((f: parser.StructFieldDecl): string => f.name);
+  let args: ast.Expr[] = [];
+  for f in fields {
+    let at = util.index_of_str(s.field_names, f);
+    if (at < 0) {
+      return None;
+    }
+    args = args.append(s.field_values[at]);
+  }
+  let slots = s.field_names.map((name: string): i32 => util.index_of_str(fields, name));
+  let key = me_infer_variant_key(ed, s.type_name, args, expected, env, enums, structs, funcs);
+  if (key.len() == 0) {
+    return None;
+  }
+  let carg = genum_single_arg(expected);
+  if (carg.len() == 0) {
+    let bound = me_variant_bound(ed, s.type_name, args, env, structs, funcs);
+    if (keyed_by_mangle(bound)) {
+      carg = bound;
+    }
+  }
+  if (carg.len() == 0) {
+    carg = key;
+  }
+  let fexps = me_variant_field_expectations(ed, s.type_name, expected, key, carg, structs, enums);
+  let nvals: ast.Expr[] = [];
+  let cur = ins;
+  for i in 0..s.field_values.len() {
+    let fexp = "";
+    if (slots[i] >= 0 && slots[i] < fexps.len()) {
+      fexp = fexps[slots[i]];
+    }
+    let rv = me_expr(s.field_values[i], fexp, env, enums, structs, funcs, cur);
+    cur = rv.rins;
+    nvals = nvals.append(rv.rexpr);
+  }
+  cur = cur.iadd_arg(ed.name, key, carg);
+  return Some(RExpr { rexpr: ast.ExprStructLit { ...s, type_name: util.mangled(s.type_name, key), enum_owner: util.mangled(ed.name, key), field_values: nvals }, rins: cur });
+}
+
 function variant_ctor_spelling(callee: ast.Expr, args: ast.Expr[], env: parser.MEnv, funcs: parser.MFns): string {
   let vname = parser.ctor_variant_name(callee, funcs.enums, env, funcs);
   if (vname.len() == 0) {
@@ -3772,6 +3823,9 @@ function me_expr(e: ast.Expr, expected: string, env: parser.MEnv, enums: parser.
       return RExpr { rexpr: ast.ExprSlice { ...sl, array: ar.rexpr, start: st.rexpr, end: en.rexpr }, rins: en.rins };
     },
     ast.ExprStructLit(s) => {
+      if let Some(rv) = me_variant_lit(s, expected, env, enums, structs, funcs, ins) {
+        return rv;
+      }
       let nvals: ast.Expr[] = [];
       let cur = ins;
       for i in 0..s.field_values.len() {

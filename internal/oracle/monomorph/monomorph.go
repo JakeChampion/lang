@@ -568,6 +568,10 @@ func Run(prog *ast.Program, info *checker.Info) error {
 				if clonedEnumNames[x.EnumName] {
 					x.EnumName = ""
 				}
+			case *ast.StructLit:
+				if clonedEnumNames[x.EnumName] {
+					x.EnumName = ""
+				}
 			}
 			return true
 		})

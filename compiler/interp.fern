@@ -6464,7 +6464,7 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
         let bvals = sv.field_values;
         for oi in 0..sl.field_values.len() {
           let oname = sl.field_names[oi];
-          let ov2 = settled_field(sl.type_name, oname, eval_expr(sl.field_values[oi], env), env);
+          let ov2 = settled_field(sl, oname, eval_expr(sl.field_values[oi], env), env);
           if (is_err(ov2)) {
             return ov2;
           }
@@ -6489,31 +6489,69 @@ function eval_expr_struct_lit(sl: ast.ExprStructLit, env: Env): Value {
   }
   let fvs: Value[] = [];
   for i in 0..sl.field_values.len() {
-    let fv = settled_field(sl.type_name, sl.field_names[i], eval_expr(sl.field_values[i], env), env);
+    let fv = settled_field(sl, sl.field_names[i], eval_expr(sl.field_values[i], env), env);
     if (is_err(fv)) {
       return fv;
     }
     fvs = fvs.append(fv);
   }
-  return v_struct_at(env.heap, sl.type_name, sl.field_names, fvs, struct_targs(sl.type_name, env));
+  let (names, values) = declared_field_order(sl, fvs, env);
+  return v_struct_at(env.heap, sl.type_name, names, values, struct_targs(sl.type_name, env));
+}
+
+// A literal evaluates its fields in written order, and the value keeps them in
+// declared order, as a variant constructor does.
+function declared_field_order(sl: ast.ExprStructLit, values: Value[], env: Env): (string[], Value[]) {
+  let names = sl.field_names;
+  let Some(sd) = literal_decl(sl, env) else {
+    return (names, values);
+  };
+  if (sd.fields.len() != names.len()) {
+    return (names, values);
+  }
+  let out_names: string[] = [];
+  let out_values: Value[] = [];
+  for fd in sd.fields {
+    let at = util.index_of_str(names, fd.name);
+    if (at < 0) {
+      return (names, values);
+    }
+    out_names = out_names.append(fd.name);
+    out_values = out_values.append(values[at]);
+  }
+  return (out_names, out_values);
+}
+
+// The declaration of the struct or the variant that a literal builds: of the
+// enum the literal names, if a declaration has it.
+function literal_decl(sl: ast.ExprStructLit, env: Env): Option[parser.StructDecl] {
+  let base = util.base_type_name(sl.type_name);
+  let first: Option[parser.StructDecl] = None;
+  for sd in env.type_decls {
+    if (sd.name == base) {
+      if (sl.enum_owner.len() == 0 || sd.enum_owner == sl.enum_owner) {
+        return Some(sd);
+      }
+      if (first.is_none()) {
+        first = Some(sd);
+      }
+    }
+  }
+  return first;
 }
 
 // A field value settles to the declared type of the field, as a let settles
 // its initializer: a literal takes the declared width, and a cell the
 // declared element type.
-function settled_field(type_name: string, field: string, fv: Value, env: Env): Value {
+function settled_field(sl: ast.ExprStructLit, field: string, fv: Value, env: Env): Value {
   if (is_err(fv)) {
     return fv;
   }
-  let base = util.base_type_name(type_name);
-  for sd in env.type_decls {
-    if (sd.name == base) {
-      for fd in sd.fields {
-        if (fd.name == field) {
-          return coerce_int_width(fv, fd.type_name);
-        }
+  if let Some(sd) = literal_decl(sl, env) {
+    for fd in sd.fields {
+      if (fd.name == field) {
+        return coerce_int_width(fv, fd.type_name);
       }
-      return fv;
     }
   }
   return fv;

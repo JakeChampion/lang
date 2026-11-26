@@ -1387,6 +1387,9 @@ type StructLit struct {
 	Base            Expr
 	TypeArgs        []Type
 	TypeArgsWritten bool
+	// EnumName is the enum of a variant that the literal builds, which the
+	// checker sets. It is empty for a struct literal.
+	EnumName string
 }
 
 type TupleLit struct {

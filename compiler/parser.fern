@@ -436,11 +436,11 @@ function e_slice_all(array: ast.Expr, line: i32, col: i32): ast.Expr {
 }
 
 function e_struct_lit(type_name: string, field_names: string[], field_lines: i32[], field_cols: i32[], field_values: ast.Expr[], line: i32, col: i32): ast.Expr {
-  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_lines: field_lines, field_cols: field_cols, field_values: field_values, has_base: false, base: e_unknown("no-base"), line: line, col: col, written: "" };
+  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_lines: field_lines, field_cols: field_cols, field_values: field_values, has_base: false, base: e_unknown("no-base"), line: line, col: col, written: "", enum_owner: "" };
 }
 
 function e_struct_update(type_name: string, field_names: string[], field_lines: i32[], field_cols: i32[], field_values: ast.Expr[], base: ast.Expr, line: i32, col: i32): ast.Expr {
-  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_lines: field_lines, field_cols: field_cols, field_values: field_values, has_base: true, base: base, line: line, col: col, written: "" };
+  return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_lines: field_lines, field_cols: field_cols, field_values: field_values, has_base: true, base: base, line: line, col: col, written: "", enum_owner: "" };
 }
 
 pub function e_field_access(obj: ast.Expr, field: string): ast.Expr {
@@ -13308,6 +13308,9 @@ pub function iterator_loop(fr: ast.StmtFor, subject: ast.Expr, col: i32): ast.St
   return s_block([s_var(it, "", subject), walk]);
 }
 
+// The declared field names of the variant a record pattern names. Where two
+// variants of the name declare different fields, the checker resolves the
+// pattern from the type of its scrutinee.
 function variant_field_names_of(structs: StructDecl[], name: string): string[] {
   let bare = name;
   for c in 0..name.len() {
@@ -13315,15 +13318,101 @@ function variant_field_names_of(structs: StructDecl[], name: string): string[] {
       bare = slice_unchecked(name, c + 1, name.len()).to_owned();
     }
   }
+  let found: string[] = [];
   for i in 0..structs.len() {
     if (structs[i].name == name || structs[i].name == bare) {
       if (structs[i].variant_field_names.len() > 0) {
-        return structs[i].variant_field_names;
+        if (found.len() > 0 && !same_names(found, structs[i].variant_field_names)) {
+          let empty: string[] = [];
+          return empty;
+        }
+        found = structs[i].variant_field_names;
       }
     }
   }
-  let empty: string[] = [];
-  return empty;
+  return found;
+}
+
+// The variant a literal builds: `E.V { … }` names its enum, and a bare `V { … }`
+// is the one variant of that name. A struct of the name wins. The checker
+// settles a bare name that two enums declare.
+function literal_variant_index(structs: StructDecl[], sl: ast.ExprStructLit): Option[i32] {
+  for sd in structs {
+    if (sd.name == sl.type_name && sd.enum_owner.len() == 0) {
+      return None;
+    }
+  }
+  let bare = variants_named(structs, sl.type_name, "");
+  if (bare.len() > 0) {
+    if (bare.len() > 1) {
+      return None;
+    }
+    return Some(bare[0]);
+  }
+  let dot = -1;
+  for c in 0..sl.type_name.len() {
+    if (sl.type_name[c] == b'.') {
+      dot = c;
+    }
+  }
+  if (dot < 0) {
+    return None;
+  }
+  let owner = slice_unchecked(sl.type_name, 0, dot).to_owned();
+  let qualified = variants_named(structs, slice_unchecked(sl.type_name, dot + 1, sl.type_name.len()).to_owned(), owner);
+  if (qualified.len() != 1) {
+    return None;
+  }
+  return Some(qualified[0]);
+}
+
+// The variants named name, of the enum owner or of any enum.
+function variants_named(structs: StructDecl[], name: string, owner: string): i32[] {
+  let out: i32[] = [];
+  for i in 0..structs.len() {
+    if (structs[i].name == name && structs[i].enum_owner.len() > 0 && (owner == "" || structs[i].enum_owner == owner)) {
+      out = out.append(i);
+    }
+  }
+  return out;
+}
+
+// A literal of a named-field variant writes the declared names of its
+// payloads. It takes the payload names, and the variant names its enum.
+function variant_literal(structs: StructDecl[], sl: ast.ExprStructLit): ast.ExprStructLit {
+  if (sl.has_base || sl.enum_owner.len() > 0) {
+    return sl;
+  }
+  let Some(vi) = literal_variant_index(structs, sl) else {
+    return sl;
+  };
+  let v = structs[vi];
+  return ast.ExprStructLit { ...sl, type_name: v.name, enum_owner: v.enum_owner, field_names: payload_field_names(v, sl.field_names) };
+}
+
+pub function payload_field_names(v: StructDecl, names: string[]): string[] {
+  let out: string[] = [];
+  for name in names {
+    let at = util.index_of_str(v.variant_field_names, name);
+    if (at >= 0 && at < v.fields.len()) {
+      out = out.append(v.fields[at].name);
+    } else {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
+
+function same_names(a: string[], b: string[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 pub function is_record_pattern(pv: ast.PatVariant): boolean {
@@ -13461,7 +13550,7 @@ function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
       if (st.has_base) {
         nbase = rvf_expr(st.base, structs);
       }
-      return ast.ExprStructLit { ...st, field_values: vals, base: nbase };
+      return variant_literal(structs, ast.ExprStructLit { ...st, field_values: vals, base: nbase });
     },
     ast.ExprFieldAccess(fa) => {
       return ast.ExprFieldAccess { ...fa, obj: rvf_expr(fa.obj, structs) };
@@ -15394,7 +15483,7 @@ function synth_from_json_value(json_alias: string, sd: StructDecl): FuncDecl {
     fnames = fnames.append(sd.fields[k].name);
     fvals = fvals.append(e_ident(fj_local_prefix(json_alias) + sd.fields[k].name));
   }
-  let lit: ast.Expr = ast.ExprStructLit { type_name: sd.name, field_names: fnames, field_lines: [], field_cols: [], field_values: fvals, has_base: false, base: e_unknown("no-base"), line: 0, col: 0, written: derived_self_type(sd) };
+  let lit: ast.Expr = ast.ExprStructLit { type_name: sd.name, field_names: fnames, field_lines: [], field_cols: [], field_values: fvals, has_base: false, base: e_unknown("no-base"), line: 0, col: 0, written: derived_self_type(sd), enum_owner: "" };
   let body: ast.Stmt[] = [s_return(e_call(e_ident("Ok"), [lit]))];
   let fi = sd.fields.len() - 1;
   while (fi >= 0) {

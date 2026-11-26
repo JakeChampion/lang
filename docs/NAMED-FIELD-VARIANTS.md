@@ -53,25 +53,52 @@ Errors (E015): naming a field the variant does not have, naming a field
 twice, leaving a field out without `..`, and using `{ }` on a positional
 variant.
 
-## Construction (v1)
+## Construction
 
-In this first cut, **named-field variants are constructed positionally**,
-arguments in declaration order:
+A named-field variant is built by name, with the record literal form:
 
 ```fern
-let r: Shape = Rect(3.0, 4.0);   // w = 3.0, h = 4.0
+let r = Rect { w: 3.0, h: 4.0 };   // r has the type Shape
+let s = Rect { h: 4.0, w: 3.0 };   // the same value
 ```
 
-The struct-literal construction form `Rect { w: 3.0, h: 4.0 }` is a
-planned follow-up (it needs a StructLit→variant node rewrite the checker
-doesn't do yet).
+The fields can be in any order. The literal evaluates its field values in
+written order, as a record literal does (`docs/EVALUATION-ORDER.md`). The
+variant keeps the values in declared order.
+
+The type of the literal is its enum. A variant is not a type of its own, so
+`r.w` is an error. Read a field with a pattern.
+
+A module-qualified literal names a variant that an imported module exports:
+`shapes.Rect { w: 3.0, h: 4.0 }`. An enum-qualified literal names the enum:
+`Shape.Rect { w: 3.0, h: 4.0 }`.
+
+Two enums can declare a variant of the same name. Then a bare literal
+builds the variant of the enum that its position expects, as a bare
+variant does. Where no position expects one of the enums, the literal is
+an E036 error. Name the enum to correct it.
+
+Errors:
+
+- E043: a field that the variant does not have.
+- E005: a field that the literal leaves out.
+- E007: a field that the literal names twice.
+- E036: a field value whose type is not the type of the field.
+- E043: a literal of a positional or a unit variant. Build `Circle(1.0)` and
+  `Empty` without braces.
+- E043: a literal with a base (`Rect { ...r, w: 1.0 }`).
+- E036: a bare literal of a variant that two enums declare, where no
+  position expects one of them.
+
+The positional form `Rect(3.0, 4.0)` is also accepted, with the arguments in
+declaration order. #14397 removes it. Do not use it in new code.
 
 ## Derives
 
 `@derive(Display)`, `@derive(Debug)`, and `@derive(Json)` render
 named-field variants with their field names:
 
-| Derive | Output for `Rect(3, 4)` |
+| Derive | Output for `Rect { w: 3, h: 4 }` |
 | --- | --- |
 | `Display` | `Rect { w: 3, h: 4 }` |
 | `Debug` | `Rect { w: 3, h: 4 }` (payloads via `Debug`) |
@@ -137,7 +164,6 @@ the file is formatted, and prints as written.
 
 ## Follow-ups
 
-- `Rect { w: …, h: … }` **construction** syntax.
 - Named-field patterns in `let … else` — `match` and `if let` take them, but
   `let Rect { w, h } = e else { … }` is a parse error on native, so the
   self-host leaves it one too rather than growing surface native lacks.
