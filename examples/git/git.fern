@@ -4057,21 +4057,15 @@ function at_offset(ix: pack.Index, order: i32[], offset: i64): i32 {
   return -1;
 }
 
-// True if the two checksums of the files hold: the hash of the packfile at
-// its end and in the index, and the hash of the index at its end.
-function checksums_ok(a: i32, data: string, idx: u8[]): boolean {
+// Check the pack before reading its objects. Git checks the index trailer
+// after reporting the objects and the chain lengths.
+function pack_checksum_ok(width: i32, data: string): boolean {
   let n = data.len();
-  let m = idx.len();
-  let raw = a;
-  if (n < 12 + raw || data[0] != b'P' || data[1] != b'A' || data[2] != b'C' || data[3] != b'K') {
+  if (n < 12 + width) {
     return false;
   }
   let view = data.as_bytes();
-  let sum = hex.encode(objects.digest(a, view[0:n - raw]));
-  if (sum != hex.encode(view[n - raw:n]) || sum != hex.encode(array.slice(idx, m - 2 * raw, m - raw))) {
-    return false;
-  }
-  return hex.encode(objects.digest(a, array.slice(idx, 0, m - raw))) == hex.encode(array.slice(idx, m - raw, m));
+  return hex.encode(objects.digest(width, view[0:n - width])) == hex.encode(view[n - width:n]);
 }
 
 // Checks each object of one packfile: its chain of deltas gives an object
@@ -4096,7 +4090,11 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
       return false;
     },
   };
-  if (!checksums_ok(a, data, idx)) {
+  if let Err(message) = index.header_count(data) {
+    eprint(message);
+    return false;
+  }
+  if (!pack_checksum_ok(a, data)) {
     return false;
   }
   let order = by_offset(ix);
@@ -4108,9 +4106,6 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
   for k in 0..order.len() {
     let name = pack.hex_name_at(ix, order[k]);
     let offset = pack.offset_at(ix, order[k]);
-    let Ok(chain) = pack.chain_in(src, offset) else {
-      return false;
-    };
     let (made, kept) = pack.object_cached(src, offset, cache);
     cache = kept;
     let Ok(o) = made else {
@@ -4119,6 +4114,12 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
     if (objects.hash_of(a, o.kind, o.body) != name) {
       return false;
     }
+    if (!verbose) {
+      continue;
+    }
+    let Ok(chain) = pack.chain_in(src, offset) else {
+      return false;
+    };
     let depth = chain.len() - 1;
     while (chains.len() <= depth) {
       chains = chains.append(0);
@@ -4132,19 +4133,28 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
     }
     out = out.concat((line + "\n").bytes());
   }
-  if (!verbose) {
-    return true;
-  }
-  put(out);
-  if (chains.len() > 0) {
-    put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
-  }
-  for d in 1..chains.len() {
-    if (chains[d] > 0) {
-      put_line("chain length = " + d.to_string() + ": " + chains[d].to_string() + plural(chains[d]));
+  if (verbose) {
+    put(out);
+    if (chains.len() > 0) {
+      put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
+    }
+    for d in 1..chains.len() {
+      if (chains[d] > 0) {
+        put_line("chain length = " + d.to_string() + ": " + chains[d].to_string() + plural(chains[d]));
+      }
     }
   }
-  put_line(path + ": ok");
+  let end = idx.len();
+  let pack_sum = hex.encode(data.as_bytes()[data.len() - a:data.len()]);
+  let recorded_pack = hex.encode(array.slice(idx, end - 2 * a, end - a));
+  let index_sum = objects.digest(a, array.slice(idx, 0, end - a));
+  if (pack_sum != recorded_pack || index_sum != array.slice(idx, end - a, end)) {
+    eprint("fatal: sha1 file '" + idx_path + "' validation error");
+    return false;
+  }
+  if (verbose) {
+    put_line(path + ": ok");
+  }
   return true;
 }
 

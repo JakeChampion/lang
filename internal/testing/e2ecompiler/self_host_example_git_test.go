@@ -625,11 +625,26 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				}
 			}
 
+			// Git prints the object listing before reporting a bad index trailer.
+			originalIndex := fileBytes(t, idx)
+			changedIndex := bytes.Clone(originalIndex)
+			changedIndex[len(changedIndex)-1] ^= 1
+			rewriteFile(t, idx, changedIndex)
+			compare("", "verify-pack", idx)
+			compare("", "verify-pack", "-v", idx)
+			rewriteFile(t, idx, originalIndex)
+
 			// One changed byte in the middle of the packfile: git and the port refuse it.
 			packed := strings.TrimSuffix(idx, ".idx") + ".pack"
 			data, err := os.ReadFile(packed)
 			if err != nil {
 				t.Fatal(err)
+			}
+			for _, offset := range []int{0, 6} {
+				changed := bytes.Clone(data)
+				changed[offset] ^= 1
+				rewriteFile(t, packed, changed)
+				compare("", "verify-pack", "-v", idx)
 			}
 			data[len(data)/2] ^= 0x40
 			rewriteFile(t, packed, data)
