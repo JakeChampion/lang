@@ -236,6 +236,8 @@ func (g *guardGen) stmt(scope []string, out *[]string, ind int, inLoop bool) {
 			add("    acc = acc + %s[%s];", name, e)
 		}
 		add("}")
+	case k < 0.72:
+		g.snake(scope, out, ind)
 	default:
 		g.names++
 		j := fmt.Sprintf("j%d", g.names)
@@ -269,6 +271,39 @@ func (g *guardGen) stmt(scope []string, out *[]string, ind int, inLoop bool) {
 		}
 		add("}")
 	}
+}
+
+// snake is a loop of two counters that step together while each is in its
+// bound and two elements are equal, as in the middle snake of diff. Each
+// bound is a value or a length, so it can be past the end of the array or
+// near an end of i32.
+func (g *guardGen) snake(scope []string, out *[]string, ind int) {
+	pad := strings.Repeat("    ", ind)
+	add := func(format string, args ...any) { *out = append(*out, pad+fmt.Sprintf(format, args...)) }
+	g.names++
+	j, k := fmt.Sprintf("j%d", g.names), fmt.Sprintf("k%d", g.names)
+	a, b := g.arr(), g.arr()
+	step := g.pick("1", "1", "1", "2")
+	bound := func(arr string) string {
+		return g.pick(arr+".len()", arr+".len()", arr+".len() - 1", arr+".len() + 1", "a", "b", g.atom(scope))
+	}
+	add("let %s: i32 = %s;", j, g.index(scope, 1))
+	add("let %s: i32 = %s;", k, g.index(scope, 1))
+	if g.r.Float64() < 0.5 {
+		off := g.pick("", "", " + 1", " - 1", " + 2")
+		cmp := g.pick("<", "<", "<=")
+		add("while (%s %s %s && %s %s %s && %s[%s%s] == %s[%s%s]) {", j, cmp, bound(a), k, cmp, bound(b), a, j, off, b, k, off)
+		add("    %s = %s + %s;", j, j, step)
+		add("    %s = %s + %s;", k, k, step)
+	} else {
+		lo := func() string { return g.pick("0", "0", "1", "0 - 1", "a", "b", g.atom(scope)) }
+		cmp := g.pick("<", "<", "<=")
+		add("while (%s %s %s && %s %s %s && %s[%s - 1] == %s[%s - 1]) {", lo(), cmp, j, lo(), cmp, k, a, j, b, k)
+		add("    %s = %s - %s;", j, j, step)
+		add("    %s = %s - %s;", k, k, step)
+	}
+	add("}")
+	add("acc = acc + %s * 3 - %s;", j, k)
 }
 
 const guardLaneBody = `    let o: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
