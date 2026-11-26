@@ -11,6 +11,21 @@ import (
 
 var constAggBlockLabel = regexp.MustCompile(`(?m)^\.K\d+:$`)
 
+// Passing each literal whole keeps it materialized for the constant-pool check.
+const constAggReuseSrc = `struct P { x: i32, y: i32 }
+@noinline function keep(p: P): P { return p; }
+function main(): i32 {
+    let cond: i32 = 1;
+    let r: i32 = 0;
+    if (cond > 0) {
+        let a: P = keep(P { x: 10, y: 20 });
+        let s: i32 = a.x + a.y;
+        let b: P = keep(P { x: 3, y: 4 });
+        r = s + b.x + b.y;
+    }
+    return r;
+}`
+
 var constAggCases = []struct {
 	name     string
 	src      string
@@ -37,7 +52,7 @@ var constAggCases = []struct {
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 5, b: 9 }; } function main(): i32 { let ps: P[] = []; let i: i32 = 0; while (i < 4) { ps = ps.append(mk()); i = i + 1; } let s: i32 = 0; let j: i32 = 0; while (j < ps.len()) { s = s + ps[j].a + ps[j].b; j = j + 1; } return s % 200; }`,
 		56, 1, 2},
 	{"reuse-shape-all-constant",
-		`struct P { x: i32, y: i32 } function main(): i32 { let cond: i32 = 1; let r: i32 = 0; if (cond > 0) { let a: P = P { x: 10, y: 20 }; let s: i32 = a.x + a.y; let b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
+		constAggReuseSrc,
 		37, 0, 2},
 	{"folded-field-admitted",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { let p: P = mk(); return (p.a + p.b + 100) % 200; }`,
