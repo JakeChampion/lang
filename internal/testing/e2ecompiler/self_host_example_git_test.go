@@ -442,6 +442,13 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 		t.Run(run.target+"-"+run.format, func(t *testing.T) {
 			top := t.TempDir()
 			idx := gitPackedFixture(t, oracle, top, run)
+			outside := t.TempDir()
+			gitCompare(t, oracle, port, outside, "", "index-pack", "--object-format=")
+			gitCompare(t, oracle, port, outside, "", "index-pack", "--object-format=unknown", "--object-format="+run.format, "p.pack")
+			gitCompare(t, oracle, port, outside, "", "verify-pack", "-v", "--object-format", run.format, idx)
+			gitCompare(t, oracle, port, outside, "", "verify-pack", "--object-format="+run.format, idx)
+			gitCompare(t, oracle, port, outside, "", "verify-pack", "-v", "--object-format=unknown", idx, idx)
+			gitCompare(t, oracle, port, top, "", "verify-pack", "--object-format=unknown", "--no-object-format", idx)
 			compare := func(stdin string, args ...string) string {
 				t.Helper()
 				wantOut, wantErr, wantCode := oracle.run(t, top, stdin, args...)
@@ -530,6 +537,14 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			idx = gitPackIndex(t, top)
 			check(idx)
 			compare("", "verify-pack", "-v", "nosuch.idx")
+			emptyHash, stderr, code := oracle.run(t, top, "", "pack-objects", "empty")
+			if code != 0 {
+				t.Fatalf("creating empty pack: %s", stderr)
+			}
+			emptyIndex := "empty-" + strings.TrimSpace(emptyHash) + ".idx"
+			compare("", "verify-pack", "-v", "--", emptyIndex)
+			compare("", "verify-pack", "--", emptyIndex)
+			compare("", "verify-pack", "-v", "--", emptyIndex, "nosuch.idx")
 
 			// Without the reverse index of git, the port sorts the offsets of the index.
 			revs, err := filepath.Glob(filepath.Join(top, ".git", "objects", "pack", "*.rev"))
@@ -610,11 +625,26 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				}
 			}
 
+			// Git prints the object listing before reporting a bad index trailer.
+			originalIndex := fileBytes(t, idx)
+			changedIndex := bytes.Clone(originalIndex)
+			changedIndex[len(changedIndex)-1] ^= 1
+			rewriteFile(t, idx, changedIndex)
+			compare("", "verify-pack", idx)
+			compare("", "verify-pack", "-v", idx)
+			rewriteFile(t, idx, originalIndex)
+
 			// One changed byte in the middle of the packfile: git and the port refuse it.
 			packed := strings.TrimSuffix(idx, ".idx") + ".pack"
 			data, err := os.ReadFile(packed)
 			if err != nil {
 				t.Fatal(err)
+			}
+			for _, offset := range []int{0, 6} {
+				changed := bytes.Clone(data)
+				changed[offset] ^= 1
+				rewriteFile(t, packed, changed)
+				compare("", "verify-pack", "-v", idx)
 			}
 			data[len(data)/2] ^= 0x40
 			rewriteFile(t, packed, data)

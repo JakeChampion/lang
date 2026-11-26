@@ -13,7 +13,7 @@ git hash-object [-w] [-t KIND] [--literally] [--stdin] [FILE...]
 git cat-file (-t | -s | -p | -e) NAME
 git cat-file (--batch | --batch-check)
 git rev-parse [--verify] [-q] [--short[=N]] [--git-dir] [--not] [--end-of-options] ARG...
-git verify-pack [-v] FILE.idx...
+git verify-pack [-v] [--object-format=HASH] FILE.idx...
 git ls-tree [-r] [-t] [-d] [-l] [-z] [--name-only] [--object-only]
             [--full-name] [--full-tree] [--abbrev[=N]] TREE [PATH...]
 git log [OPTION...] [REVISION...] [-- PATH...]
@@ -202,7 +202,8 @@ The port reads and writes repositories with SHA-1 names and with SHA-256
 names (`git init --object-format=sha256`). The key
 `extensions.objectformat` of the `config` file gives the hash. With no
 repository, `hash-object`, `index-pack` and `verify-pack` use SHA-1, as
-git does.
+git does. Use `verify-pack --object-format=sha256` to check a SHA-256
+pack outside its repository.
 
 A packfile can be larger than 4 GiB. The port finds an object through the
 multi-pack index first, as git does. The port maps a packfile of 1 GiB
