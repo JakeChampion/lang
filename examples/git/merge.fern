@@ -748,7 +748,9 @@ function module_config(parent: refs.Repo): config.Config {
   let path = ".gitmodules".bytes();
   let pos = dircache.first_of(ix, path);
   let staged = dircache.has_path(ix, pos, path);
-  if (staged && ix.entries[pos].stage != 0) { return config.empty(); }
+  if (staged && ix.entries[pos].stage != 0) {
+    return config.empty();
+  }
   if let Ok(st) = lstat(file) {
     return if ((st.mode & 61440) == 32768) { config.read(file, file) } else { config.empty() };
   }
@@ -757,7 +759,9 @@ function module_config(parent: refs.Repo): config.Config {
   if (hash != "") {
     let found = store.read(db, hash);
     if let Ok(obj) = found.object {
-      if (obj.kind == "blob") { return config.parse(unsafe { string_from_bytes_unchecked(obj.body) }); }
+      if (obj.kind == "blob") {
+        return config.parse(unsafe { string_from_bytes_unchecked(obj.body) });
+      }
     }
   }
   return config.empty();
@@ -772,21 +776,35 @@ function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
   if (parent.top == "") {
     return if (!configured && missing_or_empty_dir(modules)) { MissingModule } else { UnknownModule };
   }
-  if let Some(sub) = refs.checkout_at(parent.top + "/" + path) { return AvailableModule(sub); }
-  if (configured && parent.dir != parent.top + "/.git") { return UnknownModule; }
+  if let Some(sub) = refs.checkout_at(parent.top + "/" + path) {
+    return AvailableModule(sub);
+  }
+  if (configured && parent.dir != parent.top + "/.git") {
+    return UnknownModule;
+  }
   let unavailable = if (missing_or_empty_dir(parent.top + "/" + path + "/.git")) { MissingModule } else { UnknownModule };
-  if (!configured && missing_or_empty_dir(modules)) { return unavailable; }
+  if (!configured && missing_or_empty_dir(modules)) {
+    return unavailable;
+  }
   let module_name = "";
   for e in module_config(parent).entries {
-    if (e.value != path || !e.name.starts_with("submodule.") || !e.name.ends_with(".path") || e.name.len() <= 15) { continue; }
+    if (e.value != path || !e.name.starts_with("submodule.") || !e.name.ends_with(".path") || e.name.len() <= 15) {
+      continue;
+    }
     let name = objects.part(e.name, 10, e.name.len() - 5);
     for part in name.replace("\\", "/").split("/") {
-      if (part == "" || part == "." || part == "..") { return UnknownModule; }
+      if (part == "" || part == "." || part == "..") {
+        return UnknownModule;
+      }
     }
-    if (module_name != "") { return UnknownModule; }
+    if (module_name != "") {
+      return UnknownModule;
+    }
     module_name = name;
   }
-  if (module_name == "") { return UnknownModule; }
+  if (module_name == "") {
+    return UnknownModule;
+  }
   let dir = modules + "/" + module_name;
   if (configured) {
     let key = "submodule." + module_name + ".gitdir";
@@ -796,11 +814,17 @@ function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
     dir = if (value.starts_with("/")) { value } else { parent.top + "/" + value };
     // A direct child of the module-store directory cannot be nested in
     // another module. Other configured layouts need Git's ancestry check.
-    if (!dir.starts_with(modules + "/")) { return UnknownModule; }
+    if (!dir.starts_with(modules + "/")) {
+      return UnknownModule;
+    }
     let leaf = objects.part(dir, modules.len() + 1, dir.len());
-    if (leaf == "" || leaf == "." || leaf == ".." || leaf.contains("/")) { return UnknownModule; }
+    if (leaf == "" || leaf == "." || leaf == ".." || leaf.contains("/")) {
+      return UnknownModule;
+    }
   }
-  if let Some(sub) = refs.stored_module(dir) { return AvailableModule(sub); }
+  if let Some(sub) = refs.stored_module(dir) {
+    return AvailableModule(sub);
+  }
   return if (missing_or_empty_dir(dir)) { unavailable } else { UnknownModule };
 }
 

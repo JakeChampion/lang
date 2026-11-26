@@ -4137,8 +4137,12 @@ function verify_listing(a: i32, data: string, ix: pack.Index, verbose: boolean):
 // index-pack compares packed objects with existing objects of the same
 // name in the current repository before it reports index differences.
 function existing_pack_error(a: i32, data: string, actual: pack.Index): string {
-  let Ok(repo) = refs.find() else { return ""; };
-  if (repo.width != a) { return ""; }
+  let Ok(repo) = refs.find() else {
+    return "";
+  };
+  if (repo.width != a) {
+    return "";
+  }
   let st = repo.store();
   let src = pack.memory(data, (name: u8[]): i64 => pack.offset_of(actual, name), a);
   let cache = pack.cache_new();
@@ -4146,16 +4150,26 @@ function existing_pack_error(a: i32, data: string, actual: pack.Index): string {
     let name = pack.hex_name_at(actual, i);
     let info = store.info(st, name);
     st = info.store;
-    if (info.why == "missing") { continue; }
-    if (info.why != "") { return "fatal: cannot read existing object info " + name; }
+    if (info.why == "missing") {
+      continue;
+    }
+    if (info.why != "") {
+      return "fatal: cannot read existing object info " + name;
+    }
     let (entry, kept) = pack.object_cached(src, pack.offset_at(actual, i), cache);
     cache = kept;
-    let Ok(packed) = entry else { return "fatal: cannot read packed object " + name; };
+    let Ok(packed) = entry else {
+      return "fatal: cannot read packed object " + name;
+    };
     if (packed.kind == info.kind && packed.body.len() as i64 == info.size) {
       let found = store.read(st, name);
       st = found.store;
-      let Ok(obj) = found.object else { return "fatal: cannot read existing object " + name; };
-      if (obj.kind == packed.kind && obj.body == packed.body) { continue; }
+      let Ok(obj) = found.object else {
+        return "fatal: cannot read existing object " + name;
+      };
+      if (obj.kind == packed.kind && obj.body == packed.body) {
+        continue;
+      }
     }
     return "fatal: SHA1 COLLISION FOUND WITH " + name + " !";
   }
@@ -4208,7 +4222,9 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
           eprint(error);
           return false;
         }
-        if (verbose) { verify_listing(a, data, actual, true); }
+        if (verbose) {
+          verify_listing(a, data, actual, true);
+        }
       }
     }
     eprint("fatal: sha1 file '" + idx_path + "' validation error");
