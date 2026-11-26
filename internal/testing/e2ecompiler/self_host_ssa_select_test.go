@@ -80,6 +80,15 @@ function probe(i: i32): Probe {
 @noinline function safe_div(a: i32, b: i32): i32 { return if (b != 0) { a / b } else { 0 }; }
 @noinline function at(xs: i32[], i: i32): i32 { return if (i < xs.len()) { xs[i] } else { 0 - 1 }; }
 @noinline function fmn(a: f64, b: f64): f64 { return if (a < b) { a } else { b }; }
+@noinline function sticky(xs: i32[], lim: i32): boolean {
+    let big = false;
+    let i: i32 = 0;
+    while (i < xs.len()) {
+        if (xs[i] > lim) { big = true; }
+        i = i + 1;
+    }
+    return big;
+}
 function main(): i32 {
     let xs: i32[] = [5, 9, 2];
     let acc: i64 = 0i64;
@@ -100,6 +109,7 @@ function main(): i32 {
         acc = acc + (phi_tag(i % 61) as i64);
         acc = acc + (safe_div(a, b & 3) as i64) + (at(xs, b & 3) as i64);
         acc = acc + (fmn((a as f64) * 0.5, b as f64) as i64);
+        if (sticky(xs, b & 15)) { acc = acc + 23i64; }
         acc = acc * 31i64 % 1000000007i64;
         i = i + 1;
     }
@@ -155,6 +165,9 @@ func TestSelfHostSSASelectsAreConditionalMoves(t *testing.T) {
 	// came back.
 	direct := []string{"tagged", "phi_tag"}
 	branches := []string{"safe_div", "at", "fmn"}
+	// sticky sets a flag that its loop carries to a constant. The branch is
+	// almost never taken, and a select would make each pass wait on the last.
+	flags := []string{"sticky"}
 	for _, c := range cases {
 		out := filepath.Join(dir, "selects-"+c.target+".s")
 		if report, err := exec.Command(h.cli, "-target", c.target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
@@ -185,6 +198,15 @@ func TestSelfHostSSASelectsAreConditionalMoves(t *testing.T) {
 			}
 			if c.move.MatchString(fn) {
 				t.Errorf("%s: %s should go straight from each arm of probe to its own arm, with no conditional move:\n%s", c.target, name, fn)
+			}
+		}
+		for _, name := range flags {
+			fn := functionListing(string(asm), "__fn_"+name)
+			if fn == "" {
+				t.Fatalf("%s: no __fn_%s in the listing", c.target, name)
+			}
+			if c.move.MatchString(fn) {
+				t.Errorf("%s: %s should keep the branch that sets its flag, with no conditional move:\n%s", c.target, name, fn)
 			}
 		}
 		for _, name := range branches {

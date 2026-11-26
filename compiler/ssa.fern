@@ -6410,11 +6410,11 @@ struct SelectRound { s: Selection, changed: boolean }
 
 function select_round(f: SFunc): SelectRound {
   let at = block_positions(f);
-  let fl = float_values(f, [], false);
+  let sf = select_facts(f, at);
   let none = __alloc_bool(f.blocks.len());
   let r = Flattening { blocks: f.blocks, busy: none, gone: none, nvals: f.nvals, changed: false, joins: [] };
   for p in 0..f.blocks.len() {
-    let d = diamond_at(f, at, fl, p);
+    let d = diamond_at(f, at, sf, p);
     if (d.ok && !diamond_busy(r.busy, d)) {
       r = flatten_diamond(f, d, r);
     }
@@ -6502,7 +6502,7 @@ function drop_arm(r: Flattening, arm: i32): Flattening {
   return Flattening { ...r, busy: r.busy.with(arm, true), gone: r.gone.with(arm, true) };
 }
 
-function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
+function diamond_at(f: SFunc, at: i32[], sf: SelectFacts, p: i32): Diamond {
   let none = Diamond { ok: false, head: p, t: -1, f: -1, join: -1 };
   let head = f.blocks[p];
   let br = head.term;
@@ -6519,11 +6519,11 @@ function diamond_at(f: SFunc, at: i32[], fl: boolean[], p: i32): Diamond {
   if (!arms_fit(f, at_t, at_f)) {
     return none;
   }
-  if (returns_picked(f, fl, at_t) && returns_picked(f, fl, at_f)) {
+  if (returns_picked(f, sf.fl, at_t) && returns_picked(f, sf.fl, at_f)) {
     return Diamond { ok: true, head: p, t: tp, f: fp, join: -1 };
   }
   let jp = join_of(f, at, p, tp, at_t, fp, at_f);
-  if (jp < 0 || !select_join(f, fl, f.blocks[jp], arm_source(f, head, at_t), arm_source(f, head, at_f))) {
+  if (jp < 0 || !select_join(sf, jp, f.blocks[jp], arm_source(f, head, at_t), arm_source(f, head, at_f))) {
     return none;
   }
   return Diamond { ok: true, head: p, t: at_t, f: at_f, join: jp };
@@ -6626,20 +6626,66 @@ function int_unary(ins: SInst): boolean {
     || k == ir.K_BSWAP || k == ir.K_CLZ || k == ir.K_CTZ || k == ir.K_POPCOUNT || k == ir.K_ROTR;
 }
 
-function select_join(f: SFunc, fl: boolean[], j: SBlock, from_t: i32, from_f: i32): boolean {
+function select_join(sf: SelectFacts, jp: i32, j: SBlock, from_t: i32, from_f: i32): boolean {
   if (j.preds.len() != 2 || !has_pred(j.preds, from_t) || !has_pred(j.preds, from_f)) {
     return false;
   }
   let phis = 0;
   for ins in j.insts {
     if (ins.kind_tag == PHI) {
-      if (ins.args.len() != 2 || picks_float(fl, ins.result)) {
+      if (ins.args.len() != 2 || picks_float(sf.fl, ins.result) || sets_carried(sf, jp, ins.args[0], ins.args[1])) {
         return false;
       }
       phis += 1;
     }
   }
   return phis <= 2;
+}
+
+// What select_branches reads: the float values, the last latch of each
+// header, the header of each value that a header phi defines (or -1), and
+// the constants.
+struct SelectFacts { fl: boolean[], latch: i32[], carried: i32[], constant: boolean[] }
+
+function select_facts(f: SFunc, at: i32[]): SelectFacts {
+  let latch = furthest_latches(f, at);
+  let carried = util.minus_ones(f.nvals);
+  let constant = __alloc_bool(f.nvals);
+  for bi in 0..f.blocks.len() {
+    for ins in f.blocks[bi].insts {
+      let v = ins.result;
+      if (v < 0 || v >= f.nvals) {
+        continue;
+      }
+      let k = ins.kind_tag;
+      if (k == PHI && latch[bi] >= bi) {
+        carried = carried.with(v, bi);
+      }
+      if (k == CONST_INT || k == CONST_BOOL || k == CONST_I64) {
+        constant = constant.with(v, true);
+      }
+    }
+  }
+  return SelectFacts { fl: float_values(f, [], false), latch: latch, carried: carried, constant: constant };
+}
+
+// Whether a phi at join position jp picks a constant or the value that its
+// loop carries in, as `if (c) { flag = true; }` does. The branch is almost
+// never taken, and a select makes each pass wait on the one before.
+function sets_carried(sf: SelectFacts, jp: i32, a: i32, b: i32): boolean {
+  return carried_into(sf, jp, a) && picks_constant(sf, b) || carried_into(sf, jp, b) && picks_constant(sf, a);
+}
+
+function carried_into(sf: SelectFacts, jp: i32, v: i32): boolean {
+  if (v < 0 || v >= sf.carried.len()) {
+    return false;
+  }
+  let h = sf.carried[v];
+  return h >= 0 && h < jp && jp <= sf.latch[h];
+}
+
+function picks_constant(sf: SelectFacts, v: i32): boolean {
+  return v >= 0 && v < sf.constant.len() && sf.constant[v];
 }
 
 function picks_float(fl: boolean[], v: i32): boolean {
