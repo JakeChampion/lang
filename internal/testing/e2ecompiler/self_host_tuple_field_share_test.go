@@ -177,17 +177,18 @@ function main(): i32 {
 `, 12},
 	{"local_enumarr_outlives_record", `enum Flag { On(i32[]), Off }
 struct Flags { n: i32, fs: Flag[] }
-function main(): i32 {
-    let r: Flags = Flags { n: 2, fs: [Flag.On([4, 5]), Flag.Off] };
+@noinline function round(v: i32): i32 {
+    let r: Flags = Flags { n: 2, fs: [Flag.On([v, v + 1]), Flag.Off] };
     let p: (i32, Flag[]) = (r.n, r.fs);
     r = Flags { n: 1, fs: [Flag.Off] };
     let acc: i32 = 0;
     let k: i32 = 0;
-    while (k < 8) { let junk: Flag = Flag.On([9, 9]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
+    while (k < 8) { let junk: Flag = Flag.On([9, k]); match (junk) { Flag.On(z) => { acc = acc + z[0]; }, Flag.Off => {} } k = k + 1; }
     let got: i32 = 0;
     match (p.1[0]) { Flag.On(q) => { got = q[1]; }, Flag.Off => { got = 0; } }
     return p.0 + got + p.1.len() + r.n + acc - 72;
 }
+function main(): i32 { return round(4); }
 `, 10},
 	{"callee_local_structarr_caller_elem", `struct Pt { x: i32, tag: i32[] }
 struct Bag { n: i32, pts: Pt[] }

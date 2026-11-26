@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"os/exec"
@@ -634,7 +635,33 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			compare("", "verify-pack", "-v", idx)
 			rewriteFile(t, idx, originalIndex)
 
-			// One changed byte in the middle of the packfile: git and the port refuse it.
+			// A valid index checksum must not hide a bad CRC for an object.
+			width := run.digits / 2
+			count := int(binary.BigEndian.Uint32(originalIndex[1028:1032]))
+			badCRC := bytes.Clone(originalIndex)
+			badCRC[1032+count*width] ^= 1
+			trailer := len(badCRC) - width
+			copy(badCRC[trailer:], gitValidationHash(run.format, badCRC[:trailer]))
+			rewriteFile(t, idx, badCRC)
+			compare("", "verify-pack", idx)
+			compare("", "verify-pack", "-v", idx)
+			rewriteFile(t, idx, originalIndex)
+
+			// Git reconstructs the listing from packed data when the index points
+			// at the wrong object or one byte past the start of an entry.
+			for _, at := range []int{1032 + width - 1, 1032 + count*(width+4) + 3} {
+				badEntry := bytes.Clone(originalIndex)
+				badEntry[at] ^= 1
+				copy(badEntry[trailer:], gitValidationHash(run.format, badEntry[:trailer]))
+				rewriteFile(t, idx, badEntry)
+				compare("", "verify-pack", idx)
+				compare("", "verify-pack", "-v", idx)
+				gitCompare(t, oracle, port, outside, "", "verify-pack", "--object-format="+run.format, idx)
+				gitCompare(t, oracle, port, outside, "", "verify-pack", "-v", "--object-format="+run.format, idx)
+			}
+			rewriteFile(t, idx, originalIndex)
+
+			// Match the diagnostic for damage to the header, an object, or the trailer.
 			packed := strings.TrimSuffix(idx, ".idx") + ".pack"
 			data, err := os.ReadFile(packed)
 			if err != nil {
@@ -646,12 +673,26 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				rewriteFile(t, packed, changed)
 				compare("", "verify-pack", "-v", idx)
 			}
+			rewriteFile(t, packed, data)
+
+			// Verify the damaged copy while the repository still has a sound pack.
+			copyBase := filepath.Join(t.TempDir(), "copy")
+			if err := os.WriteFile(copyBase+".idx", fileBytes(t, idx), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			badSum := bytes.Clone(data)
+			badSum[len(badSum)-1] ^= 0x40
+			for _, changed := range [][]byte{data[:len(data)-1], append(bytes.Clone(data), 0), badSum} {
+				if err := os.WriteFile(copyBase+".pack", changed, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				compare("", "verify-pack", copyBase+".idx")
+				compare("", "verify-pack", "-v", copyBase+".idx")
+			}
 			data[len(data)/2] ^= 0x40
 			rewriteFile(t, packed, data)
-			_, _, wantCode := oracle.run(t, top, "", "verify-pack", idx)
-			if _, _, gotCode := port.run(t, top, "", "verify-pack", idx); wantCode == 0 || gotCode != wantCode {
-				t.Errorf("verify-pack of a changed packfile: the port gives exit %d and git gives %d", gotCode, wantCode)
-			}
+			compare("", "verify-pack", idx)
+			compare("", "verify-pack", "-v", idx)
 		})
 	}
 }

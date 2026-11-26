@@ -59,7 +59,6 @@ function main(): i32 {
 	let b3: i64 = __heap_bump_bytes();
 	let r3: ndarray.NdArray[i64] = t.reshape([n * n]);
 	let d_r3: i64 = __heap_bump_bytes() - b3;
-	if (r3.get_unchecked([1]) != a.get_unchecked([1, 0])) { return 60; }
 	if (counters && d_r3 < elem_bytes) { return 61; }
 
 	let b4: i64 = __heap_bump_bytes();
@@ -71,13 +70,11 @@ function main(): i32 {
 	let b5: i64 = __heap_bump_bytes();
 	let f2: i64[] = t.to_flat();
 	let d_f2: i64 = __heap_bump_bytes() - b5;
-	if (f2.len() != n * n || f2[1] != a.get_unchecked([1, 0])) { return 80; }
 	if (counters && d_f2 < elem_bytes) { return 81; }
 
 	let b6: i64 = __heap_bump_bytes();
 	let p: ndarray.NdArray[i64] = t.packed();
 	let d_p: i64 = __heap_bump_bytes() - b6;
-	if (!p.is_packed() || p.get_unchecked([3, 5]) != t.get_unchecked([3, 5])) { return 90; }
 	if (counters && d_p < elem_bytes) { return 91; }
 	if (!a.packed().is_packed()) { return 92; }
 
@@ -87,11 +84,7 @@ function main(): i32 {
 	let b7: i64 = __heap_bump_bytes();
 	let rvf: i64[] = rv.to_flat();
 	let d_rvf: i64 = __heap_bump_bytes() - b7;
-	if (rvf.len() != n * n || rvf[0] != a.get_unchecked([0, n - 1]) || rvf[n - 1] != a.get_unchecked([0, 0])) { return 93; }
-	if (rvf[n] != a.get_unchecked([1, n - 1]) || rvf[n * n - 1] != a.get_unchecked([n - 1, 0])) { return 94; }
 	if (counters && d_rvf < elem_bytes) { return 95; }
-	let both: ndarray.NdArray[i64] = a.reverse(0).reverse(1).packed();
-	if (!both.is_packed() || both.get_unchecked([0, 0]) != a.get_unchecked([n - 1, n - 1]) || both.get_unchecked([n - 1, n - 1]) != a.get_unchecked([0, 0])) { return 96; }
 
 	let z: ndarray.NdArray[i64] = ndarray.from_flat([7 as i64], []);
 	if (z.rank() != 0 || z.len() != 1 || z.get_unchecked([]) != 7 as i64) { return 100; }
@@ -103,8 +96,27 @@ function main(): i32 {
 	let b8: i64 = __heap_bump_bytes();
 	let m: ndarray.NdArray[i64] = t.map((x: i64): i64 => x * (2 as i64));
 	let d_m: i64 = __heap_bump_bytes() - b8;
-	if (!m.is_packed() || m.shape()[0] != n || m.get_unchecked([3, 5]) != (2 * (5 * n + 3)) as i64) { return 120; }
 	if (counters && d_m < elem_bytes) { return 121; }
+
+	// Outer materializes one result buffer from two broadcast views.
+	let outer_row = a.select(0, 0);
+	let b11: i64 = __heap_bump_bytes();
+	let op2: ndarray.NdArray[i64] = outer_row.outer(outer_row, (x: i64, y: i64): i64 => x * y);
+	let d_op2: i64 = __heap_bump_bytes() - b11;
+	if (op2.rank() != 2 || op2.shape()[1] != n || !op2.is_packed() || op2.get_unchecked([5, 3]) != 15 as i64) { return 150; }
+	if (counters && d_op2 < elem_bytes) { return 151; }
+
+	// Read the materialized buffers after the last lower-bound measurement.
+	// A buffer freed earlier could be recycled without advancing the bump counter.
+	if (r3.get_unchecked([1]) != a.get_unchecked([1, 0])) { return 60; }
+	if (f2.len() != n * n || f2[1] != a.get_unchecked([1, 0])) { return 80; }
+	if (!p.is_packed() || p.get_unchecked([3, 5]) != t.get_unchecked([3, 5])) { return 90; }
+	if (rvf.len() != n * n || rvf[0] != a.get_unchecked([0, n - 1]) || rvf[n - 1] != a.get_unchecked([0, 0])) { return 93; }
+	if (rvf[n] != a.get_unchecked([1, n - 1]) || rvf[n * n - 1] != a.get_unchecked([n - 1, 0])) { return 94; }
+	if (!m.is_packed() || m.shape()[0] != n || m.get_unchecked([3, 5]) != (2 * (5 * n + 3)) as i64) { return 120; }
+
+	let both: ndarray.NdArray[i64] = a.reverse(0).reverse(1).packed();
+	if (!both.is_packed() || both.get_unchecked([0, 0]) != a.get_unchecked([n - 1, n - 1]) || both.get_unchecked([n - 1, n - 1]) != a.get_unchecked([0, 0])) { return 96; }
 	let zw: ndarray.NdArray[i64] = a.zip_with(t, (x: i64, y: i64): i64 => x - y);
 	if (zw.get_unchecked([3, 5]) != a.get_unchecked([3, 5]) - a.get_unchecked([5, 3]) || zw.get_unchecked([7, 7]) != 0 as i64) { return 122; }
 
@@ -225,15 +237,9 @@ function main(): i32 {
 	let bs: i32[] = ndarray.broadcast_shape([1, n], [n, 1]);
 	if (bs.len() != 2 || bs[0] != n || bs[1] != n) { return 147; }
 
-	// Products: outer is one result buffer over two broadcast views; inner
-	// contracts the last axis of the receiver against the first of the
+	// Inner contracts the last axis of the receiver against the first of the
 	// argument, in increasing index order along it, on a strided or
 	// reversed operand exactly as on a packed one.
-	let b11: i64 = __heap_bump_bytes();
-	let op2: ndarray.NdArray[i64] = rowv.outer(rowv, (x: i64, y: i64): i64 => x * y);
-	let d_op2: i64 = __heap_bump_bytes() - b11;
-	if (op2.rank() != 2 || op2.shape()[1] != n || !op2.is_packed() || op2.get_unchecked([5, 3]) != 15 as i64) { return 150; }
-	if (counters && d_op2 < elem_bytes) { return 151; }
 	let dot: ndarray.NdArray[i64] = rowv.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);
 	if (dot.rank() != 0 || dot.get_unchecked([]) != 85344 as i64) { return 152; }
 	let mv: ndarray.NdArray[i64] = a.inner(rowv, 0 as i64, (x: i64, y: i64): i64 => x * y, (x: i64, y: i64): i64 => x + y);

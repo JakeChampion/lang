@@ -115,7 +115,8 @@ func TestSelfHostCompareReadsItsOperandFromMemory(t *testing.T) {
 // The box of `inner` is loaded to %rcx, and `k` is in a frame slot. The
 // compare reads `limit` from the box, so `k` must go to a different register.
 const loadCompareSpilledProg = `struct Inner { used: i64, limit: i64, a: i64, b: i64, c: i64, d: i64 }
-struct Outer { inner: Inner, pad: i64 }
+// Keep the outer record boxed so its inner pointer still occupies a register.
+struct Outer { inner: Inner, pad: i64, pad2: i64, pad3: i64, pad4: i64 }
 
 @noinline function note(n: i64): i64 {
   return n + 1i64;
@@ -143,7 +144,7 @@ struct Outer { inner: Inner, pad: i64 }
 }
 
 function main(): i32 {
-  let o = Outer { inner: Inner { used: 1i64, limit: 5i64, a: 0i64, b: 0i64, c: 0i64, d: 0i64 }, pad: 0i64 };
+  let o = Outer { inner: Inner { used: 1i64, limit: 5i64, a: 0i64, b: 0i64, c: 0i64, d: 0i64 }, pad: 0i64, pad2: 0i64, pad3: 0i64, pad4: 0i64 };
   let x = over(o, 1i64, 2i64, 3i64, 4i64, 5i64);
   let y = over(o, 9i64, 2i64, 3i64, 4i64, 5i64);
   if (x != 365i64 || y != 69i64) {

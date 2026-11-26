@@ -103,7 +103,7 @@ func selfHostEMISweep(t *testing.T, flags []string) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			src, kept := fernsmith.EMI(string(orig), seed, selfHostEMISteps, checksCleanOn("x86-64-linux"))
+			src, kept := fernsmith.EMI(string(orig), seed, selfHostEMISteps, emiCandidateCheck(t, fernBin, stdlibRoot))
 			if kept == 0 {
 				t.Skip("no EMI step type-checks in this case")
 			}
@@ -144,6 +144,28 @@ func selfHostEMISweep(t *testing.T, flags []string) {
 				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class})
 			}
 		})
+	}
+}
+
+// A copied statement can consume a value twice. Only the self-host checker
+// checks ownership (#16331). Keep reporting any other checker disagreement.
+func emiCandidateCheck(t *testing.T, fernBin, stdlibRoot string) func(string) bool {
+	checkTarget := checksCleanOn("x86-64-linux")
+	return func(src string) bool {
+		t.Helper()
+		if !checkTarget(src) {
+			return false
+		}
+		out, err := selfHostCheck(t, fernBin, stdlibRoot, src)
+		if err == nil {
+			return true
+		}
+		codes, _ := splitDiagnostics(out)
+		if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 && len(codes) > 0 && len(e2eharness.SharedCodes(codes)) == 0 {
+			return false
+		}
+		t.Fatalf("self-host check of EMI candidate: %v\n%s\nsrc:\n%s", err, out, src)
+		return false
 	}
 }
 

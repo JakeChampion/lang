@@ -23,16 +23,22 @@ func TestSelfHostOptStructStringFieldX86_64(t *testing.T) {
 				"reached a live string", name, exit, want)
 		}
 		allocs, frees, live := parseLeakcheck(t, name, stderr)
+		t.Logf("%s: allocs=%d frees=%d live_bytes=%d", name, allocs, frees, live)
+		return allocs, frees, live
+	}
+
+	heapCounts := func(t *testing.T, name, src string) (int64, int64, int64) {
+		t.Helper()
+		allocs, frees, live := counts(t, name, src)
 		if allocs == 0 {
 			t.Fatalf("%s allocated nothing — the probe is not exercising the path", name)
 		}
-		t.Logf("%s: allocs=%d frees=%d live_bytes=%d", name, allocs, frees, live)
 		return allocs, frees, live
 	}
 
 	balanced := func(t *testing.T, name, src, was string) {
 		t.Helper()
-		allocs, frees, live := counts(t, name, src)
+		allocs, frees, live := heapCounts(t, name, src)
 		if live != 0 || allocs != frees {
 			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance; %s",
 				allocs, frees, live, was)
@@ -137,7 +143,7 @@ function main(): i32 {
 	})
 
 	t.Run("scalar_only_payload", func(t *testing.T) {
-		balanced(t, "oss_scalar", `struct P { a: i32, b: i32 }
+		allocs, frees, live := counts(t, "oss_scalar", `struct P { a: i32, b: i32 }
 function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -153,7 +159,10 @@ function main(): i32 {
     let r: i32 = 0;
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
-}`, "this was 35200, with frees=0 — neither box was released")
+}`)
+		if allocs != 0 || frees != 0 || live != 0 {
+			t.Errorf("scalar-only payload: allocs=%d frees=%d live_bytes=%d, want all zero", allocs, frees, live)
+		}
 	})
 
 	t.Run("aliased_string_field_payload_survives", func(t *testing.T) {
@@ -203,7 +212,7 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 97;
 }`
-		allocs, frees, live := counts(t, "oss_escaping", src)
+		allocs, frees, live := heapCounts(t, "oss_escaping", src)
 		if live != 0 || allocs != frees {
 			t.Errorf("allocs=%d frees=%d live_bytes=%d — want an exact balance. This arm "+
 				"extracts the string field into a name that outlives the match; the exit "+

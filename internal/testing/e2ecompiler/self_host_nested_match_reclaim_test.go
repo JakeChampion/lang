@@ -52,7 +52,7 @@ function main(): i32 {
 const nmFlatStrSrc = `import "core/int";
 function make(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -73,7 +73,7 @@ function main(): i32 {
 const nmIfStrSrc = `import "core/int";
 function make(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -96,7 +96,7 @@ function main(): i32 {
 const nmWhileStrSrc = `import "core/int";
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -140,7 +140,7 @@ function main(): i32 {
 const nmElseMentionsSrc = `import "core/int";
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -162,7 +162,7 @@ const nmUsedAfterSrc = `import "core/int";
 function olen(o: Option[string]): i32 { match (o) { Some(s) => { return s.len(); }, None => { return 0; } } }
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function main(): i32 {
     let acc: i32 = 0;
@@ -183,7 +183,7 @@ const nmCondMentionsSrc = `import "core/int";
 function olen(o: Option[string]): i32 { match (o) { Some(s) => { return s.len(); }, None => { return 0; } } }
 function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function main(): i32 {
     let acc: i32 = 0;
