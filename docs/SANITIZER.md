@@ -243,7 +243,7 @@ quarantine:
   count is the poison word, with `fern-sanitizer: use-after-free`.
 - A count that reaches zero a second time reports
   `fern-sanitizer: rc over-release`.
-- A raw release of a block that is in the quarantine is a double free.
+- A second raw release of a block is a double free (the raw-free bitmap).
 
 A release past the budget (`-quarantine`, 64 MiB by default) evicts the
 oldest block to its free list. `__fern_quar_check` first reads word 0 and

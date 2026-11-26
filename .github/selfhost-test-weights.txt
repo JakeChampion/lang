@@ -1615,7 +1615,6 @@ TestSelfHostHardenAndroid 57
 TestSelfHostHardenArm64 13
 TestSelfHostHardenFreeListRoundTrip 4
 TestSelfHostHardenFreeListStringBoxes 5
-TestSelfHostHardenRawInterleavedDoubleFree 4
 TestSelfHostHardenScrubsReleasedBlocks 3
 TestSelfHostHeadTailBytes 11
 TestSelfHostHeadersIR 3
@@ -2702,7 +2701,7 @@ TestSelfHostRangePatternX86_64 2
 TestSelfHostRangeProofsOff 57
 TestSelfHostRangeValueIR 6
 TestSelfHostRatchetIncludesLiterateSources 12
-TestSelfHostRawDoubleFree 4
+TestSelfHostRawDoubleFree 60
 TestSelfHostRawFree 4
 TestSelfHostRawFreeInWorkerChild 4
 TestSelfHostRawFreeOutsideHeap 4
@@ -3005,7 +3004,6 @@ TestSelfHostSanitizeFlag 3
 TestSelfHostSanitizeLeakVerdictX86_64 3
 TestSelfHostSanitizeOffEmitsNoSymbolsX86_64 3
 TestSelfHostSanitizeQuarantineGrowth 3
-TestSelfHostSanitizeRawDoubleFree 4
 TestSelfHostSanitizeReportCarriesBacktrace 4
 TestSelfHostSaturatingWasmIR 4
 TestSelfHostSaturatingX86IR 3

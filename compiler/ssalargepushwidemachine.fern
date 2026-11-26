@@ -49,12 +49,12 @@ function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): sha
   };
 }
 
-function initial(r: ranges.Interval, oversized: boolean, duplicate: boolean): shared.State {
+function initial(r: ranges.Interval, oversized: boolean): shared.State {
   let regs: shared.Word[] = [];
   for reg in 0..16 {
     regs = regs.append(initial_register(r, reg, oversized));
   }
-  let head = shared.identity(if (duplicate) { 8 } else { 6 }, 0);
+  let head = shared.identity(6, 0);
   let cells = [half.token(5, 0, 0), half.token(5, 0, 1), head.low, head.high, half.token(4, 0, 0), half.token(4, 0, 1)];
   let state = shared.initial(regs, cells, false, 0);
   return shared.State { ...state, oversized: oversized };
@@ -293,13 +293,8 @@ function finished(s: shared.State, r: ranges.Interval): boolean {
   return s.block_writes == writes && s.slot_writes == writes && shared.same_word(read(s, r, 0, 64), block) && shared.same_word(read(s, r, 2, 64), head) && shared.same_word(read(s, r, 4, 64), shared.identity(4, 0));
 }
 
-function execute(s: shared.State, r: ranges.Interval, item: decoder.WideOp, pc: i32, duplicate: boolean): Flow {
+function execute(s: shared.State, r: ranges.Interval, item: decoder.WideOp, pc: i32): Flow {
   let op = item.instruction;
-  if (op.kind == 35) {
-    let taken = condition.unsigned_branch(s.flags.order, op.condition);
-    let abort = taken == 1 && duplicate && !s.oversized && s.block_writes == 0 && s.slot_writes == 0;
-    return Flow { state: shared.State { ...s, ok: s.ok && (taken == 0 || abort) }, next: if (taken == 1) { -1 } else { pc + 1 } };
-  }
   if (op.kind == 17) {
     let taken = condition.unsigned_branch(s.flags.order, op.condition);
     return Flow { state: shared.State { ...s, ok: s.ok && taken >= 0 }, next: if (taken == 1) { op.target } else { pc + 1 } };
@@ -308,8 +303,8 @@ function execute(s: shared.State, r: ranges.Interval, item: decoder.WideOp, pc: 
   return Flow { state: next, next: pc + 1 };
 }
 
-function path(p: decoder.WideProgram, r: ranges.Interval, oversized: boolean, duplicate: boolean): boolean {
-  let s = initial(r, oversized, duplicate);
+function path(p: decoder.WideProgram, r: ranges.Interval, oversized: boolean): boolean {
+  let s = initial(r, oversized);
   let visited: boolean[] = [];
   for op in p.ops {
     visited = visited.append(false);
@@ -322,16 +317,13 @@ function path(p: decoder.WideProgram, r: ranges.Interval, oversized: boolean, du
     visited = visited.with(pc, true);
     let op = p.ops[pc];
     if (op.instruction.kind == 18) {
-      return !duplicate && finished(s, r);
+      return finished(s, r);
     }
-    let flow = execute(s, r, op, pc, duplicate);
+    let flow = execute(s, r, op, pc);
     s = flow.state;
     pc = flow.next;
     if (!s.ok) {
       return false;
-    }
-    if (pc == -1) {
-      return true;
     }
   }
   return false;
@@ -343,22 +335,9 @@ pub function check(output: string): boolean {
     return false;
   }
   for r in ranges.intervals() {
-    if (!path(p, r, false, false)) {
+    if (!path(p, r, false)) {
       return false;
     }
   }
-  return path(p, ranges.Interval { low: 0, high: 0 }, true, false);
-}
-
-pub function check_guarded(output: string): boolean {
-  if (!check(output)) {
-    return false;
-  }
-  let p = decoder.large_program(output);
-  for r in ranges.intervals() {
-    if (!path(p, r, false, true)) {
-      return false;
-    }
-  }
-  return true;
+  return path(p, ranges.Interval { low: 0, high: 0 }, true);
 }

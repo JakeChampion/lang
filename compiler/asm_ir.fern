@@ -334,14 +334,20 @@ function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    ret\n");
 }
 
-// Under -sanitize a fresh raw block holds the poison pattern, so a read of a
+// The user `__alloc`. It clears the raw-free bit of the block. Under
+// -sanitize a fresh raw block also holds the poison pattern, so a read of a
 // byte that the program never wrote gives the same value on each run.
-function emit_raw_alloc_san(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("__fern_raw_alloc_san:\n");
-  s = s.write("    pushq %rdi\n    pushq %rdi\n    call __fern_alloc\n    popq %rdi\n    popq %rdi\n");
-  s = s.write("    addq $7, %rdi\n    andq $-8, %rdi\n    movabs $" + rc_poison64() + ", %rdx\n");
-  s = s.write("    pushq %rcx\n    xorl %ecx, %ecx\n.Lraw_san_fill:\n    cmpq %rdi, %rcx\n    jae .Lraw_san_filled\n");
-  return s.write("    movq %rdx, (%rax,%rcx)\n    addq $8, %rcx\n    jmp .Lraw_san_fill\n.Lraw_san_filled:\n    popq %rcx\n    ret\n");
+function emit_raw_alloc(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_raw_alloc:\n");
+  s = s.write("    pushq %rdi\n    pushq %rdi\n    call __fern_alloc\n    popq %rdi\n    popq %rdi\n    pushq %rcx\n");
+  if (san_redzone_on(s)) {
+    s = s.write("    addq $7, %rdi\n    andq $-8, %rdi\n    movabs $" + rc_poison64() + ", %rdx\n");
+    s = s.write("    xorl %ecx, %ecx\n.Lraw_san_fill:\n    cmpq %rdi, %rcx\n    jae .Lraw_san_filled\n");
+    s = s.write("    movq %rdx, (%rax,%rcx)\n    addq $8, %rcx\n    jmp .Lraw_san_fill\n.Lraw_san_filled:\n");
+  }
+  s = s.write("    movq %rax, %rcx\n    subq __fern_rawmap_lo(%rip), %rcx\n    jb .Lraw_alloc_ret\n    cmpq __fern_heap_end(%rip), %rax\n    jae .Lraw_alloc_ret\n");
+  s = s.write("    shrq $3, %rcx\n    movq __fern_rawmap(%rip), %rdi\n    btrq %rcx, (%rdi)\n");
+  return s.write(".Lraw_alloc_ret:\n    popq %rcx\n    ret\n");
 }
 
 // Under -sanitize each block carries a redzone: the words of its size class
@@ -453,16 +459,6 @@ function san_uninit_fill(s: asmcore.EmitState): string {
   }
   return "    addq $7, %r12\n    shrq $3, %r12\n    movabs $" + rc_poison64() + ", %r13\n.Lfern_uninit_fill:\n    testq %r12, %r12\n    jz .Lfern_uninit_filled\n"
     + "    movq %r13, (%rax,%r12,8)\n    decq %r12\n    jmp .Lfern_uninit_fill\n.Lfern_uninit_filled:\n";
-}
-
-// Under -sanitize a raw free of a block that is in the quarantine aborts as a
-// double free. The poison word selects the candidates, and a walk of the
-// quarantine decides, so a live block that holds the poison value is freed.
-function san_raw_twice_check(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    cmpl $" + rc_poison() + ", (%rdi)\n    jne .Lrawfree_fresh\n");
-  s = s.write("    movq __fern_quar_head(%rip), %rcx\n.Lrawfree_qscan:\n    testq %rcx, %rcx\n    jz .Lrawfree_fresh\n");
-  s = s.write("    cmpq %rdi, %rcx\n    je .Lrawfree_double\n    movq 16(%rcx), %rcx\n    jmp .Lrawfree_qscan\n");
-  return s.write(".Lrawfree_fresh:\n");
 }
 
 // Runs `body` on each payload word of the block at %rdi, words 3 to %rsi - 1,
@@ -788,24 +784,20 @@ function str_grow_census(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function freelist_push(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
-  return freelist_push_classed(capw_class(s, words), ptr, words, tmp, "");
+  return freelist_push_classed(capw_class(s, words), ptr, words, tmp);
 }
 
-// Pushes ptr on the free list of its class. With `twice` set, a block that is
-// already the head of the list jumps to that label instead.
-function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, tmp: string, twice: string): asmcore.EmitState {
-  return freelist_push_slot(s, ptr, words, "(%r8," + words + ",8)", tmp, twice);
+// Pushes ptr on the free list of its class.
+function freelist_push_classed(s: asmcore.EmitState, ptr: string, words: string, tmp: string): asmcore.EmitState {
+  return freelist_push_slot(s, ptr, words, "(%r8," + words + ",8)", tmp);
 }
 
 // Pushes ptr, a block of `words` words, on the free list whose head is
 // `slot`, an operand over the list table in %r8.
-function freelist_push_slot(s: asmcore.EmitState, ptr: string, words: string, slot: string, tmp: string, twice: string): asmcore.EmitState {
+function freelist_push_slot(s: asmcore.EmitState, ptr: string, words: string, slot: string, tmp: string): asmcore.EmitState {
   s = freelist_scrub(s, ptr, words);
   s = s.write("    leaq __fern_freelist(%rip), %r8\n");
   s = s.write("    movq " + slot + ", " + tmp + "\n");
-  if (twice != "") {
-    s = freelist_twice_check(s, tmp, ptr, twice);
-  }
   s = freelist_encode(s, ptr, tmp, "%r9");
   s = s.write("    movq " + tmp + ", (" + ptr + ")\n");
   return s.write("    movq " + ptr + ", " + slot + "\n");
@@ -818,24 +810,6 @@ function freelist_scrub(s: asmcore.EmitState, ptr: string, words: string): asmco
     return s;
   }
   return s.write("    pushq " + words + "\n    pushq " + ptr + "\n    call __fern_scrub\n    leaq 16(%rsp), %rsp\n");
-}
-
-// Jumps to `twice` when `ptr` is already on the free list whose head is in
-// `head`. The release build compares the head alone. -harden walks the first
-// 64 blocks through .Lfltake_next, so a second free with other frees of the
-// class between the two aborts too.
-function freelist_twice_check(s: asmcore.EmitState, head: string, ptr: string, twice: string): asmcore.EmitState {
-  if (!s.harden) {
-    return s.write("    cmpq " + ptr + ", " + head + "\n    je " + twice + "\n");
-  }
-  let l = asmcore.fresh_label(s);
-  let n = l.name;
-  let restore = "    popq %r11\n    popq %r10\n    popq %r8\n    popq %rax\n";
-  s = l.state.write("    pushq %rax\n    pushq %r8\n    pushq %r10\n    pushq %r11\n    movq " + ptr + ", %r10\n    movq " + head + ", %rax\n    movl $64, %r11d\n");
-  s = s.write(n + "_loop:\n    testq %rax, %rax\n    jz " + n + "_done\n    cmpq %r10, %rax\n    je " + n + "_hit\n");
-  s = s.write("    call .Lfltake_next\n    movq %r8, %rax\n    decl %r11d\n    jnz " + n + "_loop\n");
-  s = s.write(n + "_done:\n" + restore + "    jmp " + n + "_out\n" + n + "_hit:\n" + restore + "    jmp " + twice + "\n");
-  return s.write(n + "_out:\n");
 }
 
 // The abort a corrupt free list link takes, which only -harden checks.
@@ -4466,6 +4440,18 @@ function arena_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
   return s.syscall(28);
 }
 
+// The bytes of the raw-free bitmap of a hosted arena of `limit` bytes: one
+// bit for each word, and a page more for the bit of the end address.
+function rawmap_bytes(limit: i64): i64 {
+  return limit / 64i64 + 4096i64;
+}
+
+// Turns the length of a region in `reg` into the bytes of the bitmap that
+// its start holds, a multiple of 16 that covers the rest of the region.
+function rawmap_carve(reg: string): string {
+  return "    shrq $6, " + reg + "\n    addq $16, " + reg + "\n    andq $-16, " + reg + "\n";
+}
+
 // The first allocation maps the arena.
 function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    pushq %rdi\n");
@@ -4477,7 +4463,7 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    pushq %r10\n");
   s = s.write("    pushq %r11\n");
   s = s.write("    movl $0x10000000, %edi\n");
-  s = s.write("    movabs $" + s.heap_limit.to_string() + ", %rsi\n");
+  s = s.write("    movabs $" + (s.heap_limit + rawmap_bytes(s.heap_limit)).to_string() + ", %rsi\n");
   s = s.write("    movl $3, %edx\n");
   s = s.write("    movl $0x4022, %r10d\n");
   s = s.write("    movq $-1, %r8\n");
@@ -4488,9 +4474,11 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jl .Lalloc_map_fail\n");
   s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    movq %rax, __fern_heap_base(%rip)\n");
+  s = s.write("    movq %rax, __fern_rawmap_lo(%rip)\n");
   s = s.write("    movabs $" + s.heap_limit.to_string() + ", %rcx\n");
   s = s.write("    addq %rax, %rcx\n");
   s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
+  s = s.write("    movq %rcx, __fern_rawmap(%rip)\n");
   s = arena_huge_pages(s);
   s = s.write("    popq %r11\n");
   s = s.write("    popq %r10\n");
@@ -4509,7 +4497,9 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
 function emit_heap_init(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .text\n    .globl __fern_heap_init\n    .type __fern_heap_init, @function\n__fern_heap_init:\n");
   if (s.has_need("heap")) {
-    s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n    movq %rdi, __fern_heap_base(%rip)\n    addq %rdi, %rsi\n    movq %rsi, __fern_heap_end(%rip)\n");
+    s = s.write("    movq %rsi, %rax\n" + rawmap_carve("%rax"));
+    s = s.write("    movq %rdi, __fern_rawmap(%rip)\n    addq %rdi, %rsi\n    addq %rax, %rdi\n    movq %rdi, __fern_rawmap_lo(%rip)\n");
+    s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n    movq %rdi, __fern_heap_base(%rip)\n    movq %rsi, __fern_heap_end(%rip)\n");
   }
   return s.write("    ret\n.size __fern_heap_init, .-__fern_heap_init\n");
 }
@@ -4615,6 +4605,7 @@ function emit_ir_runtime_part_1(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_heap_end: .quad 0\n");
   s = s.write("    .align 8\n");
   s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
+  s = s.write("__fern_rawmap: .quad 0\n__fern_rawmap_lo: .quad 0\n");
   if (s.has_need("heap_adopt")) {
     s = s.write("__fern_image_lo: .quad 0\n");
     s = s.write("__fern_image_hi: .quad 0\n");
@@ -4925,7 +4916,6 @@ function emit_ir_runtime_part_3(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rdx, %rax\n");
   s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
   s = s.write("    movq (%rdx,%rax,8), %rcx\n");
-  s = freelist_twice_check(s, "%rcx", "%r8", ".Lrawfree_double");
   s = freelist_encode(s, "%r8", "%rcx", "%rsi");
   s = s.write("    movq %rcx, (%r8)\n");
   s = s.write("    movq %r8, (%rdx,%rax,8)\n");
@@ -4962,8 +4952,8 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = emit_quarantine(s);
   }
+  s = emit_raw_alloc(s);
   if (san_redzone_on(s)) {
-    s = emit_raw_alloc_san(s);
     s = emit_san_class(s);
   }
   if (s.harden) {
@@ -4990,8 +4980,9 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    andq $-8, %rsi\n");
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
+  s = s.write("    movq %rdi, %rcx\n    subq __fern_rawmap_lo(%rip), %rcx\n    jb .Lrawfree_unmarked\n    shrq $3, %rcx\n");
+  s = s.write("    movq __fern_rawmap(%rip), %rdx\n    btsq %rcx, (%rdx)\n    jc .Lrawfree_double\n.Lrawfree_unmarked:\n");
   if (s.rc_free_debug) {
-    s = san_raw_twice_check(s);
     s = s.write(quarantine_rc("(%rdi)", s.rc_free_debug));
   }
   s = s.write("    movq %rsi, %rcx\n");
@@ -5005,7 +4996,7 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    cmpq $65536, %rcx\n");
     s = s.write("    jae .Lrawfree_large\n");
     s = hev_free(s, "%rdi", "%rcx");
-    s = freelist_push_classed(capw_class(s, "%rcx"), "%rdi", "%rcx", "%rdx", ".Lrawfree_double");
+    s = freelist_push_classed(capw_class(s, "%rcx"), "%rdi", "%rcx", "%rdx");
     s = s.write(".Lrawfree_ret:\n");
     s = s.write("    ret\n");
     s = s.write(".Lrawfree_large:\n");
@@ -5032,7 +5023,7 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rdx", "%rcx");
   if (!s.rc_free_debug) {
     s = s.write(".Larrdec_push:\n");
-    s = freelist_push_classed(s, "%rdx", "%rcx", "%rdi", "");
+    s = freelist_push_classed(s, "%rdx", "%rcx", "%rdi");
   } else {
     s = quar_push(s, "%rdx", "%rcx", 8);
   }
@@ -5126,7 +5117,7 @@ function emit_ir_runtime_part_5(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq -8(%rax), %rdx\n");
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
-    s = freelist_push_slot(s, "%rdx", "$3", "24(%r8)", "%rsi", "");
+    s = freelist_push_slot(s, "%rdx", "$3", "24(%r8)", "%rsi");
   } else {
     s = quar_push(s, "%rdx", "$3", 0);
   }
@@ -5165,7 +5156,7 @@ function emit_ir_runtime_part_5(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rcx", "%rdx");
   if (!s.rc_free_debug) {
     s = s.write(".Lstrfree_fused_push:\n");
-    s = freelist_push_classed(s, "%rcx", "%rdx", "%rsi", "");
+    s = freelist_push_classed(s, "%rcx", "%rdx", "%rsi");
   } else {
     s = s.write("    jmp .Lstrfree_quar\n");
   }
@@ -5233,7 +5224,7 @@ function emit_ir_runtime_part_6(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
   s = hev_free(s, "%rdx", "$3");
   if (!s.rc_free_debug) {
-    s = freelist_push_slot(s, "%rdx", "$3", "24(%r8)", "%rsi", "");
+    s = freelist_push_slot(s, "%rdx", "$3", "24(%r8)", "%rsi");
   } else {
     s = quar_push(s, "%rdx", "$3", 0);
   }
@@ -11029,7 +11020,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
     s = s.write("    addq $24, %rdi\n");
   }
   if (ins.str == "alloc") {
-    sym = asmcore.raw_alloc_sym(s);
+    sym = "__fern_raw_alloc";
     s = lc_rt_req_alloc(s);
   }
   if (asmcore.packed_shift(ins.str) > 0 && ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
@@ -13797,6 +13788,8 @@ function emit_ir_op_heap_adopt(o: ir.Op, s: asmcore.EmitState): asmcore.EmitStat
   s = s.need("heap_adopt");
   s = s.write("    popq %rdx\n");
   s = s.write("    popq %rax\n");
+  s = s.write("    pushq %rcx\n    movq %rdx, %rcx\n    subq %rax, %rcx\n" + rawmap_carve("%rcx"));
+  s = s.write("    movq %rax, __fern_rawmap(%rip)\n    addq %rcx, %rax\n    movq %rax, __fern_rawmap_lo(%rip)\n    popq %rcx\n");
   let move = asmcore.fresh_label(s);
   let keep = asmcore.fresh_label(move.state);
   s = keep.state;
