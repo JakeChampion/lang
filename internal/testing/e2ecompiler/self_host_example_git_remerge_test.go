@@ -975,6 +975,21 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
 	g.git("-C", "module", "update-ref", "--no-deref", "HEAD", solution)
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	// Only the checked-out submodule worktree's detached HEAD participates.
+	// The primary worktree holds a resolution that the linked one cannot see.
+	primary := filepath.Join(t.TempDir(), "module-primary")
+	module := filepath.Join(dir, "module")
+	if err := os.Rename(module, primary); err != nil {
+		t.Fatal(err)
+	}
+	g.git("-C", primary, "worktree", "add", "-q", "--detach", module, other)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	g.git("-C", module, "update-ref", "--no-deref", "HEAD", solution)
+	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	g.git("-C", primary, "worktree", "remove", module)
+	if err := os.Rename(primary, module); err != nil {
+		t.Fatal(err)
+	}
 	// From s1, one parent rewinds to s0 and the other advances to s2.
 	rewind := g.git("commit-tree", "-p", "module-1", "-m", "rewind", s0Tree)
 	advance := g.git("commit-tree", "-p", "module-1", "-m", "advance", rightTree)

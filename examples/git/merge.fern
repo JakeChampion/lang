@@ -833,8 +833,18 @@ enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Div
 // A merge of two divergent commits is reachable only if a ref tip or
 // detached HEAD reaches both. A missing object leaves the answer unknown.
 function no_submodule_resolution(sub: refs.Repo, graph: walk.Graph, a: string, b: string): boolean {
-  if (sub.dir != sub.common || sub.config.get("extensions.refstorage").unwrap_or("files") != "files") {
+  if (sub.config.get("extensions.refstorage").unwrap_or("files") != "files") {
     return false;
+  }
+  // Git searches this worktree's HEAD and shared refs. Private refs need
+  // worktree-specific lookup, which all_refs does not provide.
+  if (sub.dir != sub.common) {
+    for name in ["bisect", "worktree", "rewritten"] {
+      let suffix = "/refs/" + name;
+      if (!missing_or_empty_dir(sub.dir + suffix) || !missing_or_empty_dir(sub.common + suffix)) {
+        return false;
+      }
+    }
   }
   let tips = refs.all_refs(sub);
   let head = refs.resolve_ref(sub, "HEAD");
