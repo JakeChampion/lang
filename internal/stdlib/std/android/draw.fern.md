@@ -97,11 +97,42 @@ pub function (f: Frame) fill(x: i32, y: i32, w: i32, h: i32, color: i32): void {
     f.store(x, y, w, h, color);
     return;
   }
+  let x0 = clamp(x, 0, f.width);
+  let x1 = clamp(x + w, 0, f.width);
   for row in clamp(y, 0, f.height)..clamp(y + h, 0, f.height) {
-    for col in clamp(x, 0, f.width)..clamp(x + w, 0, f.width) {
-      put(f, col, row, color, 15);
+    cover_row(f.bits + ((row * f.stride + x0) * 4) as usize, x1 - x0, color);
+  }
+}
+
+// `blend` of `color` over each of the `n` pixels at `to`, with the alpha of
+// `color` as the weight w. A step does 4 pixels on lanes of 16 bits: each
+// channel is `(s * w + d * (255 - w)) / 255`, with the alpha of `color` as
+// 255.
+function cover_row(to: usize, n: i32, color: i32): void {
+  let w = alpha_of(color);
+  let r = (color & 255) * w;
+  let g = (color >> 8 & 255) * w;
+  let b = (color >> 16 & 255) * w;
+  let part = __u16x8_of(r, g, b, 255 * w, r, g, b, 255 * w);
+  let keep = __u16x8_splat(255 - w);
+  unsafe {
+    for i in 0..n / 4 {
+      let at = to + (i * 16) as usize;
+      let d = __u8x16_load_ptr(at);
+      let lo = by_255(__u8x16_widen_lo(d) * keep + part);
+      let hi = by_255(__u8x16_widen_hi(d) * keep + part);
+      __u8x16_store(at, __u16x8_narrow(lo, hi));
+    }
+    for i in n / 4 * 4..n {
+      let at = to + (i * 4) as usize;
+      __store_i32(at, blend(color, __load_i32(at), w));
     }
   }
+}
+
+// Each lane of `x` divided by 255, for a lane up to 255 * 255.
+function by_255(x: u16x8): u16x8 {
+  return __u16x8_shr(x + __u16x8_shr(x, 8) + __u16x8_splat(1), 8);
 }
 
 // Writes the pixel word `color` into each pixel of the rectangle at x and y,

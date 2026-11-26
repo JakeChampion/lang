@@ -392,6 +392,46 @@ function test_blend_frame_wide(): test.TestOutcome {
   return test.assert_eq(bad.join(" "), "");
 }
 
+// One channel at `shift` of `color` over `under` with the weight w from 0
+// to 255.
+function covered(color: i32, under: i32, shift: i32, w: i32): i32 {
+  let s = if (shift == 24) { 255 } else { color >> shift & 255 };
+  return (s * w + (under >> shift & 255) * (255 - w)) / 255 << shift;
+}
+
+// A translucent fill blends its color over each pixel it covers as each
+// channel gives, at each alpha, through the steps of 4 pixels and the pixels
+// after them. The other pixels do not change.
+function test_fill_wide(): test.TestOutcome {
+  let bad: string[] = [];
+  for alpha in [1, 77, 128, 200, 254] {
+    for left in [-1, 6] {
+      let color = draw.rgba(200, 31, 97, alpha);
+      let f = frame(19, 3);
+      for y in 0..3 {
+        for x in 0..19 {
+          f.store(x, y, 1, 1, noise(300 + y * 19 + x));
+        }
+      }
+      f.fill(left, 1, 14, 2, color);
+      for y in 0..3 {
+        for x in 0..19 {
+          let under = noise(300 + y * 19 + x);
+          let want = under;
+          if (y >= 1 && x >= left && x < left + 14) {
+            want = covered(color, under, 0, alpha) | covered(color, under, 8, alpha) | covered(color, under, 16, alpha) | covered(color, under, 24, alpha);
+          }
+          if (f.pixel(x, y) != want) {
+            bad = bad.append("alpha " + alpha.to_string() + " at " + left.to_string() + ": " + x.to_string() + "," + y.to_string());
+          }
+        }
+      }
+      free_frame(f);
+    }
+  }
+  return test.assert_eq(bad.join(" "), "");
+}
+
 function test_mask(): test.TestOutcome {
   let f = frame(3, 2);
   let cov: u8[] = [255 as u8, 128 as u8, 0 as u8, 0 as u8, 255 as u8, 64 as u8];
@@ -506,6 +546,7 @@ function main(): i32 {
   r = r.it("blit copies an offscreen frame", test_offscreen_blit);
   r = r.it("blend_frame blends a frame by an alpha", test_blend_frame);
   r = r.it("blend_frame blends a wide frame as each channel gives", test_blend_frame_wide);
+  r = r.it("a translucent fill blends as each channel gives", test_fill_wide);
   r = r.it("mask blends a colour by a coverage map", test_mask);
   r = r.it("blend puts premultiplied colors over the frame", test_blend);
   r = r.it("a blend over a transparent pixel is premultiplied", test_premultiplied);
