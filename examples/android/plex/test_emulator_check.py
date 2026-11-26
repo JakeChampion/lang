@@ -128,5 +128,39 @@ class DownloadTests(unittest.TestCase):
         self.assertEqual(taps, [("4", "5"), ("6", "7")])
 
 
+class AdbTests(unittest.TestCase):
+    def fake_adb(self, results):
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args[1:])
+            if args[1:] == ["wait-for-device"]:
+                return subprocess.CompletedProcess(args, 0, "", "")
+            code, stderr = results.pop(0)
+            return subprocess.CompletedProcess(args, code, "out" if code == 0 else "", stderr)
+        return calls, patch.object(check.subprocess, "run", run)
+
+    def test_a_command_that_did_not_reach_the_device_runs_again(self):
+        calls, fake = self.fake_adb([(1, "adb: device 'emulator-5554' not found\n"),
+                                     (1, "adb: device offline\n"), (0, "")])
+        with fake:
+            self.assertEqual(check.adb("shell", "true"), "out")
+        self.assertEqual(calls, [["shell", "true"], ["wait-for-device"], ["shell", "true"],
+                                 ["wait-for-device"], ["shell", "true"]])
+
+    def test_a_command_that_fails_on_the_device_runs_once(self):
+        calls, fake = self.fake_adb([(1, "Failure [INSTALL_FAILED_INVALID_APK]\n")])
+        with fake, self.assertRaises(subprocess.CalledProcessError) as raised:
+            check.adb("install", "bad.apk")
+        self.assertEqual(calls, [["install", "bad.apk"]])
+        self.assertIn("INSTALL_FAILED_INVALID_APK", raised.exception.stderr)
+
+    def test_the_retries_stop_at_the_timeout(self):
+        calls, fake = self.fake_adb([(1, "adb: device offline\n")])
+        with fake, self.assertRaises(subprocess.CalledProcessError):
+            check.adb("shell", "true", timeout=0)
+        self.assertEqual(calls, [["shell", "true"]])
+
+
 if __name__ == "__main__":
     unittest.main()
