@@ -691,7 +691,7 @@ function main(): i32 {
 			name: "Date struct fields round-trip",
 			source: `import "std/time";
 function main(): i32 {
-    let d: Date = time.date_of(2026, 5, 19);
+    let d: time.Date = time.date_of(2026, 5, 19);
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
     return d.day;
 }`,
@@ -702,7 +702,7 @@ function main(): i32 {
 			name: "Time at second precision (nsec zero)",
 			source: `import "std/time";
 function main(): i32 {
-    let t: Time = time.time_of(14, 30, 45);
+    let t: time.Time = time.time_of(14, 30, 45);
     print(t.hour.to_string() + ":" + t.minute.to_string() + ":" + t.second.to_string());
     return t.nsec;
 }`,
@@ -712,7 +712,7 @@ function main(): i32 {
 			name: "DateTime composes Date + Time",
 			source: `import "std/time";
 function main(): i32 {
-    let dt: DateTime = time.datetime_of(time.date_of(2026, 1, 1), time.time_of(0, 0, 0));
+    let dt: time.DateTime = time.datetime_of(time.date_of(2026, 1, 1), time.time_of(0, 0, 0));
     print((dt.date.year - dt.time.hour).to_string());
     return 0;
 }`,
@@ -735,8 +735,8 @@ function main(): i32 {
 			name: "Span days vs hours are distinct fields",
 			source: `import "std/time";
 function main(): i32 {
-    let dz: Span = time.span_days(7);
-    let hr: Span = time.span_hours(24);
+    let dz: time.Span = time.span_days(7);
+    let hr: time.Span = time.span_hours(24);
     print((dz.days * 100 + hr.hours).to_string());
     return 0;
 }`,
@@ -850,7 +850,7 @@ func TestInterpScriptCivilDateArith(t *testing.T) {
 		{
 			name: "add_days crosses month + year boundaries",
 			source: `import "std/time";
-function show(d: Date): void {
+function show(d: time.Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -864,7 +864,7 @@ function main(): i32 {
 		{
 			name: "add_days respects leap years",
 			source: `import "std/time";
-function show(d: Date): void {
+function show(d: time.Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -925,7 +925,7 @@ function main(): i32 {
 		{
 			name: "is_valid rejects bad month/day/feb-30",
 			source: `import "std/time";
-function show_v(d: Date): void {
+function show_v(d: time.Date): void {
     if (d.is_valid()) { print("valid"); } else { print("invalid"); }
 }
 function main(): i32 {
@@ -961,7 +961,7 @@ function main(): i32 {
 		{
 			name: "pre-epoch dates round-trip through add_days",
 			source: `import "std/time";
-function show(d: Date): void {
+function show(d: time.Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1019,7 +1019,7 @@ function main(): i32 {
 		{
 			name: "date_parse_iso accepts canonical form",
 			source: `import "std/time";
-function show(r: Result[Date, time.TimeParseError]): void {
+function show(r: Result[time.Date, time.TimeParseError]): void {
     match (r) {
         Ok(d) => { print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string()); },
         Err(_) => { print("none"); }
@@ -1312,7 +1312,7 @@ func TestInterpScriptSpanDurationArith(t *testing.T) {
 		{
 			name: "add_span months clamps day-end overflow",
 			source: `import "std/time";
-function show(d: Date): void {
+function show(d: time.Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1331,7 +1331,7 @@ function main(): i32 {
 		{
 			name: "add_span years clamps Feb 29 in non-leap target",
 			source: `import "std/time";
-function show(d: Date): void {
+function show(d: time.Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1349,18 +1349,18 @@ function main(): i32 {
 		{
 			name: "add_span composes months + days",
 			source: `import "std/time";
-function show(d: Date): void {
+function show(d: time.Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
-    show(time.date_of(2026, 1, 15).add_span(Span {
+    show(time.date_of(2026, 1, 15).add_span(time.Span {
         years: 1, months: 2, weeks: 0, days: 5,
         hours: 0, minutes: 0, seconds: 0, nanos: 0,
     }));
     // Weeks + days add as serial-day offset (no clamping).
     show(time.date_of(2026, 3, 30).add_span(time.span_weeks(2)));
     // Mixed weeks + days.
-    show(time.date_of(2026, 1, 1).add_span(Span {
+    show(time.date_of(2026, 1, 1).add_span(time.Span {
         years: 0, months: 0, weeks: 1, days: 3,
         hours: 0, minutes: 0, seconds: 0, nanos: 0,
     }));
@@ -1371,7 +1371,7 @@ function main(): i32 {
 		{
 			name: "add_span with negative months walks backward",
 			source: `import "std/time";
-function show(d: Date): void {
+function show(d: time.Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
@@ -1436,9 +1436,9 @@ function main(): i32 {
 			name: "days_until is the Span counterpart to days_since",
 			source: `import "std/time";
 function main(): i32 {
-    let a: Date = time.date_of(2026, 1, 1);
-    let b: Date = time.date_of(2026, 12, 31);
-    let s: Span = a.days_until(b);
+    let a: time.Date = time.date_of(2026, 1, 1);
+    let b: time.Date = time.date_of(2026, 12, 31);
+    let s: time.Span = a.days_until(b);
     print(s.days.to_string());          // 364
     print(b.days_until(a).days.to_string());  // -364
     return 0;

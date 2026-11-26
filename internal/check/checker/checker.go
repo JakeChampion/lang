@@ -369,43 +369,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		{
-			Name: "Date",
-			Fields: []ast.Param{
-				{Name: "year", Type: ast.NumberType{}},
-				{Name: "month", Type: ast.NumberType{}},
-				{Name: "day", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name: "Time",
-			Fields: []ast.Param{
-				{Name: "hour", Type: ast.NumberType{}},
-				{Name: "minute", Type: ast.NumberType{}},
-				{Name: "second", Type: ast.NumberType{}},
-				{Name: "nsec", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name: "DateTime",
-			Fields: []ast.Param{
-				{Name: "date", Type: ast.StructType{Name: "Date"}},
-				{Name: "time", Type: ast.StructType{Name: "Time"}},
-			},
-		},
-		{
-			Name: "Span",
-			Fields: []ast.Param{
-				{Name: "years", Type: ast.NumberType{}},
-				{Name: "months", Type: ast.NumberType{}},
-				{Name: "weeks", Type: ast.NumberType{}},
-				{Name: "days", Type: ast.NumberType{}},
-				{Name: "hours", Type: ast.NumberType{}},
-				{Name: "minutes", Type: ast.NumberType{}},
-				{Name: "seconds", Type: ast.NumberType{}},
-				{Name: "nanos", Type: ast.NumberType{}},
-			},
-		},
-		{
 			Name: "Duration",
 			Fields: []ast.Param{
 				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
