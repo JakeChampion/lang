@@ -277,3 +277,14 @@ aarch64/utf8_validate.dr	29588157
 aarch64/video_qtrle.text	6152
 aarch64/video_qtrle.ir	1182142622
 aarch64/video_qtrle.dr	94129041
+
+# lane: bootstrap-arm64-darwin
+bootstrap/arm64-darwin/stage1.wall_s	93
+bootstrap/arm64-darwin/stage1.peak_rss_mb	3171
+bootstrap/arm64-darwin/stage1.size_bytes	22558065
+bootstrap/arm64-darwin/stage2.wall_s	103
+bootstrap/arm64-darwin/stage2.peak_rss_mb	2902
+bootstrap/arm64-darwin/stage2.size_bytes	22640417
+bootstrap/arm64-darwin/stage3.wall_s	106
+bootstrap/arm64-darwin/stage3.peak_rss_mb	2666
+bootstrap/arm64-darwin/stage3.size_bytes	22640417
