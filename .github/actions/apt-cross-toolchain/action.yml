@@ -12,7 +12,8 @@ description: >
       403 Forbidden on its azure-cli / prod repos ("repository is no
       longer signed"). Those repos are pre-seeded on the GitHub runner
       image and are irrelevant to a cross toolchain, but one 403 fails
-      the whole update and takes the job with it.
+      the whole update and takes the job with it. The
+      disable-runner-apt-feeds step removes them.
 
     * the download from azure.archive.ubuntu.com crawls — 21 MB of
       gcc-13-aarch64-linux-gnu still unfinished after nine minutes — and
@@ -74,7 +75,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ./.github/actions/disable-chrome-apt
+    - uses: ./.github/actions/disable-runner-apt-feeds
 
     # The runner image's identity, read at RUNTIME. `${{ env.ImageOS }}`
     # interpolated straight into the cache key below resolves to the empty
@@ -206,15 +207,6 @@ runs:
         # present: unpacked-but-unconfigured passes `command -v` while
         # leaving a broken dpkg state behind for the job's next apt user.
         if [ "$dpkg_ok" != "1" ] || ! toolchain_present; then
-          # Third-party repos pre-seeded on the runner image. None of them
-          # carries a cross toolchain, and packages.microsoft.com has been
-          # observed 403-ing, which fails `apt-get update` outright. Their
-          # absence cannot affect what we install.
-          sudo rm -f /etc/apt/sources.list.d/microsoft-prod.list \
-                     /etc/apt/sources.list.d/azure-cli.list \
-                     /etc/apt/sources.list.d/google-chrome.list \
-                     /etc/apt/sources.list.d/*msprod* 2>/dev/null || true
-
           # All attempts share the deadline, including the cached install.
           # Keep downloaded packages for the next attempt and cache save.
           apt_install() {

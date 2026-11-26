@@ -8,13 +8,14 @@ import (
 	"testing"
 )
 
-func TestDisableChromeAptSources(t *testing.T) {
-	script, err := filepath.Abs("../../../.github/actions/disable-chrome-apt/disable.sh")
+func TestDisableRunnerAptFeeds(t *testing.T) {
+	script, err := filepath.Abs("../../../.github/actions/disable-runner-apt-feeds/disable.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	const ubuntu = "deb http://archive.ubuntu.com/ubuntu noble main\n"
 	const chrome = "https://dl.google.com/linux/chrome-stable/deb/"
+	const microsoft = "https://packages.microsoft.com/ubuntu/24.04/prod"
 	const signed = "Signed-By: /usr/share/keyrings/example.gpg\n"
 	cases := []struct {
 		name, path, source, want string
@@ -30,6 +31,10 @@ func TestDisableChromeAptSources(t *testing.T) {
 		{"comment-only", "sources.list.d/keep.list", "# deb " + chrome + " stable main\n" + ubuntu, "# deb " + chrome + " stable main\n" + ubuntu},
 		{"unrelated-deb822", "sources.list.d/keep.sources", "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\n" + signed, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\n" + signed},
 		{"ignored-extension", "sources.list.d/keep.disabled", "deb " + chrome + " stable main\n", "deb " + chrome + " stable main\n"},
+		{"microsoft-prod", "sources.list.d/microsoft-prod.list", "deb [arch=amd64,arm64,armhf] " + microsoft + " noble main\n" + ubuntu, ubuntu},
+		{"azure-cli-deb822", "sources.list.d/azure-cli.sources", "Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/\nSuites: noble\nComponents: main\n" + signed, ""},
+		{"microsoft-and-ubuntu", "sources.list.d/mixed.sources", "Types: deb\nURIs: " + microsoft + " http://archive.ubuntu.com/ubuntu\nSuites: noble\n" + signed, "Types: deb\nURIs: http://archive.ubuntu.com/ubuntu\nSuites: noble\n" + signed + "\n"},
+		{"microsoft-lookalike", "sources.list.d/keep.list", "deb https://packages.microsoft.com.example/ubuntu/24.04/prod noble main\n", "deb https://packages.microsoft.com.example/ubuntu/24.04/prod noble main\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -63,7 +68,7 @@ func TestDisableChromeAptSources(t *testing.T) {
 	}
 }
 
-func TestDisableChromeAptKeepsUbuntuTargets(t *testing.T) {
+func TestDisableRunnerAptFeedsKeepsUbuntuTargets(t *testing.T) {
 	apt, err := exec.LookPath("apt-get")
 	if err != nil {
 		t.Skip("apt-get is only available on apt-based Linux hosts")
@@ -73,7 +78,7 @@ func TestDisableChromeAptKeepsUbuntuTargets(t *testing.T) {
 	if err := os.MkdirAll(parts, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	const mixed = "Types: deb\nURIs: https://dl.google.com/linux/chrome-stable/deb/\n http://archive.ubuntu.com/ubuntu\nSuites: noble\nComponents: main\n"
+	const mixed = "Types: deb\nURIs: https://dl.google.com/linux/chrome-stable/deb/\n http://archive.ubuntu.com/ubuntu\n https://packages.microsoft.com/ubuntu/24.04/prod\nSuites: noble\nComponents: main\n"
 	if err := os.WriteFile(filepath.Join(parts, "mixed.sources"), []byte(mixed), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -93,10 +98,10 @@ func TestDisableChromeAptKeepsUbuntuTargets(t *testing.T) {
 		return string(out)
 	}
 	before := targets()
-	if !strings.Contains(before, "dl.google.com/linux/chrome-stable") || !strings.Contains(before, "archive.ubuntu.com/ubuntu") {
+	if !strings.Contains(before, "dl.google.com/linux/chrome-stable") || !strings.Contains(before, "packages.microsoft.com") || !strings.Contains(before, "archive.ubuntu.com/ubuntu") {
 		t.Fatalf("fixture did not configure both repositories: %s", before)
 	}
-	script, err := filepath.Abs("../../../.github/actions/disable-chrome-apt/disable.sh")
+	script, err := filepath.Abs("../../../.github/actions/disable-runner-apt-feeds/disable.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +109,7 @@ func TestDisableChromeAptKeepsUbuntuTargets(t *testing.T) {
 		t.Fatalf("cleanup: %v\n%s", err, out)
 	}
 	after := targets()
-	if strings.Contains(after, "dl.google.com/linux/chrome-stable") || !strings.Contains(after, "archive.ubuntu.com/ubuntu") {
-		t.Fatalf("cleanup lost Ubuntu or kept Chrome targets: %s", after)
+	if strings.Contains(after, "dl.google.com/linux/chrome-stable") || strings.Contains(after, "packages.microsoft.com") || !strings.Contains(after, "archive.ubuntu.com/ubuntu") {
+		t.Fatalf("cleanup lost Ubuntu or kept Chrome or Microsoft targets: %s", after)
 	}
 }

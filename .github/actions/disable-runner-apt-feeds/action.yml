@@ -1,0 +1,20 @@
+name: Prepare the runner apt sources
+description: >
+  Remove the runner image's Google Chrome and Microsoft apt feeds before
+  installing Ubuntu packages. Playwright downloads its own Chromium, and the
+  Microsoft feeds supply only Microsoft tools. Neither supplies the compiler,
+  Valgrind, ripgrep or browser system dependencies of these jobs, and a 403
+  from either fails `apt-get update`. Use the official Ubuntu archive instead
+  of the slow cloud mirror of the runner image. Preserve apt signature
+  verification, suites, components and signing keys.
+runs:
+  using: composite
+  steps:
+    - name: Remove the unused runner Chrome and Microsoft repositories
+      shell: bash
+      # A Chrome hash mismatch or a Microsoft 403 must not prevent unrelated
+      # Ubuntu packages from being installed. Apt's verification stays enabled.
+      run: sudo bash "$GITHUB_ACTION_PATH/disable.sh"
+    - name: Prefer the official Ubuntu archive
+      shell: bash
+      run: sudo bash "$GITHUB_ACTION_PATH/prefer-ubuntu-mirror.sh"

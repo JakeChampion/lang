@@ -82,7 +82,7 @@ jobs:
       # valgrind carries the dynamic half. If it cannot be installed the run
       # still reports the static half and says which half is missing, rather
       # than reporting a green it did not earn.
-      - uses: ./.github/actions/disable-chrome-apt
+      - uses: ./.github/actions/disable-runner-apt-feeds
       - name: Install valgrind
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
@@ -375,7 +375,7 @@ jobs:
         with:
           ref: ${{ inputs.audio_baseline }}
           path: baseline
-      - uses: ./candidate/.github/actions/disable-chrome-apt
+      - uses: ./candidate/.github/actions/disable-runner-apt-feeds
       - name: Install the reference encoder
         run: |
           if ! command -v ffmpeg >/dev/null; then

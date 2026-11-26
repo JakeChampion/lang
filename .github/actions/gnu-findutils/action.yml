@@ -25,6 +25,8 @@ runs:
       with:
         path: ~/gnu-findutils
         key: gnu-findutils-${{ inputs.version }}-${{ inputs.host }}-${{ runner.os == 'Linux' && 'selinux' || 'plain' }}
+    - uses: ./.github/actions/disable-runner-apt-feeds
+      if: steps.gnu-findutils.outputs.cache-hit != 'true' && runner.os == 'Linux'
     - name: Install the SELinux library for the oracle
       if: steps.gnu-findutils.outputs.cache-hit != 'true' && runner.os == 'Linux'
       shell: bash
