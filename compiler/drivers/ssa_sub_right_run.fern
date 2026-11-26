@@ -1,0 +1,40 @@
+import "../ir";
+import "../ssa";
+import "../ssafixed";
+import "../util";
+
+// v2 = v0 - v1, then v3 = v0 + v2. v1 dies at the subtract and v0 lives on.
+function probe(nregs: i32, two_address: boolean): ssa.Alloc {
+  let ops: ssa.SInst[] = [
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 0, args: [], imm: 7, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: 1, args: [], imm: 9, str: "" },
+    ssa.binary_inst(2, [0, 1], 0, ir.K_SUB),
+    ssa.binary_inst(3, [0, 2], 0, ir.K_ADD),
+  ];
+  let f = ssa.SFunc { name: "sub_right", nparams: 0, nvals: 4, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 3 } }] };
+  return ssa.regalloc_linear_fixed_costs(f, nregs, 0, -1, false, [false, false, false, false], [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: two_address, two_address: two_address });
+}
+
+function main(): i32 {
+  let failed: string[] = [];
+  // A three-address ISA lets the result share the register of the right operand.
+  let three = probe(4, false);
+  if (three.reg_of[2] < 0 || three.reg_of[2] != three.reg_of[1]) {
+    failed = failed.append("three-address share");
+  }
+  // A two-address ISA puts the result in a free register.
+  let two = probe(4, true);
+  if (two.reg_of[2] < 0 || two.reg_of[2] == two.reg_of[1] || two.reg_of[2] == two.reg_of[0]) {
+    failed = failed.append("two-address free register");
+  }
+  // With no free register, the result shares the right operand's register and does not spill.
+  let full = probe(2, true);
+  if (full.reg_of[2] < 0 || full.reg_of[2] != full.reg_of[1]) {
+    failed = failed.append("two-address full");
+  }
+  for name in failed {
+    eprint("failed: " + name + "\n");
+  }
+  print("failures=" + util.i32_to_string(failed.len()));
+  return failed.len();
+}

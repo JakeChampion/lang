@@ -1913,13 +1913,15 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
 }
 
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
-  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false });
+  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false, two_address: false });
 }
 
 // A spill definition or normal read needs an extra transfer instruction.
 // An x86 ALU instruction can read a right operand from its spill slot.
 // The model discounts those reads and keeps the squared-use protection.
-pub struct SpillCosts { fold_alu_rhs: boolean }
+// On a two-address ISA, a subtract that writes the register of its right
+// operand needs a scratch register and one more move.
+pub struct SpillCosts { fold_alu_rhs: boolean, two_address: boolean }
 
 function phi_count(insts: SInst[]): i32 {
   let count = 0;
@@ -1953,6 +1955,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let reads_mate = __alloc_bool(f.nvals);
   let def_a = __alloc_i32(f.nvals);
   let def_b = __alloc_i32(f.nvals);
+  let right_of: i32[] = [];
   i = 0;
   while (i < f.nvals) {
     def_pos = def_pos.with(i, -1);
@@ -1960,6 +1963,9 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     def_a = def_a.with(i, -1);
     def_b = def_b.with(i, -1);
     i += 1;
+  }
+  if (costs.two_address) {
+    right_of = util.minus_ones(f.nvals);
   }
   let blk_start: i32[] = [];
   let pos = 0;
@@ -1995,6 +2001,9 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
           }
           if (ins.kind_tag != PHI && ins.args.len() > 1) {
             def_b = def_b.with(ins.result, ins.args[1]);
+          }
+          if (right_of.len() > 0 && ins.kind_tag == BINARY && ins.ir_kind == ir.K_SUB && ins.args[0] != ins.args[1]) {
+            right_of = right_of.with(ins.result, ins.args[1]);
           }
         }
       }
@@ -2222,6 +2231,14 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     let abi_ok = !spans_call(cum_abi, lo[v], hi[v]);
     let soft = cold_calls && oi < split && spans_call(cum_soft, lo[v], hi[v]) && free_s.len() > 0;
     let keep_caller = spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) || soft;
+    let pick = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
+    let from_caller = !spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
+    from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
+    // A subtract shares the register of its right operand only when no register is free.
+    let right: i32 = -1;
+    if (right_of.len() > 0 && (from_caller || free_s.len() > 0)) {
+      right = right_of[v];
+    }
     let placed = false;
     let ci = 0;
     while (ci < 5 && !placed) {
@@ -2283,6 +2300,9 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       if (ha < 0) {
         continue;
       }
+      if (right >= 0 && act_val[ha] == right) {
+        continue;
+      }
       let share = act_hi[ha] == lo[v] && reads_mate[v];
       if (!share && (h == mates.hint[v] && mates.carried[v] || h == mates.alt[v])) {
         sites = cached_read_sites(f, sites, at, blk_start);
@@ -2307,9 +2327,6 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       oi += 1;
       continue;
     }
-    let pick = pick_fixed_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok, fixed, lo[v], hi[v]);
-    let from_caller = !spans_hard(hard, crossing_all, oi < split, cum, lo[v], hi[v], v) && pick >= 0 && !soft;
-    from_caller = from_caller || cold_caller(free_s.len(), cold_calls && oi < split, pick, cum, lo[v], hi[v]);
     // A save around a call restores its holder, so a lent interval of a caller
     // register holds none. A call keeps a saved register.
     let lends_caller = !from_caller && oi < split && !keep_caller && !spans_call(cum_all, lo[v] - 1, hi[v] + 1);
@@ -3246,7 +3263,7 @@ pub function spill_slot(code: i32): i32 {
 // register index or frame slot it took. FERN_DEBUG_SSA_ALLOC=<function> prints it,
 // and `*` prints each function.
 pub function print_alloc(f: SFunc, a: Alloc): string {
-  return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false });
+  return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false, two_address: false });
 }
 
 pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {

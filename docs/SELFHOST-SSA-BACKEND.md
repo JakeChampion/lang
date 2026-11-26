@@ -544,7 +544,11 @@ add, subtract, multiply, and, or, xor and the compares compute into the
 home with only a spilled operand passing through a scratch
 (`ssa_bin_in_place`; on x86-64 the operands swap, or a comparison flips,
 when the right one lives in the destination, and a spilled right operand
-is read from its frame slot rather than a scratch). A spilled operand the
+is read from its frame slot rather than a scratch). A subtract cannot swap,
+so on x86-64 it computes into %r11 and moves the result. The allocator
+prevents this case: on a two-address ISA (`SpillCosts.two_address`) a
+subtract gets the register of its dying right operand only when no other
+register is free. A spilled operand the
 scratch still holds, because the op before computed it there and stored
 it, is read from the scratch (%r11, x4) instead of from the slot it was
 just stored to, which would put a store-to-load forward on the dependency
