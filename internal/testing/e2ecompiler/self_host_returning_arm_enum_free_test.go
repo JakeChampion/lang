@@ -19,8 +19,9 @@ function main(): i32 {
 }`
 
 const raeScalarEnumFallthroughSrc = `enum E { Box(i32, i32), Nil }
+@noinline function make_box(i: i32): E { return Box(i, i); }
 function round(i: i32): i32 {
-    let e: E = Box(i, i);
+    let e: E = make_box(i);
     let t: i32 = 0;
     match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
     if (__rc_underflow_count() != 0) { return 99; }
@@ -72,8 +73,9 @@ function main(): i32 {
 }`
 
 const raeMixedPathsSrc = `enum E { Box(i32, i32), Nil }
+@noinline function make_box(i: i32): E { return Box(i, i); }
 function round(i: i32): i32 {
-    let e: E = Box(i, i);
+    let e: E = make_box(i);
     let t: i32 = 0;
     match (e) { Box(a, b) => { if (a > 50) { return a + b; } t = a; }, Nil => { t = 0; } }
     return t;
