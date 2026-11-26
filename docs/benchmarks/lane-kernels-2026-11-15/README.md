@@ -88,6 +88,26 @@ The scalar counts are from the compiler of main at 2903c63b.
 For each pixel, the fill runs 7.0 instructions in place of 123.
 `blend` runs 15.2 in place of 125.6, and `mask` runs 13.3 in place of 56.0.
 
+## The JPEG decoder (2026-11-26)
+
+The inverse transform of `std/jpeg` does two samples in one step, as lanes of `f64x2`.
+Each lane does the multiplications and additions of its sample in the order that the scalar transform did.
+So each pixel is the same, on x86-64, arm64 and wasm, for each image of the tests and for 24 encoded images.
+The transform writes to the plane, and the pixels go to an array of the full size.
+Before, each block made an array of 64 samples, and each pixel made an array of its samples and appended 4 bytes.
+
+`bench/jpeg_decode.fern` encodes a picture of 512 by 512 pixels at 4:2:0 and decodes it 4 times.
+The counts are retired instructions on x86-64-linux, from callgrind.
+The stage counts are from a copy of the module where each stage is a function that is not inline.
+
+| Stage | Before | After | Ratio |
+| --- | --: | --: | --: |
+| transform and planes | 523,504,316 | 152,316,936 | 3.4 |
+| all of `pixels` | 941,459,962 | 318,883,247 | 3.0 |
+| whole program | 1,081,512,038 | 447,785,889 | 2.4 |
+
+The color conversion is now 159 instructions for each pixel, in place of 400.
+
 ## Lane operations out of loops (#17362)
 
 The compiler merges two lane operations that are the same.
