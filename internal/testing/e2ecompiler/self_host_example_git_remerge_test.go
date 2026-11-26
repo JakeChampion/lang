@@ -884,7 +884,7 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	g.git("config", "core.repositoryformatversion", "1")
 	g.git("config", "extensions.submodulePathConfig", "true")
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
-	for _, store := range []string{".git/modules/OtherLibrary", otherStore, ".git/modules/Absent"} {
+	for _, store := range []string{".git/modules/OtherLibrary", otherStore, ".git/modules/Absent", "missing", ".git/modules/OtherLibrary/nested"} {
 		g.git("config", "submodule.Library.gitdir", store)
 		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
 	}
@@ -919,7 +919,32 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 		t.Fatal(err)
 	}
 	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
-	if err := os.Rename(linkedStore, storedGit); err != nil {
+	// Configured gitdirs can point into a linked worktree's private store.
+	g.git("config", "core.repositoryformatversion", "1")
+	g.git("config", "extensions.submodulePathConfig", "true")
+	configuredStore := filepath.Join(linkedModules, "ConfiguredLibrary")
+	if err := os.Rename(linkedStore, configuredStore); err != nil {
+		t.Fatal(err)
+	}
+	relativeStore, err := filepath.Rel(linked, configuredStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, store := range []string{configuredStore, relativeStore} {
+		g.git("config", "submodule.Library.gitdir", store)
+		gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	}
+	// A worktree-specific setting overrides the shared location.
+	g.git("config", "extensions.worktreeConfig", "true")
+	g.git("config", "submodule.Library.gitdir", ".git/modules/Absent")
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	g.git("-C", linked, "config", "--worktree", "submodule.Library.gitdir", configuredStore)
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	g.git("config", "--unset", "extensions.worktreeConfig")
+	g.git("config", "--unset", "submodule.Library.gitdir")
+	g.git("config", "--unset", "extensions.submodulePathConfig")
+	g.git("config", "core.repositoryformatversion", version)
+	if err := os.Rename(configuredStore, storedGit); err != nil {
 		t.Fatal(err)
 	}
 	g.git("reset", "--soft", "HEAD^")

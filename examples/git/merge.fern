@@ -767,7 +767,7 @@ function module_config(parent: refs.Repo): config.Config {
   return config.empty();
 }
 
-enum ModuleLookup { AvailableModule(refs.Repo), MissingModule, UnknownModule, ModuleError(string) }
+enum ModuleLookup { AvailableModule(refs.Repo), MissingModule, UnknownModule, ModuleError(string), InvalidModuleDir(string) }
 
 // A checked-out submodule takes precedence over its named module store.
 function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
@@ -778,9 +778,6 @@ function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
   }
   if let Some(sub) = refs.checkout_at(parent.top + "/" + path) {
     return AvailableModule(sub);
-  }
-  if (configured && parent.dir != parent.top + "/.git") {
-    return UnknownModule;
   }
   let unavailable = if (missing_or_empty_dir(parent.top + "/" + path + "/.git")) { MissingModule } else { UnknownModule };
   if (!configured && missing_or_empty_dir(modules)) {
@@ -808,19 +805,22 @@ function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
   let dir = modules + "/" + module_name;
   if (configured) {
     let key = "submodule." + module_name + ".gitdir";
-    let Some(value) = parent.config.get(key) else {
+    let location = parent.config.get(key);
+    if (parent.config.flag("extensions.worktreeconfig", false)) {
+      let file = parent.dir + "/config.worktree";
+      if let Some(local) = config.read(file, file).get(key) {
+        location = Some(local);
+      }
+    }
+    let Some(value) = location else {
       return ModuleError("the '" + key + "' config does not exist for module '" + module_name + "'. Please ensure it is set, for example by running something like: 'git config " + key + " .git/modules/" + module_name + "'. For details see the extensions.submodulePathConfig documentation.");
     };
+    // Git checks the configured spelling before resolving a relative path.
+    let slash = value.last_index_of("/").unwrap_or(-1);
+    if (slash < 0 || !objects.part(value, 0, slash).ends_with("/modules")) {
+      return InvalidModuleDir(value);
+    }
     dir = if (value.starts_with("/")) { value } else { parent.top + "/" + value };
-    // A direct child of the module-store directory cannot be nested in
-    // another module. Other configured layouts need Git's ancestry check.
-    if (!dir.starts_with(modules + "/")) {
-      return UnknownModule;
-    }
-    let leaf = objects.part(dir, modules.len() + 1, dir.len());
-    if (leaf == "" || leaf == "." || leaf == ".." || leaf.contains("/")) {
-      return UnknownModule;
-    }
   }
   if let Some(sub) = refs.stored_module(dir) {
     return AvailableModule(sub);
@@ -1002,6 +1002,10 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
           },
           Unresolved => {}
         }
+      }
+      if let InvalidModuleDir(dir) = found {
+        st = State { ...st, warnings: st.warnings.append("hint: enabling extensions.submodulePathConfig might fix the following error, if it's not already enabled."), fatal: "refusing to create/use '" + dir + "' in another submodule's  git dir." };
+        return (st, false, a);
       }
       if let ModuleError(reason) = found {
         return (State { ...st, fatal: reason }, false, a);

@@ -344,8 +344,8 @@ With git 2.43, these settings, messages and merges are also different:
   submodule that the two parents changed when its history contains a
   possible merge resolution or cannot be fully read. A primary or linked worktree
   can use its own named module store through its worktree, staged, or
-  committed `.gitmodules`. A primary worktree also supports configured gitdirs directly under
-  `.git/modules`. Other configured layouts remain open.
+  committed `.gitmodules`. Configured gitdirs can use absolute or worktree-relative
+  paths. A worktree-specific gitdir setting overrides the shared one.
   The second part is a merge driver of the
   configuration (`merge.NAME.driver`). The third is
   `merge.renormalize`.
