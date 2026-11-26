@@ -530,6 +530,14 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			idx = gitPackIndex(t, top)
 			check(idx)
 			compare("", "verify-pack", "-v", "nosuch.idx")
+			emptyHash, stderr, code := oracle.run(t, top, "", "pack-objects", "empty")
+			if code != 0 {
+				t.Fatalf("creating empty pack: %s", stderr)
+			}
+			emptyIndex := "empty-" + strings.TrimSpace(emptyHash) + ".idx"
+			compare("", "verify-pack", "-v", "--", emptyIndex)
+			compare("", "verify-pack", "--", emptyIndex)
+			compare("", "verify-pack", "-v", "--", emptyIndex, "nosuch.idx")
 
 			// Without the reverse index of git, the port sorts the offsets of the index.
 			revs, err := filepath.Glob(filepath.Join(top, ".git", "objects", "pack", "*.rev"))

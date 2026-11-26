@@ -4124,7 +4124,9 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
     return true;
   }
   put(out);
-  put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
+  if (chains.len() > 0) {
+    put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
+  }
   for d in 1..chains.len() {
     if (chains[d] > 0) {
       put_line("chain length = " + d.to_string() + ": " + chains[d].to_string() + plural(chains[d]));
