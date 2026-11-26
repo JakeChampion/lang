@@ -4982,8 +4982,11 @@ function emit_ir_runtime_part_4(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    andq $-8, %rsi\n");
   s = s.write("    cmpq $8, %rsi\n");
   s = s.write("    jb .Lrawfree_ret\n");
-  s = s.write("    movq %rdi, %rcx\n    subq __fern_rawmap_lo(%rip), %rcx\n    jb .Lrawfree_unmarked\n    shrq $3, %rcx\n");
-  s = s.write("    movq __fern_rawmap(%rip), %rdx\n    btsq %rcx, (%rdx)\n    jc .Lrawfree_double\n.Lrawfree_unmarked:\n");
+  // Only a block from a user `__alloc` can reach the bitmap check.
+  if (s.has_need("raw_alloc")) {
+    s = s.write("    movq %rdi, %rcx\n    subq __fern_rawmap_lo(%rip), %rcx\n    jb .Lrawfree_unmarked\n    shrq $3, %rcx\n");
+    s = s.write("    movq __fern_rawmap(%rip), %rdx\n    btsq %rcx, (%rdx)\n    jc .Lrawfree_double\n.Lrawfree_unmarked:\n");
+  }
   if (s.rc_free_debug) {
     s = s.write(quarantine_rc("(%rdi)", s.rc_free_debug));
   }

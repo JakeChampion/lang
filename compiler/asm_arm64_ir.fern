@@ -11752,9 +11752,12 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    add x1, x1, #7\n");
   s = s.write("    lsr x5, x1, #3\n");
   s = s.write("    cbz x5, .Lrawfree_done\n");
-  s = s.write("    adrp x9, __fern_rawmap_lo\n    add x9, x9, :lo12:__fern_rawmap_lo\n    ldr x9, [x9]\n    subs x9, x0, x9\n    b.lo .Lrawfree_unmarked\n    lsr x9, x9, #3\n");
-  s = s.write("    adrp x10, __fern_rawmap\n    add x10, x10, :lo12:__fern_rawmap\n    ldr x10, [x10]\n    add x10, x10, x9, lsr #3\n    and x9, x9, #7\n");
-  s = s.write("    ldrb w2, [x10]\n    lsr w3, w2, w9\n    tbz w3, #0, .Lrawfree_mark\n    b __fern_double_free_abort\n.Lrawfree_mark:\n    mov w3, #1\n    lsl w3, w3, w9\n    orr w2, w2, w3\n    strb w2, [x10]\n.Lrawfree_unmarked:\n");
+  // Only a block from a user `__alloc` can reach the bitmap check.
+  if (s.has_need("raw_alloc")) {
+    s = s.write("    adrp x9, __fern_rawmap_lo\n    add x9, x9, :lo12:__fern_rawmap_lo\n    ldr x9, [x9]\n    subs x9, x0, x9\n    b.lo .Lrawfree_unmarked\n    lsr x9, x9, #3\n");
+    s = s.write("    adrp x10, __fern_rawmap\n    add x10, x10, :lo12:__fern_rawmap\n    ldr x10, [x10]\n    add x10, x10, x9, lsr #3\n    and x9, x9, #7\n");
+    s = s.write("    ldrb w2, [x10]\n    lsr w3, w2, w9\n    tbz w3, #0, .Lrawfree_mark\n    b __fern_double_free_abort\n.Lrawfree_mark:\n    mov w3, #1\n    lsl w3, w3, w9\n    orr w2, w2, w3\n    strb w2, [x10]\n.Lrawfree_unmarked:\n");
+  }
   if (s.rc_free_debug) {
     s = s.write(quarantine_rc("[x0]", "w9", s.rc_free_debug));
     s = lc_bump_free_words(s, "x5", "x3", "x10", "x0");
