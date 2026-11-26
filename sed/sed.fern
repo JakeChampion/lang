@@ -1266,7 +1266,7 @@ function compile_translate(c0: Comp, cmd: Cmd): Comp {
   let src = y_text(c, m1.1);
   let dst = y_text(c, m2.1);
   if (c.o.utf8) {
-    return compile_translate_utf8(read_end_of_cmd(c), cmd, chars_of(src), chars_of(dst));
+    return compile_translate_utf8(c, cmd, chars_of(src), chars_of(dst));
   }
   if (src.len() != dst.len()) {
     bad_prog(c, "strings for `y' command are different lengths");
@@ -1305,7 +1305,7 @@ function compile_translate_utf8(c: Comp, cmd: Cmd, src: u8[][], dst: u8[][]): Co
       k -= 1;
     }
   }
-  return push_cmd(c, Cmd { ...cmd, table: table, ymap: pairs });
+  return push_cmd(read_end_of_cmd(c), Cmd { ...cmd, table: table, ymap: pairs });
 }
 
 // chars_of splits UTF-8 text into its characters. A byte that starts no
