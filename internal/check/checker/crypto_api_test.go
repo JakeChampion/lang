@@ -24,6 +24,7 @@ import "std/crypto/sha2";
 		{"aead-keys", b + `let Ok(g) = aes_gcm.key(b) else { return 1; }; let Ok(c) = chacha20poly1305.key(b) else { return 1; }; let x: Result[u8[], aead.AeadError] = g.seal(b, b, b); let y: Result[u8[], aead.AeadError] = c.open(b, b, b); let z: Result[u8[], aead.AeadError] = c.chacha20_xor(b, 1 as u32, b);`, ""},
 		{"aead-in-place", b + `let Ok(g) = aes_gcm.key(b) else { return 1; }; let Ok(c) = chacha20poly1305.key(b) else { return 1; }; let s: Result[u8[], aead.AeadError] = g.seal_in_place(b, 1 as u64, __alloc_u8(48), 0, 16, 16, 16); let o: Result[u8[], aead.AeadError] = c.open_in_place(b, 1 as u64, __alloc_u8(48), 0, 16, 16, 16);`, ""},
 		{"signature-keys", b + `let Ok(sk) = ed25519.private_key(b) else { return 1; }; let Ok(pk) = ed25519.public_key(sk.public_point()) else { return 1; }; let ok: boolean = pk.verify(b, sk.sign(b)); let Ok(ek) = ecdsa.private_key(ecdsa.P256, b) else { return 1; }; let sig: Result[u8[], ecdsa.EcdsaError] = ek.sign(sha2.Sha256, b); let shared: Result[u8[], ecdsa.EcdsaError] = ek.ecdh(b);`, ""},
+		{"ecdsa-qualified-verify-is-the-method", b + `let Ok(k) = ecdsa.public_key(ecdsa.P256, b) else { return 1; }; let ok: boolean = ecdsa.verify(k, sha2.Sha256, b, b) && k.verify(sha2.Sha256, b, b);`, ""},
 		{"rsa-verifies-on-the-key", b + `let Ok(k) = rsa.public_key(b, b) else { return 1; }; let ok: boolean = k.verify_pss(sha2.Sha256, b, b) || k.verify_pkcs1v15(sha2.Sha256, b, b);`, ""},
 		{"final-bytes-removed", b + `crypto.sha256_new().update(b).final_bytes();`, `no field or method "final_bytes"`},
 		{"final-hex-removed", b + `crypto.sha256_new().update(b).final_hex();`, `no field or method "final_hex"`},
@@ -39,7 +40,6 @@ import "std/crypto/sha2";
 		{"aes-gcm-raw-key-seal-removed", b + `aes_gcm.seal(b, b, b, b);`, "seal"},
 		{"chacha-raw-key-open-removed", b + `chacha20poly1305.open(b, b, b, b);`, "open"},
 		{"ed25519-seed-sign-removed", b + `ed25519.sign(b, b);`, "sign"},
-		{"ecdsa-free-verify-removed", b + `let Ok(k) = ecdsa.public_key(ecdsa.P256, b) else { return 1; }; ecdsa.verify(k, sha2.Sha256, b, b);`, "verify"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
