@@ -156,20 +156,25 @@ function parse_text(s: string): string {
 func TestX86_64BigIntDifferential(t *testing.T) {
 	cases := bigintCases()
 
-	var body strings.Builder
+	// Keep each function's liveness matrix bounded as the oracle corpus grows.
+	const casesPerFunction = 64
+	var src, calls strings.Builder
+	src.WriteString(bigintPrelude)
 	want := make([]string, 0, len(cases))
-	for _, c := range cases {
-		body.WriteString("    print(" + c.expr + ");\n")
-		want = append(want, c.want)
+	for start := 0; start < len(cases); start += casesPerFunction {
+		fmt.Fprintf(&src, "\n@noinline function cases_%d(): void {\n", start)
+		for _, c := range cases[start:min(start+casesPerFunction, len(cases))] {
+			src.WriteString("    print(" + c.expr + ");\n")
+			want = append(want, c.want)
+		}
+		src.WriteString("}\n")
+		fmt.Fprintf(&calls, "    cases_%d();\n", start)
 	}
+	src.WriteString("\nfunction main(): i32 {\n")
+	src.WriteString(calls.String())
+	src.WriteString("    return 0;\n}\n")
 
-	src := bigintPrelude + `
-function main(): i32 {
-` + body.String() + `    return 0;
-}
-`
-
-	out, exit := compileAndRunX86_64(t, src)
+	out, exit := compileAndRunX86_64(t, src.String())
 	if exit != 0 {
 		t.Fatalf("program exited %d, want 0\noutput:\n%s", exit, out)
 	}
