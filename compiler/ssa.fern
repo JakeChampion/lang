@@ -1627,6 +1627,18 @@ pub function lane_inst(ins: SInst): boolean {
   return (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ir.is_lane_kind(ins.ir_kind);
 }
 
+// A lane operation with no effect that cannot trap: a splat, the arithmetic,
+// the bitwise operations, the compares, the shifts, widen, narrow and swizzle.
+pub function pure_lane(ins: SInst): boolean {
+  if (!lane_inst(ins) || ins.kind_tag == LANE_STORE || ins.result < 0) {
+    return false;
+  }
+  let k = ins.ir_kind;
+  return k == ir.K_VSPLAT || k >= ir.K_VADD && k <= ir.K_VSELECT
+    || k >= ir.K_VIADD && k <= ir.K_VIABS || k == ir.K_VISPLAT || k >= ir.K_VIMUL && k <= ir.K_VISHRU
+    || k >= ir.K_VIWIDENLOS && k <= ir.K_VISWIZZLE;
+}
+
 pub function lane_param(f: SFunc, p: i32): boolean {
   if (f.blocks.len() == 0) {
     return false;
@@ -4777,7 +4789,7 @@ pub function merge_duplicates(f: SFunc, across: boolean): Formed {
   let n = 0;
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag >= CONST_INT && ins.kind_tag <= CONST_I64 || ins.kind_tag == BINARY || ins.kind_tag == UNARY) {
+      if (ins.kind_tag >= CONST_INT && ins.kind_tag <= CONST_I64 || ins.kind_tag == BINARY || ins.kind_tag == UNARY || ins.kind_tag == TERNARY) {
         n += 1;
       }
     }
@@ -5263,6 +5275,9 @@ function is_constant(ins: SInst, nvals: i32): boolean {
 function mergeable(ins: SInst): boolean {
   if (ins.result < 0) {
     return false;
+  }
+  if (lane_inst(ins)) {
+    return pure_lane(ins);
   }
   if (ins.kind_tag == BINARY) {
     return !binary_fixes_abi(ins.ir_kind);
@@ -8048,7 +8063,7 @@ pub function hoisted_invariants(f: SFunc): Formed {
     let last = latch[h];
     let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
     if (pre >= 0) {
-      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, defs, def_pos, h, last);
+      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, defs, def_pos, h, last, !loop_calls(blocks, h, last));
       let moving: SInst[] = [];
       let originals: i32[] = [];
       let copies: i32[] = [];
@@ -8138,16 +8153,31 @@ pub function hoisted_invariants(f: SFunc): Formed {
   return Formed { f: rewrite_through(moved, flat), repl: flat };
 }
 
+// A call in the loop from `h` to `last`. No lane register is kept across a
+// call, so a lane value that moves in front of such a loop takes a frame slot.
+function loop_calls(blocks: SBlock[], h: i32, last: i32): boolean {
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      if (inst_is_call(ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // The values of the loop from `h` to `last` that can move in front of it: a
 // pure integer computation of operands defined before the loop, of constants,
-// or of values that move. At least one operand must not be a constant: a
-// computation of constants only gains nothing in front of the loop, and it
-// holds a register across the loop there.
-function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32): boolean[] {
+// or of values that move. At least one operand of an integer computation must
+// not be a constant: a computation of constants only gains nothing in front of
+// the loop, and it holds a register across the loop there. A lane value of
+// constants moves, because each build of it costs several instructions, but
+// only out of a loop with no call (`lanes`).
+function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32, lanes: boolean): boolean[] {
   let inv = __alloc_bool(f.nvals);
   for bi in h..=last {
     for ins in blocks[bi].insts {
-      if (!hoistable(ins, defs)) {
+      if (!hoistable(ins, defs) || !lanes && lane_inst(ins)) {
         continue;
       }
       let ok = true;
@@ -8163,7 +8193,7 @@ function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i3
           ok = false;
         }
       }
-      if (ok && reads_non_constant) {
+      if (ok && (reads_non_constant || lane_inst(ins))) {
         inv = inv.with(ins.result, true);
       }
     }
@@ -8176,6 +8206,9 @@ function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i3
 function hoistable(ins: SInst, defs: SInst[]): boolean {
   if (ins.result < 0 || ins.args.len() == 0) {
     return false;
+  }
+  if (lane_inst(ins)) {
+    return pure_lane(ins);
   }
   if (ins.kind_tag == UNARY) {
     return ins.args.len() == 1 && int_unary(ins);
