@@ -67,21 +67,26 @@ The whole program runs 116,782,626 instructions in place of 321,963,735, and it 
 A step runs 30 instructions on x86-64, and its operations need about 22.
 The index of the step goes through four integer instructions.
 
-### `fill` and `blend` (2026-11-26)
+### `fill`, `blend` and `mask` (2026-11-26)
 
 A fill with a color that is not opaque blends 4 pixels in one step.
 `blend` puts 4 premultiplied pixels of a `[u8]` over the frame in one step.
 Each divides by 255 as `(x + (x >> 8) + 1) >> 8`, which is exact for each value up to 65,152.
-`bench/draw_fill.fern` and `bench/draw_rgba.fern` each do 8,388,608 pixels.
+
+`mask` reads 16 bytes of coverage and blends 16 pixels in one step.
+A swizzle gives each byte the coverage of its pixel, so the weights are lanes of 16 bits.
+`bench/draw_fill.fern`, `bench/draw_rgba.fern` and `bench/draw_mask.fern` each do 8,388,608 pixels.
 The counts are retired instructions of the function that holds the loop, on x86-64-linux, from callgrind.
-The scalar counts are from the compiler of #17369.
+The scalar counts are from the compiler of main at 2903c63b.
 
 | Program | Scalar | Lanes | Ratio |
 | --- | --: | --: | --: |
-| `draw_fill` | 1,031,798,784 | 60,866,560 | 17.0 |
-| `draw_rgba` | 1,053,627,264 | 121,241,600 | 8.7 |
+| `draw_fill` | 1,031,798,784 | 58,769,408 | 17.6 |
+| `draw_rgba` | 1,053,627,264 | 127,434,752 | 8.3 |
+| `draw_mask` | 469,422,533 | 111,783,168 | 4.2 |
 
-For each pixel, the fill runs 7.3 instructions in place of 123, and `blend` runs 14.5 in place of 125.6.
+For each pixel, the fill runs 7.0 instructions in place of 123.
+`blend` runs 15.2 in place of 125.6, and `mask` runs 13.3 in place of 56.0.
 
 ## Lane operations out of loops (#17362)
 

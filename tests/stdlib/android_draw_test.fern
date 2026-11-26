@@ -479,6 +479,45 @@ function test_blend_wide(): test.TestOutcome {
   return test.assert_eq(bad.join(" "), "");
 }
 
+// A wide coverage map blends its color over each pixel as each channel
+// gives, through the steps of 16 pixels and the pixels after them, with
+// coverages of 0 and 255 among them. The other pixels do not change.
+function test_mask_wide(): test.TestOutcome {
+  let cov: u8[] = [];
+  for k in 0..37 * 2 {
+    let c = if (k % 7 == 3) { 0 } else if (k % 7 == 5) { 255 } else { noise(900 + k) >> 5 & 255 };
+    cov = cov.append(c as u8);
+  }
+  let bad: string[] = [];
+  for color in [draw.rgb(200, 31, 97), draw.rgba(12, 250, 77, 128)] {
+    for left in [-2, 1] {
+      let f = frame(40, 3);
+      for y in 0..3 {
+        for x in 0..40 {
+          f.store(x, y, 1, 1, noise(1100 + y * 40 + x));
+        }
+      }
+      f.mask(left, 1, 37, 2, cov, color);
+      for y in 0..3 {
+        for x in 0..40 {
+          let under = noise(1100 + y * 40 + x);
+          let want = under;
+          if (y >= 1 && x >= left && x < left + 37) {
+            let k = cov[(y - 1) * 37 + x - left] as i32 * (color >> 24 & 255) * 257 + 32768 >> 16;
+            let w = k + (k >> 7);
+            want = channel(color, under, 0, w) | channel(color, under, 8, w) | channel(color, under, 16, w) | channel(color, under, 24, w);
+          }
+          if (f.pixel(x, y) != want) {
+            bad = bad.append("at " + left.to_string() + ": " + x.to_string() + "," + y.to_string());
+          }
+        }
+      }
+      free_frame(f);
+    }
+  }
+  return test.assert_eq(bad.join(" "), "");
+}
+
 function test_mask(): test.TestOutcome {
   let f = frame(3, 2);
   let cov: u8[] = [255 as u8, 128 as u8, 0 as u8, 0 as u8, 255 as u8, 64 as u8];
@@ -596,6 +635,7 @@ function main(): i32 {
   r = r.it("a translucent fill blends as each channel gives", test_fill_wide);
   r = r.it("blend puts wide premultiplied pixels over the frame", test_blend_wide);
   r = r.it("mask blends a colour by a coverage map", test_mask);
+  r = r.it("mask blends a wide coverage map as each channel gives", test_mask_wide);
   r = r.it("blend puts premultiplied colors over the frame", test_blend);
   r = r.it("a blend over a transparent pixel is premultiplied", test_premultiplied);
   r = r.it("a color goes to OKLCH and back", test_lch_round_trip);
