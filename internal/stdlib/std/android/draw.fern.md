@@ -312,16 +312,37 @@ pub function (f: Frame) blend(x: i32, y: i32, w: i32, h: i32, rgba: [u8]): void 
   if (x1 <= x0 || y1 <= y0 || rgba.len() < 4 * w * h) {
     return;
   }
+  for row in y0..y1 {
+    blend_row(f.bits + ((row * f.stride + x0) * 4) as usize, rgba, 4 * ((row - y) * w + x0 - x), x1 - x0);
+  }
+}
+
+// `premultiplied_over` of each of the `n` pixels of `rgba` from the index
+// `from` over the pixels at `to`. A pixel with an alpha of 0 leaves the pixel
+// under it. A step does 4 pixels on lanes of 16 bits: each channel is
+// `v + (d * (255 - a) + 127) / 255`, held to 255.
+function blend_row(to: usize, rgba: [u8], from: i32, n: i32): void {
+  let alphas = __u8x16_of(3 as u8, 3 as u8, 3 as u8, 3 as u8, 7 as u8, 7 as u8, 7 as u8, 7 as u8, 11 as u8, 11 as u8, 11 as u8, 11 as u8, 15 as u8, 15 as u8, 15 as u8, 15 as u8);
+  let full = __u8x16_splat(255 as u8);
+  let none = __u8x16_splat(0 as u8);
+  let half = __u16x8_splat(127);
   unsafe {
-    for row in y0..y1 {
-      let to = f.bits + (row * f.stride * 4) as usize;
-      for col in x0..x1 {
-        let k = 4 * ((row - y) * w + col - x);
-        let a = rgba[k + 3] as i32;
-        if (a != 0) {
-          let at = to + (col * 4) as usize;
-          __store_i32(at, premultiplied_over(rgba[k] as i32, rgba[k + 1] as i32, rgba[k + 2] as i32, a, __load_i32(at)));
-        }
+    for i in 0..n / 4 {
+      let at = to + (i * 16) as usize;
+      let v = __u8x16_load_view(rgba, from + i * 16);
+      let a = __u8x16_swizzle(v, alphas);
+      let keep = full - a;
+      let d = __u8x16_load_ptr(at);
+      let lo = by_255(__u8x16_widen_lo(d) * __u8x16_widen_lo(keep) + half) + __u8x16_widen_lo(v);
+      let hi = by_255(__u8x16_widen_hi(d) * __u8x16_widen_hi(keep) + half) + __u8x16_widen_hi(v);
+      __u8x16_store(at, __u8x16_select(d, __u16x8_narrow(lo, hi), __u8x16_eq(a, none)));
+    }
+    for i in n / 4 * 4..n {
+      let k = from + 4 * i;
+      let a = rgba[k + 3] as i32;
+      if (a != 0) {
+        let at = to + (i * 4) as usize;
+        __store_i32(at, premultiplied_over(rgba[k] as i32, rgba[k + 1] as i32, rgba[k + 2] as i32, a, __load_i32(at)));
       }
     }
   }
