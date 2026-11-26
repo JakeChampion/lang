@@ -20844,11 +20844,11 @@ function ocl_callback_value(e: ast.Expr, facts: OclFacts): boolean {
 }
 
 // The last-use and capture facts are computed on their first question.
-struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
+struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_owners: util.NameIndex, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
 
 function lu_pending(fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): Cell[LastUses] {
   let none: string[] = [];
-  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, typed_fn: typed_fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
+  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, typed_fn: typed_fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_owners: util.name_index(none), capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
 }
 
 function ow_callback_facts(ctx: OwnCtx): OclFacts {
@@ -20860,32 +20860,41 @@ function ow_callback_facts(ctx: OwnCtx): OclFacts {
   }
   if (!lu.captures_known) {
     let facts = ocl_facts(annotate_func(lu.fn, ctx.factories.env), state.factories, ctx.value_proofs, false, Some(lu.lenders));
-    lu = LastUses { ...lu, captures_known: true, capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
+    lu = LastUses { ...lu, captures_known: true, capture_owners: ow_capture_owners(facts, ctx), capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
     ctx.last_use.set(lu);
   }
   return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, proofs: ctx.value_proofs, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams, summary: false, methods: None };
 }
 
-function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
-  let facts = ow_callback_facts(ctx);
+// Capture facts belong to the function. Index their owners once so checking
+// a declaration does not walk the capture rows of every other local.
+function ow_capture_owners(facts: OclFacts, ctx: OwnCtx): util.NameIndex {
+  let names: string[] = [];
   for capture in facts.inlines {
-    if (capture.name == name && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
-      return true;
+    if (!ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+      names = names.append(capture.name);
     }
   }
-  // A local that holds a callback makes an owner of a binding with one definition only.
-  let single = ocl_unique(facts.names, name);
   for i in 0..facts.rows.len() {
+    let row = facts.rows[i];
+    if (row.len() == 0) {
+      continue;
+    }
     let callback = ocl_callback_type(facts.types[i], facts.tparams);
-    if (single || callback) {
-      for capture in facts.rows[i] {
-        if (capture.name == name && !(callback && capture.lent) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
-          return true;
-        }
+    for capture in row {
+      if ((callback || ocl_unique(facts.names, capture.name)) && !(callback && capture.lent) && !ow_cached_value_data(capture.type_name, ctx.decls, ctx.value_proofs)) {
+        names = names.append(capture.name);
       }
     }
   }
-  return false;
+  return util.name_index(names);
+}
+
+function ow_local_capture_owner(name: string, ctx: OwnCtx): boolean {
+  if (!ctx.last_use.get().captures_known) {
+    ow_callback_facts(ctx);
+  }
+  return ctx.last_use.get().capture_owners.has(name);
 }
 
 function ow_callback_capture_diags(value: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
