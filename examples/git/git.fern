@@ -3112,6 +3112,25 @@ function log_command(argv: string[]): i32 {
   let o = LogOpts { lines: [], hi: log.no_highlight(), gpg: gpg_programs(r), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_default: "separate", merges_need: false, imply_patch: false, remerge: [], pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   for e in r.config.entries {
+    if (e.name == "diff.renames") {
+      let low = e.value.to_ascii_lower();
+      let copies = low == "copies" || low == "copy";
+      let enabled = if (copies) { 1 } else { e.maybe_bool() };
+      if (enabled < 0) {
+        return fatal("bad boolean config value '" + e.value + "' for 'diff.renames'");
+      }
+      o = LogOpts { ...o, renames: enabled == 1, find: treediff.Detect { ...o.find, copies: copies } };
+    }
+    if (e.name == "diff.algorithm") {
+      if (e.bare) {
+        eprint("error: " + config.missing_value(e));
+        return fatal(r.config.bad(e));
+      }
+      if (diff_algorithm(o.patch.algo, e.value).algorithm < 0) {
+        eprint("error: unknown value for config 'diff.algorithm': " + e.value);
+        return fatal(r.config.bad(e));
+      }
+    }
     if (e.name == "log.diffmerges") {
       let m = merges_value(e.value, "separate");
       if (e.bare || m.len() == 0) {
@@ -3123,9 +3142,7 @@ function log_command(argv: string[]): i32 {
       o = LogOpts { ...o, merges_default: m };
     }
   }
-  let renames_value = r.config.get("diff.renames").unwrap_or("true").to_ascii_lower();
-  let copies = renames_value == "copies" || renames_value == "copy";
-  o = LogOpts { ...o, patch: diff_config(r, o.patch), renames: copies || r.config.flag("diff.renames", true), find: treediff.Detect { ...o.find, copies: copies }, walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
+  o = LogOpts { ...o, patch: diff_config(r, o.patch), walk: revwalk.Opts { ...o.walk, reflog_walk: o.walk_reflogs } };
   if let Some(v) = r.config.get("diff.colormoved") {
     let form = moved.parse(v);
     if (form >= 0) {

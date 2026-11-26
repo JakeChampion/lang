@@ -150,6 +150,25 @@ pub function (c: Config) all(name: string): string[] {
   return out;
 }
 
+// 1 or 0 for a boolean of the configuration, and -1 for a value that is
+// no boolean (`git_parse_maybe_bool` of git).
+pub function (e: Entry) maybe_bool(): i32 {
+  if (e.bare) {
+    return 1;
+  }
+  let low = e.value.to_ascii_lower();
+  if (low == "true" || low == "yes" || low == "on") {
+    return 1;
+  }
+  if (low == "" || low == "false" || low == "no" || low == "off") {
+    return 0;
+  }
+  return match (integer(e.value)) {
+    Ok(n) => if (n != 0) { 1 } else { 0 },
+    Err(_) => -1,
+  };
+}
+
 // The value of `name` as a boolean, or `otherwise` when it is not set.
 pub function (c: Config) flag(name: string, otherwise: boolean): boolean {
   let Some(v) = c.get(name) else {

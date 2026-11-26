@@ -706,6 +706,17 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%h", "base")
 				g.git("config", "--unset", setting[0])
 			}
+			configPath := filepath.Join(dir, ".git", "config")
+			configBytes, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range []string{"[diff]\nrenames", "[diff]\nrenames = maybe", "[merge]\nrenames", "[merge]\ndirectoryRenames", "[diff]\nalgorithm", "[diff]\nalgorithm = bogus", "[merge]\nrenormalize"} {
+				g.write(".git/config", string(configBytes)+"\n"+entry+"\n")
+				gitCompare(t, oracle, port, dir, "", "log", "-1", "base")
+				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-1", "rename-delete-1")
+			}
+			g.write(".git/config", string(configBytes))
 			// The attributes of a path select the driver of its merge and
 			// the size of its conflict markers.
 			attributes := []string{"union.txt merge=union\nplain.txt -merge\nwide.txt conflict-marker-size=12\n", "*.txt merge=binary\n",
