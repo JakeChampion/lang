@@ -62,6 +62,16 @@ func loopAlignedLabels(t *testing.T, body []string) []string {
 		if i+1 >= len(body) || !strings.HasSuffix(body[i+1], ":") {
 			t.Fatalf(".p2align 6 is not before a label: %q", body[i+1:])
 		}
+		// The padding must not run: the code before it may not fall through.
+		prev := ""
+		for k := i - 1; k >= 0 && prev == ""; k-- {
+			if code := strings.TrimSpace(body[k]); code != "" && !strings.HasSuffix(code, ":") && !strings.HasPrefix(code, ".") {
+				prev = code
+			}
+		}
+		if !strings.HasPrefix(prev, "jmp ") && prev != "ret" {
+			t.Errorf("the code before the padding of %s falls through into it: %q", body[i+1], prev)
+		}
 		out = append(out, strings.TrimSuffix(body[i+1], ":"))
 	}
 	return out
@@ -95,7 +105,7 @@ func TestSelfHostX86LoopTopAlignment(t *testing.T) {
 		for _, l := range labels {
 			def := strings.Index(text, "\n"+l+":")
 			back := regexp.MustCompile(`(?m)^\s+j[a-z]+ ` + regexp.QuoteMeta(l) + `$`)
-			if loc := back.FindStringIndex(text); loc == nil || loc[0] < def {
+			if !back.MatchString(text[def:]) {
 				t.Errorf("%s: %s is aligned, but no jump after it goes back to it", tc.fn, l)
 			}
 		}
