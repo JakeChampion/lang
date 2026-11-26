@@ -33,7 +33,7 @@ struct Scan {
 
 struct Ctx { names: util.NameIndex, fn_fields: util.NameIndex, tagged: util.NameIndex }
 
-struct Walk { ctx: Ctx, s: Scan, funcs: parser.FuncDecl[] }
+struct Walk { ctx: Ctx, s: Scan }
 
 function pos_key(line: i32, col: i32): i32 {
   return line * 4096 + col;
@@ -99,12 +99,13 @@ function call_expr(e: ast.Expr, own w: Walk): Walk {
       match (c.callee) {
         ast.ExprIdent(id) => {
           let s = Scan { ...w.s, callee_pos: w.s.callee_pos.append(pos_key(id.line, id.col)) };
+          let k = w.ctx.names.find(id.name);
           if (util.has_str(s.locals, id.name)) {
             if (!util.has_str(s.lambda_locals, id.name)) {
               s = Scan { ...s, indirect: true };
             }
-          } else if (w.ctx.names.has(id.name)) {
-            s = add_edge(s, func_at(w.funcs, id.name));
+          } else if (k >= 0) {
+            s = add_edge(s, k);
           } else if (w.ctx.tagged.has(id.name) && !util.has_str(s.builtins, id.name)) {
             s = Scan { ...s, builtins: s.builtins.append(id.name) };
           }
@@ -132,8 +133,8 @@ function call_expr(e: ast.Expr, own w: Walk): Walk {
 function ident_expr(e: ast.Expr, own w: Walk): Walk {
   match (e) {
     ast.ExprIdent(id) => {
-      if (!util.has_i32(w.s.callee_pos, pos_key(id.line, id.col)) && !util.has_str(w.s.locals, id.name) && w.ctx.names.has(id.name)) {
-        let k = func_at(w.funcs, id.name);
+      let k = w.ctx.names.find(id.name);
+      if (k >= 0 && !util.has_i32(w.s.callee_pos, pos_key(id.line, id.col)) && !util.has_str(w.s.locals, id.name)) {
         return Walk { ...w, s: Scan { ...add_edge(w.s, k), escaping: w.s.escaping.append(k) } };
       }
     },
@@ -173,7 +174,7 @@ function fresh_scan(): Scan {
 }
 
 function scan(ctx: Ctx, funcs: parser.FuncDecl[], fd: parser.FuncDecl): Scan {
-  let w = Walk { ctx: ctx, s: fresh_scan(), funcs: funcs };
+  let w = Walk { ctx: ctx, s: fresh_scan() };
   for p in fd.params {
     w = Walk { ...w, s: Scan { ...w.s, locals: w.s.locals.append(p.name) } };
   }
@@ -197,15 +198,6 @@ function scan(ctx: Ctx, funcs: parser.FuncDecl[], fd: parser.FuncDecl): Scan {
     }
   }
   return s;
-}
-
-function func_at(funcs: parser.FuncDecl[], name: string): i32 {
-  for k in 0..funcs.len() {
-    if (funcs[k].name == name) {
-      return k;
-    }
-  }
-  return -1;
 }
 
 function context(mod: parser.Module, tagged: string[]): Ctx {

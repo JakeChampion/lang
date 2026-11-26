@@ -262,6 +262,32 @@ function main(): i32 {
 		t.Errorf("a method call is charged with another type's method of the same name:\n%s", out)
 	}
 
+	methodFirst := `struct Loud { path: string }
+
+function (l: Loud) save(msg: string): void {
+  match (write_file(l.path, msg)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+}
+
+function save(): void {
+}
+
+function apply(f: () => void): void {
+  f();
+}
+
+function main(): i32 {
+  save();
+  apply(save);
+  return 0;
+}
+`
+	if out, _ := effectsRun(t, methodFirst); !strings.Contains(out, "Loud.save  fs") || strings.Contains(out, "main  fs") || strings.Contains(out, "apply  fs") {
+		t.Errorf("a call of a free function is charged with an earlier method of the same name:\n%s", out)
+	}
+
 	if out, code := effectsRun(t, "function main(): i32 { return \"s\"; }\n"); code != 1 || !strings.Contains(out, "error[E002]") {
 		t.Errorf("exit %d\n%s", code, out)
 	}
