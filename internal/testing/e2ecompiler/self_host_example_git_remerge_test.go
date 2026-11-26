@@ -878,6 +878,19 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 		t.Fatal(err)
 	}
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// The extension chooses the configured gitdir even when the subsection
+	// has a different name. A missing key and a missing store differ.
+	version := g.git("config", "--get", "core.repositoryformatversion")
+	g.git("config", "core.repositoryformatversion", "1")
+	g.git("config", "extensions.submodulePathConfig", "true")
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	for _, store := range []string{".git/modules/OtherLibrary", otherStore, ".git/modules/Absent"} {
+		g.git("config", "submodule.Library.gitdir", store)
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	}
+	g.git("config", "--unset", "submodule.Library.gitdir")
+	g.git("config", "--unset", "extensions.submodulePathConfig")
+	g.git("config", "core.repositoryformatversion", version)
 	if err := os.Rename(otherStore, storedGit); err != nil {
 		t.Fatal(err)
 	}
