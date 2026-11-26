@@ -64,10 +64,32 @@ The scalar count is from the compiler of main at 59584e37.
 For each pixel, the blend runs 11.0 instructions in place of 35.5.
 The whole program runs 116,782,626 instructions in place of 321,963,735, and it returns the same checksum.
 
-A step runs 44 instructions on x86-64, and its operations need about 22.
-The unsigned narrow holds each half to 255 before `packuswb`, and it makes that constant two times in each step.
-The compiler does not merge two lane operations that are the same.
-It also does not move a lane operation out of a loop (#17362).
+A step runs 32 instructions on x86-64, and its operations need about 22.
+Each widen makes a zero register again, and the index of the step goes through four integer instructions.
+
+## Lane operations out of loops (#17362)
+
+The compiler merges two lane operations that are the same.
+It moves a lane value that does not change out of a loop.
+A splat of a constant is 6 instructions on x86-64, so a value of constants moves also.
+
+No register keeps a lane value across a call, so a value out of a loop that makes a call goes to a frame slot.
+Each read then loads it again.
+So out of such a loop, a lane value moves only when the loop reads it one time, in the loop of its definition.
+
+The counts are for the whole program on x86-64-linux.
+The counts before are from the compiler of #17363.
+
+| Program | Before | After | Change |
+| --- | --: | --: | --: |
+| `draw_blend` | 116,782,626 | 92,106,786 | -21% |
+| `hex_encode` | 55,930,166 | 55,914,613 | 0% |
+| `hex_decode` | 246,979,175 | 202,938,498 | -18% |
+| `base64_encode` | 65,107,254 | 65,098,080 | 0% |
+| `base64_decode` | 509,200,760 | 307,902,904 | -40% |
+| `utf8_validate` | 174,753,699 | 154,077,675 | -12% |
+
+The blend loop of `draw_blend` runs 67,463,424 instructions in place of 92,139,264: 8.0 for each pixel.
 
 ## What the numbers do not show
 

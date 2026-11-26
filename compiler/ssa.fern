@@ -5269,9 +5269,15 @@ function mergeable(ins: SInst): boolean {
   }
   if (ins.kind_tag == UNARY) {
     return ins.ir_kind == ir.K_NOT || int_resize(ins.ir_kind) || ins.ir_kind == ir.K_U32_WRAP
-      || ins.ir_kind == ir.K_INT_CAST || ins.ir_kind == ir.K_ROTR;
+      || ins.ir_kind == ir.K_INT_CAST || ins.ir_kind == ir.K_ROTR || pure_lane(ins);
   }
   return false;
+}
+
+// A lane operation that reads only its operands: not a load, a store or an
+// access to a group of elements.
+function pure_lane(ins: SInst): boolean {
+  return (ins.kind_tag == UNARY || ins.kind_tag == BINARY) && ir.is_lane_kind(ins.ir_kind) && !lane_memory(ins.ir_kind);
 }
 
 function operand_id(a: i32, canon: i32[]): i32 {
@@ -8034,6 +8040,7 @@ pub function hoisted_invariants(f: SFunc): Formed {
   }
   let at = block_positions(f);
   let latch = furthest_latches(f, at);
+  let inner = innermost_loops(latch);
   let preds = position_preds(f, at);
   let defs = inst_defs(f);
   let def_pos = def_positions(f);
@@ -8048,7 +8055,9 @@ pub function hoisted_invariants(f: SFunc): Formed {
     let last = latch[h];
     let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
     if (pre >= 0) {
-      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, defs, def_pos, h, last);
+      let nvals = f.nvals + made.len();
+      let reloaded = if (loop_calls(blocks, h, last)) { reloaded_values(blocks, def_pos, inner, h, last, nvals) } else { __alloc_bool(nvals) };
+      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: nvals }, defs, def_pos, h, last, reloaded);
       let moving: SInst[] = [];
       let originals: i32[] = [];
       let copies: i32[] = [];
@@ -8139,15 +8148,17 @@ pub function hoisted_invariants(f: SFunc): Formed {
 }
 
 // The values of the loop from `h` to `last` that can move in front of it: a
-// pure integer computation of operands defined before the loop, of constants,
-// or of values that move. At least one operand must not be a constant: a
-// computation of constants only gains nothing in front of the loop, and it
-// holds a register across the loop there.
-function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32): boolean[] {
+// pure integer or lane computation of operands defined before the loop, of
+// constants, or of values that move. An integer computation must read one
+// operand that is not a constant: one of constants only gains nothing in front
+// of the loop, and it holds a register across the loop there. A lane value of
+// constants takes more than one instruction to make, so it moves. A lane value
+// that `reloaded` marks stays.
+function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32, reloaded: boolean[]): boolean[] {
   let inv = __alloc_bool(f.nvals);
   for bi in h..=last {
     for ins in blocks[bi].insts {
-      if (!hoistable(ins, defs)) {
+      if (!hoistable(ins, defs) || pure_lane(ins) && reloaded[ins.result]) {
         continue;
       }
       let ok = true;
@@ -8163,7 +8174,7 @@ function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i3
           ok = false;
         }
       }
-      if (ok && reads_non_constant) {
+      if (ok && (reads_non_constant || pure_lane(ins))) {
         inv = inv.with(ins.result, true);
       }
     }
@@ -8178,16 +8189,61 @@ function hoistable(ins: SInst, defs: SInst[]): boolean {
     return false;
   }
   if (ins.kind_tag == UNARY) {
-    return ins.args.len() == 1 && int_unary(ins);
+    return ins.args.len() == 1 && (int_unary(ins) || pure_lane(ins));
   }
   if (ins.kind_tag != BINARY || ins.args.len() != 2) {
     return false;
+  }
+  if (pure_lane(ins)) {
+    return true;
   }
   if (ins.ir_kind == ir.K_DIV_S || ins.ir_kind == ir.K_DIV_U || ins.ir_kind == ir.K_REM_S || ins.ir_kind == ir.K_REM_U) {
     let d = ins.args[1];
     return d >= 0 && d < defs.len() && is_constant(defs[d], defs.len()) && !const_is(defs, d, 0i64) && !const_is(defs, d, -1i64);
   }
   return int_binary(ins) && !ir.is_int_cmp_kind(ins.ir_kind);
+}
+
+// The position of the header of the innermost loop that holds each block, or
+// -1. The loops nest, so a later header is a loop inside an earlier one.
+function innermost_loops(latch: i32[]): i32[] {
+  let out = util.minus_ones(latch.len());
+  for h in 0..latch.len() {
+    for bi in h..=latch[h] {
+      out = out.with(bi, h);
+    }
+  }
+  return out;
+}
+
+// The values of the loop from `h` to `last` that the loop reads more than one
+// time, or in a loop inside the loop of their definition. No register keeps a
+// lane value across a call, so a lane value that moves out of a loop with a
+// call goes to a frame slot, and each read loads it again.
+function reloaded_values(blocks: SBlock[], def_pos: i32[], inner: i32[], h: i32, last: i32, nvals: i32): boolean[] {
+  let reads = __alloc_i32(nvals);
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      for a in ins.args {
+        if (a >= 0 && a < nvals && def_pos[a] >= h && def_pos[a] <= last) {
+          reads = reads.with(a, if (inner[def_pos[a]] != inner[bi]) { 2 } else { reads[a] + 1 });
+        }
+      }
+    }
+  }
+  return reads.map((n: i32): boolean => n > 1);
+}
+
+// Whether an instruction from block `h` to block `last` calls a function.
+function loop_calls(blocks: SBlock[], h: i32, last: i32): boolean {
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      if (calls(ins)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // The position of the one block outside the loop from `h` to `last` that
