@@ -1,0 +1,789 @@
+import "./ssa";
+import "./ssasem";
+import "./semrecords";
+import "./semtypes";
+import "./sourcepos";
+import "./typeinfo";
+import "./util";
+
+// An array of a flat record keeps the fields of each element in its own
+// buffer, `k` slots for each element (docs/RC-DESIGN.md §2). A flat record has
+// only integer fields and no finalizer. `slot` is i32 when each field fits in
+// 32 bits, and i64 otherwise.
+pub struct Flat { ty: typeinfo.Type, fields: semrecords.Field[], slot: typeinfo.Type }
+
+// `refused` gives each record that keeps the boxed layout, and why.
+pub struct Plan { flats: Flat[], keys: util.NameIndex, refused: string[] }
+
+pub function no_plan(): Plan {
+  let none: Flat[] = [];
+  let keys: string[] = [];
+  return Plan { flats: none, keys: util.name_index(keys), refused: keys };
+}
+
+pub function is_empty(p: Plan): boolean {
+  return p.flats.len() == 0;
+}
+
+// The flat record whose array type is t, or -1.
+pub function flat_of(p: Plan, t: typeinfo.Type): i32 {
+  if let typeinfo.TypeArray(a) = t {
+    return p.keys.find(ssasem.type_key(a.elem));
+  }
+  return -1;
+}
+
+function narrow_field(t: typeinfo.Type): boolean {
+  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u16(t) || ssasem.is_i16(t) || ssasem.is_u8(t);
+}
+
+function wide_field(t: typeinfo.Type): boolean {
+  return ssasem.is_i64(t) || ssasem.is_u64(t);
+}
+
+function candidate(f: ssasem.Func, r: semrecords.Record): boolean {
+  if (r.views || r.nests_func || r.secret || r.declared.len() > 0 || r.fields.len() == 0) {
+    return false;
+  }
+  if (semtypes.is_env(r.ty) || semtypes.is_handle(r.ty) || typeinfo.is_cell(r.ty) || ssasem.has_finalizer(f, r.ty)) {
+    return false;
+  }
+  for fl in r.fields {
+    if (!narrow_field(fl.ty) && !wide_field(fl.ty) || ssasem.is_char(fl.ty)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function slot_of(r: semrecords.Record): typeinfo.Type {
+  for fl in r.fields {
+    if (wide_field(fl.ty)) {
+      return typeinfo.t_i64();
+    }
+  }
+  return typeinfo.t_i32();
+}
+
+struct Scan { keys: string[], recs: semrecords.Record[], bad: boolean[], why: string[], index: util.NameIndex }
+
+function at_key(s: Scan, t: typeinfo.Type): i32 {
+  if let typeinfo.TypeStruct(_) = t {
+    return s.index.find(ssasem.type_key(t));
+  }
+  return -1;
+}
+
+function mark(own s: Scan, at: i32, why: string): Scan {
+  if (at >= 0 && !s.bad[at]) {
+    s = Scan { ...s, bad: s.bad.with(at, true), why: s.why.with(at, why) };
+  }
+  return s;
+}
+
+// An array of a candidate is allowed only at the top of a value's type, or
+// as an element of a tuple there.
+function nested(own s: Scan, t: typeinfo.Type, top: boolean, why: string): Scan {
+  if let typeinfo.TypeArray(a) = t {
+    if (!top) {
+      let hit1 = at_key(s, a.elem);
+      s = mark(s, hit1, why);
+    }
+    return nested(s, a.elem, false, why);
+  }
+  if let typeinfo.TypeStruct(st) = t {
+    for x in st.args {
+      s = nested(s, x, false, why);
+    }
+    return s;
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    for x in u.args {
+      s = nested(s, x, false, why);
+    }
+    return s;
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    for x in tup.elements {
+      s = nested(s, x, top, why);
+    }
+    return s;
+  }
+  if let typeinfo.TypeMap(m) = t {
+    return nested(nested(s, m.key, false, why), m.value, false, why);
+  }
+  if let typeinfo.TypeFunc(fn) = t {
+    for x in fn.param_types {
+      s = nested(s, x, false, why);
+    }
+    return nested(s, fn.ret_type, false, why);
+  }
+  return s;
+}
+
+function direct(s: Scan, t: typeinfo.Type): i32 {
+  if let typeinfo.TypeArray(a) = t {
+    return at_key(s, a.elem);
+  }
+  return -1;
+}
+
+function array_read(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.str == ""
+    && (ins.imm == 0 || ins.imm == 1 || ins.imm == ssasem.below_proven());
+}
+
+function allowed_use(ins: ssa.SInst, pos: i32, calls: util.NameIndex): boolean {
+  let k = ins.kind_tag;
+  if (k == ssa.PHI || k == ssa.COPY || k == ssasem.tuple_new() || k == ssasem.arr_concat() && pos < 2) {
+    return true;
+  }
+  if (k == ssasem.call()) {
+    return calls.has(ins.str) || ssasem.is_unique_check(ins.str);
+  }
+  if (pos != 0) {
+    return false;
+  }
+  return array_read(ins) || k == ssasem.length() || k == ssasem.with() || k == ssasem.append() || k == ssasem.arr_slice();
+}
+
+function allowed_result(ins: ssa.SInst, calls: util.NameIndex): boolean {
+  let k = ins.kind_tag;
+  if (k == ssasem.call()) {
+    return calls.has(ins.str) || ssasem.is_unique_check(ins.str);
+  }
+  return k == ssa.PHI || k == ssa.COPY || k == ssa.PARAM || k == ssasem.tuple_get() || k == ssasem.array_new() || k == ssasem.array_reserve()
+    || k == ssasem.append() || k == ssasem.with() || k == ssasem.arr_slice() || k == ssasem.arr_concat();
+}
+
+function scan_types(own s: Scan, f: ssasem.Func, open: boolean): Scan {
+  let why = "an array of it in another type in " + f.graph.name;
+  if (open) {
+    why = "used by " + f.graph.name + ", which no rewrite reaches";
+  }
+  for t in f.values {
+    s = nested(s, t, !open, why);
+  }
+  for t in f.params {
+    s = nested(s, t, !open, why);
+  }
+  s = nested(s, f.result, !open, why);
+  for c in f.calls {
+    for t in c.params {
+      s = nested(s, t, true, why);
+    }
+    s = nested(s, c.result, true, why);
+  }
+  for r in f.records.list {
+    for fl in r.fields {
+      s = nested(s, fl.ty, false, why);
+    }
+  }
+  for e in f.enums {
+    for v in e.variants {
+      for fl in v.fields {
+        s = nested(s, fl.ty, false, why);
+      }
+    }
+  }
+  for row in f.envs {
+    s = nested(nested(s, row.fn_ty, false, why), row.env_ty, false, why);
+  }
+  for row in f.dyns {
+    s = nested(nested(s, row.fn_ty, false, why), row.env_ty, false, why);
+  }
+  return s;
+}
+
+function scan_body(own s: Scan, f: ssasem.Func, calls: util.NameIndex): Scan {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result < f.values.len() && !allowed_result(ins, calls)) {
+        let hit2 = direct(s, f.values[ins.result]);
+        s = mark(s, hit2, "made by " + ssa.kind_name(ins.kind_tag) + " " + ins.str + " in " + f.graph.name);
+      }
+      for pos in 0..ins.args.len() {
+        let a = ins.args[pos];
+        if (a >= 0 && a < f.values.len() && !allowed_use(ins, pos, calls)) {
+          let hit3 = direct(s, f.values[a]);
+          s = mark(s, hit3, "read by " + ssa.kind_name(ins.kind_tag) + " " + ins.str + " in " + f.graph.name);
+        }
+      }
+    }
+    if (b.term.kind_tag == ssa.TERM_BRIF) {
+      let hit4 = direct(s, f.values[b.term.cond]);
+      s = mark(s, hit4, "a branch condition");
+    }
+  }
+  return s;
+}
+
+// `funcs[i]` is lowered when `live[i]`. `closed[i]` marks a function that no
+// rewrite reaches, such as a refused or a bodyless one: an array of a record
+// that it touches keeps the boxed layout. `names` are the callees whose bodies
+// the plan rewrites.
+pub function plan(funcs: ssasem.Func[], live: boolean[], closed: boolean[], names: string[]): Plan {
+  let no_keys: string[] = [];
+  let no_recs: semrecords.Record[] = [];
+  let no_bad: boolean[] = [];
+  let s = Scan { keys: no_keys, recs: no_recs, bad: no_bad, why: no_keys, index: util.name_index(no_keys) };
+  let rewritten: string[] = [];
+  for i in 0..funcs.len() {
+    let f = funcs[i];
+    for r in f.records.list {
+      let key = ssasem.type_key(r.ty);
+      if (s.index.find(key) < 0 && candidate(f, r)) {
+        s = Scan { keys: s.keys.append(key), recs: s.recs.append(r), bad: s.bad.append(false), why: s.why.append(""), index: s.index.added(key) };
+      }
+    }
+    if (live[i]) {
+      rewritten = rewritten.append(names[i]);
+    }
+  }
+  if (s.keys.len() == 0) {
+    return no_plan();
+  }
+  let calls = util.name_index(rewritten);
+  for i in 0..funcs.len() {
+    if (live[i]) {
+      s = scan_body(scan_types(s, funcs[i], false), funcs[i], calls);
+    } else if (closed[i]) {
+      s = scan_types(s, funcs[i], true);
+    }
+  }
+  let flats: Flat[] = [];
+  let keys: string[] = [];
+  let refused: string[] = [];
+  for i in 0..s.keys.len() {
+    if (!s.bad[i]) {
+      flats = flats.append(Flat { ty: s.recs[i].ty, fields: s.recs[i].fields, slot: slot_of(s.recs[i]) });
+      keys = keys.append(s.keys[i]);
+    } else {
+      refused = refused.append(s.keys[i] + ": " + s.why[i]);
+    }
+  }
+  return Plan { flats: flats, keys: util.name_index(keys), refused: refused };
+}
+
+// The type of a flat array is the array of its slots.
+pub function retype(p: Plan, t: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeTuple(tup) = t {
+    let elements: typeinfo.Type[] = [];
+    for x in tup.elements {
+      elements = elements.append(retype(p, x));
+    }
+    return typeinfo.TypeTuple { elements: elements };
+  }
+  let at = flat_of(p, t);
+  if (at < 0) {
+    return t;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return typeinfo.TypeArray { elem: p.flats[at].slot, view: a.view };
+  }
+  return t;
+}
+
+pub function retype_contract(p: Plan, c: ssasem.Contract): ssasem.Contract {
+  let params: typeinfo.Type[] = [];
+  for t in c.params {
+    params = params.append(retype(p, t));
+  }
+  return ssasem.Contract { ...c, name: renamed(p, c.name, c.result), params: params, result: retype(p, c.result) };
+}
+
+// The uniqueness check of a flat array is the check of the array of its slots.
+function renamed(p: Plan, name: string, t: typeinfo.Type): string {
+  if (ssasem.is_unique_check(name) && flat_of(p, t) >= 0) {
+    return ssasem.unique_check_name(retype(p, t));
+  }
+  return name;
+}
+
+// `at` is the value that the last step gave.
+struct Body { values: typeinfo.Type[], insts: ssa.SInst[], at: i32 }
+
+function put(own b: Body, kind: i32, result: i32, args: i32[], imm: i32, str: string): Body {
+  return Body { ...b, insts: b.insts.append(ssa.SInst { ir_kind: 0, kind_tag: kind, result: result, args: args, imm: imm, str: str }), at: result };
+}
+
+// The result of the new instruction is the next value.
+function def(own b: Body, kind: i32, args: i32[], imm: i32, str: string, t: typeinfo.Type): Body {
+  let id = b.values.len();
+  b = Body { ...b, values: b.values.append(t) };
+  return put(b, kind, id, args, imm, str);
+}
+
+function given(own b: Body, v: i32): Body {
+  return Body { ...b, at: v };
+}
+
+function constant(own b: Body, n: i32): Body {
+  return def(b, ssa.CONST_INT, [], n, "", typeinfo.t_i32());
+}
+
+function binary(own b: Body, op: string, x: i32, n: i32): Body {
+  b = constant(b, n);
+  let y = b.at;
+  return def(b, ssa.BINARY, [x, y], 0, op, typeinfo.t_i32());
+}
+
+function scaled(own b: Body, i: i32, k: i32): Body {
+  if (k == 1) {
+    return given(b, i);
+  }
+  return binary(b, "*", i, k);
+}
+
+function offset(own b: Body, base: i32, j: i32): Body {
+  if (j == 0) {
+    return given(b, base);
+  }
+  return binary(b, "+", base, j);
+}
+
+// i * k + j, as an index that is negative when i is. A read that a guard
+// proves below the length needs only this.
+function signed(own b: Body, i: i32, k: i32, j: i32): Body {
+  b = binary(b, ">>", i, 31);
+  let bad = b.at;
+  b = scaled(b, i, k);
+  let s0 = b.at;
+  b = offset(b, s0, j);
+  let at = b.at;
+  return def(b, ssa.BINARY, [at, bad], 0, "|", typeinfo.t_i32());
+}
+
+// The index of slot j of element i for a read or a write with check `imm`.
+function checked_index(own b: Body, i: i32, k: i32, j: i32, imm: i32): Body {
+  if (imm == ssasem.below_proven()) {
+    return signed(b, i, k, j);
+  }
+  return guarded(b, i, k, j, element_limit(k));
+}
+
+// i * k + j, as an index that is -1 when i is outside 0..=limit. A product
+// that wraps then cannot give the index of another element.
+function guarded(own b: Body, i: i32, k: i32, j: i32, limit: i32): Body {
+  b = constant(b, limit);
+  let top = b.at;
+  b = def(b, ssa.BINARY, [top, i], 0, "-", typeinfo.t_i32());
+  let room = b.at;
+  b = def(b, ssa.BINARY, [room, i], 0, "|", typeinfo.t_i32());
+  let cur1 = b.at;
+  b = binary(b, ">>", cur1, 31);
+  let bad = b.at;
+  b = scaled(b, i, k);
+  let cur2 = b.at;
+  b = offset(b, cur2, j);
+  let at = b.at;
+  return def(b, ssa.BINARY, [at, bad], 0, "|", typeinfo.t_i32());
+}
+
+function max_i32(): i32 {
+  return 2147483647;
+}
+
+// The largest index of an element of an array of k slots for each element.
+function element_limit(k: i32): i32 {
+  return max_i32() / k - 1;
+}
+
+// A slice bound can also be the length.
+function bound_limit(k: i32): i32 {
+  return max_i32() / k;
+}
+
+function converted(own b: Body, v: i32, from: typeinfo.Type, to: typeinfo.Type): Body {
+  if (semtypes.equal(from, to)) {
+    return given(b, v);
+  }
+  return def(b, ssasem.cast(), [v], 0, "", to);
+}
+
+function slot_ids(own b: Body, fl: Flat, v: i32): Got {
+  let ids: i32[] = [];
+  for j in 0..fl.fields.len() {
+    b = def(b, ssasem.record_get(), [v], j, fl.fields[j].name, fl.fields[j].ty);
+    let cur3 = b.at;
+    b = converted(b, cur3, fl.fields[j].ty, fl.slot);
+    ids = ids.append(b.at);
+  }
+  return Got { b: b, ids: ids };
+}
+
+struct Got { b: Body, ids: i32[] }
+
+function slot_read(own b: Body, fl: Flat, a: i32, at: i32, imm: i32, j: i32): Body {
+  b = def(b, ssasem.array_get(), [a, at], imm, "", fl.slot);
+  let got = b.at;
+  return converted(b, got, fl.slot, fl.fields[j].ty);
+}
+
+// `fields[v]` holds a value for each field of the element that read v gives,
+// or is empty. It is not empty when each use of v reads a field of it: the
+// read then loads only those slots and makes no record.
+struct Parts { fields: i32[][] }
+
+function whole_use(own whole: boolean[], v: i32): boolean[] {
+  if (v >= 0 && v < whole.len()) {
+    whole = whole.with(v, true);
+  }
+  return whole;
+}
+
+function parts_of(p: Plan, f: ssasem.Func, own b: Body): Split {
+  let n = f.values.len();
+  let read_at: i32[] = __alloc_i32(n);
+  let whole = __alloc_bool(n);
+  let used: boolean[][] = [];
+  for v in 0..n {
+    used = used.append([]);
+  }
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == ssasem.array_get() && array_read(ins) && flat_of(p, f.values[ins.args[0]]) >= 0) {
+        let k = p.flats[flat_of(p, f.values[ins.args[0]])].fields.len();
+        let none: boolean[] = [];
+        for j in 0..k {
+          none = none.append(false);
+        }
+        used = used.with(ins.result, none);
+        read_at = read_at.with(ins.result, flat_of(p, f.values[ins.args[0]]) + 1);
+      }
+    }
+  }
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && read_at[ins.args[0]] > 0) {
+        let v = ins.args[0];
+        used = used.with(v, used[v].with(ins.imm, true));
+      } else {
+        for a in ins.args {
+          whole = whole_use(whole, a);
+        }
+      }
+    }
+    if (blk.term.kind_tag == ssa.TERM_RET) {
+      whole = whole_use(whole, blk.term.value);
+    }
+    if (blk.term.kind_tag == ssa.TERM_BRIF) {
+      whole = whole_use(whole, blk.term.cond);
+    }
+  }
+  for v in f.dbg_vals {
+    whole = whole_use(whole, v);
+  }
+  let fields: i32[][] = [];
+  for v in 0..n {
+    let ids: i32[] = [];
+    if (read_at[v] > 0 && !whole[v]) {
+      let fl = p.flats[read_at[v] - 1];
+      for j in 0..fl.fields.len() {
+        let id = -1;
+        if (used[v][j]) {
+          id = b.values.len();
+          b = Body { ...b, values: b.values.append(fl.fields[j].ty) };
+        }
+        ids = ids.append(id);
+      }
+    }
+    fields = fields.append(ids);
+  }
+  return Split { b: b, parts: Parts { fields: fields } };
+}
+
+struct Split { b: Body, parts: Parts }
+
+// The read of slot j into value `into`.
+function slot_into(own b: Body, fl: Flat, a: i32, at: i32, imm: i32, j: i32, into: i32): Body {
+  if (semtypes.equal(fl.slot, fl.fields[j].ty)) {
+    return put(b, ssasem.array_get(), into, [a, at], imm, "");
+  }
+  b = def(b, ssasem.array_get(), [a, at], imm, "", fl.slot);
+  let got = b.at;
+  return put(b, ssasem.cast(), into, [got], 0, "");
+}
+
+// The read of element i when each use reads a field: one read checks the
+// index, and the other reads are then in range. A read of no field still
+// checks the index.
+function projected(own b: Body, fl: Flat, ins: ssa.SInst, ids: i32[]): Body {
+  let a = ins.args[0];
+  let i = ins.args[1];
+  let k = fl.fields.len();
+  let first = -1;
+  for j in 0..k {
+    if (first < 0 && ids[j] >= 0) {
+      first = j;
+    }
+  }
+  if (ins.imm != 1) {
+    let j0 = if (first < 0) { 0 } else { first };
+    b = checked_index(b, i, k, j0, ins.imm);
+    let at = b.at;
+    if (first < 0) {
+      b = def(b, ssasem.array_get(), [a, at], ins.imm, "", fl.slot);
+    } else {
+      b = slot_into(b, fl, a, at, ins.imm, first, ids[first]);
+    }
+  }
+  b = scaled(b, i, k);
+  let base = b.at;
+  for j in 0..k {
+    if (ids[j] >= 0 && (ins.imm == 1 || j != first)) {
+      b = offset(b, base, j);
+      let at = b.at;
+      b = slot_into(b, fl, a, at, 1, j, ids[j]);
+    }
+  }
+  return b;
+}
+
+// The read of element i makes the record from its slots. The read of the
+// last slot checks the index, and the other reads are then in range.
+function read(own b: Body, fl: Flat, ins: ssa.SInst): Body {
+  let a = ins.args[0];
+  let i = ins.args[1];
+  let k = fl.fields.len();
+  let parts: i32[] = [];
+  for j in 0..k {
+    parts = parts.append(-1);
+  }
+  if (ins.imm != 1) {
+    b = checked_index(b, i, k, k - 1, ins.imm);
+    let cur4 = b.at;
+    b = slot_read(b, fl, a, cur4, ins.imm, k - 1);
+    parts = parts.with(k - 1, b.at);
+  }
+  b = scaled(b, i, k);
+  let base = b.at;
+  for j in 0..k {
+    if (parts[j] < 0) {
+      b = offset(b, base, j);
+      let cur5 = b.at;
+      b = slot_read(b, fl, a, cur5, 1, j);
+      parts = parts.with(j, b.at);
+    }
+  }
+  return put(b, ssasem.record_new(), ins.result, parts, 0, "");
+}
+
+// The write of element i writes its slots, the last slot first, so that the
+// first write checks the index.
+function write(own b: Body, fl: Flat, ins: ssa.SInst, words: typeinfo.Type): Body {
+  let k = fl.fields.len();
+  let got = slot_ids(b, fl, ins.args[2]);
+  b = got.b;
+  let vs = got.ids;
+  let i = ins.args[1];
+  b = guarded(b, i, k, k - 1, element_limit(k));
+  let arr = ins.args[0];
+  if (k == 1) {
+    let only = b.at;
+    return put(b, ssasem.with(), ins.result, [arr, only, vs[0]], ins.imm, ins.str);
+  }
+  let first = b.at;
+  b = def(b, ssasem.with(), [arr, first, vs[k - 1]], ins.imm, ins.str, words);
+  arr = b.at;
+  b = scaled(b, i, k);
+  let base = b.at;
+  for j in 0..k - 1 {
+    b = offset(b, base, j);
+    let at = b.at;
+    if (j == k - 2) {
+      b = put(b, ssasem.with(), ins.result, [arr, at, vs[j]], ins.imm, ins.str);
+    } else {
+      b = def(b, ssasem.with(), [arr, at, vs[j]], ins.imm, ins.str, words);
+      arr = b.at;
+    }
+  }
+  return b;
+}
+
+function push(own b: Body, fl: Flat, ins: ssa.SInst, words: typeinfo.Type): Body {
+  let k = fl.fields.len();
+  let got = slot_ids(b, fl, ins.args[1]);
+  b = got.b;
+  let vs = got.ids;
+  let arr = ins.args[0];
+  for j in 0..k {
+    if (j == k - 1) {
+      b = put(b, ssasem.append(), ins.result, [arr, vs[j]], ins.imm, ins.str);
+    } else {
+      b = def(b, ssasem.append(), [arr, vs[j]], ins.imm, ins.str, words);
+      arr = b.at;
+    }
+  }
+  return b;
+}
+
+function literal(own b: Body, fl: Flat, ins: ssa.SInst): Body {
+  let all: i32[] = [];
+  for e in ins.args {
+    let got = slot_ids(b, fl, e);
+    b = got.b;
+    all = util.append_all(all, got.ids);
+  }
+  return put(b, ssasem.array_new(), ins.result, all, ins.imm, ins.str);
+}
+
+// A length is never negative, and an unsigned division by k is the shorter one.
+function length(own b: Body, fl: Flat, ins: ssa.SInst): Body {
+  let unsigned = typeinfo.TypeI32 { width: 32, unsigned: true, is_char: false, polymorphic: false };
+  b = def(b, ssasem.length(), ins.args, ins.imm, ins.str, typeinfo.t_i32());
+  let words = b.at;
+  b = def(b, ssasem.cast(), [words], 0, "", unsigned);
+  let w = b.at;
+  b = def(b, ssa.CONST_INT, [], 0, fl.fields.len().to_string(), unsigned);
+  let k = b.at;
+  b = def(b, ssa.BINARY, [w, k], 0, "/", unsigned);
+  let n = b.at;
+  return put(b, ssasem.cast(), ins.result, [n], 0, "");
+}
+
+function slice(own b: Body, fl: Flat, ins: ssa.SInst): Body {
+  let k = fl.fields.len();
+  b = guarded(b, ins.args[1], k, 0, bound_limit(k));
+  let lo = b.at;
+  b = guarded(b, ins.args[2], k, 0, bound_limit(k));
+  let hi = b.at;
+  return put(b, ssasem.arr_slice(), ins.result, [ins.args[0], lo, hi], ins.imm, ins.str);
+}
+
+// The count of a range concat, in slots. A count outside 0..=limit stays
+// negative when it was, so the copy does nothing, and is larger than any
+// length when it was not, so the range check aborts.
+function counted_slots(own b: Body, n: i32, k: i32): Body {
+  b = constant(b, bound_limit(k));
+  let top = b.at;
+  b = def(b, ssa.BINARY, [top, n], 0, "-", typeinfo.t_i32());
+  let room = b.at;
+  b = def(b, ssa.BINARY, [room, n], 0, "|", typeinfo.t_i32());
+  let spread = b.at;
+  b = binary(b, ">>", spread, 31);
+  let bad = b.at;
+  b = binary(b, ">>", n, 31);
+  let neg = b.at;
+  b = binary(b, "^", neg, max_i32());
+  let far = b.at;
+  b = def(b, ssa.BINARY, [far, bad], 0, "&", typeinfo.t_i32());
+  let forced = b.at;
+  b = binary(b, "^", bad, -1);
+  let keep = b.at;
+  b = scaled(b, n, k);
+  let s0 = b.at;
+  b = def(b, ssa.BINARY, [s0, keep], 0, "&", typeinfo.t_i32());
+  let kept = b.at;
+  return def(b, ssa.BINARY, [kept, forced], 0, "|", typeinfo.t_i32());
+}
+
+// A concat of the `n` elements of `src` from `from` copies their slots.
+function range_concat(own b: Body, fl: Flat, ins: ssa.SInst): Body {
+  let k = fl.fields.len();
+  b = guarded(b, ins.args[2], k, 0, bound_limit(k));
+  let from = b.at;
+  b = counted_slots(b, ins.args[3], k);
+  let n = b.at;
+  return put(b, ins.kind_tag, ins.result, [ins.args[0], ins.args[1], from, n], ins.imm, ins.str);
+}
+
+function reserve(own b: Body, fl: Flat, ins: ssa.SInst): Body {
+  b = scaled(b, ins.args[0], fl.fields.len());
+  let n = b.at;
+  return put(b, ssasem.array_reserve(), ins.result, [n], ins.imm, ins.str);
+}
+
+function rewrite_inst(own b: Body, p: Plan, f: ssasem.Func, parts: Parts, ins: ssa.SInst): Body {
+  let k = ins.kind_tag;
+  if (k == ssasem.array_get() && array_read(ins)) {
+    let at = flat_of(p, f.values[ins.args[0]]);
+    if (at >= 0 && parts.fields[ins.result].len() > 0) {
+      return projected(b, p.flats[at], ins, parts.fields[ins.result]);
+    }
+    if (at >= 0) {
+      return read(b, p.flats[at], ins);
+    }
+  }
+  if (k == ssasem.record_get() && ins.args.len() == 1 && ins.args[0] < parts.fields.len() && parts.fields[ins.args[0]].len() > 0) {
+    return put(b, ssa.COPY, ins.result, [parts.fields[ins.args[0]][ins.imm]], 0, "");
+  }
+  if (k == ssasem.call() && ins.result >= 0) {
+    return put(b, k, ins.result, ins.args, ins.imm, renamed(p, ins.str, f.values[ins.result]));
+  }
+  let base = ssasem.update_base(ins);
+  if (base >= 0 && base < parts.fields.len() && parts.fields[base].len() > 0) {
+    return put(b, ins.kind_tag, ins.result, ins.args, 0, ins.str);
+  }
+  if (k == ssasem.length() && ins.args.len() == 1) {
+    let at = flat_of(p, f.values[ins.args[0]]);
+    if (at >= 0 && p.flats[at].fields.len() > 1) {
+      return length(b, p.flats[at], ins);
+    }
+  }
+  if (ins.result >= 0 && ins.result < f.values.len()) {
+    let at = flat_of(p, f.values[ins.result]);
+    if (at >= 0) {
+      let fl = p.flats[at];
+      let words = retype(p, f.values[ins.result]);
+      if (k == ssasem.with()) {
+        return write(b, fl, ins, words);
+      }
+      if (k == ssasem.append()) {
+        return push(b, fl, ins, words);
+      }
+      if (k == ssasem.array_new()) {
+        return literal(b, fl, ins);
+      }
+      if (k == ssasem.arr_slice() && fl.fields.len() > 1) {
+        return slice(b, fl, ins);
+      }
+      if (k == ssasem.array_reserve() && fl.fields.len() > 1) {
+        return reserve(b, fl, ins);
+      }
+      if (k == ssasem.arr_concat() && ins.args.len() == 4 && fl.fields.len() > 1) {
+        return range_concat(b, fl, ins);
+      }
+    }
+  }
+  return put(b, ins.kind_tag, ins.result, ins.args, ins.imm, ins.str);
+}
+
+pub struct Rewritten { f: ssasem.Func, changed: boolean }
+
+pub function rewrite(p: Plan, f: ssasem.Func): Rewritten {
+  let touched = false;
+  for t in f.values {
+    touched = touched || flat_of(p, t) >= 0;
+  }
+  if (!touched) {
+    return Rewritten { f: f, changed: false };
+  }
+  let split = parts_of(p, f, Body { values: f.values, insts: [], at: -1 });
+  let b = split.b;
+  let parts = split.parts;
+  let blocks: ssa.SBlock[] = [];
+  for blk in f.graph.blocks {
+    b = Body { ...b, insts: [] };
+    for ins in blk.insts {
+      b = rewrite_inst(b, p, f, parts, ins);
+    }
+    blocks = blocks.append(ssa.SBlock { ...blk, insts: b.insts });
+  }
+  let values: typeinfo.Type[] = [];
+  for t in b.values {
+    values = values.append(retype(p, t));
+  }
+  let params: typeinfo.Type[] = [];
+  for t in f.params {
+    params = params.append(retype(p, t));
+  }
+  let calls: ssasem.Contract[] = [];
+  for c in f.calls {
+    let r = retype_contract(p, c);
+    if (ssasem.find_contract_in(calls, r.name) < 0) {
+      calls = calls.append(r);
+    }
+  }
+  return Rewritten { f: ssasem.Func { ...f, values: values, params: params, result: retype(p, f.result), calls: calls, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks }, source_positions: sourcepos.pad_values(f.source_positions, values.len()) }, changed: true };
+}

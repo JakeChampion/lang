@@ -734,6 +734,16 @@ pointer that flows through the program points past the header.
 - An **array** box has its capacity at `data-16`, its count at `data-8`, its
   length at `data+0` and element `i` at `data+(i+1)*8`
   (`__fern_arr_box`).
+- An array of a record whose fields are all integers holds `k` slots for each
+  element, where `k` is the number of fields (`semflat`). Slot `i*k+j` holds
+  field `j` of element `i`. Each slot is an i32 when each field fits in 32 bits,
+  and an i64 when a field does not. The length at `data+0` counts the slots, so
+  `len()` divides it by `k`. The slots hold no counted value, so the drop of
+  the array frees only its buffer.
+
+  A record keeps this layout in each function of the program, or in none. An
+  array of it inside another type, or an operation that the pass does not
+  rewrite, keeps the boxes. `FERN_DEBUG_FLAT_ARRAYS` names the cause.
 - On the native targets a **record**, a declared **enum variant** and a
   **tuple** have a header of one word at `data-8` (`__fern_rec_box`): the
   count in the low half and a tag in the high half. Field `i` is at

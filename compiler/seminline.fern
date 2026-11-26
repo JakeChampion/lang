@@ -2613,6 +2613,11 @@ pub function split_reads(f0: ssasem.Func, modes: i32[]): Option[ssasem.Func] {
   return None;
 }
 
+// The function after split_constructions.
+pub function split_records(f: ssasem.Func, modes: i32[]): ssasem.Func {
+  return split_constructions(f, modes).f;
+}
+
 function split_constructions(f0: ssasem.Func, modes: i32[]): Rewrite {
   if (!reads_parts(f0.graph)) {
     return Rewrite { f: f0, changed: false };

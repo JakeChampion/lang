@@ -107,6 +107,8 @@ an empty value.
 | `FERN_DEBUG_NO_SHA_EXT` | On x86-64, run SHA-256 and SHA-1 on the rounds of std/crypto and not on the SHA extensions. The constant-time gate uses it, because valgrind cannot decode the SHA extensions. |
 | `FERN_DEBUG_SEM_INLINE`, `FERN_DEBUG_SEM_REUSE` | Set to zero or an empty value to disable semantic inlining or reuse of previously lowered rows. Both passes run by default. |
 | `FERN_DEBUG_NO_SEM_REACH`, `FERN_DEBUG_NO_SCALE_KERNEL`, `FERN_DEBUG_NO_PRODUCT_KERNEL`, `FERN_DEBUG_NO_ARRAY_FUSION` | Disable the named pass when enabled. |
+| `FERN_DEBUG_NO_FLAT_ARRAYS` | Keep each element of an array of a record of integer fields in a box of its own, and not as slots in the buffer of the array. |
+| `FERN_DEBUG_FLAT_ARRAYS` | Print each record whose arrays keep their elements in boxes, and the instruction that keeps them there. |
 | `FERN_DEBUG_NO_RANGE_PROOFS` | Keep each bounds check that the compiler can prove unnecessary. The word loads, loop versions and quotient rewrites that use the same proofs are also off. |
 | `FERN_DEBUG_SELFHOST_NO_REUSE` | Disable allocation reuse in the self-host compiler's generated code. |
 | `FERN_DEBUG_HIGH_HEAP` | Request a high heap address on ARM64 Linux for pointer-width testing. |
