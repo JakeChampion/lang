@@ -63,7 +63,7 @@ x86_64/deflate_encode.ir	38573623
 x86_64/deflate_encode.text	7282
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
-x86_64/http_hello.text	15871
+x86_64/http_hello.text	16292
 x86_64/http_hello.ir	21160352
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
@@ -82,8 +82,8 @@ x86_64/pvec_with.ir	43518324
 x86_64/record_update.ir	31137597
 x86_64/record_update.text	1109
 x86_64/sort_inplace.text	1650
-x86_64/sort_inplace.ir	33065911
-x86_64/sort_ints.text	2339
+x86_64/sort_inplace.ir	32070857
+x86_64/sort_ints.text	2370
 x86_64/sort_ints.ir	22291290
 x86_64/sort_strings.text	3961
 x86_64/sort_strings.ir	93478334
@@ -142,7 +142,7 @@ aarch64/deflate_encode.ir	39748600
 aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
-aarch64/http_hello.text	16806
+aarch64/http_hello.text	17225
 aarch64/http_hello.ir	22972520
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
@@ -251,7 +251,7 @@ aarch64/enum_match.dr	1125004
 aarch64/gather_many.dr	9752960
 aarch64/hex_decode.dr	15885910
 aarch64/hex_encode.dr	3287599
-aarch64/http_hello.dr	4148093
+aarch64/http_hello.dr	4192093
 aarch64/int_loop.dr	3000003
 aarch64/map_int.dr	4523391
 aarch64/map_probe_chain.dr	38645307
@@ -297,7 +297,7 @@ x86_64/enum_match.dr	225002
 x86_64/gather_many.dr	10701857
 x86_64/hex_decode.dr	25270109
 x86_64/hex_encode.dr	6369332
-x86_64/http_hello.dr	5208038
+x86_64/http_hello.dr	5296038
 x86_64/int_loop.dr	2
 x86_64/map_int.dr	4609812
 x86_64/map_probe_chain.dr	44200346
@@ -311,7 +311,7 @@ x86_64/perceus_rbtree_ck.dr	7784323
 x86_64/pmap_insert.dr	11537935
 x86_64/pvec_with.dr	12550953
 x86_64/record_update.dr	1246
-x86_64/sort_inplace.dr	5957542
+x86_64/sort_inplace.dr	5742534
 x86_64/sort_ints.dr	3588898
 x86_64/sort_strings.dr	23468692
 x86_64/string_build.dr	9396923

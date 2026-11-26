@@ -56,7 +56,7 @@ selfhost/arm64-linux/closure_call.emit	1309
 selfhost/arm64-linux/deflate_decode.emit	14642
 selfhost/arm64-linux/deflate_encode.emit	7906
 selfhost/arm64-linux/enum_match.emit	1273
-selfhost/arm64-linux/http_hello.emit	16806
+selfhost/arm64-linux/http_hello.emit	17225
 selfhost/arm64-linux/int_loop.emit	376
 selfhost/arm64-linux/map_int.emit	8555
 selfhost/arm64-linux/map_probe_chain.emit	8565
@@ -88,9 +88,9 @@ selfhost/wasm32-wasi/byte_copy_with.emit	977
 selfhost/wasm32-wasi/call_overhead.emit	184
 selfhost/wasm32-wasi/closure_call.emit	523
 selfhost/wasm32-wasi/deflate_decode.emit	24946
-selfhost/wasm32-wasi/deflate_encode.emit	12704
+selfhost/wasm32-wasi/deflate_encode.emit	12518
 selfhost/wasm32-wasi/enum_match.emit	570
-selfhost/wasm32-wasi/http_hello.emit	20890
+selfhost/wasm32-wasi/http_hello.emit	21278
 selfhost/wasm32-wasi/int_loop.emit	76
 selfhost/wasm32-wasi/map_int.emit	13496
 selfhost/wasm32-wasi/map_probe_chain.emit	13521
@@ -99,8 +99,8 @@ selfhost/wasm32-wasi/ordmap_insert.emit	6710
 selfhost/wasm32-wasi/pmap_insert.emit	3731
 selfhost/wasm32-wasi/pvec_with.emit	2764
 selfhost/wasm32-wasi/record_update.emit	599
-selfhost/wasm32-wasi/sort_inplace.emit	1030
-selfhost/wasm32-wasi/sort_ints.emit	2381
+selfhost/wasm32-wasi/sort_inplace.emit	1051
+selfhost/wasm32-wasi/sort_ints.emit	2411
 selfhost/wasm32-wasi/sort_strings.emit	3673
 selfhost/wasm32-wasi/string_build.emit	1346
 selfhost/wasm32-wasi/string_count_byte.emit	567
@@ -124,7 +124,7 @@ selfhost/x86-64-linux/closure_call.emit	1065
 selfhost/x86-64-linux/deflate_decode.emit	13652
 selfhost/x86-64-linux/deflate_encode.emit	7282
 selfhost/x86-64-linux/enum_match.emit	1036
-selfhost/x86-64-linux/http_hello.emit	15871
+selfhost/x86-64-linux/http_hello.emit	16292
 selfhost/x86-64-linux/int_loop.emit	298
 selfhost/x86-64-linux/map_int.emit	8540
 selfhost/x86-64-linux/map_probe_chain.emit	8544
@@ -134,7 +134,7 @@ selfhost/x86-64-linux/pmap_insert.emit	3632
 selfhost/x86-64-linux/pvec_with.emit	3489
 selfhost/x86-64-linux/record_update.emit	1109
 selfhost/x86-64-linux/sort_inplace.emit	1650
-selfhost/x86-64-linux/sort_ints.emit	2339
+selfhost/x86-64-linux/sort_ints.emit	2370
 selfhost/x86-64-linux/sort_strings.emit	3961
 selfhost/x86-64-linux/string_build.emit	2087
 selfhost/x86-64-linux/string_count_byte.emit	1422
