@@ -647,6 +647,20 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			compare("", "verify-pack", "-v", idx)
 			rewriteFile(t, idx, originalIndex)
 
+			// Git reconstructs the listing from packed data when the index points
+			// at the wrong object or one byte past the start of an entry.
+			for _, at := range []int{1032 + width - 1, 1032 + count*(width+4) + 3} {
+				badEntry := bytes.Clone(originalIndex)
+				badEntry[at] ^= 1
+				copy(badEntry[trailer:], gitValidationHash(run.format, badEntry[:trailer]))
+				rewriteFile(t, idx, badEntry)
+				compare("", "verify-pack", idx)
+				compare("", "verify-pack", "-v", idx)
+				gitCompare(t, oracle, port, outside, "", "verify-pack", "--object-format="+run.format, idx)
+				gitCompare(t, oracle, port, outside, "", "verify-pack", "-v", "--object-format="+run.format, idx)
+			}
+			rewriteFile(t, idx, originalIndex)
+
 			// Match the diagnostic for damage to the header, an object, or the trailer.
 			packed := strings.TrimSuffix(idx, ".idx") + ".pack"
 			data, err := os.ReadFile(packed)
