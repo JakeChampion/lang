@@ -82,7 +82,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 400) {
-        let o = Some(["ab", "cde"]);
+        let o = Some([if (i % 2 == 0) { "ab" } else { "cd" }, "cde"]);
         match (o) { Some(xs) => { acc = (acc + xs.len()) % 251; }, None => {} }
         i = i + 1;
     }
@@ -95,7 +95,7 @@ func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 400) {
-        let o: Option[string[]] = Some(["ab", "cde"]);
+        let o: Option[string[]] = Some([if (i % 2 == 0) { "ab" } else { "cd" }, "cde"]);
         match (o) { Some(xs) => { acc = (acc + xs[0].len() + xs[1].len() + xs.len()) % 251; }, None => {} }
         i = i + 1;
     }
