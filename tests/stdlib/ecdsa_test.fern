@@ -280,6 +280,96 @@ function test_sign_checks_stored_public_key(): test.TestOutcome {
   }
 }
 
+// A SigningKey gives the RFC 6979 signature of its PrivateKey.
+function signed_by(signer: ecdsa.SigningKey, h: sha2.Hash, msg: string): string {
+  match (signer.sign(h, msg.bytes())) {
+    Ok(sig) => {
+      return hex.encode(sig);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_signing_key(): test.TestOutcome {
+  let Ok(k256) = ecdsa.private_key(ecdsa.P256, __codec_bytes(hex.decode(P256_D))) else {
+    return test.fail("the P-256 scalar was refused");
+  };
+  let Ok(k384) = ecdsa.private_key(ecdsa.P384, __codec_bytes(hex.decode(P384_D))) else {
+    return test.fail("the P-384 scalar was refused");
+  };
+  let s256 = k256.signing_key();
+  if (signed_by(s256, sha2.Sha256, "sample") != P256_SHA256_SAMPLE) {
+    return test.fail("P-256 SHA-256: " + signed_by(s256, sha2.Sha256, "sample"));
+  }
+  if (signed_by(s256, sha2.Sha384, "sample") != P256_SHA384_SAMPLE) {
+    return test.fail("P-256 SHA-384");
+  }
+  if (hex.encode(s256.public_point()) != P256_POINT) {
+    return test.fail("the public point");
+  }
+  return test.assert_eq(signed_by(k384.signing_key(), sha2.Sha384, "sample"), P384_SHA384_SAMPLE);
+}
+
+// The self-check of a SigningKey uses its VerifyingKey. The scalar of another
+// key, and a table of the wrong length, each give SignatureCheck.
+function test_signing_key_checks(): test.TestOutcome {
+  let Ok(key) = ecdsa.private_key(ecdsa.P256, __alloc_u8(32).with(31, 1u8)) else {
+    return test.fail("the key was refused");
+  };
+  let Ok(other) = ecdsa.private_key(ecdsa.P256, __alloc_u8(32).with(31, 2u8)) else {
+    return test.fail("the other key was refused");
+  };
+  let signer = key.signing_key();
+  let msg = "key consistency".as_bytes();
+  let changed = ecdsa.SigningKey { ...signer, key: other };
+  let short = ecdsa.SigningKey { ...signer, check: ecdsa.VerifyingKey { ...signer.check, table: signer.check.table.take(8) } };
+  let got: string[] = [];
+  for s in [signer, changed, short] {
+    match (s.sign(sha2.Sha256, msg)) {
+      Ok(_) => {
+        got = got.append("signed");
+      },
+      Err(ecdsa.SignatureCheck) => {
+        got = got.append("refused");
+      },
+      Err(e) => {
+        got = got.append(e.message());
+      }
+    }
+  }
+  return test.assert_eq_array(got, ["signed", "refused", "refused"]);
+}
+
+// A VerifyingKey gives the result of PublicKey.verify. A table of the wrong
+// length verifies nothing.
+function test_verifying_key(): test.TestOutcome {
+  let Ok(p256) = ecdsa.public_key(ecdsa.P256, __codec_bytes(hex.decode(P256_POINT))) else {
+    return test.fail("the P-256 point was refused");
+  };
+  let Ok(p384) = ecdsa.public_key(ecdsa.P384, __codec_bytes(hex.decode(P384_POINT))) else {
+    return test.fail("the P-384 point was refused");
+  };
+  let sig = __codec_bytes(hex.decode(P256_SHA256_SAMPLE));
+  let v256 = p256.verifying_key();
+  let v384 = p384.verifying_key();
+  let got = [
+    v256.verify(sha2.Sha256, "sample".bytes(), sig),
+    v256.verify(sha2.Sha256, "test".bytes(), sig),
+    v256.verify(sha2.Sha384, "sample".bytes(), __codec_bytes(hex.decode(P256_SHA384_SAMPLE))),
+    ecdsa.VerifyingKey { ...v256, table: [] }.verify(sha2.Sha256, "sample".bytes(), sig),
+    v384.verify(sha2.Sha384, "sample".bytes(), __codec_bytes(hex.decode(P384_SHA384_SAMPLE))),
+    v384.verify(sha2.Sha384, "test".bytes(), __codec_bytes(hex.decode(P384_SHA384_SAMPLE))),
+  ];
+  let shown: string[] = [];
+  for g in got {
+    shown = shown.append(g.to_string());
+  }
+  return test.assert_eq_array(shown, ["true", "false", "true", "false", "true", "false"]);
+}
+
 function test_erase_key(): test.TestOutcome {
   let Ok(k) = ecdsa.private_key(ecdsa.P256, __codec_bytes(hex.decode(P256_D))) else {
     return test.fail("the P-256 scalar was refused");
@@ -338,6 +428,9 @@ function main(): i32 {
   r = r.it("malformed keys", test_bad_keys);
   r = r.it("signing", test_signing);
   r = r.it("sign checks the stored public key", test_sign_checks_stored_public_key);
+  r = r.it("a SigningKey gives the signature of its key", test_signing_key);
+  r = r.it("a SigningKey checks with its VerifyingKey", test_signing_key_checks);
+  r = r.it("a VerifyingKey verifies as its PublicKey", test_verifying_key);
   r = r.it("a signature in the high form verifies", test_high_s_verifies);
   r = r.it("signing refusals", test_signing_refusals);
   r = r.it("ECDH", test_ecdh);

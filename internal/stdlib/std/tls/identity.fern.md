@@ -4,7 +4,7 @@ This module reads TLS certificates and private keys.
 
 ## Model
 
-An identity combines a certificate chain with a private key. Parsers accept supported PEM and DER key representations.
+An identity combines a certificate chain with a private key. Parsers accept supported PEM and DER key representations. An ECDSA key of an identity is an `ecdsa.SigningKey`, so the self-check of each signature uses the table of the public point.
 
 ## Contracts
 
@@ -83,7 +83,7 @@ import "core/cmp";
 ```fern
 <<3 pub enum PrivateKey>>=
 pub enum PrivateKey {
-  EcdsaKey(ecdsa.PrivateKey),
+  EcdsaKey(ecdsa.SigningKey),
   Ed25519Seed(u8[]),
 }
 
@@ -324,7 +324,7 @@ function __ec_private_key(b: [u8], known: Option[ecdsa.Curve]): Result[PrivateKe
   let curve = __ec_curve(b, parts, known)?;
   match (ecdsa.private_key(curve, __padded(der.bytes(b, parts[1]), __scalar_size(curve)))) {
     Ok(k) => {
-      return Ok(EcdsaKey(k));
+      return Ok(EcdsaKey(k.signing_key()));
     },
     Err(e) => {
       return Err(Scalar(e));
@@ -441,7 +441,7 @@ function __key_matches(public: x509.PublicKey, key: PrivateKey): boolean {
     EcdsaKey(k) => {
       match (public) {
         x509.EcKey(curve, point) => {
-          return __same_curve(curve, k.curve) && __same(point, k.public_point());
+          return __same_curve(curve, k.key.curve) && __same(point, k.public_point());
         },
         _ => {
           return false;
@@ -477,7 +477,7 @@ function __key_matches(public: x509.PublicKey, key: PrivateKey): boolean {
 pub function (key: PrivateKey) scheme(): i32 {
   match (key) {
     EcdsaKey(k) => {
-      match (k.curve) {
+      match (k.key.curve) {
         ecdsa.P256 => {
           return 0x0403;
         },
