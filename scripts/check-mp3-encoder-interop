@@ -14,18 +14,19 @@ root = Path(__file__).resolve().parent.parent
 os.chdir(root)
 compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
 target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
-CONFIGS = [(44100, 1, 128), (44100, 2, 128), (48000, 1, 64), (48000, 2, 320), (32000, 2, 32), (32000, 1, 320)]
+# The last field makes the two channels equal, so the encoder uses mid-side stereo.
+CONFIGS = [(44100, 1, 128, False), (44100, 2, 128, False), (48000, 1, 64, False), (48000, 2, 320, False), (32000, 2, 32, False), (32000, 1, 320, False), (44100, 2, 64, True), (48000, 2, 128, True)]
 
 
 def floats(data):
     return struct.unpack('<' + 'f' * (len(data) // 4), data)
 
 
-def tone(frames, channels, rate):
+def tone(frames, channels, rate, equal):
     out = []
     for t in range(frames):
         for ch in range(channels):
-            f = 440.0 if ch == 0 else 1000.0
+            f = 440.0 if ch == 0 or equal else 1000.0
             out.append(0.5 * math.sin(2 * math.pi * f * t / rate) + 0.2 * math.sin(2 * math.pi * 3000 * t / rate))
     return out
 
@@ -41,9 +42,9 @@ with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([compiler, '-target', target, '-o', str(encode), 'scripts/audio-reference/mp3-encode.fern', 'internal/stdlib'], check=True)
     subprocess.run([compiler, '-target', target, '-o', str(decode), 'scripts/audio-reference/mp3.fern', 'internal/stdlib'], check=True)
     failed = False
-    for rate, channels, bitrate in CONFIGS:
+    for rate, channels, bitrate, equal in CONFIGS:
         frames = rate
-        pcm = tone(frames, channels, rate)
+        pcm = tone(frames, channels, rate, equal)
         raw = tmp / 'in.f32'
         raw.write_bytes(struct.pack('<' + 'f' * len(pcm), *pcm))
         mp3 = tmp / 'out.mp3'

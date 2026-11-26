@@ -324,15 +324,17 @@ function synthesis_history(): test.TestOutcome {
     let transform = spectral.zeros(128);
     for g in 0..2 {
       let at = g * 576 * channels;
-      let (next, pcm) = synthesis.granule(expected, synthesis_input(g), channels, reference, at);
-      expected = next;
+      // The reference decodes each granule as a one-granule MPEG-2 frame.
+      let single = synthesis.frame_lines_into(spectral.zeros(synthesis.FRAME_LINES), expected);
+      let (single_lines, pcm, _, _) = synthesis.granule_at(single, 0, synthesis_input(g), channels, reference, at, spectral.zeros(128));
+      expected = synthesis.frame_history(expected, single_lines, channels, 1);
       reference = pcm;
       let (window, values, scratch, _) = synthesis.granule_at(lines, g * 18 * 64, synthesis_input(g), channels, output, at, transform);
       lines = window;
       output = values;
       transform = scratch;
     }
-    actual = synthesis.frame_history(actual, lines, channels);
+    actual = synthesis.frame_history(actual, lines, channels, 2);
     kept = lines;
     for i in 0..960 {
       if (f32_bits(expected[i]) != f32_bits(actual[i])) {

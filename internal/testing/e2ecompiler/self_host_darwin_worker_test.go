@@ -68,6 +68,20 @@ func TestSelfHostArm64DarwinWorkers(t *testing.T) {
 			t.Fatalf("got %q, %v; want true", out, err)
 		}
 	})
+	t.Run("the watchdog releases inherited pipe writers", func(t *testing.T) {
+		const src = `function main(): i32 {
+  let Ok(p) = pipe() else { return 1; };
+  let linked = reactor_ctl(-1, 6, 0, 0);
+  let _ = p.w.close();
+  let ready = poll([p.r.fd], 5000);
+  let _ = p.r.close();
+  return if (linked == 0 && ready == 0) { 0 } else { 1 };
+}
+`
+		if out, err := exec.Command(compile(t, src)).CombinedOutput(); err != nil {
+			t.Fatalf("waiting for EOF: %v\n%s", err, out)
+		}
+	})
 	t.Run("worker_test with the census", func(t *testing.T) {
 		src, err := os.ReadFile(e2eharness.RepoPath("tests", "stdlib", "worker_test.fern"))
 		if err != nil {

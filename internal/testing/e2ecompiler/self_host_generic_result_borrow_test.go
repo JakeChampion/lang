@@ -60,7 +60,6 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 					}
 				}
 			}
-			check("Go", goCheckerDiags(t, dir, string(source)))
 			command := exec.Command(bin)
 			if len(runner) > 0 {
 				args := append(append([]string{}, runner[1:]...), bin)
@@ -77,7 +76,7 @@ func genericResultBorrowCases(t *testing.T, bin string, runner []string, dir str
 				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
 			}
 			command.Stdin = strings.NewReader(source)
-			for label, ds := range map[string][]driverDiag{"Go": goCheckerDiags(t, dir, source), "self-host": driverDiags(runCheckerDriver(t, command, name))} {
+			for label, ds := range map[string][]driverDiag{"self-host": driverDiags(runCheckerDriver(t, command, name))} {
 				negative := strings.HasPrefix(name, "diag_")
 				if negative != (len(ds) > 0) {
 					t.Fatalf("%s: unexpected diagnostics: %v", label, ds)

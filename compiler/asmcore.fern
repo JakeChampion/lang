@@ -836,10 +836,10 @@ pub function build_manifest(s: EmitState): string {
   return manifest_line(s.build_target, s.build_profile, [s.harden, s.pie, s.sanitize, s.backtrace, s.size, s.shared, s.sandbox, s.cover, s.symbols, s.optimize], s.heap_limit, s.quarantine, s.cpu_limit, s.profile);
 }
 
-// The manifest of a wasm module, from the switches its build took. A wasm
-// module has no arena, so its heap_limit is 0.
+// The manifest of a wasm module, from the switches its build took. Its
+// heap_limit is the -heap-limit value, or 0 for a memory without a maximum.
 pub function switches_manifest(sw: Switches): string {
-  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared, sw.sandbox, sw.cover, sw.symbols, sw.optimize], 0i64, sw.quarantine, sw.cpu_limit, rtprofile.mode());
+  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared, sw.sandbox, sw.cover, sw.symbols, sw.optimize], sw.heap_limit, sw.quarantine, sw.cpu_limit, rtprofile.mode());
 }
 
 // flags: harden, pie, sanitize, backtrace, size, shared, sandbox, cover,
@@ -5937,7 +5937,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_slice_abort",
     "__fern_alloc_size_abort",
     "__fern_arr_push_owned",
-    "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
+    "__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8", "__fern_arr_pushn_owned_u8",
     "__fern_alloc_u16", "__fern_arr_push_u16", "__fern_arr_push_owned_u16",
     "__fern_alloc_u32", "__fern_arr_push_u32", "__fern_arr_push_owned_u32",
     "__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",

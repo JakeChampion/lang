@@ -348,7 +348,9 @@ function inst_detail(ins: SInst): string {
   if (shows_imm(ins)) {
     out = out + " " + util.i32_to_string(ins.imm);
   }
-  if (shows_str(ins)) {
+  if (ins.kind_tag == BINARY && ins.ir_kind != 0) {
+    out = out + " " + ir.kind_name(ins.ir_kind) + ins.str;
+  } else if (shows_str(ins)) {
     out = out + " " + ins.str;
   }
   return out;
@@ -532,7 +534,7 @@ pub function kind_name(id: i32): string {
 
 // A binary instruction of the lifted form, with the IR kind `kind`.
 pub function binary_inst(result: i32, args: i32[], imm: i32, kind: i32): SInst {
-  return SInst { kind_tag: BINARY, result: result, args: args, imm: imm, str: ir.kind_name(kind), ir_kind: kind };
+  return SInst { kind_tag: BINARY, result: result, args: args, imm: imm, str: "", ir_kind: kind };
 }
 
 // The IR kind that the lift gives an op of kind `kind_tag` named `name`, or 0.
@@ -557,6 +559,14 @@ pub function lifted_kind(kind_tag: i32, name: string): i32 {
     }
   }
   return ir.kind_id(name);
+}
+
+// The lifted instruction of kind `kind_tag` named `name`. A binary op with an
+// IR kind holds no name in `str`.
+pub function lifted_inst(kind_tag: i32, result: i32, args: i32[], imm: i32, name: string): SInst {
+  let kind = lifted_kind(kind_tag, name);
+  let text = if (kind_tag == BINARY && kind != 0) { "" } else { name };
+  return SInst { kind_tag: kind_tag, result: result, args: args, imm: imm, str: text, ir_kind: kind };
 }
 
 // The id of an instruction kind name, or 0. Semantic names are not looked up.
@@ -1606,6 +1616,12 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 
 pub struct Alloc { reg_of: i32[], def_pos: i32[], lo: i32[], hi: i32[], cold: i32[] }
 
+// An integer add, subtract, bitwise op or compare. None of these can trap.
+pub function no_trap_int_binary(ins: SInst): boolean {
+  let k = ins.ir_kind;
+  return ins.kind_tag == BINARY && (k == ir.K_ADD || k == ir.K_SUB || k == ir.K_AND || k == ir.K_OR || k == ir.K_XOR || ir.is_int_cmp_kind(k));
+}
+
 pub function lane_inst(ins: SInst): boolean {
   let k = ins.kind_tag;
   return (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ir.is_lane_kind(ins.ir_kind);
@@ -1655,7 +1671,7 @@ function lane_results(f: SFunc): boolean[] {
   for blk in f.blocks {
     for ins in blk.insts {
       let k = ins.kind_tag;
-      let maybe = k == PARAM || k == CALL && ins.imm == 6 || (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ins.str.len() > 1 && ins.str[0] == b'v';
+      let maybe = k == PARAM || k == CALL && ins.imm == 6 || lane_inst(ins);
       if (maybe && ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
         if (lanes.len() == 0) {
           lanes = __alloc_bool(f.nvals);
@@ -4188,8 +4204,9 @@ pub function with_sym(own imm: Imms, v: i32, sym: string): Imms {
 // `zero_stores` says it stores only a zero so.
 // With `flag_carries`, a carry that stays in the flags does not take its
 // operands out of the immediates, because it emits no instruction that reads them.
+// The 0 of a carry mask does not either.
 pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[], stores: boolean, zero_stores: boolean, flag_carries: boolean): Imms {
-  let roles: i32[] = if (flag_carries) { carry_roles(f, use_counts(f)) } else { [] };
+  let roles = carry_roles(f, use_counts(f));
   let is_imm = __alloc_bool(f.nvals);
   let konst = __alloc_bool(f.nvals);
   let value = __alloc_i64(f.nvals);
@@ -4212,7 +4229,7 @@ pub function imm_operands(f: SFunc, lo: i64, hi: i64, right: i32[], left: i32[],
   }
   for blk in f.blocks {
     for ins in blk.insts {
-      if (flag_carry(roles, ins)) {
+      if (flag_carries && flag_carry(roles, ins) || carry_mask(roles, ins, konst, value)) {
         continue;
       }
       for a in 0..ins.args.len() {
@@ -4441,6 +4458,12 @@ pub function read_by_next(f: SFunc, imm: Imms): boolean[] {
     }
   }
   return out;
+}
+
+// `ins` is `0 - c` for a carry `c` in the flags, which is all ones when the flag is set.
+pub function carry_mask(roles: i32[], ins: SInst, konst: boolean[], value: i64[]): boolean {
+  let z = if (ins.args.len() == 2) { ins.args[0] } else { -1 };
+  return carry_role(roles, ins) == CARRY_READ && ins.ir_kind == ir.K_SUB && z >= 0 && z < konst.len() && konst[z] && value[z] == 0i64;
 }
 
 function flag_carry(roles: i32[], ins: SInst): boolean {
@@ -4967,6 +4990,9 @@ function constant_value(defs: SInst[], v: i32): Option[i64] {
 
 function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
   if (ins.kind_tag == UNARY && ins.args.len() == 1) {
+    if (ins.ir_kind == ir.K_F32_BITS) {
+      return folded_f32_bits(defs, ins.args[0]);
+    }
     if let Some(a) = constant_value(defs, ins.args[0]) {
       return folded_cast(ins, a);
     }
@@ -4991,6 +5017,15 @@ function folded_value(ins: SInst, defs: SInst[]): Option[i64] {
     }
   }
   return None;
+}
+
+// A float constant holds the bits of its f64 value.
+function folded_f32_bits(defs: SInst[], v: i32): Option[i64] {
+  if (v < 0 || v >= defs.len() || defs[v].kind_tag != CONST_FLOAT || defs[v].str.len() == 0) {
+    return None;
+  }
+  let c = f32_bits(f64_from_bits(util.lit_to_i64(defs[v].str)) as f32) as i64;
+  return if (non_negative_i32(c)) { Some(c) } else { None };
 }
 
 function non_negative_i32(c: i64): boolean {
@@ -5049,6 +5084,31 @@ function folded_cast(ins: SInst, a: i64): Option[i64] {
     return Some(a & 255i64);
   }
   return None;
+}
+
+// The bits of an f32 made from bits x are x sign-extended, with no round trip through f64.
+function fold_f32_round_trips(f: SFunc): SFunc {
+  let defs = inst_defs(f);
+  let blocks = f.blocks;
+  for bi in 0..blocks.len() {
+    let insts = blocks[bi].insts;
+    let edited = false;
+    for k in 0..insts.len() {
+      let ins = insts[k];
+      if (ins.kind_tag != UNARY || ins.ir_kind != ir.K_F32_BITS || ins.args.len() != 1 || ins.args[0] < 0 || ins.args[0] >= defs.len()) {
+        continue;
+      }
+      let d = defs[ins.args[0]];
+      if (d.kind_tag == UNARY && d.ir_kind == ir.K_F32_FROM_BITS && d.args.len() == 1) {
+        insts = insts.with(k, SInst { ir_kind: ir.K_INT_CAST, kind_tag: UNARY, result: ins.result, args: [d.args[0]], imm: 0, str: "int_cast:i32" });
+        edited = true;
+      }
+    }
+    if (edited) {
+      blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: insts });
+    }
+  }
+  return SFunc { ...f, blocks: blocks };
 }
 
 // x + 0, x - 0, x | 0, x ^ 0, x & -1, x shifted by 0 and x * 1 are x.
@@ -5205,7 +5265,7 @@ function operand_id(a: i32, canon: i32[]): i32 {
 }
 
 function inst_hash(ins: SInst, canon: i32[]): i32 {
-  let h: i32 = (ins.kind_tag * 31 + (ins.imm & 65535)) * 31 + (__str_hash(ins.str, 0) & 65535) & 1048575;
+  let h: i32 = ((ins.kind_tag * 31 + ins.ir_kind) * 31 + (ins.imm & 65535)) * 31 + (__str_hash(ins.str, 0) & 65535) & 1048575;
   for a in ins.args {
     h = h * 31 + (operand_id(a, canon) & 1048575) & 1048575;
   }
@@ -5213,7 +5273,7 @@ function inst_hash(ins: SInst, canon: i32[]): i32 {
 }
 
 function same_operation(a: SInst, b: SInst, canon: i32[]): boolean {
-  if (a.kind_tag != b.kind_tag || a.imm != b.imm || a.args.len() != b.args.len() || a.str != b.str) {
+  if (a.kind_tag != b.kind_tag || a.ir_kind != b.ir_kind || a.imm != b.imm || a.args.len() != b.args.len() || a.str != b.str) {
     return false;
   }
   for k in 0..a.args.len() {
@@ -6701,7 +6761,7 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 pub function form(f: SFunc): Formed {
   let folded = prune_trivial_phis(slot_calls(without_lines(f)));
   let merged = merge_duplicates(folded.f, false);
-  let plain = fold_identities(share_product_operands(fold_constant_operations(merged.f)));
+  let plain = fold_identities(share_product_operands(fold_constant_operations(fold_f32_round_trips(merged.f))));
   let shared = share_shape_loads(plain.f);
   let unwrapped = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(fold_lane_identities(narrow_field_loads(shared.f))))));
   let extended = fold_extensions(unwrapped.f);
@@ -7552,18 +7612,18 @@ function lane_constant_fact(ins: SInst): i32 {
 function lane_identity(ins: SInst, facts: i32[]): SInst {
   if (ins.kind_tag == TERNARY && ins.ir_kind == ir.K_VSELECT && ins.args.len() == 3) {
     if (facts[ins.args[1]] == 1) {
-      return SInst { ...ins, kind_tag: BINARY, str: "vand", ir_kind: ir.K_VAND, args: [ins.args[0], ins.args[2]] };
+      return SInst { ...ins, kind_tag: BINARY, str: "", ir_kind: ir.K_VAND, args: [ins.args[0], ins.args[2]] };
     }
     if (facts[ins.args[0]] == 1) {
-      return SInst { ...ins, kind_tag: BINARY, str: "vandnot", ir_kind: ir.K_VANDNOT, args: [ins.args[1], ins.args[2]] };
+      return SInst { ...ins, kind_tag: BINARY, str: "", ir_kind: ir.K_VANDNOT, args: [ins.args[1], ins.args[2]] };
     }
   }
   if (ins.kind_tag == BINARY && (ins.ir_kind == ir.K_VMUL || ins.ir_kind == ir.K_FMUL) && (facts[ins.args[0]] == 2 || facts[ins.args[1]] == 2)) {
     let a = if (facts[ins.args[0]] == 2) { ins.args[1] } else { ins.args[0] };
     if (ins.ir_kind == ir.K_FMUL) {
-      return SInst { ...ins, str: "fadd", ir_kind: ir.K_FADD, args: [a, a] };
+      return SInst { ...ins, ir_kind: ir.K_FADD, args: [a, a] };
     }
-    return SInst { ...ins, str: "vadd", ir_kind: ir.K_VADD, args: [a, a] };
+    return SInst { ...ins, ir_kind: ir.K_VADD, args: [a, a] };
   }
   return ins;
 }
@@ -9880,11 +9940,11 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
   }
   let v = not_of(defs, ins.args[1]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[0], v], str: "and_not", ir_kind: ir.K_AND_NOT };
+    return SInst { ...ins, args: [ins.args[0], v], ir_kind: ir.K_AND_NOT };
   }
   v = not_of(defs, ins.args[0]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[1], v], str: "and_not", ir_kind: ir.K_AND_NOT };
+    return SInst { ...ins, args: [ins.args[1], v], ir_kind: ir.K_AND_NOT };
   }
   return no_inst();
 }
@@ -10075,7 +10135,7 @@ function gather_carries(f: SFunc): SFunc {
   let nblocks: SBlock[] = [];
   for blk in f.blocks {
     if (block_has_carry(blk)) {
-      nblocks = nblocks.append(SBlock { ...blk, insts: consts_to_chains(chained(carries_after_sums(consts_first(blk.insts)), uses), uses, f.nvals) });
+      nblocks = nblocks.append(SBlock { ...blk, insts: consts_to_chains(chained(link_operands_up(carries_after_sums(consts_first(blk.insts)), uses), uses), uses, f.nvals) });
     } else {
       nblocks = nblocks.append(blk);
     }
@@ -10085,6 +10145,79 @@ function gather_carries(f: SFunc): SFunc {
 
 // The constant operands of the carries go before the other instructions, so
 // that a chain can take its members past them.
+// An AND, OR or XOR that makes an operand of a link after its carry moves up
+// to its own operands, so that chained can put the link after the carry.
+function link_operands_up(a: SInst[], uses: i32[]): SInst[] {
+  let carries: i32[] = [];
+  for ins in a {
+    if (ins.kind_tag == CARRY) {
+      carries = carries.append(ins.result);
+    }
+  }
+  for cv in carries {
+    let p = made_at(a, cv);
+    let c = a[p];
+    for q in p + 1..a.len() {
+      let s = a[q];
+      if (!wide_op(s, carry_op(c)) || !listed(s.args, c.result)) {
+        continue;
+      }
+      let ti = made_at(a, s.args[1 - carry_at(s, c)]);
+      if (ti <= p || !link_of(a[ti], s, c, uses)) {
+        continue;
+      }
+      for v in a[ti].args {
+        let d = made_at(a, v);
+        if (d > p && raisable(a, d, p)) {
+          a = raised(a, d);
+          p = made_at(a, cv);
+        }
+      }
+    }
+  }
+  return a;
+}
+
+function raisable(a: SInst[], d: i32, p: i32): boolean {
+  let ins = a[d];
+  if (ins.kind_tag != BINARY || ins.args.len() != 2 || ins.ir_kind != ir.K_AND && ins.ir_kind != ir.K_OR && ins.ir_kind != ir.K_XOR) {
+    return false;
+  }
+  for v in ins.args {
+    let at = made_at(a, v);
+    if (at >= p && !is_const_inst(a[at])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The instruction at `d` and its constant operands go directly after its last
+// other operand. Nothing moves to a place directly before an instruction that
+// reads the flags.
+function raised(a: SInst[], d: i32): SInst[] {
+  let ins = a[d];
+  let lead = first_body_inst(a);
+  let moved: i32[] = [];
+  let last = lead - 1;
+  for v in ins.args {
+    let at = made_at(a, v);
+    if (at >= lead && is_const_inst(a[at])) {
+      moved = moved.append(v);
+    } else if (at > last) {
+      last = at;
+    }
+  }
+  moved = moved.append(ins.result);
+  if (last + 1 >= d || a[last + 1].kind_tag == CARRY || reads_flags(a, last + 1, -1)) {
+    return a;
+  }
+  if (last < lead) {
+    return arranged(a, a[lead].result, moved, true);
+  }
+  return arranged(a, a[last].result, moved, false);
+}
+
 function consts_first(a: SInst[]): SInst[] {
   let lead = first_body_inst(a);
   let consts: i32[] = [];
@@ -10094,13 +10227,9 @@ function consts_first(a: SInst[]): SInst[] {
     }
   }
   let moved: i32[] = [];
-  for ins in a {
-    if (ins.kind_tag == CARRY) {
-      for v in ins.args {
-        if (listed(consts, v) && !listed(moved, v)) {
-          moved = moved.append(v);
-        }
-      }
+  for v in carry_inputs(a) {
+    if (listed(consts, v) && !listed(moved, v)) {
+      moved = moved.append(v);
     }
   }
   if (moved.len() == 0) {
@@ -10128,12 +10257,13 @@ function consts_first(a: SInst[]): SInst[] {
 // outside a chain that follows another one.
 function consts_to_chains(a: SInst[], uses: i32[], nvals: i32): SInst[] {
   let roles = block_carry_roles(a, uses, __alloc_i32(nvals));
+  let inputs = carry_inputs(a);
   let lead = first_body_inst(a);
   let anchor = util.minus_ones(a.len());
   let moves = false;
   for i in lead..a.len() {
     let c = a[i];
-    if (!is_const_inst(c) || !carry_read(a, c.result)) {
+    if (!is_const_inst(c) || !listed(inputs, c.result)) {
       continue;
     }
     let r = first_reader(a, i + 1, c.result);
@@ -10197,9 +10327,30 @@ function only_consts(a: SInst[], from: i32, to: i32): boolean {
   return true;
 }
 
-function carry_read(a: SInst[], v: i32): boolean {
+// The operands of the carries of a block, and of the adds and subtracts that
+// read one of those carries.
+function carry_inputs(a: SInst[]): i32[] {
+  let carries: SInst[] = [];
   for ins in a {
-    if (ins.kind_tag == CARRY && listed(ins.args, v)) {
+    if (ins.kind_tag == CARRY) {
+      carries = carries.append(ins);
+    }
+  }
+  let out: i32[] = [];
+  for ins in a {
+    if (ins.kind_tag == CARRY || reads_a_carry(carries, ins)) {
+      out = out.concat(ins.args);
+    }
+  }
+  return out;
+}
+
+function reads_a_carry(carries: SInst[], ins: SInst): boolean {
+  if (ins.kind_tag != BINARY || ins.args.len() != 2) {
+    return false;
+  }
+  for c in carries {
+    if (reader_of(ins, c)) {
       return true;
     }
   }

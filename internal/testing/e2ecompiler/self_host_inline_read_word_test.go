@@ -267,7 +267,7 @@ import "./ssabytes";
 function int_type(): typeinfo.Type { return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false }; }
 function word_type(): typeinfo.Type { return typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false }; }
 function byte_type(): typeinfo.Type { return typeinfo.TypeI32 { width: 8, unsigned: true, is_char: false, polymorphic: false }; }
-function op(k: i32, r: i32, args: i32[], imm: i32, name: string): ssa.SInst { return ssa.SInst { ir_kind: ssa.lifted_kind(k, name), kind_tag: k, result: r, args: args, imm: imm, str: name }; }
+function op(k: i32, r: i32, args: i32[], imm: i32, name: string): ssa.SInst { return ssa.lifted_inst(k, r, args, imm, name); }
 function func(name: string, params: typeinfo.Type[], types: typeinfo.Type[], blocks: ssa.SBlock[], result: typeinfo.Type, calls: ssasem.Contract[]): ssasem.Func {
  return ssasem.Func { graph: ssa.SFunc { name: name, nparams: params.len(), nvals: types.len(), entry: 0, takes_env: false, blocks: blocks }, values: types, params: params, result: result, records: semrecords.no_records(), enums: [], calls: calls, envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], source_positions: sourcepos.no_source(), shape_slot: false, schema_checked: false };
 }

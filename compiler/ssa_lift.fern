@@ -264,12 +264,12 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
     args = args.append(stack[i]);
   }
   stack = drop_n(stack, argc);
-  let what = k;
+  let payload = "";
   if (k == "vextract" || k == "vextract_bits" || k == "vreplace" || k == "vpermute" || k == "viextracts" || k == "viextractu" || k == "vireplace") {
-    what = k + ":" + util.i32_to_string(op.i32_imm);
+    payload = ":" + util.i32_to_string(op.i32_imm);
   }
   if ((k == "vget" || k == "vset") && op.unsigned) {
-    what = k + (if (op.i32_imm == 1) { ":unchecked:bytes" } else { ":bytes" });
+    payload = if (op.i32_imm == 1) { ":unchecked:bytes" } else { ":bytes" };
   }
   let kind = 10;
   if (ir.lane_writes(op.kind_tag)) {
@@ -281,6 +281,7 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
   }
   let v = nvals;
   nvals += 1;
+  let what = if (kind == ssa.BINARY) { payload } else { k + payload };
   insts = insts.append(ssa.SInst { ir_kind: op.kind_tag, kind_tag: kind, result: v, args: args, imm: op.width, str: what });
   if (!ir.lane_writes(op.kind_tag)) {
     stack = stack.append(v);
@@ -301,7 +302,7 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   let v = nvals;
   nvals += 1;
   if (fbin_sym(k) != "") {
-    insts = insts.append(ssa.SInst { ir_kind: op.kind_tag, kind_tag: ssa.BINARY, result: v, args: args, imm: 64, str: k });
+    insts = insts.append(ssa.SInst { ir_kind: op.kind_tag, kind_tag: ssa.BINARY, result: v, args: args, imm: 64, str: "" });
   } else if (argc == 3) {
     insts = insts.append(ssa.SInst { ir_kind: op.kind_tag, kind_tag: ssa.TERNARY, result: v, args: args, imm: 64, str: k });
   } else {
@@ -659,7 +660,7 @@ function lift_pop_push(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string
 }
 
 function lift_binary(lv: LiftVals, imm: i32, kind: i32): LiftVals {
-  return lift_pop_push_kind(lv, 2, ssa.BINARY, imm, ir.kind_name(kind), kind);
+  return lift_pop_push_kind(lv, 2, ssa.BINARY, imm, "", kind);
 }
 
 function lift_pop_push_kind(lv: LiftVals, npop: i32, kind: i32, imm: i32, str: string, ir_kind: i32): LiftVals {
@@ -1099,7 +1100,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         stack = drop_last2(stack);
         let bv = nvals;
         nvals += 1;
-        cur_insts = cur_insts.append(ssa.SInst { ir_kind: tag, kind_tag: ssa.BINARY, result: bv, args: [l, r], imm: register_width(op.width), str: k });
+        cur_insts = cur_insts.append(ssa.SInst { ir_kind: tag, kind_tag: ssa.BINARY, result: bv, args: [l, r], imm: register_width(op.width), str: "" });
         stack = stack.append(bv);
       }
     } else if (tag == t_not) {

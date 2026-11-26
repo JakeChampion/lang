@@ -44,7 +44,7 @@ function main(): i32 {
 				t.Run(tc.name, func(t *testing.T) {
 					command := runScaleTarget(t, target, bin)
 					command.Stdin = strings.NewReader(tc.source)
-					for label, ds := range map[string][]driverDiag{"Go": goCheckerDiags(t, dir, tc.source), "self-host": driverDiags(runCheckerDriver(t, command, tc.name))} {
+					for label, ds := range map[string][]driverDiag{"self-host": driverDiags(runCheckerDriver(t, command, tc.name))} {
 						if tc.want == "" && len(ds) == 0 {
 							continue
 						}

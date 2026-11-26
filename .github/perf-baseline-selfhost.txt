@@ -94,7 +94,7 @@ selfhost/wasm32-wasi/http_hello.emit	20890
 selfhost/wasm32-wasi/int_loop.emit	76
 selfhost/wasm32-wasi/map_int.emit	13496
 selfhost/wasm32-wasi/map_probe_chain.emit	13521
-selfhost/wasm32-wasi/map_string.emit	14287
+selfhost/wasm32-wasi/map_string.emit	14445
 selfhost/wasm32-wasi/ordmap_insert.emit	6710
 selfhost/wasm32-wasi/pmap_insert.emit	3731
 selfhost/wasm32-wasi/pvec_with.emit	2764
@@ -126,8 +126,8 @@ selfhost/x86-64-linux/deflate_encode.emit	7282
 selfhost/x86-64-linux/enum_match.emit	1036
 selfhost/x86-64-linux/http_hello.emit	15871
 selfhost/x86-64-linux/int_loop.emit	298
-selfhost/x86-64-linux/map_int.emit	8455
-selfhost/x86-64-linux/map_probe_chain.emit	8459
+selfhost/x86-64-linux/map_int.emit	8540
+selfhost/x86-64-linux/map_probe_chain.emit	8544
 selfhost/x86-64-linux/map_string.emit	9349
 selfhost/x86-64-linux/ordmap_insert.emit	5875
 selfhost/x86-64-linux/pmap_insert.emit	3632
@@ -176,9 +176,9 @@ selfhost/wasm32-wasi/hex_decode.emit	2769
 selfhost/x86-64-linux/base64_decode.emit	3297
 selfhost/arm64-linux/base64_decode.emit	3349
 selfhost/wasm32-wasi/base64_decode.emit	4465
-selfhost/x86-64-linux/gather_many.emit	6164
-selfhost/arm64-linux/gather_many.emit	6715
-selfhost/wasm32-wasi/gather_many.emit	6571
+selfhost/x86-64-linux/gather_many.emit	6023
+selfhost/arm64-linux/gather_many.emit	6519
+selfhost/wasm32-wasi/gather_many.emit	6452
 selfhost/x86-64-linux/utf8_validate.emit	2633
 selfhost/arm64-linux/utf8_validate.emit	2882
 selfhost/wasm32-wasi/utf8_validate.emit	2231

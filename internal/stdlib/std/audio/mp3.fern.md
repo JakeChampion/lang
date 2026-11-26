@@ -38,7 +38,7 @@ The raw budget includes codec delay and padding. This bounds work even when meta
 
 The frame APIs retain at most 511 reservoir bytes, 576 overlap values, and 960 synthesis values.
 They also keep the buffer of main data of the last frame and 80 scalefactor positions, so the next frame can use their capacity again.
-After the first MPEG-1 frame they also keep 3,264 synthesis lines, 1,152 spectral values and 128 transform values, so the next frame does not allocate them again.
+After the first frame they also keep 3,264 synthesis lines, 1,152 spectral values and 128 transform values, so the next frame does not allocate them again.
 They still allocate bounded scratch arrays. They do not promise zero allocations.
 
 The implementation derives from the scalar [minimp3 reference](https://github.com/lieff/minimp3/tree/ea99364f61c14656440e8d77e9c233ccf3124633).
@@ -218,11 +218,9 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
   pos0 = cleared_positions(pos0);
   pos1 = cleared_positions(pos1);
   let granules = if (h.version == 1) { 2 } else { 1 };
-  if (granules == 2) {
-    lines = synthesis.frame_lines_into(lines, qmf);
-    if (transform.len() != 128) {
-      transform = spectral.zeros(128);
-    }
+  lines = synthesis.frame_lines_into(lines, qmf);
+  if (transform.len() != 128) {
+    transform = spectral.zeros(128);
   }
   for granule in 0..granules {
     let samples = spectral.cleared(spectrum, 1152);
@@ -266,21 +264,13 @@ function decode_valid(own d: Decoder, input: [u8], at: i32, own output: f32[], l
       samples = values;
       overlap = ov;
     }
-    if (granules == 1) {
-      let (next, values) = synthesis.granule(qmf, samples, h.channels, output, 0);
-      qmf = next;
-      output = values;
-    } else {
-      let (next, values, scratch, spent) = synthesis.granule_at(lines, granule * 18 * 64, samples, h.channels, output, granule * 576 * h.channels, transform);
-      transform = scratch;
-      spectrum = spent;
-      lines = next;
-      output = values;
-    }
+    let (next, values, scratch, spent) = synthesis.granule_at(lines, granule * 18 * 64, samples, h.channels, output, granule * 576 * h.channels, transform);
+    transform = scratch;
+    spectrum = spent;
+    lines = next;
+    output = values;
   }
-  if (granules == 2) {
-    qmf = synthesis.frame_history(qmf, lines, h.channels);
-  }
+  qmf = synthesis.frame_history(qmf, lines, h.channels, granules);
   for i in 0..count {
     if (!output[i].is_finite()) {
       return Err(pcm.Sample);

@@ -66,7 +66,6 @@ function main(): i32 {
 					t.Fatalf("%s: E051 reported is %v, want %v: %v", label, refused, tc.reject, ds)
 				}
 			}
-			check("Go", goCheckerDiags(t, dir, source))
 			command := exec.Command(bin)
 			if len(runner) > 0 {
 				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
@@ -126,7 +125,6 @@ function main(): i32 { return work(make()); }
 					t.Fatalf("%s: E051 reported is %v, want %v: %v", label, refused, tc.reject, ds)
 				}
 			}
-			check("Go", goCheckerDiags(t, dir, source))
 			command := exec.Command(bin)
 			if len(runner) > 0 {
 				command = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)

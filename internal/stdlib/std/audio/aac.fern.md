@@ -10,7 +10,11 @@ Packet methods consume the decoder on error. The caller can create a new decoder
 The reusable-buffer methods retain storage beyond the valid output prefix.
 ADTS configuration changes reset overlap state before the new format is decoded.
 
-HE-AAC, coupling-channel elements, program configurations, and 960-sample frames are explicit unsupported cases.
+A raw data block can contain a program configuration element.
+It must describe the declared layout in the section order of that layout.
+Its element tags must match the tags of the elements in the stream.
+The decoder does not check its object type and rate index. It skips the mixdown fields and the comment.
+HE-AAC, coupling-channel elements, a program configuration that sets the layout, and 960-sample frames are explicit unsupported cases.
 
 Protected ADTS frames verify the header CRC and the CRC of each raw data block, and a mismatch returns `Checksum`.
 The CRC covers the first 192 bits of each single-channel and LFE element, and each complete data element.
@@ -39,13 +43,16 @@ const ELEMENT_STARTS: i32[] = [0, 0, 1, 2, 4, 7, 10, 14, 19];
 
 const ELEMENT_KINDS: i32[] = [0, 1, 0, 1, 0, 1, 0, 0, 1, 1, 0, 1, 1, 3, 0, 1, 1, 1, 3];
 
+// The program configuration section of each element: front 0, side 1, back 2, LFE 3.
+const ELEMENT_SECTIONS: i32[] = [0, 0, 0, 0, 0, 0, 2, 0, 0, 2, 0, 0, 2, 3, 0, 0, 0, 2, 3];
+
 pub opaque struct Decoder { config: config.Config, delay: f32[], scratch: dsp.Scratch, shapes: i32[], seed: u32, elements: Element[] }
 
 pub struct Frame { sample_rate: i32, channels: i32, channel_config: i32, frames: i32, bytes_read: i32, samples: f32[] }
 
 pub struct Decoded { sample_rate: i32, channels: i32, channel_config: i32, samples: f32[] }
 
-struct Run { config: config.Config, reader: bits.Reader, work: dsp.Work, shapes: i32[], seed: u32, elements: Element[], seen: i32[], channels: i32, count: i32, first: boolean, out_at: i32, protected: boolean, crc: u32 }
+struct Run { config: config.Config, reader: bits.Reader, work: dsp.Work, shapes: i32[], seed: u32, elements: Element[], seen: i32[], program: i32[], channels: i32, count: i32, first: boolean, out_at: i32, protected: boolean, crc: u32 }
 
 pub function create(c: config.Config, limits: audio.Limits): Result[Decoder, audio.AudioError] {
   let canonical = config.create(c.object_type, c.sample_rate, c.channel_config)?;
@@ -119,6 +126,9 @@ function element(own run: Run, kind: i32, tag: i32): Result[(Run, i32), audio.Au
     index = run.elements.len();
     if (kind != expected_element(run.config.channel_config, index)) {
       return Err(audio.Header);
+    }
+    if (index < run.program.len() && (run.program[index] & 15) != tag) {
+      return Err(audio.Unsupported);
     }
     run = Run { ...run, elements: run.elements.append(Element { kind: kind, tag: tag, channel: run.channels }) };
   }
@@ -203,6 +213,73 @@ function data_element(input: [u8], own run: Run): Result[Run, audio.AudioError] 
   return checked(input, Run { ...run, reader: bits.skip(input, reader, count * 8)? }, start, 0);
 }
 
+// Read the channel elements of one program configuration section as `(section * 4 + kind) * 16 + tag`.
+function placements(input: [u8], reader: bits.Reader, count: i32, section: i32, own found: i32[]): Result[(bits.Reader, i32[]), audio.AudioError] {
+  for _ in 0..count {
+    let kind = 3;
+    if (section < 3) {
+      let (next, cpe) = bits.read(input, reader, 1)?;
+      reader = next;
+      kind = cpe as i32;
+    }
+    let (next, tag) = bits.read(input, reader, 4)?;
+    reader = next;
+    found = found.append((section * 4 + kind) * 16 + tag as i32);
+  }
+  return Ok((reader, found));
+}
+
+function same_layout(config: i32, elements: Element[], found: i32[]): boolean {
+  if (config < 1 || config > 7 || found.len() != ELEMENT_STARTS[config + 1] - ELEMENT_STARTS[config]) {
+    return false;
+  }
+  for i in 0..found.len() {
+    let at = ELEMENT_STARTS[config] + i;
+    if (found[i] >> 4 != ELEMENT_SECTIONS[at] * 4 + ELEMENT_KINDS[at]) {
+      return false;
+    }
+    if (i < elements.len() && elements[i].tag != (found[i] & 15)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Skip the tag, object type and rate index, then read the section counts and the mixdown fields.
+// The counts are front, side, back, LFE, associated data, and coupling.
+function program_counts(input: [u8], at: bits.Reader): Result[(bits.Reader, i32[]), audio.AudioError] {
+  let (reader, _) = bits.read(input, at, 10)?;
+  let counts: i32[] = [];
+  for width in [4, 4, 4, 2, 3, 4] {
+    let (next, value) = bits.read(input, reader, width)?;
+    reader = next;
+    counts = counts.append(value as i32);
+  }
+  for width in [4, 4, 3] {
+    let (next, present) = bits.read(input, reader, 1)?;
+    reader = if (present != 0u32) { bits.skip(input, next, width)? } else { next };
+  }
+  return Ok((reader, counts));
+}
+
+function program(input: [u8], own run: Run): Result[Run, audio.AudioError] {
+  let start = run.reader;
+  let (reader, counts) = program_counts(input, run.reader)?;
+  let found: i32[] = [];
+  for section in 0..4 {
+    let (next, more) = placements(input, reader, counts[section], section, found)?;
+    reader = next;
+    found = more;
+  }
+  let aligned = bits.align(input, bits.skip(input, reader, 4 * counts[4] + 5 * counts[5])?)?;
+  let (b1, comment) = bits.read(input, aligned, 8)?;
+  let end = bits.skip(input, b1, 8 * (comment as i32))?;
+  if (!same_layout(run.config.channel_config, run.elements, found)) {
+    return Err(audio.Unsupported);
+  }
+  return checked(input, Run { ...run, reader: end, program: found }, start, 0);
+}
+
 function fill(input: [u8], own run: Run): Result[Run, audio.AudioError] {
   let (b1, size) = bits.read(input, run.reader, 4)?;
   let reader = b1;
@@ -242,6 +319,9 @@ function step(input: [u8], own run: Run): Result[(Run, boolean), audio.AudioErro
     4u32 => {
       return Ok((data_element(input, run)?, false));
     },
+    5u32 => {
+      return Ok((program(input, run)?, false));
+    },
     6u32 => {
       return Ok((fill(input, run)?, false));
     },
@@ -255,7 +335,7 @@ function step(input: [u8], own run: Run): Result[(Run, boolean), audio.AudioErro
 }
 
 function block(input: [u8], own run: Run): Result[Run, audio.AudioError] {
-  run = Run { ...run, first: run.elements.len() == 0, seen: [], channels: 0, count: 0 };
+  run = Run { ...run, first: run.elements.len() == 0, seen: [], program: [], channels: 0, count: 0 };
   while (true) {
     let (next, end) = step(input, run)?;
     run = next;
@@ -275,11 +355,11 @@ function begin(own decoder: Decoder, own output: f32[], at: i32, blocks: i32, li
     return Err(audio.Buffer);
   }
   let Decoder { config, delay, scratch, shapes, seed, elements } = decoder;
-  return Ok(Run { config: config, reader: bits.Reader { at: at, bit: 0 }, work: dsp.Work { delay: delay, scratch: scratch, pcm: output }, shapes: shapes, seed: seed, elements: elements, seen: [], channels: 0, count: 0, first: false, out_at: 0, protected: false, crc: 65535u32 });
+  return Ok(Run { config: config, reader: bits.Reader { at: at, bit: 0 }, work: dsp.Work { delay: delay, scratch: scratch, pcm: output }, shapes: shapes, seed: seed, elements: elements, seen: [], program: [], channels: 0, count: 0, first: false, out_at: 0, protected: false, crc: 65535u32 });
 }
 
 function finish(own run: Run, frames: i32, bytes: i32): (Decoder, Frame) {
-  let Run { config, reader, work, shapes, seed, elements, seen, channels, count, first, out_at, protected, crc } = run;
+  let Run { config, reader, work, shapes, seed, elements, seen, program, channels, count, first, out_at, protected, crc } = run;
   let dsp.Work { delay, scratch, pcm } = work;
   let decoder = Decoder { config: config, delay: delay, scratch: scratch, shapes: shapes, seed: seed, elements: elements };
   let frame = Frame { sample_rate: config.sample_rate, channels: config.channels, channel_config: config.channel_config, frames: frames, bytes_read: bytes, samples: pcm };

@@ -305,6 +305,26 @@ struct W3 { a: u64, b: u64, c: u64 }
     let r6: u64 = h13 + c13 + d13;
     return l00 * 3u64 ^ s10 * 5u64 ^ s11 * 7u64 ^ s12 * 11u64 ^ s13 * 13u64 ^ r6 * 17u64 ^ a0 ^ a1 ^ a2 ^ a3 ^ b0 ^ b1;
 }
+@noinline function wide_spilled(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64): u64 {
+    let l0: u64 = a0 * b0;
+    let h0: u64 = __mulhi_u64(a0, b0);
+    let l1: u64 = a1 * b0;
+    let h1: u64 = __mulhi_u64(a1, b0);
+    let l2: u64 = a2 * b0;
+    let h2: u64 = __mulhi_u64(a2, b0);
+    let l3: u64 = a3 * b0;
+    let h3: u64 = __mulhi_u64(a3, b0);
+    let l4: u64 = a0 * b1;
+    let h4: u64 = __mulhi_u64(a0, b1);
+    let l5: u64 = a1 * b1;
+    let h5: u64 = __mulhi_u64(a1, b1);
+    let l6: u64 = a2 * b1;
+    let h6: u64 = __mulhi_u64(a2, b1);
+    let l7: u64 = a3 * b1;
+    let h7: u64 = __mulhi_u64(a3, b1);
+    let x: u64 = l0 * 3u64 ^ h0 * 5u64 ^ l1 * 7u64 ^ h1 * 11u64 ^ l2 * 13u64 ^ h2 * 17u64 ^ l3 * 19u64 ^ h3 * 23u64;
+    return x ^ l4 * 29u64 ^ h4 * 31u64 ^ l5 * 37u64 ^ h5 * 41u64 ^ l6 * 43u64 ^ h6 * 47u64 ^ l7 * 53u64 ^ h7 * 59u64 ^ a0 ^ a1 ^ a2 ^ a3 ^ b0 ^ b1;
+}
 @noinline function high_only(x: u64, y: u64): u64 {
     return __mulhi_u64(x, y) ^ y;
 }
@@ -340,6 +360,7 @@ function main(): i32 {
                 acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h) + 5u64 * add_sub_p(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
                 acc = acc ^ sub4(x, y, h, y - x, y, h, x + 1u64, ALL - y) ^ add4_spilled(x, h, x ^ y, y - x, y, ALL - h, x + 1u64, ALL - y);
                 acc = acc * 41u64 + mul_rows(x, y, h, x ^ y, y - h, ALL - x);
+                acc = acc * 47u64 + wide_spilled(x, h, x ^ y, y - x, ALL - h, y + 1u64);
                 acc = acc * 43u64 + sub_mask(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
             }
         }
@@ -436,7 +457,7 @@ func TestSelfHostSSACarriesReadTheFlags(t *testing.T) {
 	}
 }
 
-// A product and its high half with the same operands make one mulq, also when
+// A product and its high half with the same operands make one mulxq, also when
 // each names its own literal of the same value.
 func TestSelfHostSSAProductHalvesShareOneMultiply(t *testing.T) {
 	h := selfHostCLIForHost(t)
@@ -453,20 +474,21 @@ func TestSelfHostSSAProductHalvesShareOneMultiply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mulq := regexp.MustCompile(`(?m)^\s+mulq `)
-	imulq := regexp.MustCompile(`(?m)^\s+imulq `)
+	mulx := regexp.MustCompile(`(?m)^\s+mulxq `)
+	other := regexp.MustCompile(`(?m)^\s+i?mulq `)
 	for _, name := range []string{"wide_k", "wide_small", "wide_xy"} {
 		fn := functionListing(string(asm), "__fn_"+name)
 		if fn == "" {
 			t.Fatalf("no __fn_%s in the listing", name)
 		}
-		if n := len(mulq.FindAllString(fn, -1)); n != 1 || imulq.MatchString(fn) {
-			t.Errorf("%s has %d mulq, want one mulq and no imulq:\n%s", name, n, fn)
+		if n := len(mulx.FindAllString(fn, -1)); n != 1 || other.MatchString(fn) {
+			t.Errorf("%s has %d mulxq, want one mulxq and no mulq or imulq:\n%s", name, n, fn)
 		}
 	}
 }
 
-// mulq reads the factor that is not in %rax from its own register or slot.
+// A widening multiply reads the factor that is not in %rax or %rdx from its
+// own register or slot.
 func TestSelfHostSSAMultiplyReadsItsFactorInPlace(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -482,23 +504,24 @@ func TestSelfHostSSAMultiplyReadsItsFactorInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	copied := regexp.MustCompile(`(?m)^\s+movq [^\n]+, %rcx\n(\s+movq [^\n]+, %rax\n)?\s+mulq %rcx$`)
+	copied := regexp.MustCompile(`(?m)^\s+movq [^\n]+, %rcx\n(\s+movq [^\n]+, %r[ad]x\n)?\s+(mulq %rcx$|mulxq %rcx,)`)
 	for _, name := range []string{"wide_xy", "high_only", "add4"} {
 		fn := functionListing(string(asm), "__fn_"+name)
 		if fn == "" {
 			t.Fatalf("no __fn_%s in the listing", name)
 		}
-		if !regexp.MustCompile(`(?m)^\s+mulq `).MatchString(fn) {
-			t.Fatalf("%s has no mulq:\n%s", name, fn)
+		if !regexp.MustCompile(`(?m)^\s+mulx?q `).MatchString(fn) {
+			t.Fatalf("%s has no mulq or mulxq:\n%s", name, fn)
 		}
 		if copied.MatchString(fn) {
-			t.Errorf("%s copies a factor to %%rcx for its mulq:\n%s", name, fn)
+			t.Errorf("%s copies a factor to %%rcx for its multiply:\n%s", name, fn)
 		}
 	}
 }
 
-// The low half of a widening product can stay in %rax, where mulq writes it.
-func TestSelfHostSSAProductLowHalfStaysInRax(t *testing.T) {
+// mulxq writes each half of a widening product into its home, so neither half
+// is copied out of %rax or %rdx.
+func TestSelfHostSSAProductHalvesGoToTheirHomes(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "carries.fern")
@@ -517,8 +540,12 @@ func TestSelfHostSSAProductLowHalfStaysInRax(t *testing.T) {
 	if fn == "" {
 		t.Fatal("no __fn_wide_xy in the listing")
 	}
-	if regexp.MustCompile(`(?m)^\s+movq %rax, %r?[a-z0-9]+$`).MatchString(fn) {
-		t.Errorf("wide_xy copies the low half out of %%rax:\n%s", fn)
+	if regexp.MustCompile(`(?m)^\s+mulxq [^\n]+\n\s+movq %r[ad]x, %r[a-z0-9]+$`).MatchString(fn) {
+		t.Errorf("wide_xy copies a half out of %%rax or %%rdx:\n%s", fn)
+	}
+	spilled := functionListing(string(asm), "__fn_wide_spilled")
+	if !regexp.MustCompile(`(?m)^\s+mulxq [^\n]+, %rax, [^\n]+\n\s+movq %rax, -\d+\(%rbp\)$`).MatchString(spilled) {
+		t.Errorf("wide_spilled writes no spilled low half through %%rax:\n%s", spilled)
 	}
 }
 
@@ -649,5 +676,53 @@ func TestSelfHostSSAMaskIdentitiesFold(t *testing.T) {
 	}
 	if !strings.Contains(fn, "adcq $0,") {
 		t.Errorf("sub_mask adds the carry of its third limb outside the chain:\n%s", fn)
+	}
+}
+
+// The mask `0 - borrow` is one `sbbq` of a register from itself on x86-64,
+// and one `sbc` from `xzr` on arm64.
+func TestSelfHostSSABorrowMaskIsOneSbb(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_sub_mask")
+	if fn == "" {
+		t.Fatal("no __fn_sub_mask in the listing")
+	}
+	self := regexp.MustCompile(`(?m)^\s+sbbq (%r\w+), (%r\w+)$`)
+	found := false
+	for _, m := range self.FindAllStringSubmatch(fn, -1) {
+		if m[1] == m[2] {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("sub_mask makes its mask without one sbbq of a register from itself:\n%s", fn)
+	}
+	if n := strings.Count(fn, "setb"); n != 0 {
+		t.Errorf("sub_mask writes %d carries to a register, want none:\n%s", n, fn)
+	}
+	armOut := filepath.Join(dir, "carries-arm64.s")
+	if report, err := exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", armOut, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	armAsm, err := os.ReadFile(armOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	armFn := functionListing(string(armAsm), "__fn_sub_mask")
+	if !regexp.MustCompile(`(?m)^\s+sbc x\d+, xzr, xzr$`).MatchString(armFn) {
+		t.Errorf("arm64: sub_mask makes its mask without one sbc from xzr:\n%s", armFn)
 	}
 }

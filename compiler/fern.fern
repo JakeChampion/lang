@@ -2149,11 +2149,16 @@ function heap_limit_bytes(text: string, target: string): i64 {
   if (text.len() == 0) {
     return 0i64;
   }
-  if (!is_native_target(target)) {
-    eprint("fern: -heap-limit is only supported for the native targets (got \"" + target + "\")");
+  let wasm = target.starts_with("wasm32-");
+  if (!is_native_target(target) && !wasm) {
+    eprint("fern: -heap-limit is only supported for the native and wasm targets (got \"" + target + "\")");
     return 0i64 - 1i64;
   }
   let value = size_bytes(text);
+  if (wasm && (value < 1048576i64 || value > 4294967296i64)) {
+    eprint("fern: -heap-limit takes a size from 1M to 4G for a wasm target, as digits with an optional K, M or G suffix (got \"" + text + "\")");
+    return 0i64 - 1i64;
+  }
   if (value < 1048576i64 || value > 17179869184i64) {
     eprint("fern: -heap-limit takes a size from 1M to 16G, as digits with an optional K, M or G suffix (got \"" + text + "\")");
     return 0i64 - 1i64;
@@ -2366,7 +2371,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-ram", "BASE,SIZE", "arm64-kernel and x86-64-kernel: the RAM that the loader puts the image in; the image starts at BASE, and the stack top is BASE + SIZE; each number is decimal or 0x hex, with an optional K, M or G suffix"),
       cli_flag("-cpu-limit", "SECONDS", "Linux and Android executables: the processor time of the process, 1 to 31536000 seconds; the kernel stops a process that passes it"),
-      cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
+      cli_flag("-heap-limit", "SIZE", "the heap quota with a K, M or G suffix: the arena of a native executable, 1M to 16G (default 16G), exits 125 when full; the memory maximum of a wasm module, 1M to 4G"),
       cli_flag("-quarantine", "SIZE", "with -sanitize: the byte budget of released blocks held before reuse, 1M to 16G with a K, M or G suffix, or 0 for no bound (default 64M)"),
       cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
     ] },

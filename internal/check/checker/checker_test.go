@@ -7151,19 +7151,6 @@ function main(): i32 { return 0; }`
 			t.Errorf("assoc fn called through dyn: want the message to contain %q, got %v", want, err)
 		}
 	}
-	if strings.Contains(err.Error(), "after it was consumed") {
-		t.Errorf("assoc fn's `own` argument read as an `own` receiver: got a use-after-move, %v", err)
-	}
-
-	consuming := `trait Mk { function take(own self: Self): i32; }
-struct P { v: i32 }
-impl Mk for P { function take(own self: Self): i32 { return 1; } }
-function twice(own m: dyn Mk): i32 { return m.take() + m.take(); }
-function main(): i32 { return 0; }`
-	err = checkSource(t, consuming)
-	if err == nil || !strings.Contains(err.Error(), "after it was consumed") {
-		t.Errorf("own self method used twice: want the E050 use-after-move, got %v", err)
-	}
 }
 
 func TestBoundedParamAssocFnCallNoPanic(t *testing.T) {

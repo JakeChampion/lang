@@ -135,9 +135,10 @@ lowered function it:
    is 0 matches in its folded form `x - c` or `x + c`. The constants that a
    carry reads go to the start of the block, so the subtract of a modulus
    is one chain too (#17029). On x86-64, `a * b` directly before
-   `__mulhi_u64(a, b)` is one `mulq` for both halves. The `mulq` reads
-   one factor from its register or its slot, and `%rcx` stays live across
-   it. The step
+   `__mulhi_u64(a, b)` is one `mulxq` for both halves. The `mulxq` reads
+   one factor from `%rdx` and the other from its register or its slot.
+   It writes each half into its home register, or into `%rax` or `%rdx`
+   for a half that has no register. The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
    `&&` or an `||` that the function returns is then a tail call. Last,
@@ -407,9 +408,11 @@ mask from the split form.
 
 ## A record or an Option passed as its parts
 
-A parameter that is a record of one to four scalar fields travels as its
-fields, and an Option of such a record, or of a scalar, as a Some flag
-followed by the payload's parts (`sempair.scalar_params`, run before the
+A parameter that is a record of one to four fields travels as its fields.
+Each field is a scalar or a reference that is not a view, and not a field
+that is laid out in the box of its record. An Option of a
+record of scalars, or of a scalar, travels as a Some flag followed by the
+payload's parts (`sempair.scalar_params`, run before the
 return pairing so the two compose). The rewrite happens on the semantic
 form, before any backend sees the function, so the three targets need
 nothing of their own: the body simply has more parameters, and each
@@ -420,8 +423,11 @@ count over the declaration's).
 A parameter is passed in parts when every reference to the function is a
 direct call, as for a paired return, and the body only reads it apart: a
 field read, a variant test, a payload read, or handing it on to another
-parameter passed in parts. Inside the body each read becomes a copy of the
-part (a payload record is rebuilt from its fields, which `split_constructions`
+parameter passed in parts. A record with a reference field also stays
+whole when the result of the function is a record of as many fields, because
+the plan can reuse its box for the result. A reference part keeps the mode
+and the `own` of the record. Inside the body each read becomes a copy of the
+part, and a copy of a reference part is then replaced by the part (a payload record is rebuilt from its fields, which `split_constructions`
 then takes apart again). At a call, a record or a Some built for the call
 hands on its arguments and a None hands on a false flag and zeros. Any other
 record is read field by field before the call. Any other Option is taken
@@ -434,6 +440,10 @@ its parts, so a chain of wrappers passes the parts straight through.
 `TestSelfHostScalarParams` pins a `Duration`, an `Option[Duration]` and an
 `Option[i64]` crossing a module boundary, a method and a trait impl reached
 through a generic at no allocations on the three targets.
+`TestSelfHostCountedRecordParams` pins a record with an array field. An
+array part keeps the bounds facts of its field: `ssabounds.caller_facts`
+gives each array parameter the length and the bound of the elements that its
+callers give it.
 
 ## A record's field laid out as its parts
 
