@@ -150,6 +150,15 @@ pub function checkout_at(top: string): Option[Repo] {
   };
 }
 
+// Open a module store that has no associated checkout.
+pub function stored_module(dir: string): Option[Repo] {
+  if (dir == "" || !is_file(dir + "/HEAD") || !is_dir(common_of(dir) + "/objects")) { return None; }
+  return match (repo_at(dir, "", dir, "")) {
+    Ok(r) => Some(r),
+    Err(_) => None,
+  };
+}
+
 const NOT_A_REPOSITORY: string = "fatal: not a git repository (or any of the parent directories): .git";
 
 // The repository of the current directory: `GIT_DIR`, or the `.git` of the

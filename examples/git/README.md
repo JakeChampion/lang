@@ -342,8 +342,10 @@ With git 2.43, these settings, messages and merges are also different:
 
 - Three parts of the merge of `--remerge-diff`. They are the merge of a
   submodule that the two parents changed when its history contains a
-  possible merge resolution or cannot be fully read, or when only its
-  module store is present, and a merge driver of the
+  possible merge resolution or cannot be fully read. A regular checkout
+  can also use a named module store through its worktree, staged, or
+  committed `.gitmodules`. Other module-store layouts remain open.
+  The second part is a merge driver of the
   configuration (`merge.NAME.driver`). The third is
   `merge.renormalize`.
   For a merge that needs one of them, the port stops with a message
