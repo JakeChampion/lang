@@ -7,6 +7,8 @@ func TestSelfHostCrossBlockReuse(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	// Calling a field reader through a function value keeps the donor and recipient
 	// boxed in probes where direct projections would eliminate the allocations.
+	// A string field keeps a record boxed in an array, which holds the fields of
+	// an all-scalar record in its own buffer.
 	cases := []struct {
 		name   string
 		src    string
@@ -44,8 +46,8 @@ function main(): i32 { return f(5) + f(1); }`, 49, 2},
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum; }`, 31, 4},
 		{"if-arm-in-loop-churn", `struct P { x: i32, y: i32 }
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5000000) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = (sum + b.x + b.y) % 1000; } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 97, 5000000},
-		{"if-arm-escaping-recipient", `struct P { x: i32, y: i32 }
-function main(): i32 { let acc: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { acc = acc.append(P { x: s, y: 1 }); } i = i + 1; } let sum: i32 = 0; for p in acc { sum = sum + p.x + p.y; } return sum; }`, 18, 5},
+		{"if-arm-escaping-recipient", `struct P { x: i32, y: i32, n: string }
+function main(): i32 { let acc: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1, n: "a" }; let s: i32 = a.x + a.y; if (i > 0) { acc = acc.append(P { x: s, y: 1, n: "b" }); } i = i + 1; } let sum: i32 = 0; for p in acc { sum = sum + p.x + p.y; } return sum; }`, 18, 5},
 		{"read-outliving-the-attempt-takes-its-unit", `struct C { k: i32 }
 struct St { xs: i32[], list: C[], n: i32 }
 struct Val { s: St, id: i32 }
@@ -78,8 +80,8 @@ function main(): i32 { return f(1) * 10 + __arr_push_shared_count(); }`, 120, 5}
 @noinline function hold(w: S): i32 { return w.n + w.xs.len() - 1; }
 function f(k: i32): i32 { let s: S = mk(room(), k); let keep: S[] = [s]; let m: i32 = 0; if (k % 2 == 0) { m = s.n; } else { m = s.n * 2; } let t: S = keep[0]; let r: S = grow(t, m); let w: S = S { xs: id([3]), n: r.n + r.xs.len() }; return hold(w); }
 function main(): i32 { return f(two()) * 10 + __arr_push_shared_count(); }`, 120, 3},
-		{"shared-donor", `struct P { x: i32, y: i32 }
-function main(): i32 { let sum: i32 = 0; let keep: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; if (i == 1) { keep = keep.append(a); } let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum + keep[0].x * 10; }`, 41, 6},
+		{"shared-donor", `struct P { x: i32, y: i32, n: string }
+function main(): i32 { let sum: i32 = 0; let keep: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1, n: "a" }; if (i == 1) { keep = keep.append(a); } let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3, n: "b" }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum + keep[0].x * 10; }`, 41, 6},
 		{"record-into-both-arms", `struct P { x: i32, y: i32 }
 function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let t: i32 = a.x; let r: i32 = 0; if (n > 3) { let b: P = P { x: n * 3, y: 4 }; r = b.x + b.y; } else { let c: P = P { x: n * 5, y: 6 }; r = c.x + c.y; } return t + r; }
 function main(): i32 { return f(5) + f(1); }`, 36, 2},
