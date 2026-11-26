@@ -75,7 +75,7 @@ function main(): i32 {
 			name: "string_payload_inside_an_if",
 			src: `function round(i: i32): i32 {
     let acc: i32 = 0;
-    let o: Option[string] = Some("hello");
+    let o: Option[string] = Some("hell" + (if (i % 2 == 0) { "o" } else { "a" }));
     if (i >= 0) {
         match (o) { Some(s) => { acc = s.len(); }, None => {} }
     }
@@ -150,6 +150,8 @@ func TestSelfHostNestedMatchBorrowHazardsX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
+	// Some holds the array pointer directly. Each round allocates a payload
+	// array and, in the append case, a container for it.
 	for _, tc := range []struct {
 		name       string
 		src        string
@@ -176,7 +178,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:       40,
-			wantAllocs: 200,
+			wantAllocs: 100,
 		},
 		{
 			name: "aliased_after_the_block",
@@ -197,7 +199,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:       40,
-			wantAllocs: 200,
+			wantAllocs: 100,
 		},
 		{
 			name: "returned_to_the_caller",
@@ -220,7 +222,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:       40,
-			wantAllocs: 200,
+			wantAllocs: 100,
 		},
 		{
 			name: "passed_to_a_callee_that_keeps_it",
@@ -243,7 +245,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:       40,
-			wantAllocs: 200,
+			wantAllocs: 100,
 		},
 		{
 			name: "arm_binding_escapes_to_an_outer_local",
@@ -263,7 +265,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:       40,
-			wantAllocs: 200,
+			wantAllocs: 100,
 		},
 		{
 			name: "arm_binding_escapes_into_a_container",
@@ -283,7 +285,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:       40,
-			wantAllocs: 300,
+			wantAllocs: 200,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -328,7 +330,7 @@ func TestSelfHostNestedMatchBorrowNoUnderflowX86_64(t *testing.T) {
     if (i >= 0) {
         match (o) { Some(a) => { acc = a.len() + a[0]; }, None => {} }
     }
-    let s: Option[string] = Some("hello");
+    let s: Option[string] = Some("hell" + (if (i % 2 == 0) { "o" } else { "a" }));
     let k: i32 = 0;
     while (k < 1) {
         match (s) { Some(t) => { acc = acc + t.len(); }, None => {} }
