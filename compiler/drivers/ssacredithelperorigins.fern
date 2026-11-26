@@ -99,7 +99,7 @@ function mapping(source: string): void {
 }
 
 function generic(target: string): void {
-  let source = "struct Box[T] { value: T } @noinline function discard(own x: Box[string]): i32 { return 0; } @noinline function keyed(m: Map[(i32, i32), i32]): Map[(i32, i32), i32] { return m; } function main(): i32 { return discard(Box { value: \"x\" }); }";
+  let source = "struct Box[T] { value: T } @noinline function discard(own x: Box[string]): i32 { return 0; } @noinline function keyed(m: Map[(i32, i32), i32]): Map[(i32, i32), i32] { return m; } function main(): i32 { let drop_box: (own Box[string]) => i32 = discard; return drop_box(Box { value: \"x\" }); }";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
   nominal(sub.physical_origins.extra, typeinfo.TypeStruct { name: "Box__string", args: [] });
   require(sub.physical_origins.producers.len() == 2, 251);

@@ -439,7 +439,7 @@ function source(mode: i32): string {
 function target_checks(target: string): void {
   let reasons = ["", "", "user finalizer", "user finalizer", "child is not a flat", "exactly the result child", "", "user finalizer", "", "user finalizer"];
   for mode in 0..10 {
-    let driven = semlower.driven(parser.parse_module(lexer.tokenize(source(mode))), target);
+    let driven = semlower.driven(boxed.parsed(source(mode), ["extract"]), target);
     expect(driven.sub, mode < 2 || mode == 6 || mode == 8, reasons[mode], 10 + mode);
     if (mode >= 6) {
       require(ssasem.finalizer_named(driven.sub.physical_finalizers, "Leaf__i32") != "" == (mode == 7 || mode == 9), 31);
@@ -531,7 +531,7 @@ function replacement_source(mode: i32): string {
 function replacement_checks(target: string): void {
   let reasons = ["", "user finalizer", "user finalizer", "child is not a flat", "exactly the incoming child", ""];
   for mode in 0..6 {
-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(replacement_source(mode))), target).sub;
+    let sub = semlower.driven(boxed.parsed(replacement_source(mode), ["replace"]), target).sub;
     expect_replace(sub, mode == 0 || mode == 5, reasons[mode], 100 + mode);
     if (mode == 0) {
       let contracts: ssasem.Contract[] = [];
@@ -611,7 +611,7 @@ function selected_source(mode: i32): string {
 
 function selected_checks(target: string): void {
   for mode in 0..4 {
-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(selected_source(mode))), target).sub;
+    let sub = semlower.driven(boxed.parsed(selected_source(mode), ["extract_left", "extract_right"]), target).sub;
     let left_reason = "";
     let right_reason = "";
     if (mode == 2) {

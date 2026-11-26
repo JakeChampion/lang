@@ -189,12 +189,16 @@ runs:
         # and repairs any half-configured state on its way through.
         # Only an exact hit goes to dpkg. The .debs of an older image are
         # input to apt, which installs the current versions.
+        repair_cached_install=false
         dpkg_ok=1
         if [ "$CACHE_HIT" != "true" ]; then
           dpkg_ok=0
         elif ls "$CACHE_DIR"/*.deb >/dev/null 2>&1; then
           echo "::group::dpkg install from $(ls "$CACHE_DIR"/*.deb | wc -l) cached .debs"
-          privileged_run 120 dpkg -i "$CACHE_DIR"/*.deb || dpkg_ok=0
+          if ! privileged_run 120 dpkg -i "$CACHE_DIR"/*.deb; then
+            dpkg_ok=0
+            repair_cached_install=true
+          fi
           echo "::endgroup::"
         fi
 
@@ -213,15 +217,25 @@ runs:
 
           # All attempts share the deadline, including the cached install.
           # Keep downloaded packages for the next attempt and cache save.
+          apt_install() {
+            privileged_run 240 apt-get install -y --no-install-recommends \
+              -o "Dir::Cache::archives=$CACHE_DIR" \
+              -o APT::Keep-Downloaded-Packages=true "$@"
+          }
+          repair_if_needed() {
+            if [ "$repair_cached_install" = true ]; then
+              # apt repairs unrelated unpacked packages only when no target
+              # package is named. Keep the runner's installed packages.
+              apt_install --fix-broken --no-remove || return 1
+              repair_cached_install=false
+            fi
+          }
           attempt=1
           max=4
           while [ "$attempt" -le "$max" ]; do
             echo "::group::apt attempt $attempt/$max"
             if privileged_run 300 apt-get update -qq &&
-               privileged_run 240 apt-get install -y --no-install-recommends \
-                 -o "Dir::Cache::archives=$CACHE_DIR" \
-                 -o APT::Keep-Downloaded-Packages=true \
-                 $PACKAGES; then
+               repair_if_needed && apt_install $PACKAGES; then
               echo "::endgroup::"
               break
             fi

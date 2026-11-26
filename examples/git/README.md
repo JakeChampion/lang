@@ -342,12 +342,17 @@ With git 2.43, these settings, messages and merges are also different:
 
 - Three parts of the merge of `--remerge-diff`. They are the merge of a
   submodule that the two parents changed when its history contains a
-  possible merge resolution or cannot be fully read. A regular checkout
-  can also use a named module store through its worktree, staged, or
-  committed `.gitmodules`. Other module-store layouts remain open.
+  possible merge resolution or cannot be fully read. When the submodule
+  checkout is a linked worktree with shared refs and a detached HEAD, the
+  search uses that checkout’s HEAD and its private refs under `refs/bisect`,
+  `refs/worktree`, and `refs/rewritten`. A primary or linked worktree
+  can use its own named module store through its worktree, staged, or
+  committed `.gitmodules`. Configured gitdirs can use absolute or worktree-relative
+  paths. A worktree-specific gitdir setting overrides the shared one.
   The second part is a merge driver of the
   configuration (`merge.NAME.driver`). The third is
-  `merge.renormalize`.
+  `merge.renormalize` for a three-way blob merge or a modify/delete
+  comparison. Gitlink merges and one-sided changes need no conversion.
   For a merge that needs one of them, the port stops with a message
   that names the part. It also stops at a state of the renames that
   git takes for an internal error.

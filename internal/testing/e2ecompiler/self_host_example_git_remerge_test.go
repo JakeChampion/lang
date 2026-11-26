@@ -688,6 +688,10 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 					gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
 				}
 			}
+			// Renormalization compares the unchanged renamed blob by object ID.
+			g.git("config", "merge.renormalize", "true")
+			gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "rename-delete-1")
+			g.git("config", "--unset", "merge.renormalize")
 			// The value of `log.diffMerges` is the diff of `-m`.
 			for _, value := range []string{"remerge", "r", "off", "combined", "first-parent"} {
 				g.git("config", "log.diffMerges", value)
@@ -702,6 +706,23 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%h", "base")
 				g.git("config", "--unset", setting[0])
 			}
+			configPath := filepath.Join(dir, ".git", "config")
+			configBytes, err := os.ReadFile(configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range []string{"[diff]\nrenames", "[diff]\nrenames = maybe", "[merge]\nrenames", "[merge]\ndirectoryRenames", "[diff]\nalgorithm", "[diff]\nalgorithm = bogus", "[merge]\nrenormalize"} {
+				g.write(".git/config", string(configBytes)+"\n"+entry+"\n")
+				gitCompare(t, oracle, port, dir, "", "log", "-1", "base")
+				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-1", "rename-delete-1")
+			}
+			for _, entry := range []string{"[merge]\ndefault", "[merge \"custom\"]\nname", "[merge \"custom\"]\ndriver", "[merge \"custom\"]\nrecursive", "[merge \"custom\"]\nunknown"} {
+				g.write(".git/config", string(configBytes)+"\n"+entry+"\n")
+				for _, ref := range []string{"content-1", "rename-delete-1"} {
+					gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-1", ref)
+				}
+			}
+			g.write(".git/config", string(configBytes))
 			// The attributes of a path select the driver of its merge and
 			// the size of its conflict markers.
 			attributes := []string{"union.txt merge=union\nplain.txt -merge\nwide.txt conflict-marker-size=12\n", "*.txt merge=binary\n",
@@ -828,6 +849,10 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	}
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
 	g.git("init", "-q", "--object-format="+run.format, "module")
+	// The bare superproject has neither a checkout nor a module store.
+	bare := filepath.Join(t.TempDir(), "bare.git")
+	g.git("clone", "--bare", "-q", dir, bare)
+	gitCompareEnv(t, oracle, port, dir, []string{"GIT_DIR=" + bare}, "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
 	// With an initialized checkout, two independent additions have no base
 	// gitlink, even when the checkout lacks both commits.
 	addLeft := g.git("commit-tree", "-p", "base", "-m", "add module on left", tree)
@@ -868,6 +893,28 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 		t.Fatal(err)
 	}
 	g.write(".gitmodules", "[submodule \"Library\"]\n path = module\n url = ./remote\n")
+	// A store belonging to another submodule does not supply this one.
+	otherStore := filepath.Join(dir, ".git", "modules", "OtherLibrary")
+	if err := os.Rename(storedGit, otherStore); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// The extension chooses the configured gitdir even when the subsection
+	// has a different name. A missing key and a missing store differ.
+	version := g.git("config", "--get", "core.repositoryformatversion")
+	g.git("config", "core.repositoryformatversion", "1")
+	g.git("config", "extensions.submodulePathConfig", "true")
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	for _, store := range []string{".git/modules/OtherLibrary", otherStore, ".git/modules/Absent", "missing", ".git/modules/OtherLibrary/nested"} {
+		g.git("config", "submodule.Library.gitdir", store)
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	}
+	g.git("config", "--unset", "submodule.Library.gitdir")
+	g.git("config", "--unset", "extensions.submodulePathConfig")
+	g.git("config", "core.repositoryformatversion", version)
+	if err := os.Rename(otherStore, storedGit); err != nil {
+		t.Fatal(err)
+	}
 	for _, commit := range []string{"module-merge", reversed} {
 		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", commit)
 	}
@@ -877,8 +924,63 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	}
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
 	g.git("commit", "-qm", "track module location")
+	// Even with a valid module store and a mapping in both HEAD and the
+	// index, Git skips the mapping when the superproject has no worktree.
+	g.git("push", "-q", bare, "HEAD:refs/heads/mapping")
+	g.git("-C", bare, "symbolic-ref", "HEAD", "refs/heads/mapping")
+	g.git("-C", bare, "read-tree", "HEAD")
+	bareStore := filepath.Join(bare, "modules", "Library")
+	g.git("clone", "-q", "--bare", storedGit, bareStore)
+	gitCompareEnv(t, oracle, port, dir, []string{"GIT_DIR=" + bare}, "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
+	g.git("-C", bare, "config", "core.repositoryformatversion", "1")
+	g.git("-C", bare, "config", "extensions.submodulePathConfig", "true")
+	g.git("-C", bare, "config", "submodule.Library.gitdir", bareStore)
+	gitCompareEnv(t, oracle, port, dir, []string{"GIT_DIR=" + bare}, "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
+
 	g.git("update-index", "--force-remove", ".gitmodules")
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// Each linked worktree has its own module stores. The same named
+	// store in the primary worktree must not resolve this merge.
+	linked := filepath.Join(t.TempDir(), "linked")
+	g.git("worktree", "add", "-q", "--detach", linked, "HEAD")
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	linkedModules := filepath.Join(g.git("-C", linked, "rev-parse", "--absolute-git-dir"), "modules")
+	if err := os.MkdirAll(linkedModules, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkedStore := filepath.Join(linkedModules, "Library")
+	if err := os.Rename(storedGit, linkedStore); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// Configured gitdirs can point into a linked worktree's private store.
+	g.git("config", "core.repositoryformatversion", "1")
+	g.git("config", "extensions.submodulePathConfig", "true")
+	configuredStore := filepath.Join(linkedModules, "ConfiguredLibrary")
+	if err := os.Rename(linkedStore, configuredStore); err != nil {
+		t.Fatal(err)
+	}
+	relativeStore, err := filepath.Rel(linked, configuredStore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, store := range []string{configuredStore, relativeStore} {
+		g.git("config", "submodule.Library.gitdir", store)
+		gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	}
+	// A worktree-specific setting overrides the shared location.
+	g.git("config", "extensions.worktreeConfig", "true")
+	g.git("config", "submodule.Library.gitdir", ".git/modules/Absent")
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	g.git("-C", linked, "config", "--worktree", "submodule.Library.gitdir", configuredStore)
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	g.git("config", "--unset", "extensions.worktreeConfig")
+	g.git("config", "--unset", "submodule.Library.gitdir")
+	g.git("config", "--unset", "extensions.submodulePathConfig")
+	g.git("config", "core.repositoryformatversion", version)
+	if err := os.Rename(configuredStore, storedGit); err != nil {
+		t.Fatal(err)
+	}
 	g.git("reset", "--soft", "HEAD^")
 	if err := os.Rename(storedGit, workGit); err != nil {
 		t.Fatal(err)
@@ -907,6 +1009,32 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
 	g.git("-C", "module", "update-ref", "--no-deref", "HEAD", solution)
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	// Only the checked-out submodule worktree's detached HEAD participates.
+	// The primary worktree holds a resolution that the linked one cannot see.
+	primary := filepath.Join(t.TempDir(), "module-primary")
+	module := filepath.Join(dir, "module")
+	if err := os.Rename(module, primary); err != nil {
+		t.Fatal(err)
+	}
+	g.git("-C", primary, "worktree", "add", "-q", "--detach", module, other)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	// Each private namespace is visible only in the worktree that owns it.
+	for _, ref := range []string{"refs/bisect/test", "refs/worktree/test", "refs/rewritten/test"} {
+		g.git("-C", primary, "update-ref", ref, solution)
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+		g.git("-C", module, "update-ref", ref, other)
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+		g.git("-C", module, "update-ref", ref, solution)
+		refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+		g.git("-C", primary, "update-ref", "-d", ref)
+		g.git("-C", module, "update-ref", "-d", ref)
+	}
+	g.git("-C", module, "update-ref", "--no-deref", "HEAD", solution)
+	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	g.git("-C", primary, "worktree", "remove", module)
+	if err := os.Rename(primary, module); err != nil {
+		t.Fatal(err)
+	}
 	// From s1, one parent rewinds to s0 and the other advances to s2.
 	rewind := g.git("commit-tree", "-p", "module-1", "-m", "rewind", s0Tree)
 	advance := g.git("commit-tree", "-p", "module-1", "-m", "advance", rightTree)
@@ -931,5 +1059,7 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	os.Remove(filepath.Join(dir, ".git", "info", "attributes"))
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
 	g.git("config", "merge.renormalize", "true")
+	// A gitlink merge never normalizes file content.
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
 	refuse("merge.renormalize", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
 }

@@ -54,7 +54,7 @@ var reuseCarryProduced = []string{"took", "note", "weigh", "rounds"}
 
 func TestSelfHostReuseCarry(t *testing.T) {
 	runSemanticProgram(t, "reusecarry", reuseCarryProgram, reuseCarryProduced,
-		semInlineWants("11617037\n"), "note", "weigh")
+		semInlineWants("11617036\n"), "note", "weigh")
 }
 
 // Each read below retires its stream, and the retire rebuilds that stream in

@@ -285,9 +285,11 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		{
 			name: "struct_if_let_destructure_alias",
 			src: `struct P { x: i32, y: i32 }
+@noinline function make_pair(i: i32): P { return P { x: 3 + i, y: 4 + i }; }
 function round(i: i32): i32 {
     let total: i32 = 0;
-    let p: P = P { x: 3 + i, y: 4 + i };
+    let make: (i32) => P = make_pair;
+    let p: P = make(i);
     if let P { x, y } = p { total = total + x + y; }
     return total;
 }
@@ -297,9 +299,11 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		{
 			name: "struct_as_pattern_binder",
 			src: `struct P { x: i32, y: i32 }
+@noinline function make_pair(i: i32): P { return P { x: 3 + i, y: 4 + i }; }
 function round(i: i32): i32 {
     let total: i32 = 0;
-    let p: P = P { x: 3 + i, y: 4 + i };
+    let make: (i32) => P = make_pair;
+    let p: P = make(i);
     if let w @ P { x, y } = p { total = total + w.x + y; }
     return total;
 }

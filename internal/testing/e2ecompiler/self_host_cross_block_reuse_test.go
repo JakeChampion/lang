@@ -5,6 +5,8 @@ import "testing"
 func TestSelfHostCrossBlockReuse(t *testing.T) {
 	boxedProbes(t)
 	cli := buildSelfHostCLI(t)
+	// Calling a field reader through a function value keeps the donor and recipient
+	// boxed in probes where direct projections would eliminate the allocations.
 	cases := []struct {
 		name   string
 		src    string
@@ -13,15 +15,17 @@ func TestSelfHostCrossBlockReuse(t *testing.T) {
 	}{
 		{"dead-donor", `enum E { A(i32[]), B(i32[]) }
 @noinline function id(xs: i32[]): i32[] { return xs; }
-function f(): i32 { let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let c: E = B(id([3, 4])); let v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } return t + v; }
-function main(): i32 { return f(); }`, 12, 1},
+@noinline function value(e: E): i32 { match (e) { A(w) => { return w[1]; }, B(w) => { return w[0] + w[1]; } } }
+function f(): i32 { let read: (E) => i32 = value; let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let c: E = B(id([3, 4])); let v: i32 = read(c); return t + v; }
+function main(): i32 { return f(); }`, 12, 3},
 		{"corruption-probe", `enum E { A(i32[]), B(i32[]) }
 function f(n: i32): i32 { let a: E = A([n, 2]); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let c: E = B([3, n]); let fresh: i32[] = [11, 22, n]; let v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } if (t + v != 9 || fresh[0] + fresh[1] + fresh[2] != 34) { return 90; } return __rc_underflow_count(); }
 function main(): i32 { return f(1); }`, 0, 4},
 		{"donor-live", `enum E { A(i32[]), B(i32[]) }
 @noinline function id(xs: i32[]): i32[] { return xs; }
-function f(): i32 { let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let c: E = B(id([3, 4])); let v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } match (a) { A(w) => { v = v + w[1]; }, B(_) => {} } return t + v; }
-function main(): i32 { return f(); }`, 14, 2},
+@noinline function value(e: E): i32 { match (e) { A(w) => { return w[1]; }, B(w) => { return w[0] + w[1]; } } }
+function f(): i32 { let read: (E) => i32 = value; let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let c: E = B(id([3, 4])); let v: i32 = read(c); v = v + read(a); return t + v; }
+function main(): i32 { return f(); }`, 14, 4},
 		{"early-return-path", `enum E { A(i32[]), B(i32[]) }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function f(n: i32): i32 { let a: E = A([n, 2]); match (a) { A(w) => { if (w[0] > 5) { return 1; } }, B(_) => {} } let c: E = B(id([3, 4])); match (c) { A(w) => { return w[0]; }, B(w) => { return w[0] + w[1]; } } return 0; }
@@ -88,14 +92,16 @@ function main(): i32 { return f(9) + f(3) + f(1); }`, 41, 6},
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, xs: id([1]) }; let s: i32 = a.x + a.xs[0]; if (i % 2 == 0) { let b: P = P { x: i, xs: id([10]) }; sum = sum + b.x + b.xs[0]; } else { let c: P = P { x: i, xs: id([20]) }; sum = sum + c.x + c.xs[0]; } sum = sum + s; i = i + 1; } return sum; }`, 76, 4},
 		{"both-arms-churn", `struct P { x: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
-function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let a: P = P { x: i, xs: id([i, 1]) }; let s: i32 = a.x + a.xs[1]; if (i % 3 == 0) { let b: P = P { x: i, xs: id([10]) }; sum = (sum + b.x + b.xs[0]) % 1000; } else if (i % 3 == 1) { let c: P = P { x: i, xs: id([20, 3]) }; sum = (sum + c.x + c.xs[1]) % 1000; } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 39, 2000000},
+@noinline function key(p: P): i32 { return p.x; }
+function main(): i32 { let read: (P) => i32 = key; let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let a: P = P { x: i, xs: id([i, 1]) }; let s: i32 = read(a) + a.xs[1]; if (i % 3 == 0) { let b: P = P { x: i, xs: id([10]) }; sum = (sum + read(b) + b.xs[0]) % 1000; } else if (i % 3 == 1) { let c: P = P { x: i, xs: id([20, 3]) }; sum = (sum + read(c) + c.xs[1]) % 1000; } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 39, 2666667},
 		{"shared-donor-both-arms", `struct P { x: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 { let keep: P[] = []; let sum: i32 = 0; let i: i32 = 0; while (i < 6) { let a: P = P { x: i, xs: id([i, 1]) }; if (i == 2 || i == 3) { keep = keep.append(a); } let s: i32 = a.x + a.xs[1]; if (i % 2 == 0) { let b: P = P { x: i, xs: id([10]) }; sum = sum + b.x + b.xs[0]; } else { let c: P = P { x: i, xs: id([20, 3]) }; sum = sum + c.x + c.xs[1]; } sum = sum + s; i = i + 1; } return sum + keep[0].xs[0] + keep[1].x; }`, 80, 15},
 		{"dying-in-both-match-arms", `enum St { On(i32), Off }
 struct M { tag: i32, st: St }
 @noinline function id(n: i32): i32 { return n; }
-function f(n: i32): i32 { let d: M = M { tag: n, st: On(id(n)) }; let s: i32 = 0; match (d.st) { On(v) => { s = v + d.tag; }, Off => { s = d.tag; } } let e: M = M { tag: n, st: Off }; if (n > 2) { s = s + e.tag; } let b: M = M { tag: n + 1, st: On(id(3)) }; match (b.st) { On(v) => { s = s + v + b.tag; }, Off => {} } return s; }
+@noinline function key(p: M): i32 { return p.tag; }
+function f(n: i32): i32 { let read: (M) => i32 = key; let d: M = M { tag: n, st: On(id(n)) }; let s: i32 = 0; match (d.st) { On(v) => { s = v + read(d); }, Off => { s = read(d); } } let e: M = M { tag: n, st: Off }; if (n > 2) { s = s + read(e); } let b: M = M { tag: n + 1, st: On(id(3)) }; match (b.st) { On(v) => { s = s + v + read(b); }, Off => {} } return s; }
 function main(): i32 { return f(1) + f(5); }`, 31, 8},
 		{"dying-in-both-if-arms", `struct P { x: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -103,8 +109,9 @@ function f(n: i32): i32 { let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = 0;
 function main(): i32 { return f(5) + f(1); }`, 41, 6},
 		{"returning-arm-holds-nothing", `struct P { x: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
-function f(n: i32): i32 { let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = 0; if (n > 3) { s = a.x; } else if (n > 1) { s = a.xs[1]; return s; } else { s = a.xs[0] + 1; } let b: P = P { x: n * 3, xs: id([4]) }; return s + b.x + b.xs[0]; }
-function main(): i32 { return f(5) + f(2) + f(0); }`, 30, 6},
+@noinline function key(p: P): i32 { return p.x; }
+function f(n: i32): i32 { let read: (P) => i32 = key; let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = 0; if (n > 3) { s = read(a); } else if (n > 1) { s = a.xs[1]; return s; } else { s = a.xs[0] + 1; } let b: P = P { x: n * 3, xs: id([4]) }; return s + read(b) + b.xs[0]; }
+function main(): i32 { return f(5) + f(2) + f(0); }`, 30, 8},
 		{"arms-of-different-counts", `enum S { One(i32), Two(i32, i64) }
 struct M { tag: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
@@ -130,7 +137,8 @@ function main(): i32 { let keep: L = build(8); let before: i32 = score(keep); le
 		{"match-arms-churn", `enum St { On(i32[]), Off(i32[]) }
 struct M { tag: i32, st: St }
 @noinline function id(xs: i32[]): i32[] { return xs; }
-function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let d: M = M { tag: i, st: On(id([i, 1])) }; let s: i32 = 0; match (d.st) { On(v) => { s = v[1] + d.tag; }, Off(v) => { s = d.tag; } } if (i % 3 > 0) { let b: M = M { tag: i, st: Off(id([3])) }; match (b.st) { On(v) => { sum = sum + 1; }, Off(v) => { sum = (sum + v[0] + b.tag) % 1000; } } } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 65, 3666666},
+@noinline function key(p: M): i32 { return p.tag; }
+function main(): i32 { let read: (M) => i32 = key; let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let d: M = M { tag: i, st: On(id([i, 1])) }; let s: i32 = 0; match (d.st) { On(v) => { s = v[1] + read(d); }, Off(v) => { s = read(d); } } if (i % 3 > 0) { let b: M = M { tag: i, st: Off(id([3])) }; match (b.st) { On(v) => { sum = sum + 1; }, Off(v) => { sum = (sum + v[0] + read(b)) % 1000; } } } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 65, 4333332},
 		{"loop-phi-donor", `struct P { x: i32, y: i32 }
 @noinline function get(p: P): i32 { return p.x + p.y; }
 function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let u: i32 = 0; let i: i32 = 0; while (i < 3) { let c: P = P { x: i, y: n }; if (i > n) { u = u + 1; } u = u + get(a); a = c; i = i + 1; } let t: i32 = get(a); let r: i32 = 0; if (t > 3) { r = 1; } let b: P = P { x: t * 3, y: 4 }; return u + r + get(b); }

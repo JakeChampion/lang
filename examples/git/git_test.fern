@@ -1317,7 +1317,7 @@ function test_merge_config(): test.TestOutcome {
   if (read("[merge]\n\trenameLimit = abc\n").fatal != "bad numeric config value 'abc' for 'merge.renamelimit' in file .git/config: invalid unit" || read("[merge]\n\trenames = maybe\n").fatal != "bad boolean config value 'maybe' for 'merge.renames'" || read("[diff]\n\talgorithm = bogus\n").fatal != "unknown value for config 'diff.algorithm': bogus") {
     return test.fail("the values that git refuses");
   }
-  if (!read("[merge]\n\trenormalize = true\n").fatal.starts_with("the port does not have merge.renormalize")) {
+  if (plain.o.renormalize || !read("[merge]\n\trenormalize = true\n").o.renormalize || read("[merge]\n\trenormalize = false\n").o.renormalize) {
     return test.fail("merge.renormalize");
   }
   if (merge.configured(config.empty(), merge.defaults(), "5").o.verbosity != 5 || read("[merge]\n\tverbosity = 4\n").o.verbosity != 4) {

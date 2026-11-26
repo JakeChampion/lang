@@ -30,7 +30,7 @@ import "./walk";
 // and `drivers` records whether each named driver has a command.
 // With a `verbosity` of 5 or more, the messages of an inner merge are kept. `abbrev` is the least length of a short name.
 // `attrs` holds the attributes, or nothing.
-pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
+pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, renormalize: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, driver_error: Option[(string, string)], drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
 
 // The text of a gap: a part of a merge that the port does not have.
 function gap(what: string): string {
@@ -39,32 +39,13 @@ function gap(what: string): string {
 
 // The settings of git with no configuration.
 pub function defaults(): Options {
-  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
+  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, renormalize: false, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", driver_error: None, drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
 }
 
 // The settings of a merge from the configuration, or the message of git
 // for a value that it refuses. `error` is a line that git writes before
 // the message.
 pub struct Configured { o: Options, error: string, fatal: string }
-
-// 1 or 0 for a boolean of the configuration, and -1 for a value that is
-// no boolean (`git_parse_maybe_bool` of git).
-function config_bool(e: config.Entry): i32 {
-  if (e.bare) {
-    return 1;
-  }
-  let low = e.value.to_ascii_lower();
-  if (low == "true" || low == "yes" || low == "on") {
-    return 1;
-  }
-  if (low == "" || low == "false" || low == "no" || low == "off") {
-    return 0;
-  }
-  return match (config.integer(e.value)) {
-    Ok(n) => if (n != 0) { 1 } else { 0 },
-    Err(_) => -1,
-  };
-}
 
 function last_entry(c: config.Config, name: string): config.Entry[] {
   let found: config.Entry[] = [];
@@ -82,6 +63,7 @@ function last_entry(c: config.Config, name: string): config.Entry[] {
 pub function configured(c: config.Config, base: Options, verbosity: string): Configured {
   let o = base;
   let stop = (message: string): Configured => Configured { o: base, error: "", fatal: message };
+  let missing = (e: config.Entry): Configured => Configured { o: base, error: "error: " + config.missing_value(e), fatal: c.bad(e) };
   for name in ["merge.verbosity", "diff.renamelimit", "merge.renamelimit"] {
     for e in last_entry(c, name) {
       let value = if (e.bare) { "" } else { e.value };
@@ -96,18 +78,19 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
     }
   }
   for e in last_entry(c, "merge.renormalize") {
-    let b = config_bool(e);
+    let b = e.maybe_bool();
     if (b < 0) {
       return stop("bad boolean config value '" + e.value + "' for 'merge.renormalize'");
     }
-    if (b == 1) {
-      return stop(gap("merge.renormalize"));
-    }
+    o = Options { ...o, renormalize: b == 1 };
   }
   for name in ["diff.renames", "merge.renames"] {
     for e in last_entry(c, name) {
+      if (e.bare) {
+        return missing(e);
+      }
       let low = e.value.to_ascii_lower();
-      let b = if (!e.bare && (low == "copies" || low == "copy")) { 1 } else { config_bool(e) };
+      let b = if (low == "copies" || low == "copy") { 1 } else { e.maybe_bool() };
       if (b < 0) {
         return stop("bad boolean config value '" + e.value + "' for '" + name + "'");
       }
@@ -115,7 +98,10 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
     }
   }
   for e in last_entry(c, "merge.directoryrenames") {
-    let b = config_bool(e);
+    if (e.bare) {
+      return missing(e);
+    }
+    let b = e.maybe_bool();
     if (b >= 0) {
       o = Options { ...o, dir_renames: b == 1, dir_moves: b == 1 };
     } else if (e.value.to_ascii_lower() == "conflict") {
@@ -123,6 +109,9 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
     }
   }
   for e in last_entry(c, "diff.algorithm") {
+    if (e.bare) {
+      return missing(e);
+    }
     let low = e.value.to_ascii_lower();
     let a = o.algo;
     if (low == "myers" || low == "default") {
@@ -141,7 +130,7 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
   for e in c.entries {
     if (e.name == "merge.conflictstyle") {
       if (e.bare) {
-        return Configured { o: base, error: "error: " + config.missing_value(e), fatal: c.bad(e) };
+        return missing(e);
       }
       if (e.value == "merge") {
         o = Options { ...o, style: linediff.STYLE_MERGE };
@@ -158,7 +147,13 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
     }
     // The name of a driver is the part between `merge.` and the last dot.
     let last = e.name.last_index_of(".").unwrap_or(-1);
-    if (e.name.starts_with("merge.") && last > 6) {
+    let is_driver = e.name.starts_with("merge.") && last > 6;
+    let needs_value = e.name == "merge.default" || is_driver && (e.name.ends_with(".name") || e.name.ends_with(".driver") || e.name.ends_with(".recursive"));
+    // Git reads the driver settings only when a blob merge selects a driver.
+    if (e.bare && needs_value && o.driver_error.is_none()) {
+      o = Options { ...o, driver_error: Some(("error: " + config.missing_value(e), c.bad(e))) };
+    }
+    if (is_driver) {
       let name = objects.part(e.name, 6, last);
       let has_command = e.name.ends_with(".driver") || o.drivers.get_or(name, false);
       o = Options { ...o, drivers: o.drivers.insert(name, has_command) };
@@ -689,6 +684,10 @@ function blob_of(st: State, hash: string): (State, u8[]) {
 
 // The driver of the merge of `path` (`find_ll_merge_driver` of git).
 function driver_of(st: State, path: string): (State, string) {
+  if let Some(err) = st.o.driver_error {
+    let (warning, fatal) = err;
+    return (State { ...st, warnings: st.warnings.append(warning), fatal: fatal }, "text");
+  }
   let value = if (st.o.attrs.len() > 0) { attr.value_of(st.o.attrs[0], path, "merge") } else { attr.UNSPECIFIED };
   if (value == attr.SET) {
     return (st, "text");
@@ -709,6 +708,9 @@ function driver_of(st: State, path: string): (State, string) {
 // The merge of the blobs `o`, `a` and `b` for `path`, and the name of its
 // blob (`merge_3way` of git). The names of the three sides are `names`.
 function merge_3way(st_in: State, path: string, o: string, a: string, b: string, names: string[], extra_marker: i32): (State, i32, string) {
+  if (st_in.o.renormalize) {
+    return (State { ...st_in, fatal: gap("merge.renormalize") }, CLEAN, "");
+  }
   let plain = names[0] == names[1] && names[1] == names[2];
   let l = if (plain) { Labels { base: st_in.ancestor, ours: st_in.branch1, theirs: st_in.branch2 } } else { Labels { base: st_in.ancestor + ":" + names[0], ours: st_in.branch1 + ":" + names[1], theirs: st_in.branch2 + ":" + names[2] } };
   let (st0, base) = blob_of(st_in, o);
@@ -767,22 +769,24 @@ function module_config(parent: refs.Repo): config.Config {
   return config.empty();
 }
 
+enum ModuleLookup { AvailableModule(refs.Repo), MissingModule, UnknownModule, ModuleError(string), InvalidModuleDir(string) }
+
 // A checked-out submodule takes precedence over its named module store.
-function submodule_at(parent: refs.Repo, path: string): Option[refs.Repo] {
+function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
+  // Git reads the path-to-name mapping only when the superproject has a worktree.
   if (parent.top == "") {
-    return None;
+    return MissingModule;
   }
+  let modules = parent.dir + "/modules";
+  let configured = parent.config.flag("extensions.submodulepathconfig", false);
   if let Some(sub) = refs.checkout_at(parent.top + "/" + path) {
-    return Some(sub);
+    return AvailableModule(sub);
   }
-  if (parent.dir != parent.common || parent.config.flag("extensions.submodulepathconfig", false)) {
-    return None;
+  let unavailable = if (missing_or_empty_dir(parent.top + "/" + path + "/.git")) { MissingModule } else { UnknownModule };
+  if (!configured && missing_or_empty_dir(modules)) {
+    return unavailable;
   }
-  let modules = parent.common + "/modules";
-  if (stat(modules).is_err()) {
-    return None;
-  }
-  let dir = "";
+  let module_name = "";
   for e in module_config(parent).entries {
     if (e.value != path || !e.name.starts_with("submodule.") || !e.name.ends_with(".path") || e.name.len() <= 15) {
       continue;
@@ -790,28 +794,41 @@ function submodule_at(parent: refs.Repo, path: string): Option[refs.Repo] {
     let name = objects.part(e.name, 10, e.name.len() - 5);
     for part in name.replace("\\", "/").split("/") {
       if (part == "" || part == "." || part == "..") {
-        return None;
+        return UnknownModule;
       }
     }
-    if (dir != "") {
-      return None;
+    if (module_name != "") {
+      return UnknownModule;
     }
-    dir = modules + "/" + name;
+    module_name = name;
   }
-  return refs.stored_module(dir);
-}
-
-// Git can find the submodule in the worktree or in its module store.
-// A configured gitdir can live elsewhere. Leave that lookup to the
-// submodule history merge.
-function submodule_absent(repo: refs.Repo, path: string): boolean {
-  if (repo.top == "" || repo.config.flag("extensions.submodulepathconfig", false)) {
-    return false;
+  if (module_name == "") {
+    return UnknownModule;
   }
-  if (!missing_or_empty_dir(repo.top + "/" + path + "/.git")) {
-    return false;
+  let dir = modules + "/" + module_name;
+  if (configured) {
+    let key = "submodule." + module_name + ".gitdir";
+    let location = parent.config.get(key);
+    if (parent.config.flag("extensions.worktreeconfig", false)) {
+      let file = parent.dir + "/config.worktree";
+      if let Some(local) = config.read(file, file).get(key) {
+        location = Some(local);
+      }
+    }
+    let Some(value) = location else {
+      return ModuleError("the '" + key + "' config does not exist for module '" + module_name + "'. Please ensure it is set, for example by running something like: 'git config " + key + " .git/modules/" + module_name + "'. For details see the extensions.submodulePathConfig documentation.");
+    };
+    // Git checks the configured spelling before resolving a relative path.
+    let slash = value.last_index_of("/").unwrap_or(-1);
+    if (slash < 0 || !objects.part(value, 0, slash).ends_with("/modules")) {
+      return InvalidModuleDir(value);
+    }
+    dir = if (value.starts_with("/")) { value } else { parent.top + "/" + value };
   }
-  return missing_or_empty_dir(repo.common + "/modules") && (repo.common == repo.dir || missing_or_empty_dir(repo.dir + "/modules"));
+  if let Some(sub) = refs.stored_module(dir) {
+    return AvailableModule(sub);
+  }
+  return if (missing_or_empty_dir(dir)) { unavailable } else { UnknownModule };
 }
 
 enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Diverged, Unresolved }
@@ -819,7 +836,7 @@ enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Div
 // A merge of two divergent commits is reachable only if a ref tip or
 // detached HEAD reaches both. A missing object leaves the answer unknown.
 function no_submodule_resolution(sub: refs.Repo, graph: walk.Graph, a: string, b: string): boolean {
-  if (sub.dir != sub.common || sub.config.get("extensions.refstorage").unwrap_or("files") != "files") {
+  if (sub.config.get("extensions.refstorage").unwrap_or("files") != "files") {
     return false;
   }
   let tips = refs.all_refs(sub);
@@ -959,7 +976,8 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
     // Git first opens the checkout, then tries its stored module. When
     // both are absent it records a conflict and keeps the first parent.
     if let Some(repo) = st.o.repo {
-      if let Some(sub) = submodule_at(repo, path) {
+      let found = submodule_at(repo, path);
+      if let AvailableModule(sub) = found {
         if (o.hash == no_version(st.store).hash) {
           st = message(st, path, "Failed to merge submodule " + path + " (no merge base)");
           return (st, false, if (st.depth > 0) { o } else { a });
@@ -988,7 +1006,14 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
           Unresolved => {}
         }
       }
-      if (submodule_absent(repo, path)) {
+      if let InvalidModuleDir(dir) = found {
+        st = State { ...st, warnings: st.warnings.append("hint: enabling extensions.submodulePathConfig might fix the following error, if it's not already enabled."), fatal: "refusing to create/use '" + dir + "' in another submodule's  git dir." };
+        return (st, false, a);
+      }
+      if let ModuleError(reason) = found {
+        return (State { ...st, fatal: reason }, false, a);
+      }
+      if let MissingModule = found {
         st = message(st, path, "Failed to merge submodule " + path + " (not checked out)");
         return (st, false, if (st.depth > 0) { o } else { a });
       }
@@ -1610,6 +1635,16 @@ function process_entry(st_in: State, d_in: Dirs, path_in: string, ci_in: Info): 
   } else if (ci.filemask == 3 || ci.filemask == 5) {
     // One side changed the file and the other side deleted it.
     let side = if (ci.filemask == 5) { 2 } else { 1 };
+    // Matching object IDs already establish equality without converting the blob.
+    if (st.o.renormalize && ci.stages[0].mode == ci.stages[side].mode) {
+      if (ci.stages[0].hash != ci.stages[side].hash) {
+        return (State { ...st, fatal: gap("merge.renormalize") }, d);
+      }
+      if (!ci.path_conflict) {
+        ci = Info { ...ci, is_null: true, clean: true, df_conflict: false, result: none };
+        return (with_path(st, path, ci), record(d, path, ci));
+      }
+    }
     ci = Info { ...ci, result: ci.stages[if (st.depth > 0) { 0 } else { side }], clean: false };
     let modify_branch = if (side == 1) { st.branch1 } else { st.branch2 };
     let delete_branch = if (side == 1) { st.branch2 } else { st.branch1 };
