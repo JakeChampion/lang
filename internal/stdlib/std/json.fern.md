@@ -781,14 +781,27 @@ const JSON_NOT_WS: u8[] = [
 
 ```fern
 <<17 function __json_ws(s: string, i: i32): i32>>=
+@inline
 function __json_ws(s: string, i: i32): i32 {
   if (i < s.len()) {
     let b = s[i] as i32;
     if (b == 32 || b == 9 || b == 10 || b == 13) {
-      return __scan_set(s, i + 1, JSON_NOT_WS);
+      return __json_ws_run(s, i + 1);
     }
   }
   return i;
+}
+
+// The end of a run of whitespace that starts before `i`.
+function __json_ws_run(s: string, i: i32): i32 {
+  // Most runs are one space, after a colon or a comma.
+  if (i < s.len()) {
+    let c = s[i] as i32;
+    if (c != 32 && c != 9 && c != 10 && c != 13) {
+      return i;
+    }
+  }
+  return __scan_set(s, i, JSON_NOT_WS);
 }
 
 function __json_byte(s: string, i: i32): i32 {
