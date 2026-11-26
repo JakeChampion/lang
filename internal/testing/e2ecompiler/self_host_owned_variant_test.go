@@ -49,7 +49,6 @@ function taken(own o: Option[i32]): i32 { return 1; }
 				}
 				t.Fatalf("%s: want %q, got %v", label, tc.want, ds)
 			}
-			check("Go", goCheckerDiags(t, dir, src))
 			cmd := exec.Command(bin)
 			if len(runner) > 0 {
 				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)

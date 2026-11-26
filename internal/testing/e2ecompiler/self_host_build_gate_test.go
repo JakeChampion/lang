@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostBuildGateX86_64(t *testing.T) {
@@ -483,9 +485,11 @@ func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 				t.Fatalf("write prog: %v", err)
 			}
 
-			native := goCheckerCodes(t, progDir, row.src)
-			if len(native) != 1 || native[0] != row.code {
-				t.Fatalf("native reports %v, want exactly [%s] — the row no longer probes its code", native, row.code)
+			if !e2eharness.SelfHostOnlyCode(row.code) {
+				native := goCheckerCodes(t, progDir, row.src)
+				if len(native) != 1 || native[0] != row.code {
+					t.Fatalf("native reports %v, want exactly [%s] — the row no longer probes its code", native, row.code)
+				}
 			}
 
 			checkCmd := exec.Command(fernBin, "-check", prog, stdlibRoot)

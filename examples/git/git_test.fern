@@ -1307,6 +1307,9 @@ function test_merge_config(): test.TestOutcome {
   if (read("[diff]\n\trenames = copies\n[merge]\n\tdirectoryRenames = false\n\trenameLimit = 0\n").o.renames != true || read("[merge]\n\tdirectoryRenames = false\n").o.dir_renames || read("[merge]\n\trenameLimit = 0\n").o.rename_limit != 7000) {
     return test.fail("the renames of a configuration");
   }
+  if (read("[merge]\nrenameLimit = 010\n").o.rename_limit != 8 || read("[merge]\nrenameLimit = +0XfK\n").o.rename_limit != 15360) {
+    return test.fail("octal and hexadecimal rename limits");
+  }
   let style = read("[merge]\n\tconflictStyle = bogus\n");
   if (style.error != "error: unknown style 'bogus' given for 'merge.conflictstyle'" || style.fatal != "bad config variable 'merge.conflictstyle' in file '.git/config' at line 2") {
     return test.fail("a style that git does not know: " + style.error + " / " + style.fatal);

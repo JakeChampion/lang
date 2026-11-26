@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,6 +16,25 @@ const countedAppendProgram = `
 @noinline function build_i32(n: i32): i32[] {
   let out: i32[] = [];
   for i in 0..n { out = out.append(scaled(i)); }
+  return out;
+}
+@noinline function branched(n: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..n {
+    let odd = i > 0 && (i % 2 == 1 || i % 7 == 0);
+    out = out.append(if (odd) { i * 2 } else { i });
+  }
+  return out;
+}
+@noinline function running(n: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..n { out = out.append(if (i > 0) { out[i - 1] + 1 } else { 0 }); }
+  return out;
+}
+@noinline function be16(t: string, i: i32): i32 { return t[i] as i32 << 8 | t[i + 1] as i32; }
+@noinline function words(t: string, n: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..n { out = out.append(be16(t, i % 8)); }
   return out;
 }
 @noinline function copied(xs: i32[]): i32[] {
@@ -107,6 +127,21 @@ function main(): i32 {
   let copy = copied(out);
   print(__heap_alloc_count() - copy_before);
   if (copy.len() != 96000 || copy[0] != -10 || copy[95999] != out[95999] + 1) { return 15; }
+  let branched_before = __heap_alloc_count();
+  let br = branched(96000);
+  print(__heap_alloc_count() - branched_before);
+  let running_before = __heap_alloc_count();
+  let run = running(96000);
+  print(__heap_alloc_count() - running_before);
+  let words_before = __heap_alloc_count();
+  let ws = words("abcdefghij", 96000);
+  print(__heap_alloc_count() - words_before);
+  for i in 0..96000 {
+    let odd = i > 0 && (i % 2 == 1 || i % 7 == 0);
+    if (br[i] != if (odd) { i * 2 } else { i }) { return 16; }
+    if (run[i] != i) { return 17; }
+    if (ws[i] != (97 + i % 8) * 256 + 98 + i % 8) { return 18; }
+  }
   let empty_before = __heap_alloc_count();
   if (build_i32(0).len() != 0 || build_i32(-7).len() != 0) { return 3; }
   if (__heap_alloc_count() != empty_before) { return 4; }
@@ -146,7 +181,7 @@ func TestSelfHostCountedAppendReserve(t *testing.T) {
 						t.Fatalf("counted append: %v\n%s", err, out)
 					}
 					lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-					for _, line := range lines[:2] {
+					for _, line := range lines[:5] {
 						count, err := strconv.Atoi(line)
 						if err != nil || disabled == "0" && count != 1 || disabled == "1" && count < 10 {
 							t.Errorf("construction allocations %q with disabled=%s", line, disabled)
@@ -177,6 +212,13 @@ func TestSelfHostCountedAppendReserveReport(t *testing.T) {
 	for _, want := range []string{"counted append capacity decisions:", "build_i32: counted append capacity", "copied: counted append capacity", "reason=reserved storage=reserved", "reason=array-observed", "reason=effect-boundary", "reason=shape-unsupported", "reason=non-scalar"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("report lacks %q:\n%s", want, text)
+		}
+	}
+	lines := strings.Split(text, "\n")
+	for _, name := range []string{"branched", "running", "words"} {
+		at := slices.Index(lines, name+": counted append capacity")
+		if at < 0 || at+1 >= len(lines) || !strings.Contains(lines[at+1], "reason=reserved") {
+			t.Errorf("%s is not reserved:\n%s", name, text)
 		}
 	}
 }

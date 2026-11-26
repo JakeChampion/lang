@@ -348,7 +348,9 @@ function inst_detail(ins: SInst): string {
   if (shows_imm(ins)) {
     out = out + " " + util.i32_to_string(ins.imm);
   }
-  if (shows_str(ins)) {
+  if (ins.kind_tag == BINARY && ins.ir_kind != 0) {
+    out = out + " " + ir.kind_name(ins.ir_kind) + ins.str;
+  } else if (shows_str(ins)) {
     out = out + " " + ins.str;
   }
   return out;
@@ -532,7 +534,7 @@ pub function kind_name(id: i32): string {
 
 // A binary instruction of the lifted form, with the IR kind `kind`.
 pub function binary_inst(result: i32, args: i32[], imm: i32, kind: i32): SInst {
-  return SInst { kind_tag: BINARY, result: result, args: args, imm: imm, str: ir.kind_name(kind), ir_kind: kind };
+  return SInst { kind_tag: BINARY, result: result, args: args, imm: imm, str: "", ir_kind: kind };
 }
 
 // The IR kind that the lift gives an op of kind `kind_tag` named `name`, or 0.
@@ -557,6 +559,14 @@ pub function lifted_kind(kind_tag: i32, name: string): i32 {
     }
   }
   return ir.kind_id(name);
+}
+
+// The lifted instruction of kind `kind_tag` named `name`. A binary op with an
+// IR kind holds no name in `str`.
+pub function lifted_inst(kind_tag: i32, result: i32, args: i32[], imm: i32, name: string): SInst {
+  let kind = lifted_kind(kind_tag, name);
+  let text = if (kind_tag == BINARY && kind != 0) { "" } else { name };
+  return SInst { kind_tag: kind_tag, result: result, args: args, imm: imm, str: text, ir_kind: kind };
 }
 
 // The id of an instruction kind name, or 0. Semantic names are not looked up.
@@ -1606,6 +1616,12 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 
 pub struct Alloc { reg_of: i32[], def_pos: i32[], lo: i32[], hi: i32[], cold: i32[] }
 
+// An integer add, subtract, bitwise op or compare. None of these can trap.
+pub function no_trap_int_binary(ins: SInst): boolean {
+  let k = ins.ir_kind;
+  return ins.kind_tag == BINARY && (k == ir.K_ADD || k == ir.K_SUB || k == ir.K_AND || k == ir.K_OR || k == ir.K_XOR || ir.is_int_cmp_kind(k));
+}
+
 pub function lane_inst(ins: SInst): boolean {
   let k = ins.kind_tag;
   return (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ir.is_lane_kind(ins.ir_kind);
@@ -1655,7 +1671,7 @@ function lane_results(f: SFunc): boolean[] {
   for blk in f.blocks {
     for ins in blk.insts {
       let k = ins.kind_tag;
-      let maybe = k == PARAM || k == CALL && ins.imm == 6 || (k == BINARY || k == UNARY || k == TERNARY || k == LANE_STORE) && ins.str.len() > 1 && ins.str[0] == b'v';
+      let maybe = k == PARAM || k == CALL && ins.imm == 6 || lane_inst(ins);
       if (maybe && ins.result >= 0 && ins.result < f.nvals && lane_result(ins)) {
         if (lanes.len() == 0) {
           lanes = __alloc_bool(f.nvals);
@@ -5249,7 +5265,7 @@ function operand_id(a: i32, canon: i32[]): i32 {
 }
 
 function inst_hash(ins: SInst, canon: i32[]): i32 {
-  let h: i32 = (ins.kind_tag * 31 + (ins.imm & 65535)) * 31 + (__str_hash(ins.str, 0) & 65535) & 1048575;
+  let h: i32 = ((ins.kind_tag * 31 + ins.ir_kind) * 31 + (ins.imm & 65535)) * 31 + (__str_hash(ins.str, 0) & 65535) & 1048575;
   for a in ins.args {
     h = h * 31 + (operand_id(a, canon) & 1048575) & 1048575;
   }
@@ -5257,7 +5273,7 @@ function inst_hash(ins: SInst, canon: i32[]): i32 {
 }
 
 function same_operation(a: SInst, b: SInst, canon: i32[]): boolean {
-  if (a.kind_tag != b.kind_tag || a.imm != b.imm || a.args.len() != b.args.len() || a.str != b.str) {
+  if (a.kind_tag != b.kind_tag || a.ir_kind != b.ir_kind || a.imm != b.imm || a.args.len() != b.args.len() || a.str != b.str) {
     return false;
   }
   for k in 0..a.args.len() {
@@ -7596,18 +7612,18 @@ function lane_constant_fact(ins: SInst): i32 {
 function lane_identity(ins: SInst, facts: i32[]): SInst {
   if (ins.kind_tag == TERNARY && ins.ir_kind == ir.K_VSELECT && ins.args.len() == 3) {
     if (facts[ins.args[1]] == 1) {
-      return SInst { ...ins, kind_tag: BINARY, str: "vand", ir_kind: ir.K_VAND, args: [ins.args[0], ins.args[2]] };
+      return SInst { ...ins, kind_tag: BINARY, str: "", ir_kind: ir.K_VAND, args: [ins.args[0], ins.args[2]] };
     }
     if (facts[ins.args[0]] == 1) {
-      return SInst { ...ins, kind_tag: BINARY, str: "vandnot", ir_kind: ir.K_VANDNOT, args: [ins.args[1], ins.args[2]] };
+      return SInst { ...ins, kind_tag: BINARY, str: "", ir_kind: ir.K_VANDNOT, args: [ins.args[1], ins.args[2]] };
     }
   }
   if (ins.kind_tag == BINARY && (ins.ir_kind == ir.K_VMUL || ins.ir_kind == ir.K_FMUL) && (facts[ins.args[0]] == 2 || facts[ins.args[1]] == 2)) {
     let a = if (facts[ins.args[0]] == 2) { ins.args[1] } else { ins.args[0] };
     if (ins.ir_kind == ir.K_FMUL) {
-      return SInst { ...ins, str: "fadd", ir_kind: ir.K_FADD, args: [a, a] };
+      return SInst { ...ins, ir_kind: ir.K_FADD, args: [a, a] };
     }
-    return SInst { ...ins, str: "vadd", ir_kind: ir.K_VADD, args: [a, a] };
+    return SInst { ...ins, ir_kind: ir.K_VADD, args: [a, a] };
   }
   return ins;
 }
@@ -9924,11 +9940,11 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
   }
   let v = not_of(defs, ins.args[1]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[0], v], str: "and_not", ir_kind: ir.K_AND_NOT };
+    return SInst { ...ins, args: [ins.args[0], v], ir_kind: ir.K_AND_NOT };
   }
   v = not_of(defs, ins.args[0]);
   if (v >= 0) {
-    return SInst { ...ins, args: [ins.args[1], v], str: "and_not", ir_kind: ir.K_AND_NOT };
+    return SInst { ...ins, args: [ins.args[1], v], ir_kind: ir.K_AND_NOT };
   }
   return no_inst();
 }

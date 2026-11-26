@@ -20,11 +20,12 @@ pub function job_size(block: i32): i32 {
 }
 
 // The largest job that `grown` makes.
-pub const MAX_JOB: i32 = 8388608;
+pub const MAX_JOB: i32 = 2097152;
 
-// The size of the job after a job of `size` bytes. Each job is a process,
-// whose start costs about 3 ms of kernel time, so the jobs after the first
-// ones double up to MAX_JOB. The output does not depend on the size.
+// The size of the job after a job of `size` bytes. Each job goes to a
+// worker through a pipe, so the jobs after the first ones double up to
+// MAX_JOB. A larger job leaves the other processes idle at the end of the
+// input. The output does not depend on the size.
 pub function grown(size: i32): i32 {
   if (size > MAX_JOB / 2) {
     return size;

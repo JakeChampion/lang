@@ -266,6 +266,53 @@ function test_wait_any_returns_the_first_to_finish(): test.TestOutcome {
   return test.assert_eq(order.join(" "), "slow fast quick");
 }
 
+// A pool gives each input a ticket, and the output of each input comes back
+// with its ticket. The inputs are larger than the buffer of a pipe, and the
+// pool has fewer workers than inputs.
+function test_a_pool_returns_each_output_with_its_ticket(): test.TestOutcome {
+  let mark: u8 = 9 as u8;
+  let p = worker.pool(2, (input: u8[]): u8[] => input.append(mark));
+  let sizes: i32[] = [];
+  let seen: i32[] = [];
+  let ok = true;
+  for k in 0..7 {
+    while (p.idle() == 0) {
+      let (p2, ticket, out) = worker.wait_pool(p);
+      p = p2;
+      ok = ok && out.len() == sizes[ticket] + 1 && out[out.len() - 1] == mark;
+      seen = seen.append(ticket);
+    }
+    let n = k * 70001;
+    let input: u8[] = [];
+    for i in 0..n {
+      input = input.append((i * 7) as u8);
+    }
+    sizes = sizes.append(n);
+    let (p3, ticket) = worker.submit(p, input);
+    p = p3;
+    ok = ok && ticket == k;
+  }
+  if (p.pending() == 0) {
+    worker.close(p);
+    return test.fail("the pool lost its inputs");
+  }
+  while (p.pending() > 0) {
+    let (p2, ticket, out) = worker.wait_pool(p);
+    p = p2;
+    ok = ok && out.len() == sizes[ticket] + 1;
+    seen = seen.append(ticket);
+  }
+  worker.close(p);
+  if (!ok) {
+    return test.fail("an output did not match its input");
+  }
+  let total = 0;
+  for t in seen {
+    total += t;
+  }
+  return test.assert_eq(seen.len().to_string() + " " + total.to_string(), "7 21");
+}
+
 function main(): i32 {
   let r = test.new("std/worker");
   r = r.it("spawn and join a scalar", test_spawn_join_scalar);
@@ -281,5 +328,6 @@ function main(): i32 {
   r = r.it("poll gives a running worker back", test_poll_gives_a_running_worker_back);
   r = r.it("an event loop holds a worker across polls", test_an_event_loop_holds_a_worker);
   r = r.it("wait_any returns the first worker to finish", test_wait_any_returns_the_first_to_finish);
+  r = r.it("a pool returns each output with its ticket", test_a_pool_returns_each_output_with_its_ticket);
   return r.finish();
 }

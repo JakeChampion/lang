@@ -1214,8 +1214,9 @@ struct Wide { n: i64, s: string }
 }
 
 @noinline function consume(r: First): i32 {
-  if (r.yes) { return r.b.n + 1; }
-  return r.b.n;
+  let c: First = borrowed(r);
+  if (c.yes) { return c.b.n + 1; }
+  return c.b.n;
 }
 
 function main(): i32 {

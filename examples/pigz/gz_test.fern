@@ -484,14 +484,15 @@ function test_combine(): test.TestOutcome {
 function test_fitted(): test.TestOutcome {
   let mib = 1048576i64;
   let block = 131072;
+  let big = 8388608;
   let sizes = [
-    layout.fitted(layout.MAX_JOB, block, 4, -1i64),
-    layout.fitted(layout.MAX_JOB, block, 4, 1024i64 * mib),
-    layout.fitted(layout.MAX_JOB, block, 4, 40i64 * mib),
-    layout.fitted(layout.MAX_JOB, block, 4, 40i64 * mib + 100000i64),
+    layout.fitted(big, block, 4, -1i64),
+    layout.fitted(big, block, 4, 1024i64 * mib),
+    layout.fitted(big, block, 4, 40i64 * mib),
+    layout.fitted(big, block, 4, 40i64 * mib + 100000i64),
     layout.fitted(2097152, block, 4, 40i64 * mib),
-    layout.fitted(layout.MAX_JOB, block, 4, 4i64 * mib),
-    layout.fitted(layout.MAX_JOB, 2097152, 4, 60i64 * mib),
+    layout.fitted(big, block, 4, 4i64 * mib),
+    layout.fitted(big, 2097152, 4, 60i64 * mib),
   ];
   let got: string[] = [];
   for n in sizes {

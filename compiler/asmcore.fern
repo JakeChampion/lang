@@ -836,10 +836,10 @@ pub function build_manifest(s: EmitState): string {
   return manifest_line(s.build_target, s.build_profile, [s.harden, s.pie, s.sanitize, s.backtrace, s.size, s.shared, s.sandbox, s.cover, s.symbols, s.optimize], s.heap_limit, s.quarantine, s.cpu_limit, s.profile);
 }
 
-// The manifest of a wasm module, from the switches its build took. A wasm
-// module has no arena, so its heap_limit is 0.
+// The manifest of a wasm module, from the switches its build took. Its
+// heap_limit is the -heap-limit value, or 0 for a memory without a maximum.
 pub function switches_manifest(sw: Switches): string {
-  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared, sw.sandbox, sw.cover, sw.symbols, sw.optimize], 0i64, sw.quarantine, sw.cpu_limit, rtprofile.mode());
+  return manifest_line(sw.target, sw.profile, [sw.harden, sw.pie, sw.sanitize, sw.backtrace, sw.size, sw.shared, sw.sandbox, sw.cover, sw.symbols, sw.optimize], sw.heap_limit, sw.quarantine, sw.cpu_limit, rtprofile.mode());
 }
 
 // flags: harden, pie, sanitize, backtrace, size, shared, sandbox, cover,

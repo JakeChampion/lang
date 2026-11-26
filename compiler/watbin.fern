@@ -1380,9 +1380,16 @@ function emit_binary(mod: SExpr): i32[] {
   while (i < mod.items.len()) {
     if (node_head(mod.items[i]) == "memory") {
       let mn = mod.items[i];
-      let minv = parse_dec(mn.items[mn.items.len() - 1].text);
-      memBody = memBody.append(0);
-      memBody = leb_u32(memBody, minv);
+      let limits: i32[] = [];
+      for j in 1..mn.items.len() {
+        if (mn.items[j].kind == 2 && mn.items[j].text[0] != b'$') {
+          limits = limits.append(parse_dec(mn.items[j].text));
+        }
+      }
+      memBody = memBody.append(limits.len() - 1);
+      for v in limits {
+        memBody = leb_u32(memBody, v);
+      }
       memCount += 1;
     }
     i += 1;

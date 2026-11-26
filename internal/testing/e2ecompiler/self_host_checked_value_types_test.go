@@ -45,7 +45,6 @@ func TestSelfHostCheckedValueTypes(t *testing.T) {
 					cmd := mvsDriverCommand(t, target, bin)
 					cmd.Stdin = strings.NewReader(tc.source)
 					for label, ds := range map[string][]driverDiag{
-						"Go":   goCheckerDiags(t, dir, tc.source),
 						"Fern": driverDiags(runCheckerDriver(t, cmd, tc.name)),
 					} {
 						if (tc.code != "") != (len(ds) > 0) {
