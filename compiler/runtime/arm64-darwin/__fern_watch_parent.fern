@@ -7,6 +7,22 @@
 // posts NOTE_EXIT, and a watch added after the post never fires. So after the
 // watch is added, a worker whose parent is no longer `parent` gets SIGTERM.
 function __fern_watch_parent(parent: i32, worker: i32): void {
+  // A watchdog uses only its own kqueue. In particular, an inherited pipe
+  // writer would keep a worker waiting for EOF while we wait for its exit.
+  // PROC_PIDLISTFDS returns eight-byte proc_fdinfo entries, fd first.
+  let me = __syscall3(20, 0, 0, 0);
+  let size = __syscall6(336, 2, me, 1, 0, 0, 0) as i32;
+  if (size > 0) {
+    let fds = __raw_alloc(size);
+    let bytes = __syscall6(336, 2, me, 1, 0, fds as i64, size as i64) as i32;
+    let index = 0;
+    while (index < bytes / 8) {
+      let fd = __raw_load_ptr(fds, index) as i32;
+      __syscall3(6, fd as i64, 0, 0);
+      index += 1;
+    }
+    let owned = __raw_string(fds, size);
+  }
   let kq = __syscall3(362, 0, 0, 0) as i32;
   if (kq >= 0) {
     let ev = __raw_alloc(208);

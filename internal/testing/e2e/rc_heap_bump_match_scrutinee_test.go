@@ -54,7 +54,7 @@ function main(): i32 {
         acc = acc + r;
         i = i + 1;
     }
-    if (acc < 0) { return -1; }
+    if (acc != i * (i - 1)) { return -1; }
     return (__heap_bump_bytes() as i32) - before;
 }`
 }
@@ -125,9 +125,25 @@ func TestArm64MatchScrutineeReclaim(t *testing.T) {
 
 func TestWASMMatchScrutineeReclaim(t *testing.T) {
 	e2eharness.BoxedProbes(t)
-	for _, mk := range []func(string) string{matchScrutineeExprBumpSrc, matchScrutineeStmtBumpSrc, matchScrutineeLiteralBumpSrc} {
-		small := runWasm(t, mk("50"))
-		large := runWasm(t, mk("5000"))
+	// The calls return boxed variants with inlining off. A match on a
+	// literal constructor reads its payload directly and needs no box.
+	for _, tc := range []struct {
+		name    string
+		makeSrc func(string) string
+		boxed   bool
+	}{
+		{"expression-call", matchScrutineeExprBumpSrc, true},
+		{"statement-call", matchScrutineeStmtBumpSrc, true},
+		{"literal", matchScrutineeLiteralBumpSrc, false},
+	} {
+		small := runWasm(t, tc.makeSrc("50"))
+		large := runWasm(t, tc.makeSrc("5000"))
+		if tc.boxed && small <= 0 {
+			t.Errorf("%s: heap growth = %d, want positive", tc.name, small)
+		}
+		if !tc.boxed && small != 0 {
+			t.Errorf("%s: heap growth = %d, want zero", tc.name, small)
+		}
 		if small != large {
 			t.Errorf("match-scrutinee bump should be bounded: N=50 -> %d, N=5000 -> %d", small, large)
 		}

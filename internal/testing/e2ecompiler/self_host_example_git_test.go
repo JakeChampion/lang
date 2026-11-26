@@ -309,6 +309,17 @@ func TestSelfHostExampleGitAgainstGit(t *testing.T) {
 					}
 				}
 			}
+			for _, value := range []string{"010", "0x10", "false", "auto", "3", "08"} {
+				if _, stderr, code := oracle.run(t, top, "", "config", "core.abbrev", value); code != 0 {
+					t.Fatal(stderr)
+				}
+				gitCompare(t, oracle, port, top, "", "rev-parse", "--short", "HEAD")
+				gitCompare(t, oracle, port, top, "", "rev-parse", "--short=5", "HEAD")
+				gitCompare(t, oracle, port, top, "", "log", "-1", "--format=%h")
+			}
+			if _, stderr, code := oracle.run(t, top, "", "config", "--unset", "core.abbrev"); code != 0 {
+				t.Fatal(stderr)
+			}
 			// The port writes a loose object, and git reads it and finds the store sound.
 			text := "written by the port\n" + strings.Repeat("line\n", 4000)
 			name, stderr, code := port.run(t, top, text, "hash-object", "-w", "--stdin")
@@ -448,6 +459,7 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				}
 				compare("", "verify-pack", idx)
 				compare("", "verify-pack", "-v", strings.TrimSuffix(idx, ".idx")+".pack")
+				compare("", "verify-pack", "-v", strings.TrimSuffix(idx, ".idx"))
 				var names strings.Builder
 				for _, line := range strings.Split(listing, "\n") {
 					if f := strings.Fields(line); len(f) >= 5 && len(f[0]) == run.digits {
