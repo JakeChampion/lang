@@ -223,11 +223,13 @@ func keys(m map[string][2]uint64) []string {
 }
 
 func TestDWARFMixedStructVars(t *testing.T) {
+	// Take describe as a function value so its parameter uses the boxed ABI.
 	src := "struct Person { name: string, age: i32, score: i32 }\n" +
 		"@noinline function describe(p: Person): i32 { return p.age + p.score; }\n" +
 		"function main(): i32 {\n" +
 		"    let p: Person = Person { name: \"Ada\", age: 36, score: 99 };\n" +
-		"    return describe(p);\n" +
+		"    let f: (Person) => i32 = describe;\n" +
+		"    return f(p);\n" +
 		"}\n"
 	bin := buildFernCLI(t)
 	dir := t.TempDir()

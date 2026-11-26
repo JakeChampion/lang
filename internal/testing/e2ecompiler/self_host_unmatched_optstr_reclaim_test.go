@@ -35,7 +35,12 @@ func TestSelfHostUnmatchedOptStrReclaimX86_64(t *testing.T) {
 		if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 			t.Fatalf("%s: parse %q: %v", name, summary, err)
 		}
-		if allocs == 0 {
+		if name == "uos_option_string_literal" {
+			// Some holds the static string pointer directly.
+			if allocs != 0 {
+				t.Fatalf("%s allocated %d times for a literal; want zero", name, allocs)
+			}
+		} else if allocs == 0 {
 			t.Fatalf("%s allocated nothing — the probe is not exercising the path", name)
 		}
 		return allocs, frees, live

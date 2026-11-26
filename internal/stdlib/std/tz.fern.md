@@ -288,7 +288,7 @@ pub function (z: Zone) at(t: time.Timestamp): Zoned {
 }
 
 // The local civil date and clock time.
-pub function (zt: Zoned) to_datetime(): DateTime {
+pub function (zt: Zoned) to_datetime(): time.DateTime {
   return zt.local().to_datetime();
 }
 

@@ -134,9 +134,12 @@ function main(): i32 {
 
 var semSplitProduced = []string{"ids", "held", "option_rounds", "result_rounds", "record_rounds", "tuple_rounds", "held_rounds", "threaded_rounds", "shown", "kept_variant_rounds", "mk", "gate_rounds"}
 
+// held reads the two fields through the split parameter ABI. Some(string)
+// uses the string pointer directly, so kept_variant_rounds allocates only
+// the 50 strings, including when semantic inlining is off.
 func TestSelfHostSemanticSplit(t *testing.T) {
 	runSemanticProgram(t, "semsplit", semSplitProgram, semSplitProduced,
-		semInlineWants("150100\n2600100\n5150100\n5150100\n5150200\n102001\n250100\n10100100\n"))
+		semInlineWants("150100\n2600100\n5150100\n5150100\n5150100\n102001\n250050\n10100100\n"))
 }
 
 // gate_rounds allocates 300 boxes, not 350: the Gate the if reassigns dies on
@@ -144,7 +147,7 @@ func TestSelfHostSemanticSplit(t *testing.T) {
 func TestSelfHostSemanticSplitOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "semsplit-off", semSplitProgram, semSplitProduced,
-		semInlineWants("150150\n2600250\n5150200\n5150200\n5150200\n102002\n250100\n10100300\n"))
+		semInlineWants("150100\n2600250\n5150200\n5150200\n5150200\n102002\n250050\n10100300\n"))
 }
 
 const semSplicedProgram = `struct Acc { n: i32 }

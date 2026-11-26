@@ -270,10 +270,12 @@ function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
 @noinline function hold(p: P): i32 { return 0; }
 function grab(i: i32): string[] {
+    let read: (P) => i32 = hold;
     let q: P = P { f: mkv(), n: i };
+    if (read(q) != 0) { return mkv(); }
     let tt: string[] = q.f;
     let p: P = P { f: tt, n: i };
-    if (hold(p) != 0) { return mkv(); }
+    if (read(p) != 0) { return mkv(); }
     return tt;
 }
 function main(): i32 {

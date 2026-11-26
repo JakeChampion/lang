@@ -35,7 +35,7 @@ pub struct ExprIndex { array: Expr, index: Expr, unchecked: boolean, ty: string,
 
 pub struct ExprSlice { array: Expr, start: Expr, end: Expr, ty: string, open_end: boolean, open_start: boolean, line: i32, col: i32 }
 
-pub struct ExprStructLit { type_name: string, field_names: string[], field_lines: i32[], field_cols: i32[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32, written: string }
+pub struct ExprStructLit { type_name: string, field_names: string[], field_lines: i32[], field_cols: i32[], field_values: Expr[], has_base: boolean, base: Expr, line: i32, col: i32, written: string, enum_owner: string }
 
 // display marks a `to_string` callee that binds through `cmp.Display`: an
 // f-string part, or the argument of `print`, `write` or `eprint`.

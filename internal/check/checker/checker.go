@@ -369,43 +369,6 @@ func builtinStructDecls() []*ast.StructDecl {
 			},
 		},
 		{
-			Name: "Date",
-			Fields: []ast.Param{
-				{Name: "year", Type: ast.NumberType{}},
-				{Name: "month", Type: ast.NumberType{}},
-				{Name: "day", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name: "Time",
-			Fields: []ast.Param{
-				{Name: "hour", Type: ast.NumberType{}},
-				{Name: "minute", Type: ast.NumberType{}},
-				{Name: "second", Type: ast.NumberType{}},
-				{Name: "nsec", Type: ast.NumberType{}},
-			},
-		},
-		{
-			Name: "DateTime",
-			Fields: []ast.Param{
-				{Name: "date", Type: ast.StructType{Name: "Date"}},
-				{Name: "time", Type: ast.StructType{Name: "Time"}},
-			},
-		},
-		{
-			Name: "Span",
-			Fields: []ast.Param{
-				{Name: "years", Type: ast.NumberType{}},
-				{Name: "months", Type: ast.NumberType{}},
-				{Name: "weeks", Type: ast.NumberType{}},
-				{Name: "days", Type: ast.NumberType{}},
-				{Name: "hours", Type: ast.NumberType{}},
-				{Name: "minutes", Type: ast.NumberType{}},
-				{Name: "seconds", Type: ast.NumberType{}},
-				{Name: "nanos", Type: ast.NumberType{}},
-			},
-		},
-		{
 			Name: "Duration",
 			Fields: []ast.Param{
 				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
@@ -6025,9 +5988,12 @@ type checker struct {
 	overLimit      map[ast.Expr]bool
 	noRCIdentTypes map[*ast.Ident]ast.Type
 	// litTypes holds the type each struct literal checked to.
-	litTypes    map[*ast.StructLit]ast.Type
-	callee      ast.Expr
-	funcSources map[string]string
+	litTypes map[*ast.StructLit]ast.Type
+	// variantLitFields holds the declared field names of the constructor call
+	// that checks a variant literal.
+	variantLitFields map[*ast.Call][]string
+	callee           ast.Expr
+	funcSources      map[string]string
 	// publicFreeFuncs lists the public free functions under the name their
 	// module declares, so a method call can name a function of that name.
 	publicFreeFuncs map[string][]publicFreeFunc
@@ -6944,6 +6910,81 @@ func (c *checker) variantEnumList(name string) string {
 		b.WriteString(c.enumHintName(vr.enumName))
 	}
 	return b.String()
+}
+
+// checkVariantLit checks a literal of a named-field variant as its constructor
+// call, with the payloads in declared order. The literal still evaluates them
+// in written order. It reports false when the name is not a variant.
+func (c *checker) checkVariantLit(n *ast.StructLit, s *scope) (ast.Type, bool) {
+	if dot := strings.LastIndexByte(n.TypeName, '.'); dot >= 0 && n.EnumName == "" {
+		if _, ok := c.info.Enums[n.TypeName[:dot]]; ok {
+			n.EnumName, n.TypeName = n.TypeName[:dot], n.TypeName[dot+1:]
+		}
+	}
+	enumName := n.EnumName
+	if enumName == "" {
+		if en := c.expectedEnumName(c.expectedType); en != "" {
+			if _, ok, _ := c.resolveVariant(n.TypeName, en); ok {
+				enumName = en
+			}
+		}
+	}
+	vr, ok, multi := c.resolveVariant(n.TypeName, enumName)
+	if !ok {
+		if !multi {
+			return nil, false
+		}
+		c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. %s",
+			n.TypeName, c.variantEnumList(n.TypeName), c.variantQualifierHint(n.TypeName, " { ... }"))
+		return nil, true
+	}
+	n.EnumName = vr.enumName
+	v := c.info.Enums[vr.enumName].Variants[vr.index]
+	if len(v.FieldNames) == 0 {
+		how := n.TypeName
+		if len(v.Payloads) > 0 {
+			how += "(...)"
+		}
+		c.errfCode(n.P, "E043", "variant %s has no named fields: build it as %s", n.TypeName, how)
+		return nil, true
+	}
+	if n.Base != nil {
+		c.errfCode(n.P, "E043", "a %s literal cannot take a base: write each field", n.TypeName)
+		return nil, true
+	}
+	args := make([]ast.Expr, len(v.FieldNames))
+	complete := true
+	for _, f := range n.Fields {
+		at := slices.Index(v.FieldNames, f.Name)
+		switch {
+		case at < 0:
+			c.errfCode(n.P, "E043", "variant %s has no field %q", n.TypeName, f.Name)
+			complete = false
+		case args[at] != nil:
+			c.errfCode(n.P, "E007", "duplicate field %q in variant literal", f.Name)
+			complete = false
+		default:
+			args[at] = f.Value
+		}
+	}
+	for i, name := range v.FieldNames {
+		if args[i] == nil {
+			c.errfCode(n.P, "E005", "missing field %q in this %s literal", name, n.TypeName)
+			complete = false
+		}
+	}
+	if !complete {
+		for _, f := range n.Fields {
+			c.checkExpr(f.Value, s)
+		}
+		return nil, true
+	}
+	call := &ast.Call{P: n.P, Callee: &ast.Ident{P: n.P, Name: n.TypeName, EnumName: vr.enumName}, Args: args}
+	if c.variantLitFields == nil {
+		c.variantLitFields = map[*ast.Call][]string{}
+	}
+	c.variantLitFields[call] = v.FieldNames
+	return c.checkExprInner(call, s), true
 }
 
 func (c *checker) variantQualifierHint(name, suffix string) string {
@@ -14935,8 +14976,13 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						}
 					}
 					if !c.unifyType(vr.payloads[i], at, sub) && !dynPayloadOK {
-						c.errfCode(a.Pos(), "E036", "variant %s payload %d type %s, expected %s",
-							id.Name, i, at, substituteType(vr.payloads[i], sub))
+						if fields := c.variantLitFields[n]; i < len(fields) {
+							c.errfCode(a.Pos(), "E036", "variant %s field %q type %s, expected %s",
+								id.Name, fields[i], at, substituteType(vr.payloads[i], sub))
+						} else {
+							c.errfCode(a.Pos(), "E036", "variant %s payload %d type %s, expected %s",
+								id.Name, i, at, substituteType(vr.payloads[i], sub))
+						}
 					}
 				}
 				resolvedPayloads := make([]ast.Type, len(vr.payloads))
@@ -16199,6 +16245,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 	case *ast.StructLit:
 		sd, ok := c.info.Structs[n.TypeName]
 		if !ok {
+			if t, variant := c.checkVariantLit(n, s); variant {
+				return t
+			}
 			c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(n.TypeName))
 			return nil
 		}

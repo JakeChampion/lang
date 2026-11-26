@@ -14,12 +14,12 @@ import (
 func TestSelfHostCheckEntryShadowOfBuiltin(t *testing.T) {
 	cli := newStrictCLI(t)
 	cases := []struct{ name, src, msg string }{
-		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Span { Empty, Wide(f64, string) }\nfunction f(s: Span): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", `enum "Span" is a reserved built-in name`},
+		{"enum-takes-builtin-struct-name", "import \"std/string\";\nenum Socket { Empty, Wide(f64, string) }\nfunction f(s: Socket): i32 {\n  match (s) { Wide(d, t) => { return (d * 4.0) as i32 + t.len(); }, Empty => { return 0; } }\n}\nfunction main(): i32 { return f(Wide(1.0, \"ab\")); }\n", `enum "Socket" is a reserved built-in name`},
 		{"struct-takes-builtin-enum-name", "import \"std/string\";\nstruct Option { n: i32 }\nfunction main(): i32 { let o: Option = Option { n: 1 }; return o.n; }\n", `struct "Option" is a reserved built-in name`},
-		{"struct-takes-builtin-struct-name", "import \"std/string\";\nstruct Span { n: i32 }\nfunction main(): i32 { let s: Span = Span { n: 1 }; return s.n; }\n", `struct "Span" is a reserved built-in name`},
+		{"struct-takes-builtin-struct-name", "import \"std/string\";\nstruct Socket { n: i32 }\nfunction main(): i32 { let s: Socket = Socket { n: 1 }; return s.n; }\n", `struct "Socket" is a reserved built-in name`},
 		{"enum-takes-builtin-enum-name", "import \"std/string\";\nenum Option { A, B }\nfunction main(): i32 { let o: Option = A; return 0; }\n", `enum "Option" is a reserved built-in name`},
-		{"qualified-enum-with-method", "import \"std/string\";\nenum Span { Empty, Wide(f64) }\nfunction (s: Span) wide(): Span { return Span.Wide(1.0); }\nfunction f(s: Span): i32 { match (s) { Span.Empty => { return 0; }, _ => { return 1; } } }\nfunction main(): i32 { return f(Span.Empty); }\n", `enum "Span" is a reserved built-in name`},
-		{"later-mismatch", "import \"std/string\";\nstruct Span { n: i32 }\nfunction main(): i32 { let s: Span = Span { n: 1 }; let t: string = s; return 0; }\n", `struct "Span" is a reserved built-in name`},
+		{"qualified-enum-with-method", "import \"std/string\";\nenum Socket { Empty, Wide(f64) }\nfunction (s: Socket) wide(): Socket { return Socket.Wide(1.0); }\nfunction f(s: Socket): i32 { match (s) { Socket.Empty => { return 0; }, _ => { return 1; } } }\nfunction main(): i32 { return f(Socket.Empty); }\n", `enum "Socket" is a reserved built-in name`},
+		{"later-mismatch", "import \"std/string\";\nstruct Socket { n: i32 }\nfunction main(): i32 { let s: Socket = Socket { n: 1 }; let t: string = s; return 0; }\n", `struct "Socket" is a reserved built-in name`},
 		{"generic-use-of-shadowed-enum", "struct Option { n: i32 }\nfunction g(): Option[i32] { return None; }\nfunction main(): i32 { return 0; }\n", `struct "Option" is a reserved built-in name`},
 	}
 	for _, tc := range cases {

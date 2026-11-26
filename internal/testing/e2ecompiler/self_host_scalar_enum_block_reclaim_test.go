@@ -5,13 +5,18 @@ import (
 	"testing"
 )
 
-const scalarEnumLoopSrc = `enum E { Box(i32, i32), Nil }
+// Return the enum across a call boundary so its consuming match receives a box.
+const scalarEnumBoxSrc = `enum E { Box(i32, i32), Nil }
+@noinline function make_box(a: i32, b: i32): E { return Box(a, b); }
+`
+
+const scalarEnumLoopSrc = scalarEnumBoxSrc + `
 
 function round(i: i32): i32 {
     let acc: i32 = 0;
     let k: i32 = 0;
     while (k < 4) {
-        let e: E = Box(k, 2);
+        let e: E = make_box(k, 2);
         match (e) { Box(a, b) => { acc = acc + a + b; }, Nil => {} }
         k = k + 1;
     }
@@ -25,15 +30,15 @@ function main(): i32 {
     return t / 100;
 }`
 
-const scalarEnumMixedSrc = `enum E { Box(i32, i32), Nil }
+const scalarEnumMixedSrc = scalarEnumBoxSrc + `
 
 function round(i: i32): i32 {
     let acc: i32 = 0;
-    let top: E = Box(i, 1);
+    let top: E = make_box(i, 1);
     match (top) { Box(a, b) => { acc = a + b; }, Nil => {} }
     let k: i32 = 0;
     while (k < 3) {
-        let inner: E = Box(k, 2);
+        let inner: E = make_box(k, 2);
         match (inner) { Box(c, d) => { acc = acc + c + d; }, Nil => {} }
         k = k + 1;
     }
@@ -91,11 +96,11 @@ func TestSelfHostScalarEnumBlockReclaimX86_64(t *testing.T) {
 	})
 
 	t.Run("if_block_local", func(t *testing.T) {
-		src := `enum E { Box(i32, i32), Nil }
+		src := scalarEnumBoxSrc + `
 function round(i: i32): i32 {
     let acc: i32 = 0;
     if (i > 0) {
-        let e: E = Box(i, 3);
+        let e: E = make_box(i, 3);
         match (e) { Box(a, b) => { acc = a + b; }, Nil => {} }
     }
     return acc;

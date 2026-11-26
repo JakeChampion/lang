@@ -26,17 +26,6 @@ func diagPositions(out string) []string {
 	return got
 }
 
-func diagFullLines(out string) []string {
-	var got []string
-	for _, line := range strings.Split(out, "\n") {
-		if diagPosRE.MatchString(line) {
-			got = append(got, line)
-		}
-	}
-	sort.Strings(got)
-	return got
-}
-
 func selfHostCheckDriver(t *testing.T) (string, []string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -58,7 +47,9 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		files map[string]string
-		exact bool
+		// Ownership diagnostics are produced by the self-host checker alone.
+		ownershipPosition string
+		details           []string
 	}{
 		{
 			name: "sibling",
@@ -68,7 +59,8 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
-			name: "owned_argument",
+			name:              "owned_argument",
+			ownershipPosition: "main.fern:3:19 E051",
 			files: map[string]string{
 				"main.fern": "function take(own s: string): i32 { return s.len(); }\n" +
 					"function f(a: i32, s: string): i32 {\n    return take(  s);\n}\n" +
@@ -76,7 +68,8 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
-			name: "owned_index_argument",
+			name:              "owned_index_argument",
+			ownershipPosition: "main.fern:4:11 E051",
 			files: map[string]string{
 				"main.fern": "function take(own s: string): i32 { return s.len(); }\n" +
 					"function f(xs: string[]): i32 {\n    return take(\n        xs[0]);\n}\n" +
@@ -97,8 +90,12 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 			},
 		},
 		{
-			name:  "sibling_moved_at",
-			exact: true,
+			name:              "sibling_moved_at",
+			ownershipPosition: "lib.fern:4:16 E050",
+			details: []string{
+				`lib.fern:4:16: error[E050]: use of owned parameter "s" after it was consumed`,
+				"lib.fern:3:23: note: moved here",
+			},
 			files: map[string]string{
 				"main.fern": "import \"./lib\";\nfunction main(): i32 { return lib.f(\"x\"); }\n",
 				"lib.fern": "pub function take(own s: string): i32 { return s.len(); }\n" +
@@ -114,14 +111,25 @@ func TestSelfHostDiagnosticNamesItsFile(t *testing.T) {
 				}
 			}
 			entry := filepath.Join(dir, "main.fern")
-			nout, _ := exec.Command(native, "-check", entry).CombinedOutput()
+			nout, nativeErr := exec.Command(native, "-check", entry).CombinedOutput()
 			cmd := runX86_64Bin(runner, driver)
 			cmd.Args = append(cmd.Args, "-check", entry, root)
-			sout, _ := cmd.CombinedOutput()
+			sout, selfHostErr := cmd.CombinedOutput()
 			want := diagPositions(string(nout))
 			got := diagPositions(string(sout))
-			if tc.exact {
-				want, got = diagFullLines(string(nout)), diagFullLines(string(sout))
+			if selfHostErr == nil {
+				t.Fatalf("self-host accepted the invalid program: %s", sout)
+			}
+			if tc.ownershipPosition != "" {
+				if nativeErr != nil || len(want) != 0 {
+					t.Fatalf("unexpected native diagnostic: %v\n%s", nativeErr, nout)
+				}
+				want = []string{filepath.Join(dir, tc.ownershipPosition)}
+			}
+			for _, line := range tc.details {
+				if !strings.Contains(string(sout), filepath.Join(dir, line)+"\n") {
+					t.Errorf("missing diagnostic line %q in:\n%s", line, sout)
+				}
 			}
 			if len(want) == 0 {
 				t.Fatalf("native reported nothing — the probe is not exercising the path:\n%s", nout)

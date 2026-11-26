@@ -25,13 +25,15 @@ function main(): i32 { return churn(%d) + __rc_underflow_count() * 100; }
 }
 
 var nestedOptFlatCases = []struct {
-	name    string
-	body    string
-	want100 int
-	want200 int
+	name           string
+	body           string
+	want100        int
+	want200        int
+	allocationFree bool
 }{
 	{
-		name: "option_inner",
+		name:           "option_inner",
+		allocationFree: true,
 		body: `        let o: Option[Option[i32]] = Some(Some(i));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v) % 91; }, None => { acc = (acc + 1) % 91; } } },
@@ -41,7 +43,8 @@ var nestedOptFlatCases = []struct {
 		want200: 62,
 	},
 	{
-		name: "result_inner",
+		name:           "result_inner",
+		allocationFree: true,
 		body: `        let o: Option[Result[i32, i32]] = Some(Ok(i));
         match (o) {
             Some(inner) => { match (inner) { Ok(v) => { acc = (acc + v) % 91; }, Err(e) => { acc = (acc + e) % 91; } } },
@@ -80,7 +83,7 @@ var nestedOptFlatCases = []struct {
 	},
 	{
 		name: "rc_inner_string",
-		body: `        let o: Option[Option[string]] = Some(Some("ab"));
+		body: `        let o: Option[Option[string]] = Some(Some("a" + (if (i % 2 == 0) { "b" } else { "c" })));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -90,7 +93,7 @@ var nestedOptFlatCases = []struct {
 	},
 	{
 		name: "rc_inner_string_array",
-		body: `        let o: Option[Option[string[]]] = Some(Some(["a", "b"]));
+		body: `        let o: Option[Option[string[]]] = Some(Some([if (i % 2 == 0) { "a" } else { "c" }, "b"]));
         match (o) {
             Some(inner) => { match (inner) { Some(v) => { acc = (acc + v.len()) % 91; }, None => { acc = (acc + 1) % 91; } } },
             None => { acc = (acc + 2) % 91; }
@@ -198,7 +201,11 @@ func TestSelfHostNestedOptionReclaimX86_64(t *testing.T) {
 				if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 					t.Fatalf("%s: parse %q: %v", name, summary, err)
 				}
-				if allocs == 0 {
+				if tc.allocationFree {
+					if allocs != 0 {
+						t.Errorf("%s allocated %d times for scalar matches, want zero", name, allocs)
+					}
+				} else if allocs == 0 {
 					t.Fatalf("%s allocated nothing — the probe is not exercising the path", name)
 				}
 				t.Logf("%s: %s", name, summary)

@@ -13,6 +13,7 @@ import "core/map";
 import "./attr";
 import "./commitgraph";
 import "./config";
+import "./dircache";
 import "./log";
 import "./objects";
 import "./refs";
@@ -740,6 +741,48 @@ function missing_or_empty_dir(path: string): boolean {
   };
 }
 
+// Look for .gitmodules in the worktree, index, then HEAD.
+function module_config(parent: refs.Repo): config.Config {
+  let file = parent.top + "/.gitmodules";
+  let ix = rev.index_of(parent);
+  let path = ".gitmodules".bytes();
+  let pos = dircache.first_of(ix, path);
+  let staged = dircache.has_path(ix, pos, path);
+  if (staged && ix.entries[pos].stage != 0) { return config.empty(); }
+  if let Ok(st) = lstat(file) {
+    return if ((st.mode & 61440) == 32768) { config.read(file, file) } else { config.empty() };
+  }
+  let db = parent.store();
+  let hash = if (staged) { ix.entries[pos].hash } else { rev.parse(parent, db, "HEAD:.gitmodules").hash };
+  if (hash != "") {
+    let found = store.read(db, hash);
+    if let Ok(obj) = found.object {
+      if (obj.kind == "blob") { return config.parse(unsafe { string_from_bytes_unchecked(obj.body) }); }
+    }
+  }
+  return config.empty();
+}
+
+// A checked-out submodule takes precedence over its named module store.
+function submodule_at(parent: refs.Repo, path: string): Option[refs.Repo] {
+  if (parent.top == "") { return None; }
+  if let Some(sub) = refs.checkout_at(parent.top + "/" + path) { return Some(sub); }
+  if (parent.dir != parent.common || parent.config.flag("extensions.submodulepathconfig", false)) { return None; }
+  let modules = parent.common + "/modules";
+  if (stat(modules).is_err()) { return None; }
+  let dir = "";
+  for e in module_config(parent).entries {
+    if (e.value != path || !e.name.starts_with("submodule.") || !e.name.ends_with(".path") || e.name.len() <= 15) { continue; }
+    let name = objects.part(e.name, 10, e.name.len() - 5);
+    for part in name.replace("\\", "/").split("/") {
+      if (part == "" || part == "." || part == "..") { return None; }
+    }
+    if (dir != "") { return None; }
+    dir = modules + "/" + name;
+  }
+  return refs.stored_module(dir);
+}
+
 // Git can find the submodule in the worktree or in its module store.
 // A configured gitdir can live elsewhere. Leave that lookup to the
 // submodule history merge.
@@ -898,35 +941,33 @@ function content_merge(st_in: State, path: string, o: Version, a: Version, b: Ve
     // Git first opens the checkout, then tries its stored module. When
     // both are absent it records a conflict and keeps the first parent.
     if let Some(repo) = st.o.repo {
-      if (repo.top != "") {
-        if let Some(sub) = refs.checkout_at(repo.top + "/" + path) {
-          if (o.hash == no_version(st.store).hash) {
-            st = message(st, path, "Failed to merge submodule " + path + " (no merge base)");
+      if let Some(sub) = submodule_at(repo, path) {
+        if (o.hash == no_version(st.store).hash) {
+          st = message(st, path, "Failed to merge submodule " + path + " (no merge base)");
+          return (st, false, if (st.depth > 0) { o } else { a });
+        }
+        match (submodule_history(sub, o, a, b, st.depth > 0)) {
+          FastForward(later) => {
+            return (st, clean, later);
+          },
+          Diverged => {
+            if (st.depth == 0) {
+              st = message(st, path, "Failed to merge submodule " + path);
+            }
             return (st, false, if (st.depth > 0) { o } else { a });
-          }
-          match (submodule_history(sub, o, a, b, st.depth > 0)) {
-            FastForward(later) => {
-              return (st, clean, later);
-            },
-            Diverged => {
-              if (st.depth == 0) {
-                st = message(st, path, "Failed to merge submodule " + path);
-              }
-              return (st, false, if (st.depth > 0) { o } else { a });
-            },
-            Rewind => {
-              st = message(st, path, "Failed to merge submodule " + path + " (commits don't follow merge-base)");
-              return (st, false, if (st.depth > 0) { o } else { a });
-            },
-            MissingCommit(diagnostic) => {
-              if (diagnostic != "") {
-                st = State { ...st, warnings: st.warnings.append(diagnostic) };
-              }
-              st = message(st, path, "Failed to merge submodule " + path + " (commits not present)");
-              return (st, false, if (st.depth > 0) { o } else { a });
-            },
-            Unresolved => {}
-          }
+          },
+          Rewind => {
+            st = message(st, path, "Failed to merge submodule " + path + " (commits don't follow merge-base)");
+            return (st, false, if (st.depth > 0) { o } else { a });
+          },
+          MissingCommit(diagnostic) => {
+            if (diagnostic != "") {
+              st = State { ...st, warnings: st.warnings.append(diagnostic) };
+            }
+            st = message(st, path, "Failed to merge submodule " + path + " (commits not present)");
+            return (st, false, if (st.depth > 0) { o } else { a });
+          },
+          Unresolved => {}
         }
       }
       if (submodule_absent(repo, path)) {

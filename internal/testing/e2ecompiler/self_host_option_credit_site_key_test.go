@@ -35,7 +35,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 61, allocs: 152, frees: 152,
+			want: 61, allocs: 52, frees: 52,
 		},
 		{
 			name: "opttup_renamed",
@@ -54,7 +54,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 61, allocs: 152, frees: 152,
+			want: 61, allocs: 52, frees: 52,
 		},
 		{
 			name: "optstruct_collide",
@@ -74,7 +74,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 34, allocs: 152, frees: 152,
+			want: 34, allocs: 51, frees: 51,
 		},
 		{
 			name: "optstruct_renamed",
@@ -94,7 +94,7 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return t % 83;
 }`,
-			want: 34, allocs: 152, frees: 152,
+			want: 34, allocs: 51, frees: 51,
 		},
 		{
 			name: "optaarr_collide",
@@ -106,7 +106,7 @@ function main(): i32 {
     return t + keep.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 350, frees: 350,
+			want: 68, allocs: 200, frees: 200,
 		},
 		{
 			name: "optaarr_renamed",
@@ -118,7 +118,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
     return t + keep.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 350, frees: 350,
+			want: 68, allocs: 200, frees: 200,
 		},
 		{
 			name: "optarrarr_collide",
@@ -132,7 +132,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 400, frees: 400,
+			want: 68, allocs: 250, frees: 250,
 		},
 		{
 			name: "optarrarr_renamed",
@@ -146,7 +146,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 68, allocs: 400, frees: 400,
+			want: 68, allocs: 250, frees: 250,
 		},
 		{
 			name: "optarr_collide",
@@ -160,7 +160,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 20, allocs: 200, frees: 200,
+			want: 20, allocs: 50, frees: 50,
 		},
 		{
 			name: "optarr_renamed",
@@ -174,15 +174,15 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 20, allocs: 200, frees: 200,
+			want: 20, allocs: 50, frees: 50,
 		},
 		{
 			name: "optstr_collide",
 			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
 function round(i: i32): i32 {
-    let keep: Option[string] = Some("keeper");
+    let keep: Option[string] = Some("keepe" + (if (i % 2 == 0) { "r" } else { "d" }));
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1 + hold(o); }
+    if (i % 2 == 0) { let o: Option[string] = Some("fres" + (if (i % 2 == 0) { "h" } else { "a" })); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let o: Option[string] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
@@ -194,9 +194,9 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			name: "optstr_renamed",
 			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
 function round(i: i32): i32 {
-    let keep: Option[string] = Some("keeper");
+    let keep: Option[string] = Some("keepe" + (if (i % 2 == 0) { "r" } else { "d" }));
     let t: i32 = 0;
-    if (i % 2 == 0) { let o: Option[string] = Some("fresh"); t = t + 1 + hold(o); }
+    if (i % 2 == 0) { let o: Option[string] = Some("fres" + (if (i % 2 == 0) { "h" } else { "a" })); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let u: Option[string] = keep; t = t + 2; }
     match (keep) { Some(q) => { t = t + q.len(); }, None => {} }
     return t;
@@ -213,7 +213,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 53, allocs: 300, frees: 300,
+			want: 53, allocs: 100, frees: 100,
 		},
 		{
 			name: "credited_optstruct",
@@ -225,7 +225,7 @@ function round(i: i32): i32 {
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 300, frees: 300,
+			want: 34, allocs: 100, frees: 100,
 		},
 		{
 			name: "credited_optaarr",
@@ -234,7 +234,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
     return xs.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 300, frees: 300,
+			want: 34, allocs: 200, frees: 200,
 		},
 		{
 			name: "credited_optarrarr",
@@ -245,7 +245,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
     return t;
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 34, allocs: 400, frees: 400,
+			want: 34, allocs: 300, frees: 300,
 		},
 		{
 			name: "credited_optarr",
@@ -255,13 +255,13 @@ function round(i: i32): i32 {
     return i + 1 + hold(o);
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 70, allocs: 200, frees: 200,
+			want: 70, allocs: 100, frees: 100,
 		},
 		{
 			name: "credited_optstr",
 			src: `@noinline function hold(o: Option[string]): i32 { return 0; }
 function round(i: i32): i32 {
-    let o: Option[string] = Some("fresh");
+    let o: Option[string] = Some("fres" + (if (i % 2 == 0) { "h" } else { "a" }));
     return i + 1 + hold(o);
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -278,7 +278,7 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 25, allocs: 700, frees: 700,
+			want: 25, allocs: 400, frees: 400,
 		},
 		{
 			name: "binder_forin_renamed",
@@ -291,7 +291,7 @@ function round(i: i32): i32 {
     return t + keep.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
-			want: 25, allocs: 700, frees: 700,
+			want: 25, allocs: 400, frees: 400,
 		}}
 }
 

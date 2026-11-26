@@ -7974,6 +7974,9 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		}
 		return nil, fmt.Errorf("interp: `?` on variant %q of %s (index %d): not a two-variant `?` shape", ev.VariantName, ev.EnumName, ev.Index)
 	case *ast.StructLit:
+		if x.EnumName != "" {
+			return i.evalVariantLit(x, env)
+		}
 		s := &Struct{TypeName: x.TypeName, Fields: map[string]Value{}, holdsElems: true}
 		if x.Base != nil {
 			bv, err := i.evalExpr(x.Base, env)
@@ -8054,6 +8057,30 @@ func (i *Interp) evalBare(e ast.Expr, env *env) (Value, error) {
 		return v, nil
 	}
 	return nil, fmt.Errorf("interp: unsupported expression %T", e)
+}
+
+// evalVariantLit evaluates the fields of a variant literal in written order,
+// and gives each payload its declared position.
+func (i *Interp) evalVariantLit(x *ast.StructLit, env *env) (Value, error) {
+	ed, idx, ok := i.findVariantOn(x.TypeName, x.EnumName)
+	if !ok {
+		return nil, fmt.Errorf("interp: enum %s has no variant %s", x.EnumName, x.TypeName)
+	}
+	names := ed.Variants[idx].FieldNames
+	payloads := make([]Value, len(names))
+	for _, f := range x.Fields {
+		at := slices.Index(names, f.Name)
+		if at < 0 {
+			return nil, fmt.Errorf("interp: variant %s has no field %q", x.TypeName, f.Name)
+		}
+		v, err := i.evalExpr(f.Value, env)
+		if err != nil {
+			return nil, err
+		}
+		storeArray(v)
+		payloads[at] = v
+	}
+	return &Enum{EnumName: ed.Name, VariantName: x.TypeName, Index: idx, Payloads: payloads}, nil
 }
 
 func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {

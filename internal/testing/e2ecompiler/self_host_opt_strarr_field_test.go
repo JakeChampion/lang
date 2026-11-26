@@ -22,7 +22,7 @@ func TestSelfHostOptStrArrFieldX86_64(t *testing.T) {
 			src: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let o: Option[P] = Some(P { xs: ["alph" + (if (i % 2 == 0) { "a" } else { "i" }), "beta"], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len(); }, None => {} }
     return acc;
 }
@@ -39,7 +39,7 @@ function main(): i32 {
 			src: `struct P { xs: string[], ys: i32[], n: i32 }
 function round(i: i32): i32 {
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { xs: ["alpha", "beta"], ys: [i, i + 1], n: i });
+    let o: Option[P] = Some(P { xs: ["alph" + (if (i % 2 == 0) { "a" } else { "i" }), "beta"], ys: [i, i + 1], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len() + p.ys.len(); }, None => {} }
     return acc;
 }
@@ -73,7 +73,7 @@ function main(): i32 {
 			src: `struct P { s: string, n: i32 }
 function round(i: i32): i32 {
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { s: "alpha", n: i });
+    let o: Option[P] = Some(P { s: "alph" + (if (i % 2 == 0) { "a" } else { "i" }), n: i });
     match (o) { Some(p) => { acc = p.n + p.s.len(); }, None => {} }
     return acc;
 }
@@ -110,8 +110,7 @@ function main(): i32 {
 				t.Fatalf("allocated nothing — the probe is not exercising the path")
 			}
 			if live != 0 {
-				t.Errorf("live_bytes=%d, want 0 — the option box, the payload box, the "+
-					"string[] buffer and its element boxes all leak once per round", live)
+				t.Errorf("live_bytes=%d after dropping the option payload, want 0", live)
 			}
 			if allocs != frees {
 				t.Errorf("allocs=%d frees=%d — must balance exactly", allocs, frees)
@@ -137,7 +136,7 @@ func TestSelfHostOptStrArrFieldHazardsX86_64(t *testing.T) {
 function round(i: i32): i32 {
     let held: string[] = [];
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let o: Option[P] = Some(P { xs: ["alph" + (if (i % 2 == 0) { "a" } else { "i" }), "beta"], n: i });
     match (o) { Some(p) => { held = p.xs; acc = p.n; }, None => {} }
     return acc + held.len() + held[0].len();
 }`,
@@ -149,7 +148,7 @@ function round(i: i32): i32 {
 function round(i: i32): i32 {
     let keep: string[][] = [];
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let o: Option[P] = Some(P { xs: ["alph" + (if (i % 2 == 0) { "a" } else { "i" }), "beta"], n: i });
     match (o) { Some(p) => { keep = keep.append(p.xs); acc = p.n; }, None => {} }
     return acc + keep[0][1].len();
 }`,
@@ -162,7 +161,7 @@ function round(i: i32): i32 {
 function round(i: i32): i32 {
     let held: string[] = [];
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let o: Option[P] = Some(P { xs: ["alph" + (if (i % 2 == 0) { "a" } else { "i" }), "beta"], n: i });
     match (o) { Some(p) => { held = keepit(p.xs); acc = p.n; }, None => {} }
     return acc + held[1].len();
 }`,
@@ -174,7 +173,7 @@ function round(i: i32): i32 {
 function round(i: i32): i32 {
     let hs: string = "";
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let o: Option[P] = Some(P { xs: ["alph" + (if (i % 2 == 0) { "a" } else { "i" }), "beta"], n: i });
     match (o) { Some(p) => { hs = p.xs[0]; acc = p.n; }, None => {} }
     return acc + hs.len();
 }`,
@@ -239,7 +238,7 @@ func TestSelfHostOptStrArrFieldPartialReclaimX86_64(t *testing.T) {
 	body := `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
     let acc: i32 = 0;
-    let o: Option[P] = Some(P { xs: ["alpha", "beta"], n: i });
+    let o: Option[P] = Some(P { xs: ["alph" + (if (i % 2 == 0) { "a" } else { "i" }), "beta"], n: i });
     match (o) { Some(p) => { acc = p.n + p.xs.len() + p.xs[0].len(); }, None => {} }
     return acc;
 }`

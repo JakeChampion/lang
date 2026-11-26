@@ -173,6 +173,18 @@ impl cmp.Eq for Timestamp {}
 
 impl cmp.Ord for Timestamp {}
 
+// A calendar date. `month` is 1 to 12 and `day` is 1 to 31.
+pub struct Date { year: i32, month: i32, day: i32 }
+
+// A clock time of day. `nsec` is 0 to 999,999,999.
+pub struct Time { hour: i32, minute: i32, second: i32, nsec: i32 }
+
+// A civil date and clock time, with no time zone.
+pub struct DateTime { date: Date, time: Time }
+
+// A calendar span. Each field counts its own unit, so one month and 30 days are not equal.
+pub struct Span { years: i32, months: i32, weeks: i32, days: i32, hours: i32, minutes: i32, seconds: i32, nanos: i32 }
+
 pub function date_of(year: i32, month: i32, day: i32): Date {
   return Date { year: year, month: month, day: day };
 }

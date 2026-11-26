@@ -148,6 +148,8 @@ func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
+	// Each of the 100 rounds allocates one leaf array. Appending the
+	// leaf to a container allocates a second array in that case.
 	for _, tc := range []struct {
 		name      string
 		src       string
@@ -173,7 +175,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 500,
+			wantFrees: 100,
 		},
 		{
 			name: "leaf_array_extracted",
@@ -193,7 +195,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 400,
+			wantFrees: 100,
 		},
 		{
 			name: "leaf_array_into_a_container",
@@ -213,7 +215,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 500,
+			wantFrees: 200,
 		},
 		{
 			name: "leaf_array_to_a_callee_that_keeps_it",
@@ -234,7 +236,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 400,
+			wantFrees: 100,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -259,7 +261,7 @@ function main(): i32 {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("parse %q: %v", summary, err)
 			}
-			if frees != tc.wantFrees {
+			if frees != tc.wantFrees || allocs != frees || live != 0 {
 				t.Errorf("frees=%d, want exactly %d (allocs=%d live=%d) — a HIGHER count is "+
 					"an extracted value released under a live reference; a lower one means "+
 					"this probe stopped exercising the path it was written for",

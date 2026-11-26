@@ -1,0 +1,22 @@
+enum Shape {
+  Rect { w: i32, h: i32 },
+  Circle(i32),
+  Dot,
+}
+
+function area(s: Shape): i32 {
+  return match (s) {
+    Rect { w, h } => w * h,
+    Circle(r) => r,
+    Dot => 0,
+  };
+}
+
+function grow(s: Shape): Shape {
+  return Rect { ...s, w: 3 };
+}
+
+function main(): i32 {
+  print(area(Rect { w: 1, h: 2 }).to_string());
+  return 0;
+}
