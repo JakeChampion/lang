@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Boot an Android TV emulator, run a command against it, and stop the emulator.
+# Usage: emulator LOG COMMAND...
+# LOG gets the output of the emulator. The exit status is the status of COMMAND.
+set -euo pipefail
+log=$1
+shift
+image='system-images;android-36;android-tv;x86_64'
+bin=${ANDROID_HOME:?}/cmdline-tools/latest/bin
+export ANDROID_AVD_HOME=${ANDROID_AVD_HOME:-$HOME/.android/avd}
+export PATH=$ANDROID_HOME/platform-tools:$PATH
+
+"$bin/sdkmanager" --licenses < <(yes) > /dev/null
+"$bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
+avd=$ANDROID_AVD_HOME/plex-tv.avd
+mkdir -p "$ANDROID_AVD_HOME"
+echo no | "$bin/avdmanager" create avd --force -n plex-tv --package "$image" --device tv_720p -p "$avd"
+if ! "$ANDROID_HOME/emulator/emulator" -list-avds | grep -qx plex-tv; then
+    echo "the emulator does not list the AVD plex-tv; avdmanager has:" >&2
+    "$bin/avdmanager" list avd >&2
+    exit 1
+fi
+printf 'hw.cpu.ncore=2\nhw.ramSize=2048M\n' >> "$avd/config.ini"
+
+mkdir -p "$(dirname "$log")"
+"$ANDROID_HOME/emulator/emulator" -avd plex-tv -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim > "$log" 2>&1 &
+emulator=$!
+trap 'adb emu kill > /dev/null 2>&1 || kill "$emulator" 2> /dev/null || true; wait "$emulator" || true' EXIT
+
+# The image restarts adbd just after it boots, so a probe can fail after the
+# device answered. The loop runs the probe again until it succeeds.
+deadline=$((SECONDS + 600))
+until timeout 30 adb wait-for-device shell '
+    test "$(getprop sys.boot_completed)" = 1 &&
+    pm path android > /dev/null &&
+    settings put global window_animation_scale 0 &&
+    settings put global transition_animation_scale 0 &&
+    settings put global animator_duration_scale 0' 2> /dev/null; do
+    if ((SECONDS >= deadline)); then
+        echo "the emulator did not boot in 600 seconds; its log is in $log" >&2
+        exit 1
+    fi
+    sleep 1
+done
+"$@"

@@ -394,15 +394,12 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Check the Plex preview channel and Watch Next row
-        uses: reactivecircus/android-emulator-runner@v2
+        run: tests/android/plex_tv/emulator build/android-tv/emulator.log python3 examples/android/plex/tv_emulator_check.py build/android-tv
+      - uses: actions/upload-artifact@v7
+        if: failure()
         with:
-          api-level: 36
-          target: android-tv
-          arch: x86_64
-          profile: tv_720p
-          ram-size: 2048M
-          disable-animations: true
-          script: python3 examples/android/plex/tv_emulator_check.py build/android-tv
+          name: fern-plex-tv-emulator
+          path: build/android-tv/emulator.log
 
   # Each syscall that an Android image of a fixture can make, against the app
   # seccomp filter that bionic generates at the AOSP tag in

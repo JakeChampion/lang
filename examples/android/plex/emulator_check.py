@@ -168,8 +168,27 @@ def server(files):
     return httpd
 
 
-def adb(*args, check=True):
-    return subprocess.run(["adb", *args], check=check, stdout=subprocess.PIPE, text=True).stdout
+# adb writes these when it did not send the command to the device. The
+# Android TV image restarts adbd just after it boots.
+TRANSPORT = re.compile(r"device offline|device '[^']*' not found|no devices/emulators found")
+
+
+def adb(*args, check=True, timeout=60):
+    """The output of `adb ARGS`. When adb cannot send the command, it runs
+    again after the device comes back, for TIMEOUT seconds at most."""
+    deadline = time.time() + timeout
+    while True:
+        run = subprocess.run(["adb", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if run.returncode == 0 or not TRANSPORT.search(run.stderr) or time.time() >= deadline:
+            break
+        try:
+            subprocess.run(["adb", "wait-for-device"], timeout=max(1, deadline - time.time()))
+        except subprocess.TimeoutExpired:
+            pass
+    sys.stderr.write(run.stderr)
+    if check and run.returncode != 0:
+        raise subprocess.CalledProcessError(run.returncode, run.args, run.stdout, run.stderr)
+    return run.stdout
 
 
 def logcat():
