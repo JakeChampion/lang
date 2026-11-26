@@ -6179,15 +6179,6 @@ pub function runtime_sync_roots(s: EmitState): string {
   return out;
 }
 
-// Under -sanitize the user `__alloc` goes through the wrapper that fills the
-// block with the poison pattern.
-pub function raw_alloc_sym(s: EmitState): string {
-  if (s.sanitize) {
-    return "__fern_raw_alloc_san";
-  }
-  return "__fern_alloc";
-}
-
 // The kernel image's stack holds the top 1 MiB of the RAM, and the heap holds
 // the rest above the image.
 pub function reset_stack_bytes(): i64 {

@@ -58,9 +58,9 @@ selfhost/arm64-linux/deflate_encode.emit	7906
 selfhost/arm64-linux/enum_match.emit	1273
 selfhost/arm64-linux/http_hello.emit	17225
 selfhost/arm64-linux/int_loop.emit	376
-selfhost/arm64-linux/map_int.emit	8555
-selfhost/arm64-linux/map_probe_chain.emit	8565
-selfhost/arm64-linux/map_string.emit	9587
+selfhost/arm64-linux/map_int.emit	8678
+selfhost/arm64-linux/map_probe_chain.emit	8688
+selfhost/arm64-linux/map_string.emit	9710
 selfhost/arm64-linux/ordmap_insert.emit	6303
 selfhost/arm64-linux/pmap_insert.emit	3986
 selfhost/arm64-linux/pvec_with.emit	3827
@@ -75,7 +75,7 @@ selfhost/arm64-linux/string_rfind_byte.emit	2116
 selfhost/arm64-linux/string_scan.emit	2660
 selfhost/arm64-linux/string_slice.emit	1291
 selfhost/arm64-linux/struct_drop.emit	3075
-selfhost/arm64-linux/tokenize.emit	1531
+selfhost/arm64-linux/tokenize.emit	1511
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	8657
 selfhost/arm64-linux/utf8_ingest_validated.emit	9333
 selfhost/wasm32-wasi/array_append.emit	498
@@ -128,7 +128,7 @@ selfhost/x86-64-linux/http_hello.emit	16292
 selfhost/x86-64-linux/int_loop.emit	298
 selfhost/x86-64-linux/map_int.emit	8540
 selfhost/x86-64-linux/map_probe_chain.emit	8544
-selfhost/x86-64-linux/map_string.emit	9349
+selfhost/x86-64-linux/map_string.emit	9456
 selfhost/x86-64-linux/ordmap_insert.emit	5875
 selfhost/x86-64-linux/pmap_insert.emit	3632
 selfhost/x86-64-linux/pvec_with.emit	3489

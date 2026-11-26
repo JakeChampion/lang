@@ -9184,15 +9184,6 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     hsf = hsf.append(bare_field("background", "Option[() => void]"));
     structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
-  structs = add_builtin_stream(structs);
-  if (!name_declared(structs, "ChunkProducer")) {
-    let cpf: StructFieldDecl[] = [];
-    cpf = cpf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: ["i32"], line: 0, col: 0 });
-    cpf = cpf.append(bare_field("idle_ms", "i32"));
-    cpf = cpf.append(bare_field("filler", "u8[]"));
-    cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: [], line: 0, col: 0 });
-    structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
-  }
   return structs;
 }
 

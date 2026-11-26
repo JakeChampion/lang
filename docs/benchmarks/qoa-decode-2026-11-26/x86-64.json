@@ -1,0 +1,707 @@
+{
+  "schema": 2,
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.44-fc-v880-x86_64-with-glibc2.39",
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.30GHz",
+  "cpu": 0,
+  "rounds": 64,
+  "trials": 7,
+  "frames_per_file": 262144,
+  "git_head": "7cc6466b9aef795232d24d0da08cb2c35072f12e",
+  "compiler": "fern (unknown build)\nbuilt for x86-64-linux",
+  "compiler_sha256": "c090272609d10dd55e74a22aeb7923317a6a4eb842070cd4f7370c23378e6404",
+  "reference_commit": "bc0589710ff6aa2f50e08fb4d0a815d567bc0f3e",
+  "reference_sha256": "6475dc5a879458f9728f87af7a546aab3ef732b3a44bb614355d2ecb5f87e4a7",
+  "fern_sha256": "95722ce67945e35b8f37e1cf5a4847aed3be5d58f882f5a184a652759dcbfe9e",
+  "source_sha256": {
+    "scripts/bench-audio": "3f37a7e9e811001d6a843d8a31878b57eacccf9f0593485167b38b4ccd1f29c0",
+    "scripts/audio-reference/qoa_bench.c": "195b217c9ac21d777e96a5c407ef3f76f19d7931fc93babef621d13462833b58",
+    "bench/audio/qoa_decode.fern": "6d600ccdddbc31348217c914c4f54de2d9f1007aa01d0f485546f34bf1554d59",
+    "internal/stdlib/std/audio/qoa.fern.md": "a181c6cd0cff6c48d24eae73e209affe42b0fa754df8e4c16f9350907f37b239"
+  },
+  "measurement": "decode of every frame into reusable output, four warmup rounds; file read and decoder setup excluded; checksum pass after the timed region",
+  "output_storage": "Fern: interleaved signed 32-bit PCM. C: interleaved signed 16-bit PCM. The checksum hashes each sample as a sign-extended 32-bit value",
+  "peak_rss": "Linux process peak resident set after decode, including code, input and output",
+  "cases": {
+    "silence": {
+      "channels": 2,
+      "wav_sha256": "46c6bb516ff2090eb0a3f5a79ae660653a7c5a306a3f431d2ba6878cea130ff4",
+      "qoa_sha256": "8b8157ddd88c883e1dbc5b765429862a7e65b883e67ff82c0b61f4ce9069caf7",
+      "encoded_bytes": 211816,
+      "checksum": 3881828123,
+      "median_ns_per_sample": {
+        "fern": 6.434774458408356,
+        "c": 2.76776260137558
+      },
+      "fern_over_c": 2.324901151280196,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "peak_rss_kb": {
+        "fern": 352,
+        "c": 2000
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 216132838,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 215915202,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 214434932,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 212189152,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 214621875,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 235004900,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 218680490,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 92741188,
+            "peak_rss_kb": 1996,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 92870702,
+            "peak_rss_kb": 2000,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 92480153,
+            "peak_rss_kb": 2000,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 91710766,
+            "peak_rss_kb": 2000,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 93317406,
+            "peak_rss_kb": 2000,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 93061165,
+            "peak_rss_kb": 1996,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 94077913,
+            "peak_rss_kb": 2000,
+            "observed": 1
+          }
+        ]
+      }
+    },
+    "impulse": {
+      "channels": 2,
+      "wav_sha256": "c008c53c95e842a438787bfa8cc1557656acfafb07d61f4d63d43415a861bb70",
+      "qoa_sha256": "0eae917e4a3d9eb74bbf6eda6a349d542d905e6d39de7038cd056332ef0f1858",
+      "encoded_bytes": 211816,
+      "checksum": 2392821869,
+      "median_ns_per_sample": {
+        "fern": 6.710074365139008,
+        "c": 2.81442791223526
+      },
+      "fern_over_c": 2.384169918145023,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "peak_rss_kb": {
+        "fern": 356,
+        "c": 2000
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 227761964,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 214572467,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 215577201,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 215317234,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 240260935,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 228454462,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 225152734,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 356,
+            "observed": 5860
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 92980069,
+            "peak_rss_kb": 1996,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 94719655,
+            "peak_rss_kb": 2000,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 94338819,
+            "peak_rss_kb": 2000,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 98767440,
+            "peak_rss_kb": 2000,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 94436530,
+            "peak_rss_kb": 2000,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 95857667,
+            "peak_rss_kb": 1992,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 93323288,
+            "peak_rss_kb": 1996,
+            "observed": 5860
+          }
+        ]
+      }
+    },
+    "speech": {
+      "channels": 1,
+      "wav_sha256": "f23c7f57d5739fa4aa5653a40c1a93ab26379680e412fd80fbb81f0adc414613",
+      "qoa_sha256": "f9413f70a2e4b60a2a99a436de8235218ec336fed40234f574f42fd15a9ed555",
+      "encoded_bytes": 106120,
+      "checksum": 790822009,
+      "median_ns_per_sample": {
+        "fern": 6.378255248069763,
+        "c": 3.0048677921295166
+      },
+      "fern_over_c": 2.12264089114868,
+      "fern_allocs_per_frame": 2.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "peak_rss_kb": {
+        "fern": 232,
+        "c": 1884
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 106690789,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 232,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 154914876,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 228,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 141734334,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 224,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 107009366,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 232,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 106021635,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 228,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 106126097,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 232,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 117393625,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 224,
+            "observed": -3258
+          }
+        ],
+        "c": [
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 50413316,
+            "peak_rss_kb": 1884,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 63645691,
+            "peak_rss_kb": 1880,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 63018440,
+            "peak_rss_kb": 1884,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 87918056,
+            "peak_rss_kb": 1880,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 48849306,
+            "peak_rss_kb": 1880,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 46787344,
+            "peak_rss_kb": 1884,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 46803675,
+            "peak_rss_kb": 1880,
+            "observed": -3258
+          }
+        ]
+      }
+    },
+    "music": {
+      "channels": 2,
+      "wav_sha256": "96b663fd010c8876e73671a3c14c50effb099716b502cf457e170af2acff6c05",
+      "qoa_sha256": "96b9bdd87d5cd88e4f8e566c7f0cb0461db90f496a2f1137864087d2db602ee7",
+      "encoded_bytes": 211816,
+      "checksum": 4103631056,
+      "median_ns_per_sample": {
+        "fern": 6.428258299827576,
+        "c": 2.7906796038150787
+      },
+      "fern_over_c": 2.30347413979005,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "peak_rss_kb": {
+        "fern": 356,
+        "c": 2000
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 215393254,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 215268533,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 215684076,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 356,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 216087513,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 356,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 215696556,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 233041681,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 356,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 220462980,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 356,
+            "observed": 1119
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 94448560,
+            "peak_rss_kb": 2000,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 94422024,
+            "peak_rss_kb": 2000,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 94949533,
+            "peak_rss_kb": 1996,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 93639669,
+            "peak_rss_kb": 1996,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 92838901,
+            "peak_rss_kb": 2000,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 92625461,
+            "peak_rss_kb": 2000,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 93599915,
+            "peak_rss_kb": 1996,
+            "observed": 1119
+          }
+        ]
+      }
+    },
+    "noise": {
+      "channels": 2,
+      "wav_sha256": "bf8c95ada0cef825fd4c1b17b963af0bc755b1bc50a5813985b749a80fce5a41",
+      "qoa_sha256": "4b2976768948f8d1959ed159c621272006c4d1bc6c78914d341e5a660c673955",
+      "encoded_bytes": 211816,
+      "checksum": 4163020800,
+      "median_ns_per_sample": {
+        "fern": 6.414065897464752,
+        "c": 2.6670840680599213
+      },
+      "fern_over_c": 2.404898283588955,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "peak_rss_kb": {
+        "fern": 352,
+        "c": 2000
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 268587742,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 214025366,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 214926062,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 215220338,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 216099695,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 216077017,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 214753739,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "peak_rss_kb": 352,
+            "observed": -18983
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 88565376,
+            "peak_rss_kb": 1996,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 89492491,
+            "peak_rss_kb": 2000,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 92291765,
+            "peak_rss_kb": 2000,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 92318240,
+            "peak_rss_kb": 2000,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 88350399,
+            "peak_rss_kb": 1996,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 87393183,
+            "peak_rss_kb": 1996,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 95319906,
+            "peak_rss_kb": 1996,
+            "observed": -18983
+          }
+        ]
+      }
+    }
+  }
+}

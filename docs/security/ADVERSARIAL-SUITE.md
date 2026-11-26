@@ -41,7 +41,7 @@ QEMU establishes emulated behaviour only.
 | A raw write past the end of a typed box | `TestSanitizeTypedBoxOverflowReported` | `fern-sanitizer: heap-buffer-overflow` at the box's release, exit 124 under `-sanitize` | x86, arm64 |
 | A raw read through a dangling pointer | `TestSelfHostQuarantinePolicy` | the poison pattern, not the stale bytes, under `-sanitize` | x86, arm64 |
 | A raw free of an address outside the arena | `TestSelfHostRawFreeOutsideHeap` | abort with the out-of-heap cause | x86, arm64 |
-| A second raw free of one block after other frees of its class | `TestSelfHostHardenRawInterleavedDoubleFree` | abort with the double-free cause under `-harden`, for a small and a large class | x86, arm64 |
+| A second raw free of one block after other frees of its class | `TestSelfHostRawDoubleFree` | abort with the double-free cause in every profile, for a small and a large class, with up to 200 frees between the two | x86, arm64 |
 | A forged free list link in a released block | `TestSelfHostFreeListLinkForgery` | abort with the corrupt-link cause under `-harden`; the control recycles twelve blocks | x86, arm64 |
 | A secret left in a released block | `TestSelfHostEraseZeroesStorage` | `crypto.erase` zeroes it; the control reads it back | x86, arm64 |
 | Key material a primitive copied and released | `TestSelfHostPrimitivesEraseKeyMaterial` | no copy in the arena after the call; the planted control is found | x86, arm64 |

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -128,24 +129,9 @@ func TestSelfHostRawFreeInWorkerChild(t *testing.T) {
 	}
 }
 
-func TestSelfHostRawDoubleFree(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	_, qemu := arm64Tooling(t)
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		for _, size := range []string{"64", "1048576"} {
-			t.Run(target+"/"+size, func(t *testing.T) {
-				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawDoubleFreeSrc(size))
-				want := "true\ntwo frees of one class\n"
-				if code != 134 || stdout != want || !strings.HasPrefix(stderr, "fern: release of memory that is already free\n") {
-					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the double-free cause", code, stdout, stderr, want)
-				}
-			})
-		}
-	}
-}
-
-// Under -harden a raw free walks the first 64 blocks of its list, so a second
-// free of a block with other frees of its class between the two aborts too.
+// A raw free sets the bit of its block in the raw-free bitmap, and a raw
+// allocation clears it. So a second free of a block aborts in every profile,
+// with any number of frees of its class between the two.
 func rawInterleavedFreeSrc(size string) string {
 	return `function main(): i32 {
   unsafe {
@@ -164,62 +150,103 @@ func rawInterleavedFreeSrc(size string) string {
 `
 }
 
-func TestSelfHostHardenRawInterleavedDoubleFree(t *testing.T) {
-	cli := buildSelfHostCLI(t)
-	_, qemu := arm64Tooling(t)
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		for _, size := range []string{"64", "1048576"} {
-			t.Run(target+"/"+size, func(t *testing.T) {
-				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawInterleavedFreeSrc(size), "-harden")
-				want := "three frees of one class\n"
-				if code != 134 || stdout != want || !strings.HasPrefix(stderr, "fern: release of memory that is already free\n") {
-					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the double-free cause", code, stdout, stderr, want)
-				}
-			})
-			t.Run(target+"/"+size+"/head", func(t *testing.T) {
-				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawDoubleFreeSrc(size), "-harden")
-				want := "true\ntwo frees of one class\n"
-				if code != 134 || stdout != want || !strings.HasPrefix(stderr, "fern: release of memory that is already free\n") {
-					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the double-free cause", code, stdout, stderr, want)
-				}
-			})
-		}
-	}
+// Two hundred frees of the class come between the two frees of the first
+// block. The control frees and allocates each block again first.
+const rawFarDoubleFreeSrc = `function main(): i32 {
+  unsafe {
+    let ps: usize[] = [];
+    for i in 0..201 {
+      ps = ps.append(__alloc(64));
+    }
+    for p in ps {
+      __free(p, 64);
+    }
+    let qs: usize[] = [];
+    for i in 0..201 {
+      qs = qs.append(__alloc(64));
+    }
+    for q in qs {
+      __free(q, 64);
+    }
+    print("each block freed once after its reuse");
+    __free(qs[0], 64);
+    print("freed a block twice");
+    return 0;
+  }
 }
+`
 
-// A live block whose first word holds the quarantine poison value. Its free
-// must not abort, because the block is not in the quarantine.
+// The freed block can go to a typed value before the second free.
+const rawTypedReuseDoubleFreeSrc = `function main(): i32 {
+  unsafe {
+    let a: usize = __alloc(40);
+    __free(a, 40);
+    let xs: i64[] = [1i64, 2i64, 3i64];
+    print(xs.len().to_string());
+    __free(a, 40);
+    print("freed a block twice");
+    return 0;
+  }
+}
+`
+
+// A live block whose first word holds the quarantine poison value, and a
+// block with the bytes of a free list link. Their frees do not abort.
 const rawPoisonValuedFreeSrc = `function main(): i32 {
   unsafe {
     let p: usize = __alloc(64);
     __store_i32(p, 2129525454);
     __free(p, 64);
+    let q: usize = __alloc(64);
+    let r: usize = __alloc(64);
+    __store_i64(r, q as i64);
+    __free(q, 64);
+    __free(r, 64);
     print("poison-valued block freed");
     return 0;
   }
 }
 `
 
-// Under -sanitize a raw free quarantines the block, and a second raw free of a
-// quarantined block aborts, with or without other frees between the two.
-func TestSelfHostSanitizeRawDoubleFree(t *testing.T) {
+func TestSelfHostRawDoubleFree(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	_, qemu := arm64Tooling(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		for _, size := range []string{"64", "1048576"} {
-			t.Run(target+"/"+size, func(t *testing.T) {
-				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawInterleavedFreeSrc(size), "-sanitize")
-				want := "three frees of one class\n"
+		for _, profile := range []string{"release", "-harden", "-sanitize"} {
+			var flags []string
+			if profile != "release" {
+				flags = []string{profile}
+			}
+			abort := func(t *testing.T, source, want string) {
+				t.Helper()
+				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, source, flags...)
 				if code != 134 || stdout != want || !strings.Contains(stderr, "fern: release of memory that is already free\n") {
 					t.Fatalf("exit %d, stdout %q, stderr %q; want 134 after %q with the double-free cause", code, stdout, stderr, want)
 				}
+			}
+			// The quarantine of -sanitize keeps a freed block from its next
+			// allocation.
+			reused := strconv.FormatBool(profile != "-sanitize")
+			for _, size := range []string{"64", "1048576"} {
+				t.Run(target+"/"+profile+"/"+size+"/head", func(t *testing.T) {
+					abort(t, rawDoubleFreeSrc(size), reused+"\ntwo frees of one class\n")
+				})
+				t.Run(target+"/"+profile+"/"+size+"/interleaved", func(t *testing.T) {
+					abort(t, rawInterleavedFreeSrc(size), "three frees of one class\n")
+				})
+			}
+			t.Run(target+"/"+profile+"/far", func(t *testing.T) {
+				abort(t, rawFarDoubleFreeSrc, "each block freed once after its reuse\n")
+			})
+			t.Run(target+"/"+profile+"/typed-reuse", func(t *testing.T) {
+				abort(t, rawTypedReuseDoubleFreeSrc, "3\n")
+			})
+			t.Run(target+"/"+profile+"/poison-valued", func(t *testing.T) {
+				stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawPoisonValuedFreeSrc, flags...)
+				if code != 0 || !strings.HasPrefix(stdout, "poison-valued block freed\n") {
+					t.Fatalf("exit %d, stdout %q, stderr %q; want 0 after the frees", code, stdout, stderr)
+				}
 			})
 		}
-		t.Run(target+"/poison-valued", func(t *testing.T) {
-			stdout, stderr, code := runRawFreeProbe(t, cli, qemu, target, rawPoisonValuedFreeSrc, "-sanitize")
-			if code != 0 || !strings.HasPrefix(stdout, "poison-valued block freed\n") {
-				t.Fatalf("exit %d, stdout %q, stderr %q; want 0 after the free", code, stdout, stderr)
-			}
-		})
 	}
 }

@@ -38,6 +38,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | An array box never exceeds 2^28 - 1 words, so no payload reaches 2^31 bytes | `TestSelfHostArrayCeiling` | x86, arm64 |
 | An allocation whose size wraps the heap pointer aborts | `TestSelfHostAllocRefusesWrappedBump` | x86, arm64 |
 | A raw free of an address outside the arena aborts | `TestSelfHostRawFreeOutsideHeap` | x86, arm64 |
+| A second raw free of a block aborts in every profile, with any number of frees between the two | `TestSelfHostRawDoubleFree`, `TestSelfHostAbortReports*` (`raw_double_free_interleaved`) | x86, arm64, wasm |
 | Under `-sanitize`, a use after free, a double free and a leak are reported | `TestX86_64SanitizeUseAfterFreeReported`, `TestX86_64SanitizeDoubleFreeReported`, `TestX86_64SanitizeLeakVerdict` and their arm64 rows | x86, arm64 |
 | Under `-sanitize`, a raw write up to 16 bytes past a raw block is reported at the block's free | `TestSelfHostQuarantinePolicy` | x86, arm64 |
 | `crypto.erase` zeroes a secret before its block is reused | `TestSelfHostEraseZeroesStorage` | x86, arm64 |
