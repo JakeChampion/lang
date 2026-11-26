@@ -139,7 +139,7 @@ function __send_all(sock: Socket, data: u8[]): i32 {
 pub enum Read { Opened(i32, u8[]), StreamEnded, NothingYet, WaitCancelled, ReadFailed(i32) }
 ```
 
-### `7 pub function read(sock: Socket, wait: Duration): Read`
+### `7 pub function read(sock: Socket, wait: time.Duration): Read`
 
 ```fern
 <<7 pub function read(sock: Socket, wait: time.Duration): Read>>=

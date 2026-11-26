@@ -1291,7 +1291,7 @@ function __driven_feed(sh: Shared, at: i32, d: Driven, bytes: u8[]): Option[i32]
 }
 ```
 
-### `26 pub function (sh: Shared) expired(now: Instant, idle: Duration): i32[]`
+### `26 pub function (sh: Shared) expired(now: time.Instant, idle: time.Duration): i32[]`
 
 ```fern
 <<26 pub function (sh: Shared) expired(now: time.Instant, idle: time.Duration): i32[]>>=

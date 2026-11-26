@@ -1522,7 +1522,7 @@ pub function write_rest(sock: Socket, data: u8[]): Result[u8[], NetError] {
 pub enum Recv { Chunk(u8[]), Elapsed, Abandoned }
 ```
 
-### `34 pub function read_deadline(sock: Socket, max: i32, deadline: Duration): Result[Recv, NetError]`
+### `34 pub function read_deadline(sock: Socket, max: i32, deadline: time.Duration): Result[Recv, NetError]`
 
 ```fern
 <<34 pub function read_deadline(sock: Socket, max: i32, deadline: time.Duration): Result[Recv, NetError]>>=

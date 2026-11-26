@@ -422,7 +422,7 @@ function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[],
 }
 ```
 
-### `9 pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string]`
+### `9 pub function client(c: Config, entropy: [u8], now: time.Instant, wall: time.Timestamp): Result[Conn, string]`
 
 ```fern
 <<9 pub function client(c: Config, entropy: [u8], now: time.Instant, wall: time.Timestamp): Result[Conn, string]>>=
@@ -940,7 +940,7 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
 }
 ```
 
-### `19 pub function (c: Conn) tick(now: Instant): Conn`
+### `19 pub function (c: Conn) tick(now: time.Instant): Conn`
 
 ```fern
 <<19 pub function (c: Conn) tick(now: time.Instant): Conn>>=
@@ -996,7 +996,7 @@ function (c: Conn) __probe_timed_out(now: i64): Conn {
 }
 ```
 
-### `21 pub function (c: Conn) update_keys(now: Instant): Result[Conn, string]`
+### `21 pub function (c: Conn) update_keys(now: time.Instant): Result[Conn, string]`
 
 ```fern
 <<21 pub function (c: Conn) update_keys(now: time.Instant): Result[Conn, string]>>=
@@ -1115,7 +1115,7 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
 }
 ```
 
-### `23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn`
+### `23 pub function (c: Conn) receive(datagram: [u8], now: time.Instant): Conn`
 
 ```fern
 <<23 pub function (c: Conn) receive(datagram: [u8], now: time.Instant): Conn>>=
@@ -2250,7 +2250,7 @@ function __param_error(reason: string): frames.FrameError {
 }
 ```
 
-### `29 pub function (c: Conn) transmit(now: Instant): Conn`
+### `29 pub function (c: Conn) transmit(now: time.Instant): Conn`
 
 ```fern
 <<29 pub function (c: Conn) transmit(now: time.Instant): Conn>>=

@@ -151,7 +151,7 @@ pub function timeout(h: HeaderMap): Option[time.Duration] {
 }
 ```
 
-### `5 function __unit(unit: i32, n: i64): Option[Duration]`
+### `5 function __unit(unit: i32, n: i64): Option[time.Duration]`
 
 ```fern
 <<5 function __unit(unit: i32, n: i64): Option[time.Duration]>>=

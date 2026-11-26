@@ -279,7 +279,7 @@ impl async.Driver for Sim {
 }
 ```
 
-### `8 pub function (s: Sim) advance_to(to: Instant): boolean`
+### `8 pub function (s: Sim) advance_to(to: time.Instant): boolean`
 
 Inside a task, the clock moves only when the scheduler resumes the task. So
 `advance_to` parks until `to`, and `run_tasks` moves the clock to the earliest
@@ -356,7 +356,7 @@ pub function block_on[T](drv: Sim, own f: async.Future[T]): Option[T] {
 }
 ```
 
-### `9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[Instant][]): i32`
+### `9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[time.Instant][]): i32`
 
 ```fern
 <<9 function __next_due[T](drv: Sim, out: async.TaskStatus[T][], cancel_at: Option[time.Instant][]): i32>>=
@@ -427,7 +427,7 @@ function __run_due[T](drv: Sim, t: async.Task[T], st: async.TaskStatus[T], cance
 }
 ```
 
-### `10 pub function future_at[T](at: Instant, v: T): async.Future[T]`
+### `10 pub function future_at[T](at: time.Instant, v: T): async.Future[T]`
 
 ```fern
 <<10 pub function future_at[T](at: time.Instant, v: T): async.Future[T]>>=

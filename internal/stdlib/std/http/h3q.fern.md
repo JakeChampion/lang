@@ -232,7 +232,7 @@ pub function (c: Conn) close(now: time.Instant): Conn {
 }
 ```
 
-### `5 function (c: Conn) __stepped(now: Instant): Conn`
+### `5 function (c: Conn) __stepped(now: time.Instant): Conn`
 
 ```fern
 <<5 function (c: Conn) __stepped(now: time.Instant): Conn>>=

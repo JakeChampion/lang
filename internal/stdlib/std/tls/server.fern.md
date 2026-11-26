@@ -536,7 +536,7 @@ const TICKET_CHAIN_MAX: i32 = 16384;
 pub const TICKET_ENTROPY: i32 = 16;
 ```
 
-### `14 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket`
+### `14 pub function issue_ticket(key: [u8], lifetime: time.Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket`
 
 ```fern
 <<14 pub function issue_ticket(key: [u8], lifetime: time.Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket>>=
@@ -791,7 +791,7 @@ pub struct Connection { sock: Socket, session: Session, pending: u8[], ended: bo
 pub struct Received { conn: Connection, data: u8[], ended: boolean }
 ```
 
-### `17 pub function accept(own sock: Socket, config: Config, timeout: Duration): Result[Connection, tls.TlsError]`
+### `17 pub function accept(own sock: Socket, config: Config, timeout: time.Duration): Result[Connection, tls.TlsError]`
 
 ```fern
 <<17 pub function accept(own sock: Socket, config: Config, timeout: time.Duration): Result[Connection, tls.TlsError]>>=

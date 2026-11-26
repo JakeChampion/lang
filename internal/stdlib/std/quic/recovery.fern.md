@@ -172,7 +172,7 @@ pub function (r: Recovery) on_sent(space: i32, p: Sent): Recovery {
 }
 ```
 
-### `6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: Duration, now: Instant, largest_sent:...`
+### `6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: time.Duration, now: time.Instant, largest_sent:...`
 
 ```fern
 <<6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: time.Duration, now: time.Instant, largest_sent:...>>=
@@ -457,7 +457,7 @@ function __max(a: i64, b: i64): i64 {
 }
 ```
 
-### `9 pub function (r: Recovery) pto(space: i32): Duration`
+### `9 pub function (r: Recovery) pto(space: i32): time.Duration`
 
 ```fern
 <<9 pub function (r: Recovery) pto(space: i32): time.Duration>>=
@@ -541,7 +541,7 @@ function __eliciting_in(s: Space): boolean {
 }
 ```
 
-### `11 pub function (r: Recovery) on_timeout(now: Instant): Recovery`
+### `11 pub function (r: Recovery) on_timeout(now: time.Instant): Recovery`
 
 ```fern
 <<11 pub function (r: Recovery) on_timeout(now: time.Instant): Recovery>>=

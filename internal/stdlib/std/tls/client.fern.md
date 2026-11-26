@@ -691,7 +691,7 @@ pub struct Connection { sock: Socket, session: Session, tickets: Ticket[], pendi
 pub struct Received { conn: Connection, data: u8[], ended: boolean }
 ```
 
-### `16 pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, tls.Tl...`
+### `16 pub function connect(host: string, port: i32, config: Config, timeout: time.Duration): Result[Connection, tls.Tl...`
 
 ```fern
 <<16 pub function connect(host: string, port: i32, config: Config, timeout: time.Duration): Result[Connection, tls.Tl...>>=

@@ -217,7 +217,7 @@ import "std/quic/packet";
 import "std/http/h2/frame";
 ```
 
-### `3 function __recv_deadline_default(): Duration`
+### `3 function __recv_deadline_default(): time.Duration`
 
 ```fern
 <<3 function __recv_deadline_default(): time.Duration>>=

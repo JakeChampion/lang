@@ -430,7 +430,7 @@ pub function precondition_failed(): HttpResponse {
 }
 ```
 
-### `15 pub const DELTA_MAX: Duration`
+### `15 pub const DELTA_MAX: time.Duration`
 
 ```fern
 <<15 pub const DELTA_MAX: time.Duration>>=

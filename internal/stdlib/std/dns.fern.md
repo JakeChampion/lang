@@ -1325,7 +1325,7 @@ function local_for(ns: net.SocketAddr): net.SocketAddr {
 }
 ```
 
-### `40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]`
+### `40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]`
 
 ```fern
 <<40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]>>=
@@ -1566,7 +1566,7 @@ function take_reply(sock: Socket, q: Message): Result[Option[Message], DnsError]
 }
 ```
 
-### `44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]`
+### `44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]`
 
 ```fern
 <<44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]>>=
