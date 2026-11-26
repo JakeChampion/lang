@@ -2244,12 +2244,18 @@ function lit_text_exact(text: string): boolean {
   return util.i64_to_string(util.lit_to_i64(text)) == text;
 }
 
+// A value that no one `movz` or `movn` encodes, such as the word count of a
+// large array box, takes a `movz` and a `movk` for each other 16 bits.
 function ssa_mov_imm(s: asmcore.EmitState, d: string, text: string): asmcore.EmitState {
-  if (s.records() && (movz_text_ok(text) || movn_text_ok(text))) {
+  let single = movz_text_ok(text) || movn_text_ok(text);
+  if (s.records() && single) {
     let w = arm64_native.arm64_rec_mov_imm(d, util.digits_to_i32(text) as i64);
     if (w >= 0) {
       return s.word(w);
     }
+  }
+  if (!single) {
+    return s.write(mov_imm64(d, util.lit_to_i64(text)));
   }
   return s.write("    mov " + d + ", #" + text + "\n");
 }
