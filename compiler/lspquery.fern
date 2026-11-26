@@ -1040,16 +1040,14 @@ function ends_pattern(t: Tok): boolean {
 }
 
 function bracket_step(t: Tok): i32 {
-  if (t.ident || t.text.len() != 1) {
+  if (t.ident) {
     return 0;
   }
-  if (t.text == "(" || t.text == "[" || t.text == "{") {
-    return 1;
-  }
-  if (t.text == ")" || t.text == "]" || t.text == "}") {
-    return -1;
-  }
-  return 0;
+  return match (t.text) {
+    "(" | "[" | "{" => 1,
+    ")" | "]" | "}" => -1,
+    _ => 0,
+  };
 }
 
 pub function after(toks: Tok[], line: i32, col: i32): i32 {
@@ -1068,11 +1066,9 @@ pub function after(toks: Tok[], line: i32, col: i32): i32 {
 
 pub function body_end(toks: Tok[], from: i32): Option[i32] {
   let depth = 0;
-  let i = from;
-  while (i < toks.len()) {
+  for i in from..toks.len() {
     let t = toks[i].text;
     if (toks[i].ident || t.len() != 1) {
-      i += 1;
       continue;
     }
     if (t == "(" || t == "[") {
@@ -1084,7 +1080,6 @@ pub function body_end(toks: Tok[], from: i32): Option[i32] {
     } else if (t == "{" && depth == 0) {
       return Some(closing_brace(toks, i));
     }
-    i += 1;
   }
   return None;
 }
@@ -1105,12 +1100,13 @@ function closing_brace(toks: Tok[], open: i32): i32 {
 }
 
 pub function field_tok(toks: Tok[], from: i32, name: string): Option[i32] {
-  let i = from;
-  while (i < toks.len() && toks[i].text != "}") {
+  for i in from..toks.len() {
+    if (toks[i].text == "}") {
+      break;
+    }
     if (toks[i].ident && toks[i].text == name && text_at(toks, i + 1) == ":") {
       return Some(i);
     }
-    i += 1;
   }
   return None;
 }

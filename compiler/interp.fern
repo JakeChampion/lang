@@ -4724,35 +4724,40 @@ function strings_ordered(code: i32, a: string, b: string): boolean {
   return a >= b;
 }
 
+function checked_operand_tag(side: ast.Expr): string {
+  let tag = match (side) {
+    ast.ExprNumber(n) => n.suffix,
+    _ => ast.expr_ty(side),
+  };
+  let k = scalar_code(tag);
+  return if (k > SC_USIZE && k <= SC_LAST_INT) { tag } else { "" };
+}
+
 function checked_operand_type(b: ast.ExprBinary, lv: Value): string {
-  let ints: string[] = ["u8", "u16", "i16", "i32", "u32", "i64", "u64"];
-  for side in [b.left, b.right] {
-    let tag = ast.expr_ty(side);
-    if let ast.ExprNumber(n) = side {
-      tag = n.suffix;
-    }
-    if (util.has_str(ints, tag)) {
-      return tag;
-    }
+  let left = checked_operand_tag(b.left);
+  if (left.len() > 0) {
+    return left;
   }
-  return value_type_name(lv);
+  let right = checked_operand_tag(b.right);
+  return if (right.len() > 0) { right } else { value_type_name(lv) };
 }
 
 function eval_checked(op: string, lv: Value, rv: Value, ty: string): Value {
   if (!is_int_like(lv) || !is_int_like(rv)) {
     return v_err("checked operator `" + op + "` on a non-integer");
   }
-  let signed = ty == "i16" || ty == "i32" || ty == "i64";
+  let k = scalar_code(ty);
+  let signed = k == SC_I16 || k == SC_I32 || k == SC_I64;
   let width: i64 = 32;
-  if (ty == "u8") {
+  if (k == SC_U8) {
     width = 8;
-  } else if (ty == "u16" || ty == "i16") {
+  } else if (k == SC_U16 || k == SC_I16) {
     width = 16;
-  } else if (ty == "i64" || ty == "u64") {
+  } else if (k == SC_I64 || k == SC_U64) {
     width = 64;
   }
-  let a = vint_as_i64(coerce_int_width(lv, ty));
-  let b = vint_as_i64(coerce_int_width(rv, ty));
+  let a = vint_as_i64(coerce_scalar(lv, k, ty));
+  let b = vint_as_i64(coerce_scalar(rv, k, ty));
   let none_args: Value[] = [];
   if (op == "<<?" || op == ">>?") {
     if (b < 0 || b >= width) {
@@ -4766,7 +4771,7 @@ function eval_checked(op: string, lv: Value, rv: Value, ty: string): Value {
     r = checked_narrow(op, a, b, signed, width);
   }
   if let Some(v) = r {
-    return v_variant("Some", [coerce_int_width(v_int64(v), ty)]);
+    return v_variant("Some", [coerce_scalar(v_int64(v), k, ty)]);
   }
   return v_variant("None", none_args);
 }
