@@ -1,54 +1,182 @@
 #!/usr/bin/env python3
-"""Measure whole-file QOA decode against the pinned C reference."""
+"""Compare native QOA frame decode with the pinned C reference decoder."""
+
+import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import platform
+import random
 import shutil
 import statistics
 import subprocess
+import sys
 import tempfile
-import time
 import urllib.request
 import wave
 
-root = Path(__file__).resolve().parent.parent
-os.chdir(root)
-spec = importlib.util.spec_from_file_location('fixtures', root / 'scripts/gen-audio-fixtures.py')
-fixtures = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(fixtures)
-compiler = os.environ.get('FERN') or subprocess.check_output(['./bootstrap/bootstrap.sh', 'stage0'], text=True).strip()
-compiler = shutil.which(compiler) or compiler
-target = {'x86_64': 'x86-64-linux', 'aarch64': 'arm64-linux', 'arm64': 'arm64-darwin'}[os.uname().machine]
-with tempfile.TemporaryDirectory() as temp:
-    temp = Path(temp)
-    header = urllib.request.urlopen(f'https://raw.githubusercontent.com/phoboslab/qoa/{fixtures.QOA_REV}/qoa.h').read()
-    assert hashlib.sha256(header).hexdigest() == fixtures.QOA_SHA
-    (temp / 'qoa.h').write_bytes(header)
-    for source, output in [('qoa.c', 'encode'), ('qoa_bench.c', 'reference')]:
-        shutil.copy(root / 'scripts/audio-reference' / source, temp / source)
-        subprocess.run(['cc', '-O3', '-fwrapv', '-o', str(temp / output), str(temp / source)], check=True)
-    subprocess.run([compiler, '-stdlib', 'internal/stdlib', '-target', target, '-o', str(temp / 'fern'), 'bench/audio/qoa_decode.fern'], check=True)
-    samples = fixtures.sample_signal(10004, 2)
-    with wave.open(str(temp / 'input.wav'), 'wb') as output:
-        output.setnchannels(2)
-        output.setsampwidth(2)
-        output.setframerate(48000)
-        output.writeframes(b''.join(s.to_bytes(2, 'little', signed=True) for s in samples))
-    subprocess.run([str(temp / 'encode'), str(temp / 'input.wav'), str(temp / 'input.qoa')], check=True)
-    timings = {'fern': [], 'reference': []}
-    checksums = set()
-    for trial in range(5):
-        for name in (['fern', 'reference'] if trial % 2 == 0 else ['reference', 'fern']):
-            start = time.perf_counter()
-            result = subprocess.check_output([str(temp / name), str(temp / 'input.qoa')], text=True)
-            timings[name].append(time.perf_counter() - start)
-            checksums.add(result.strip())
-    assert len(checksums) == 1
-    medians = {name: statistics.median(values) for name, values in timings.items()}
-    print(json.dumps({'machine': platform.platform(), 'compiler_sha256': hashlib.sha256(Path(compiler).read_bytes()).hexdigest(), 'compiler': subprocess.check_output([compiler, '-version'], text=True).strip(),
-                      'qoa_reference': fixtures.QOA_REV, 'iterations': 1000, 'frames_per_file': 10004, 'channels': 2,
-                      'seconds': timings, 'median_seconds': medians, 'fern_over_c': medians['fern'] / medians['reference'],
-                      'output_storage': {'fern': 'i32', 'reference': 'int16'}}, indent=2))
+ROOT = Path(__file__).resolve().parents[1]
+CASES = [
+    ("silence", 2),
+    ("impulse", 2),
+    ("speech", 1),
+    ("music", 2),
+    ("noise", 2),
+]
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def fixtures():
+    spec = importlib.util.spec_from_file_location("fixtures", ROOT / "scripts/gen-audio-fixtures.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def signal(name, channels, frames):
+    """Returns interleaved signed 16-bit samples at 48 kHz for one named case."""
+    rng = random.Random(14515)
+    out = []
+    for frame in range(frames):
+        t = frame / 48000
+        for channel in range(channels):
+            if name == "silence":
+                value = 0
+            elif name == "impulse":
+                value = (32767 if frame // 4800 % 2 == 0 else -32768) if frame % 4800 == channel else 0
+            elif name == "speech":
+                # Three formants at a 4 Hz syllable rate, with a pause in each 1.5 s phrase.
+                envelope = max(0.0, math.sin(2 * math.pi * 4 * t)) if t % 1.5 < 1.05 else 0.0
+                voiced = 0.5 * math.sin(2 * math.pi * 700 * t) + 0.3 * math.sin(2 * math.pi * 1220 * t) + 0.2 * math.sin(2 * math.pi * 2600 * t)
+                value = int(voiced * envelope * 20000) + rng.randrange(-24, 25)
+            elif name == "music":
+                chord = [220.0, 277.18, 329.63] if int(t * 2) % 2 == 0 else [196.0, 246.94, 293.66]
+                tone = sum(math.sin(2 * math.pi * f * h * t + channel * 0.3) / h for f in chord for h in (1, 2, 3))
+                value = int(tone * 4800) + rng.randrange(-64, 65)
+            else:
+                value = rng.randrange(-32768, 32768)
+            out.append(max(-32768, min(32767, value)))
+    return out
+
+
+def fields(output):
+    return {key: int(value) for key, value in (line.split("=", 1) for line in output.splitlines() if "=" in line)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--compiler", default=os.environ.get("FERN"))
+    parser.add_argument("--stdlib", type=Path, default=ROOT / "internal/stdlib", help="the standard library to build the Fern decoder with")
+    parser.add_argument("--rounds", type=int, default=64)
+    parser.add_argument("--trials", type=int, default=7)
+    parser.add_argument("--frames", type=int, default=262144)
+    parser.add_argument("--case", action="append", dest="cases")
+    parser.add_argument("--cpu", type=int)
+    parser.add_argument("--output", type=Path)
+    args = parser.parse_args()
+    if not 1 <= args.rounds <= 100000 or args.trials < 3 or not 5120 <= args.frames <= 4194304:
+        parser.error("use 1 through 100000 rounds, at least three trials, and 5120 through 4194304 frames")
+    target = {("Linux", "x86_64"): "x86-64-linux", ("Linux", "aarch64"): "arm64-linux"}.get((platform.system(), platform.machine()))
+    if target is None:
+        parser.error("use a native Linux x86-64 or ARM64 host")
+    selected = [case for case in CASES if not args.cases or case[0] in args.cases]
+    if args.cases and len(selected) != len(set(args.cases)):
+        parser.error("unknown case")
+    affinity = sorted(os.sched_getaffinity(0))
+    cpu = args.cpu if args.cpu is not None else affinity[0]
+    if cpu not in affinity:
+        parser.error("CPU is outside the allowed affinity")
+    os.sched_setaffinity(0, {cpu})
+    compiler = args.compiler or subprocess.check_output([str(ROOT / "bootstrap/bootstrap.sh"), "stage0"], text=True).strip()
+    compiler = Path(shutil.which(compiler) or compiler).resolve()
+    pins = fixtures()
+    with tempfile.TemporaryDirectory(prefix="fern-qoa-bench-") as directory:
+        temp = Path(directory)
+        header = urllib.request.urlopen(f"https://raw.githubusercontent.com/phoboslab/qoa/{pins.QOA_REV}/qoa.h", timeout=60).read()
+        if hashlib.sha256(header).hexdigest() != pins.QOA_SHA:
+            raise SystemExit("qoa.h hash mismatch")
+        (temp / "qoa.h").write_bytes(header)
+        for source, output in [("qoa.c", "encode"), ("qoa_bench.c", "reference")]:
+            shutil.copy(ROOT / "scripts/audio-reference" / source, temp / source)
+            subprocess.run(["cc", "-O3", "-fwrapv", "-o", str(temp / output), str(temp / source)], check=True)
+        fern = temp / "fern"
+        stdlib = args.stdlib.resolve()
+        subprocess.run([str(compiler), "-stdlib", str(stdlib), "-O", "-target", target,
+                        "-o", str(fern), str(ROOT / "bench/audio/qoa_decode.fern")], check=True)
+        sources = [ROOT / "scripts/bench-audio", ROOT / "scripts/audio-reference/qoa_bench.c",
+                   ROOT / "bench/audio/qoa_decode.fern", stdlib / "std/audio/qoa.fern.md"]
+        result = {
+            "schema": 2,
+            "target": target,
+            "platform": platform.platform(),
+            "cpu_model": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
+                               if line.startswith("model name")), ""),
+            "cpu": cpu,
+            "rounds": args.rounds,
+            "trials": args.trials,
+            "frames_per_file": args.frames,
+            "git_head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+            "compiler": subprocess.check_output([str(compiler), "-version"], text=True).strip(),
+            "compiler_sha256": sha(compiler),
+            "reference_commit": pins.QOA_REV,
+            "reference_sha256": sha(temp / "reference"),
+            "fern_sha256": sha(fern),
+            "source_sha256": {path.name if not path.is_relative_to(ROOT) else str(path.relative_to(ROOT)): sha(path) for path in sources},
+            "measurement": "decode of every frame into reusable output, four warmup rounds; file read and decoder setup excluded; checksum pass after the timed region",
+            "output_storage": "Fern: interleaved signed 32-bit PCM. C: interleaved signed 16-bit PCM. The checksum hashes each sample as a sign-extended 32-bit value",
+            "peak_rss": "Linux process peak resident set after decode, including code, input and output",
+            "cases": {},
+        }
+        for name, channels in selected:
+            source = temp / (name + ".wav")
+            encoded = temp / (name + ".qoa")
+            with wave.open(str(source), "wb") as output:
+                output.setnchannels(channels)
+                output.setsampwidth(2)
+                output.setframerate(48000)
+                output.writeframes(b"".join(s.to_bytes(2, "little", signed=True) for s in signal(name, channels, args.frames)))
+            subprocess.run([str(temp / "encode"), str(source), str(encoded)], check=True)
+            rows = {"fern": [], "c": []}
+            for trial in range(args.trials):
+                for side in (["fern", "c"] if trial % 2 == 0 else ["c", "fern"]):
+                    binary = fern if side == "fern" else temp / "reference"
+                    run = subprocess.run([str(binary), str(encoded), str(args.rounds)], check=True, capture_output=True, text=True, timeout=600)
+                    rows[side].append(fields(run.stdout))
+            checksums = {row["checksum"] for side in rows.values() for row in side}
+            if len(checksums) != 1:
+                raise SystemExit(name + ": checksums differ: " + str(checksums))
+            median = {side: statistics.median(row["wall_ns"] for row in side_rows) for side, side_rows in rows.items()}
+            samples = rows["fern"][0]["samples"]
+            qoa_frames = args.rounds * math.ceil(args.frames / 5120)
+            case = {
+                "channels": channels,
+                "wav_sha256": sha(source),
+                "qoa_sha256": sha(encoded),
+                "encoded_bytes": encoded.stat().st_size,
+                "checksum": checksums.pop(),
+                "median_ns_per_sample": {side: value / samples for side, value in median.items()},
+                "fern_over_c": median["fern"] / median["c"],
+                "fern_allocs_per_frame": rows["fern"][0]["allocs"] / qoa_frames,
+                "fern_fresh_bytes_per_frame": rows["fern"][0]["fresh_bytes"] / qoa_frames,
+                "peak_rss_kb": {side: max(row["peak_rss_kb"] for row in side_rows) for side, side_rows in rows.items()},
+                "trials": rows,
+            }
+            result["cases"][name] = case
+            print(f"{name}: fern {case['median_ns_per_sample']['fern']:.3f} ns/sample, c {case['median_ns_per_sample']['c']:.3f}"
+                  f" ns/sample, ratio {case['fern_over_c']:.3f}, {case['fern_allocs_per_frame']:.2f} allocs/frame",
+                  file=sys.stderr, flush=True)
+        text = json.dumps(result, indent=2) + "\n"
+        if args.output:
+            args.output.write_text(text)
+        else:
+            print(text)
+
+
+if __name__ == "__main__":
+    main()
