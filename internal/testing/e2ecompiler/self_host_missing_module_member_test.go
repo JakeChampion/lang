@@ -39,7 +39,7 @@ function hidden(): i32 { return 4; }
 		{"misspelt-call", `import "./lib"; function main(): i32 { return lib.visibl(); }`, true},
 		{"missing-value", `import "./lib"; function main(): i32 { let f: () => i32 = lib.absent; return f(); }`, true},
 		{"import-alias", `import "./lib" as api; function main(): i32 { return api.missing(); }`, true},
-		{"method-as-function", `import "./lib"; function main(): i32 { return lib.value(lib.Box { n: 1 }); }`, true},
+		{"method-as-qualified-call", `import "./lib"; function main(): i32 { return lib.value(lib.Box { n: 1 }); }`, false},
 		{"method-suggestion", `import "./lib"; function main(): i32 { return lib.valu(lib.Box { n: 1 }); }`, true},
 		{"private-call", `import "./lib"; function main(): i32 { return lib.hidden(); }`, true},
 		{"before-later-shadow", `import "./lib"; function main(): i32 { let n = lib.missing(); let lib = lib.Box { n: 1 }; return n + lib.value(); }`, true},
