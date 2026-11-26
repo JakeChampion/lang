@@ -903,6 +903,19 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	}
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
 	g.git("commit", "-qm", "track module location")
+	// Even with a valid module store and a mapping in both HEAD and the
+	// index, Git skips the mapping when the superproject has no worktree.
+	g.git("push", "-q", bare, "HEAD:refs/heads/mapping")
+	g.git("-C", bare, "symbolic-ref", "HEAD", "refs/heads/mapping")
+	g.git("-C", bare, "read-tree", "HEAD")
+	bareStore := filepath.Join(bare, "modules", "Library")
+	g.git("clone", "-q", "--bare", storedGit, bareStore)
+	gitCompareEnv(t, oracle, port, dir, []string{"GIT_DIR=" + bare}, "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
+	g.git("-C", bare, "config", "core.repositoryformatversion", "1")
+	g.git("-C", bare, "config", "extensions.submodulePathConfig", "true")
+	g.git("-C", bare, "config", "submodule.Library.gitdir", bareStore)
+	gitCompareEnv(t, oracle, port, dir, []string{"GIT_DIR=" + bare}, "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
+
 	g.git("update-index", "--force-remove", ".gitmodules")
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
 	// Each linked worktree has its own module stores. The same named

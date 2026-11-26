@@ -771,11 +771,12 @@ enum ModuleLookup { AvailableModule(refs.Repo), MissingModule, UnknownModule, Mo
 
 // A checked-out submodule takes precedence over its named module store.
 function submodule_at(parent: refs.Repo, path: string): ModuleLookup {
+  // Git reads the path-to-name mapping only when the superproject has a worktree.
+  if (parent.top == "") {
+    return MissingModule;
+  }
   let modules = parent.dir + "/modules";
   let configured = parent.config.flag("extensions.submodulepathconfig", false);
-  if (parent.top == "") {
-    return if (!configured && missing_or_empty_dir(modules)) { MissingModule } else { UnknownModule };
-  }
   if let Some(sub) = refs.checkout_at(parent.top + "/" + path) {
     return AvailableModule(sub);
   }
