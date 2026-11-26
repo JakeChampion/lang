@@ -5968,7 +5968,7 @@ function ssa_frameless(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], early: EarlyHo
   for ins in blk.insts {
     let k = ins.kind_tag;
     let plain = k == ssa.PARAM || k == ssa.CONST_INT || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LD_AT || k == ssa.SHAPE_ADDR || k == ssa.LINE;
-    if (!plain && !(k == ssa.BINARY && util.has_str(["add", "sub", "and", "or", "xor", "eq", "ne", "lt_s", "lt_u", "le_s", "le_u", "gt_s", "gt_u", "ge_s", "ge_u"], ins.str))) {
+    if (!plain && !ssa.no_trap_int_binary(ins)) {
       return false;
     }
     if (k != ssa.PARAM && ins.result >= 0 && ssa_taken_home(early.late, reg_of[ins.result])) {
