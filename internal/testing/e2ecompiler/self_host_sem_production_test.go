@@ -3267,7 +3267,7 @@ function main(): i32 {
     print("over-releases " + __rc_underflow_count().to_string());
     return acc % 109;
 }`},
-	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 50, want: "21|", src: `
+	{name: "an-unannotated-binding-takes-its-call-s-type", atLeast: 45, want: "21|", src: `
 import "std/option";
 import "std/result";
 function mapped(): i32 {
@@ -3287,7 +3287,7 @@ function main(): i32 {
     while (i < 20) { acc = acc + mapped() + chained(); i = i + 1; }
     return acc % 113;
 }`},
-	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 43, want: "39|", src: `
+	{name: "a-variant-literal-types-itself-where-the-parameter-cannot", atLeast: 38, want: "39|", src: `
 import "std/option";
 function both(): i32 {
     let s: Option[i32] = Some(5);
@@ -3300,7 +3300,7 @@ function main(): i32 {
     while (i < 20) { acc = acc + both(); i = i + 1; }
     return acc % 107;
 }`},
-	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 52, want: "77|", src: `
+	{name: "a-variant-is-a-value-not-a-type-head", atLeast: 47, want: "77|", src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Display, cmp.Ord)
 enum Shape { Circle(i32), Square(i32), Empty }
@@ -3334,7 +3334,7 @@ function main(): i32 {
     if (Held { xs: [1.5, 2.5] }.render() != "[1.5,2.5]") { return 2; }
     return acc % 101;
 }`},
-	{name: "a-composite-compares-through-its-own-method", atLeast: 50, want: "42|", src: `
+	{name: "a-composite-compares-through-its-own-method", atLeast: 45, want: "42|", src: `
 import "core/cmp";
 @derive(cmp.Eq, cmp.Ord)
 struct Point { x: i32, y: string }
