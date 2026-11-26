@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # perf-history — every main-branch perf report, kept as git notes.
 #
-#   perf-history record LANE REPORT        append REPORT to HEAD's note under
-#                                          refs/notes/perf and push it
+#   perf-history record LANE REPORT [LANE REPORT]...
+#                                          append each REPORT to HEAD's note
+#                                          under refs/notes/perf, in one push
 #   perf-history show METRIC [N] [REV]     `date  sha  value` for METRIC over the
 #                                          last N commits of REV (50, origin/main)
 #   perf-history metrics [REV]             the metric names REV's newest note holds
@@ -19,18 +20,20 @@
 # perf lanes' metric namespaces are disjoint, so `show` takes a metric's first
 # occurrence.
 #
-# CONCURRENCY. Five jobs record against the same commit within minutes of each
+# CONCURRENCY. Many jobs record against the same commit within seconds of each
 # other, and a notes push is an ordinary ref update: the second one to land is
 # rejected as non-fast-forward. `record` therefore fetches, appends and pushes
 # in a loop, taking the remote's note over its own local copy on every retry —
 # a lane already present in the note is never appended twice, so a re-run of a
-# job is a no-op.
+# job is a no-op. The wait between attempts grows and is random, so two jobs
+# that collide once do not collide again in the next round. A job with several
+# reports gives them to one `record`, which makes one push for all of them.
 set -euo pipefail
 
 ref=refs/notes/perf
 remote="${FERN_PERF_REMOTE:-origin}"
 
-usage() { sed -n '2,10p' "$0" >&2; exit 2; }
+usage() { sed -n '2,11p' "$0" >&2; exit 2; }
 
 # Notes commits need an identity; a runner has none configured.
 if ! git config user.email >/dev/null 2>&1; then
@@ -46,31 +49,53 @@ fetch_notes() {
 }
 
 record() {
-  local lane="$1" report="$2" block attempt
-  [ -s "$report" ] || { echo "perf-history: no report at $report; nothing to record" >&2; exit 1; }
-  block="$(mktemp)"
+  local dir lane report pending attempt err i n=0 attempts=8
+  dir="$(mktemp -d)"
   # Expanded now: the trap fires after this function's locals are gone.
-  trap "rm -f '$block'" EXIT
-  {
-    printf '# lane: %s\n' "$lane"
-    grep -vE '^[[:space:]]*(#|$)' "$report"
-  } > "$block"
-
-  for attempt in 1 2 3 4 5; do
-    fetch_notes
-    if git notes --ref="$ref" show HEAD 2>/dev/null | grep -qxF "# lane: $lane"; then
-      echo "perf-history: $lane already recorded on $(git rev-parse --short HEAD)"
-      return 0
-    fi
-    git notes --ref="$ref" append -F "$block" HEAD
-    if git push -q "$remote" "$ref:$ref" 2>/dev/null; then
-      echo "perf-history: recorded $lane on $(git rev-parse --short HEAD) ($(grep -c . "$block") lines)"
-      return 0
-    fi
-    echo "perf-history: notes push rejected (attempt $attempt); another lane landed first, retrying" >&2
+  trap "rm -rf '$dir'" EXIT
+  while [ $# -gt 0 ]; do
+    lane="$1" report="$2"
+    shift 2
+    [ -s "$report" ] || { echo "perf-history: no report at $report; nothing to record" >&2; exit 1; }
+    n=$((n + 1))
+    printf -v i '%03d' "$n"
+    printf '%s\n' "$lane" > "$dir/$i.lane"
+    {
+      printf '# lane: %s\n' "$lane"
+      grep -vE '^[[:space:]]*(#|$)' "$report"
+    } > "$dir/$i.block"
   done
-  echo "perf-history: gave up pushing $ref after 5 attempts" >&2
+
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    fetch_notes
+    pending="$(pending_blocks "$dir")"
+    if [ -z "$pending" ]; then
+      echo "perf-history: every lane is already recorded on $(git rev-parse --short HEAD)"
+      return 0
+    fi
+    # shellcheck disable=SC2086 # one block path per word
+    awk 'FNR == 1 && NR > 1 { print "" } { print }' $pending > "$dir/append"
+    git notes --ref="$ref" append -F "$dir/append" HEAD
+    if err="$(git push -q "$remote" "$ref:$ref" 2>&1)"; then
+      echo "perf-history: recorded $(grep -h '^# lane: ' $pending | cut -d' ' -f3- | paste -sd' ') on $(git rev-parse --short HEAD) ($(grep -c . "$dir/append") lines)"
+      return 0
+    fi
+    echo "perf-history: notes push rejected (attempt $attempt of $attempts): ${err:-no message from git}" >&2
+    [ "$attempt" -lt "$attempts" ] && sleep $((attempt + RANDOM % (attempt + 1)))
+  done
+  echo "perf-history: gave up pushing $ref after $attempts attempts" >&2
   exit 1
+}
+
+# The block files under DIR whose lane HEAD's note does not hold yet.
+pending_blocks() {
+  local dir="$1" note f
+  note="$(git notes --ref="$ref" show HEAD 2>/dev/null || true)"
+  for f in "$dir"/*.lane; do
+    if ! grep -qxF "# lane: $(cat "$f")" <<<"$note"; then
+      printf '%s ' "${f%.lane}.block"
+    fi
+  done
 }
 
 default_rev() {
@@ -103,7 +128,7 @@ metrics() {
 }
 
 case "${1:-}" in
-  record)  [ $# -eq 3 ] || usage; record "$2" "$3" ;;
+  record)  [ $# -ge 3 ] && [ $(($# % 2)) -eq 1 ] || usage; shift; record "$@" ;;
   show)    [ $# -ge 2 ] && [ $# -le 4 ] || usage; show "$2" "${3:-}" "${4:-}" ;;
   metrics) [ $# -le 2 ] || usage; metrics "${2:-}" ;;
   *)       usage ;;

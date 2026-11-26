@@ -157,7 +157,7 @@ func TestPerfHistorySurvivesAConcurrentLane(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("record under contention: exit %d\n%s", code, out)
 	}
-	if !strings.Contains(out, "rejected (attempt 1)") {
+	if !strings.Contains(out, "rejected (attempt 1 of ") {
 		t.Fatalf("the hook should have forced one rejected push; output:\n%s", out)
 	}
 	if _, err := os.Stat(marker); err != nil {
@@ -186,5 +186,42 @@ func TestPerfHistoryIgnoresAnInheritedGitDir(t *testing.T) {
 	note := gitIn(t, origin, "notes", "--ref=refs/notes/perf", "show", head)
 	if !strings.Contains(note, "x86_64/a.text\t100\n") {
 		t.Errorf("the note did not reach the fixture origin:\n%s", note)
+	}
+}
+
+func TestPerfHistoryRecordsSeveralLanesInOnePush(t *testing.T) {
+	origin, clone := perfRepo(t)
+	dir := t.TempDir()
+	rA := writeReport(t, dir, "a.txt", "x86_64/a.text\t1\n")
+	rB := writeReport(t, dir, "b.txt", "# header\nx86_64/b.text\t2\n")
+	if code, out := runPerfHistory(t, clone, "record", "lane-a", rA, "lane-b", rB); code != 0 {
+		t.Fatalf("record two lanes: exit %d\n%s", code, out)
+	}
+	if n := strings.Count(gitIn(t, origin, "log", "--format=%H", "refs/notes/perf"), "\n"); n != 1 {
+		t.Errorf("two lanes in one record made %d notes commits, want 1", n)
+	}
+	head := strings.TrimSpace(gitIn(t, clone, "rev-parse", "HEAD"))
+	note := gitIn(t, origin, "notes", "--ref=refs/notes/perf", "show", head)
+	for _, want := range []string{"# lane: lane-a\nx86_64/a.text\t1\n", "# lane: lane-b\nx86_64/b.text\t2\n"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("origin note missing %q:\n%s", want, note)
+		}
+	}
+
+	// A re-run in which one lane is already present appends only the other.
+	rC := writeReport(t, dir, "c.txt", "x86_64/c.text\t3\n")
+	if code, out := runPerfHistory(t, clone, "record", "lane-a", rA, "lane-c", rC); code != 0 {
+		t.Fatalf("record with one lane present: exit %d\n%s", code, out)
+	}
+	note = gitIn(t, origin, "notes", "--ref=refs/notes/perf", "show", head)
+	if n := strings.Count(note, "# lane: lane-a"); n != 1 {
+		t.Errorf("lane-a recorded %d times, want 1:\n%s", n, note)
+	}
+	if !strings.Contains(note, "# lane: lane-c\nx86_64/c.text\t3\n") {
+		t.Errorf("origin note missing lane-c:\n%s", note)
+	}
+
+	if code, out := runPerfHistory(t, clone, "record", "lane-a"); code != 2 {
+		t.Errorf("record with a lane but no report: exit %d, want 2 (usage)\n%s", code, out)
 	}
 }
