@@ -7,7 +7,7 @@ import (
 
 const cbsOptStrCallSrc = `function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function round(r: i32): i32 {
     let acc: i32 = 0;
@@ -70,7 +70,7 @@ function main(): i32 {
 
 const cbsOptStrFnScopeSrc = `function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
-    return Some("abcd");
+    return Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
 }
 function round(r: i32): i32 {
     let v: Option[string] = mk(r);
@@ -89,7 +89,7 @@ const cbsOptStrDirectSrc = `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 4) {
-        let v: Option[string] = Some("abcd");
+        let v: Option[string] = Some("abc" + (if (i % 2 == 0) { "d" } else { "e" }));
         match (v) { Some(s) => { acc = acc + s.len(); }, None => { acc = acc + 1; } }
         i = i + 1;
     }
@@ -103,7 +103,7 @@ function main(): i32 {
 }`
 
 const cbsOptStrAliasLocalSrc = `function mk(i: i32): Option[string] {
-    let pre: string = "abcd";
+    let pre: string = "abc" + (if (i % 2 == 0) { "d" } else { "e" });
     if (i < 0) { return None; }
     return Some(pre);
 }
@@ -129,7 +129,7 @@ const cbsOptStrParamAliasSrc = `function mk(s: string, i: i32): Option[string] {
     return Some(s);
 }
 function round(r: i32): i32 {
-    let keep: string = "abcd";
+    let keep: string = "abc" + (if (r % 2 == 0) { "d" } else { "e" });
     let acc: i32 = 0;
     let i: i32 = 0;
     while (i < 4) {

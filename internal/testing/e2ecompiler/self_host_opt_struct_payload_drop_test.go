@@ -13,9 +13,10 @@ func TestSelfHostOptStructPayloadDropX86_64(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range []struct {
-		name string
-		src  string
-		want int
+		name           string
+		src            string
+		want           int
+		allocationFree bool
 	}{
 		{
 			name: "single_bind_scalar_field_read",
@@ -155,7 +156,8 @@ function main(): i32 {
     while (r < 100) { x = x + round(r); r = r + 1; }
     return x % 83;
 }`,
-			want: 53,
+			want:           53,
+			allocationFree: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -178,7 +180,11 @@ function main(): i32 {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("parse %q: %v", summary, err)
 			}
-			if allocs == 0 {
+			if tc.allocationFree {
+				if allocs != 0 {
+					t.Errorf("scalar-only option allocated %d times, want zero", allocs)
+				}
+			} else if allocs == 0 {
 				t.Fatalf("allocated nothing — the probe is not exercising the path")
 			}
 			if live != 0 {
@@ -199,6 +205,9 @@ func TestSelfHostOptStructPayloadDropHazardsX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
+	// Each round allocates the extracted array. Appending it to a container
+	// also allocates the outer array. Neither the local record nor Some
+	// needs a separate allocation.
 	for _, tc := range []struct {
 		name      string
 		src       string
@@ -222,7 +231,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      57,
-			wantFrees: 300,
+			wantFrees: 100,
 		},
 		{
 			name: "field_appended_into_a_container",
@@ -241,7 +250,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 400,
+			wantFrees: 200,
 		},
 		{
 			name: "field_passed_to_a_callee_that_keeps_it",
@@ -261,7 +270,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 100,
 		},
 		{
 			name: "whole_payload_struct_escapes",
@@ -280,7 +289,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 400,
+			wantFrees: 100,
 		},
 		{
 			name: "nested_block_match_field_extracted",
@@ -301,7 +310,7 @@ function main(): i32 {
     return x % 83;
 }`,
 			want:      40,
-			wantFrees: 300,
+			wantFrees: 100,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -325,7 +334,7 @@ function main(): i32 {
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("parse %q: %v", summary, err)
 			}
-			if frees != tc.wantFrees {
+			if frees != tc.wantFrees || allocs != frees || live != 0 {
 				t.Errorf("frees=%d, want exactly %d (allocs=%d live=%d) — a HIGHER count is "+
 					"the moved field being released under a live reference; a lower one means "+
 					"this probe stopped exercising the path it was written for",

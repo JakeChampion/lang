@@ -1484,11 +1484,14 @@ value_block_width_call_arm                           0
 value_cleanup_keeps_cow_aliases                      0
 value_if_arm_fn_call_arg                             0
 var_inference                                        0
+variant_literal_settles_a_shared_name                0
+variant_named_field_literal                          0
 variant_named_like_an_ioerror_variant                0
 variant_pattern_nested                               0
 variant_pattern_rename                               0
 variant_pattern_rename_rest                          0
 variant_pattern_rest                                 0
+variant_pattern_shared_name_field_order              0
 variant_payload_expected_type                        0
 variant_payload_from_array_field                     0
 vec_generic_impls                                    0

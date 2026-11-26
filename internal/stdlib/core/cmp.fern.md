@@ -1218,17 +1218,28 @@ function __cmp_sort_adaptive[T: Ord](arr: T[], desc: boolean): T[] {
         let mhi = bounds[r + 2];
         let p = mlo;
         let q = mmid;
-        while (p < mmid && q < mhi) {
-          let om = a[p].cmp(a[q]);
+        // Keep both run heads and reload only the one consumed.
+        let left = a[p];
+        let right = a[q];
+        while (true) {
+          let om = left.cmp(right);
           if (desc) {
             om = 0 - om;
           }
           if (om > 0) {
-            out = out.append(a[q]);
+            out = out.append(right);
             q += 1;
+            if (q == mhi) {
+              break;
+            }
+            right = a[q];
           } else {
-            out = out.append(a[p]);
+            out = out.append(left);
             p += 1;
+            if (p == mmid) {
+              break;
+            }
+            left = a[p];
           }
         }
         while (p < mmid) {
@@ -1342,13 +1353,24 @@ pub function sort_by[T](arr: T[], order: (T, T) => i32): T[] {
         let mhi = bounds[r + 2];
         let p = mlo;
         let q = mmid;
-        while (p < mmid && q < mhi) {
-          if (order(a[p], a[q]) > 0) {
-            out = out.append(a[q]);
+        // Keep both run heads and reload only the one consumed.
+        let left = a[p];
+        let right = a[q];
+        while (true) {
+          if (order(left, right) > 0) {
+            out = out.append(right);
             q += 1;
+            if (q == mhi) {
+              break;
+            }
+            right = a[q];
           } else {
-            out = out.append(a[p]);
+            out = out.append(left);
             p += 1;
+            if (p == mmid) {
+              break;
+            }
+            left = a[p];
           }
         }
         while (p < mmid) {

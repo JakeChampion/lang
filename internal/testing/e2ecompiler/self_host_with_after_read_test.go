@@ -18,7 +18,8 @@ func TestSelfHostWithAfterReadUnchecked(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "with.fern")
 	program := withAfterRead + `function main(): i32 {
-  let a = bump(bump([1, 2, 3], 1), 1);
+  let i = args().len();
+  let a = bump(bump([1, 2, 3], i), i);
   let b = maybe(put([1, 4, 3], args().len() - 1), 2, true);
   return a[1] + b[0] + b[2] - 15;
 }`

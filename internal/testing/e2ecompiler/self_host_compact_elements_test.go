@@ -356,7 +356,8 @@ function main(): i32 {
     print("f64 " + __f64x2_lane(e, 0).to_string() + " " + __f64x2_lane(e, 1).to_string());
     let snan: f32 = f32_from_bits(2139095041);
     let ns: f32[] = [snan];
-    print("snan " + f32_bits(ns[0]).to_string());
+    // A load may quiet the signaling NaN. Check every other bit.
+    print("snan " + (f32_bits(ns[0]) | 0x00400000).to_string());
     return 0;
 }
 `

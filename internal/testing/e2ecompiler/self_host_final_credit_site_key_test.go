@@ -154,7 +154,7 @@ function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; w
 @noinline function hold(o: S): i32 { return 0; }
 function round(i: i32): i32 {
     let keep: S = S.P(i);
-    let t: i32 = 0;
+    let t: i32 = hold(keep);
     if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let o: S = keep; t = t + 2; }
     match (keep) { S.P(v) => { t = t + v; }, S.Q => {} }
@@ -169,7 +169,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 @noinline function hold(o: S): i32 { return 0; }
 function round(i: i32): i32 {
     let keep: S = S.P(i);
-    let t: i32 = 0;
+    let t: i32 = hold(keep);
     if (i % 2 == 0) { let o: S = S.P(i + 1); t = t + 1 + hold(o); }
     if (i % 2 == 1) { let u: S = keep; t = t + 2; }
     match (keep) { S.P(v) => { t = t + v; }, S.Q => {} }
@@ -261,9 +261,10 @@ function main(): i32 { let pre: string = "ab"; let t: i32 = 0; let i: i32 = 0; w
 		{
 			name: "credited_rcenum",
 			src: `enum R { Full(i32[]), Empty }
+@noinline function hold(o: R): i32 { return 0; }
 function round(i: i32): i32 {
     let o: R = R.Full([i, i + 1]);
-    let t: i32 = 0;
+    let t: i32 = hold(o);
     match (o) { R.Full(xs) => { t = t + xs[0]; }, R.Empty => {} }
     return t;
 }

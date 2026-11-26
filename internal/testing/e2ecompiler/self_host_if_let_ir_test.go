@@ -36,7 +36,10 @@ func ifLetRuntimeSource(t *testing.T, src string) string {
 		}
 	}
 	return strings.NewReplacer(
-		"function main(): i32 {", "@noinline function probe(n: i32): i32 {",
+		// Pass t through a function value so the runtime variant exercises
+		// record reclamation even when direct calls pass scalar fields.
+		"function main(): i32 {", "function padOf(t: Point): i32 { return t.x - t.y; } @noinline function probe(n: i32): i32 {",
+		"let pad: i32 = t.x - t.y;", "let read: (Point) => i32 = padOf; let pad: i32 = read(t);",
 		"Point { x: 1, y: 1 }", "Point { x: n, y: n }",
 		"Point { x: 3, y: 4 }", "Point { x: n, y: n + 1 }",
 		"P3 { x: 3, y: 4, z: 5 }", "P3 { x: n, y: n + 1, z: n + 2 }",

@@ -187,7 +187,7 @@ function area(s: Shape): f64 {
 }
 
 function main(): i32 {
-    print(area(Rect(3.0, 4.0)).to_string());   // 12
+    print(area(Rect { w: 3.0, h: 4.0 }).to_string());   // 12
     return 0;
 }
 ```
@@ -195,8 +195,10 @@ function main(): i32 {
 A named-field variant is matched with `{ }` like a struct: fields in any
 order, `w: width` to bind a field under another name, and a trailing `..`
 to leave the remaining fields out (`Rect { w, .. }`). Without `..`, every
-field must be named. It is constructed positionally, arguments in
-declaration order: `Rect(3.0, 4.0)` sets `w` then `h`.
+field must be named. It is built by name in the same way:
+`Rect { h: 4.0, w: 3.0 }` takes its fields in any order, and evaluates
+them in written order. The type of the literal is the enum `Shape`, not
+the variant.
 
 Two enums can declare the same variant name. `Color.Red` names the
 variant of one enum. A bare `Red` resolves against the type its

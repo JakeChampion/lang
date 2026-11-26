@@ -38,9 +38,11 @@ function main(): i32 {
 	let payload: u8[] = args()[0].bytes();
 	// The observable is not stuck at zero: a fresh box moves it. This runs
 	// first because a dead State later on would donate its box to the probe.
+	// The indirect call takes the whole box even with scalar-parameter lowering.
+	let read_count: (State) => i32 = count_of;
 	let before: i64 = __heap_alloc_count();
 	let fresh: State = State { count: one(), total: 1 as i64, tag: 1, payload: payload };
-	if (count_of(fresh) != 1) { return 94; }
+	if (read_count(fresh) != 1) { return 94; }
 	if (__heap_alloc_count() - before <= (0 as i64)) { return 95; }
 
 	let s: State = State { count: one() - 1, total: 0 as i64, tag: 0, payload: args()[0].bytes() };

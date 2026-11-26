@@ -11,7 +11,8 @@ import (
 const selfHostAppendReportSrc = `import "std/array";
 import "std/i32";
 
-struct Acc { items: i32[], n: i32 }
+// Keep Acc boxed so the report observes a record-field grow.
+struct Acc { items: i32[], n: i32, x: i32, y: i32, z: i32 }
 
 @noinline
 function sole(n: i32): i32[] {
@@ -112,7 +113,7 @@ function main(): i32 {
     print((c1 - c0).to_string() + " " + (c2 - c1).to_string() + " " + (c3 - c2).to_string() + " " + (c4 - c3).to_string());
     return 1;
   }
-  let a: Acc = Acc { items: [1], n: 0 };
+  let a: Acc = Acc { items: [1], n: 0, x: 0, y: 0, z: 0 };
   return s + l + p + k + chained([2]).len() + from_field(a).len() + grow_owned(a).items.len() - 318;
 }
 `

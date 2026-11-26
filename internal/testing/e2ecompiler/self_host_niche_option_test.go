@@ -5,9 +5,10 @@ import "testing"
 // An Option of a box is the payload pointer, and null is None. Some(x) makes
 // no box, and each payload kind and a nested Option keep their values.
 const nicheOptionProgram = `struct P { a: u8[], b: i32 }
-struct R { n: i32, p: Option[P] }
+// Keep the returned R boxed so every round allocates R alone.
+struct R { n: i32, p: Option[P], x: i32, y: i32, z: i32 }
 enum E { Leaf(i32), Pair(string, i32), Empty }
-@noinline function mk(ps: P[], i: i32): R { return R { n: i, p: Some(ps[i]) }; }
+@noinline function mk(ps: P[], i: i32): R { return R { n: i, p: Some(ps[i]), x: i, y: i, z: i }; }
 @noinline function rd(r: R): i32 { match (r.p) { Some(p) => { return p.b; }, None => { return 0; } } }
 @noinline function pick_s(xs: string[], i: i32): Option[string] { if (i < xs.len()) { return Some(xs[i]); } return None; }
 @noinline function pick_a(xs: i32[][], i: i32): Option[i32[]] { if (i < xs.len()) { return Some(xs[i]); } return None; }

@@ -31,15 +31,19 @@ func ownedVariantResolutionCases(t *testing.T, bin string, runner []string, dir 
 				"Go":   goCheckerDiags(t, dir, tc.Source),
 				"Fern": driverDiags(runCheckerDriver(t, cmd, tc.Name)),
 			} {
-				if tc.Want == "" && len(ds) == 0 {
+				want := tc.Want
+				if label == "Go" && e2eharness.SelfHostOnlyCode(want) {
+					want = ""
+				}
+				if want == "" && len(ds) == 0 {
 					continue
 				}
 				found := false
 				for _, d := range ds {
-					found = found || tc.Want != "" && d.code == tc.Want
+					found = found || want != "" && d.code == want
 				}
 				if !found {
-					t.Errorf("%s: want %q, got %v", label, tc.Want, ds)
+					t.Errorf("%s: want %q, got %v", label, want, ds)
 				}
 			}
 		})

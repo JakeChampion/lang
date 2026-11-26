@@ -860,6 +860,29 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "module-merge")
 	reversed := g.git("commit-tree", "-p", "module-2", "-p", "module-1", "-m", "swapped parents", rightTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// A deinitialized submodule can still resolve either parent order from
+	// its module store. The subsection name differs from the checkout path.
+	workGit := filepath.Join(dir, "module", ".git")
+	storedGit := filepath.Join(dir, ".git", "modules", "Library")
+	if err := os.Rename(workGit, storedGit); err != nil {
+		t.Fatal(err)
+	}
+	g.write(".gitmodules", "[submodule \"Library\"]\n path = module\n url = ./remote\n")
+	for _, commit := range []string{"module-merge", reversed} {
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", commit)
+	}
+	g.git("add", ".gitmodules")
+	if err := os.Remove(filepath.Join(dir, ".gitmodules")); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	g.git("commit", "-qm", "track module location")
+	g.git("update-index", "--force-remove", ".gitmodules")
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	g.git("reset", "--soft", "HEAD^")
+	if err := os.Rename(storedGit, workGit); err != nil {
+		t.Fatal(err)
+	}
 	// A gitlink can name an annotated tag. Walk its target for ancestry,
 	// and keep the original tag object in the fast-forwarded tree.
 	// A tag pointing to a tree reports the peeled object's type.

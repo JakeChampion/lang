@@ -161,8 +161,9 @@ function main(): i32 {
     return x % 251;
 }`
 		allocs, frees, live := counts(t, "oae_arr_escape", src)
-		if frees != 1400 || live != 0 {
-			t.Errorf("allocs=%d frees=%d live_bytes=%d — want 1400 frees and 0 remaining. "+
+		// Four payload arrays and six churn arrays per round.
+		if frees != 1000 || allocs != frees || live != 0 {
+			t.Errorf("allocs=%d frees=%d live_bytes=%d — want 1000 frees and 0 remaining. "+
 				"An escaping arm binding RETAINS an array, so this shape reclaims fully",
 				allocs, frees, live)
 		}

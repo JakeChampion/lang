@@ -15,9 +15,9 @@ func TestReservedTypeNamesPrecedeResolution(t *testing.T) {
 		name, declarations string
 		count              int
 	}{
-		{"enum over struct", "enum Span { Empty, Wide(f64, string) }", 1},
+		{"enum over struct", "enum Socket { Empty, Wide(f64, string) }", 1},
 		{"struct over enum", "struct Option { value: i32 }", 1},
-		{"two reserved names", "enum Span { Empty, Wide(f64, string) }\nstruct Reader { value: i32 }", 2},
+		{"two reserved names", "enum Socket { Empty, Wide(f64, string) }\nstruct Reader { value: i32 }", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, _, err := modload.LoadSource("import \"std/time\";\n" + tc.declarations + "\nfunction main(): i32 { return 0; }\n")
@@ -43,7 +43,7 @@ func TestReservedTypeNamesPrecedeResolution(t *testing.T) {
 }
 
 func TestReservedTypeNamesAfterPriorCheck(t *testing.T) {
-	for _, declaration := range []string{"enum Span { Empty }", "struct Option { value: i32 }"} {
+	for _, declaration := range []string{"enum Socket { Empty }", "struct Option { value: i32 }"} {
 		t.Run(declaration, func(t *testing.T) {
 			prog, err := parser.Parse("function main(): i32 { return 0; }")
 			if err != nil {
@@ -87,7 +87,7 @@ function main(): i32 { return f(Wide(1.0, "ab")); }
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Structs["Span"] == nil || info.Enums["Sample"] == nil {
+	if info.Structs["Socket"] == nil || info.Enums["Sample"] == nil {
 		t.Fatal("valid user enum lost the built-in struct")
 	}
 	prog, _, err = modload.LoadSource(strings.Replace(source, "t.len()", "t.no_such_method()", 1))

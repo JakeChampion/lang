@@ -39,7 +39,7 @@ var constAggWasmCases = []struct {
 		`struct N { v: i32, f: boolean } function hx(): N { return N { v: 0x1f, f: false }; } function main(): i32 { let a: N = hx(); let t: i32 = 0; if (a.f) { t = t + 100; } return t + a.v; }`,
 		31, 1, true},
 	{"reuse-shape-all-constant",
-		`struct P { x: i32, y: i32 } function main(): i32 { let cond: i32 = 1; let r: i32 = 0; if (cond > 0) { let a: P = P { x: 10, y: 20 }; let s: i32 = a.x + a.y; let b: P = P { x: 3, y: 4 }; r = s + b.x + b.y; } return r; }`,
+		constAggReuseSrc,
 		37, 2, true},
 	{"folded-field-admitted",
 		`struct P { a: i32, b: i32 } function mk(): P { return P { a: 0 - 3, b: 0x10 }; } function main(): i32 { let p: P = mk(); return (p.a + p.b + 100) % 200; }`,

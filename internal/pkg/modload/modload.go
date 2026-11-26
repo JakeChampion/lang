@@ -1855,7 +1855,11 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 			}
 		})
 	case *ast.StructLit:
-		x.TypeName = r.rewriteStructNameAt(x.TypeName, x.P)
+		if variant, enum, ok := r.qualifiedVariantLit(x.TypeName, x.P); ok {
+			x.TypeName, x.EnumName = variant, enum
+		} else {
+			x.TypeName = r.rewriteStructNameAt(x.TypeName, x.P)
+		}
 		if args := r.rewriteTypeArgs(x.TypeArgs); args != nil {
 			x.TypeArgs = args
 		}
@@ -1966,6 +1970,26 @@ func (r *rewriter) wrapsOwnStruct(name string) bool {
 	}
 	_, enumVariant := r.ownVariants[name]
 	return r.ownStructs[name] && !enumVariant
+}
+
+// qualifiedVariantLit resolves `Enum.Variant { … }`, a literal of a variant of
+// an enum that the module declares, and `mod.Variant { … }`, a literal of a
+// variant that an imported module exports. A struct of the same name wins.
+func (r *rewriter) qualifiedVariantLit(name string, pos ast.Position) (string, string, bool) {
+	dot := indexByte(name, '.')
+	if dot < 0 {
+		return "", "", false
+	}
+	modName, variant := name[:dot], name[dot+1:]
+	if r.ownEnums[modName] && !r.localVars[modName] {
+		return variant, r.selfPrefix + modName, true
+	}
+	mod, prefix, ok := r.importedModule(modName)
+	if !ok || mod.publicStructs[variant] {
+		return "", "", false
+	}
+	enum, ok := r.qualifiedVariant(mod, prefix, variant, pos)
+	return variant, enum, ok
 }
 
 func (r *rewriter) qualifiedVariant(mod *module, prefix, name string, pos ast.Position) (string, bool) {

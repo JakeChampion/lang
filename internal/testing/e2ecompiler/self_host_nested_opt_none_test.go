@@ -93,7 +93,8 @@ func nestedOptNoneCases() []nestedOptNoneCase {
     }
     return acc + held[1];
 }` + nestedOptNoneMain,
-			want: 77, wantFrees: 400,
+			// Some holds the array pointer directly, so each round frees just the array.
+			want: 77, wantFrees: 200,
 		},
 		{
 			name: "nested_string",

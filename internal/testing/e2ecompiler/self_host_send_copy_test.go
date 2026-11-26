@@ -77,7 +77,7 @@ func TestSelfHostSendCopyAllocatesFreshBoxes(t *testing.T) {
 }
 
 // Twenty-six levels, each with two references to the level below, are 27
-// records, 52 Option boxes and 2^26 paths. The two lines are the allocation
+// records and 2^26 paths. Some(N) stores the child pointer directly. The two lines are the allocation
 // count of the copy and its depth.
 const sendCopySharedProg = `import "std/i64";
 
@@ -131,9 +131,9 @@ func TestSelfHostSendCopyKeepsSharedBoxes(t *testing.T) {
 			if _, err := fmt.Sscanf(stdout.String(), "%d\n%d\n", &allocs, &depth); err != nil {
 				t.Fatalf("stdout %q: %v", &stdout, err)
 			}
-			// The 79 boxes, the table, and its slot arrays as it grows.
-			if allocs < 79 || allocs > 86 || depth != 26 {
-				t.Errorf("the copy made %d allocations at depth %d, want 79 to 86 at depth 26", allocs, depth)
+			// The 27 records, the table, and its slot arrays as it grows.
+			if allocs < 27 || allocs > 34 || depth != 26 {
+				t.Errorf("the copy made %d allocations at depth %d, want 27 to 34 at depth 26", allocs, depth)
 			}
 			if m := leak.FindStringSubmatch(stderr.String()); len(m) != 3 || m[1] != m[2] {
 				t.Fatalf("unbalanced sanitized run: %s", &stderr)

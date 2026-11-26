@@ -21,6 +21,7 @@ import "core/cmp";
 import "core/map";
 import "std/crypto";
 import "std/hex";
+import "std/hash/crc32";
 import "std/linediff";
 import "./color";
 import "./combine";
@@ -4068,6 +4069,99 @@ function pack_checksum_ok(width: i32, data: string): boolean {
   return hex.encode(objects.digest(width, view[0:n - width])) == hex.encode(view[n - width:n]);
 }
 
+// None means the index could not locate or identify the packed objects.
+// Buffer the listing until all entries are known to belong to this pack.
+function verify_listing(a: i32, data: string, ix: pack.Index, verbose: boolean): Option[boolean] {
+  let order = by_offset(ix);
+  let text = data;
+  let src = pack.memory(text, (name: u8[]): i64 => pack.offset_of(ix, name), a);
+  let cache = pack.cache_new();
+  let bytes = data.as_bytes();
+  let pack_end = (data.len() - a) as i64;
+  let crcs_ok = true;
+  let chains: i32[] = [];
+  let out: u8[] = [];
+  for k in 0..order.len() {
+    let name = pack.hex_name_at(ix, order[k]);
+    let offset = pack.offset_at(ix, order[k]);
+    let end = if (k + 1 < order.len()) { pack.offset_at(ix, order[k + 1]) } else { pack_end };
+    if (offset < 12 || offset >= end || end > pack_end) {
+      return None;
+    }
+    if (ix.version == 2 && crc32.of(bytes[offset as i32:end as i32]) as i64 != pack.crc_at(ix, order[k])) {
+      crcs_ok = false;
+    }
+    let (made, kept) = pack.object_cached(src, offset, cache);
+    cache = kept;
+    let Ok(o) = made else {
+      return None;
+    };
+    if (objects.hash_of(a, o.kind, o.body) != name) {
+      return None;
+    }
+    if (!verbose) {
+      continue;
+    }
+    let Ok(chain) = pack.chain_in(src, offset) else {
+      return None;
+    };
+    let depth = chain.len() - 1;
+    while (chains.len() <= depth) {
+      chains = chains.append(0);
+    }
+    chains = chains.with(depth, chains[depth] + 1);
+    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(pack.whole(text, a), offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
+    if (depth > 0) {
+      let base = at_offset(ix, order, chain[1]);
+      if (base < 0) {
+        return None;
+      }
+      line = line + " " + depth.to_string() + " " + pack.hex_name_at(ix, base);
+    }
+    out = out.concat((line + "\n").bytes());
+  }
+  if (verbose) {
+    put(out);
+    if (chains.len() > 0) {
+      put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
+    }
+    for d in 1..chains.len() {
+      if (chains[d] > 0) {
+        put_line("chain length = " + d.to_string() + ": " + chains[d].to_string() + plural(chains[d]));
+      }
+    }
+  }
+  return Some(crcs_ok);
+}
+
+// index-pack compares packed objects with existing objects of the same
+// name in the current repository before it reports index differences.
+function existing_pack_error(a: i32, data: string, actual: pack.Index): string {
+  let Ok(repo) = refs.find() else { return ""; };
+  if (repo.width != a) { return ""; }
+  let st = repo.store();
+  let src = pack.memory(data, (name: u8[]): i64 => pack.offset_of(actual, name), a);
+  let cache = pack.cache_new();
+  for i in by_offset(actual) {
+    let name = pack.hex_name_at(actual, i);
+    let info = store.info(st, name);
+    st = info.store;
+    if (info.why == "missing") { continue; }
+    if (info.why != "") { return "fatal: cannot read existing object info " + name; }
+    let (entry, kept) = pack.object_cached(src, pack.offset_at(actual, i), cache);
+    cache = kept;
+    let Ok(packed) = entry else { return "fatal: cannot read packed object " + name; };
+    if (packed.kind == info.kind && packed.body.len() as i64 == info.size) {
+      let found = store.read(st, name);
+      st = found.store;
+      let Ok(obj) = found.object else { return "fatal: cannot read existing object " + name; };
+      if (obj.kind == packed.kind && obj.body == packed.body) { continue; }
+    }
+    return "fatal: SHA1 COLLISION FOUND WITH " + name + " !";
+  }
+  return "";
+}
+
 // Checks each object of one packfile: its chain of deltas gives an object
 // with the name that the index has. With `verbose`, it prints a line for
 // each object in the order of the packfile, and the lengths of the chains.
@@ -4090,65 +4184,41 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
       return false;
     },
   };
-  if let Err(message) = index.header_count(data) {
-    eprint(message);
-    return false;
-  }
+  let count = match (index.header_count(data)) {
+    Ok(n) => n,
+    Err(message) => {
+      eprint(message);
+      return false;
+    },
+  };
   if (!pack_checksum_ok(a, data)) {
+    // Read the streams to distinguish a bad object from a damaged trailer.
+    if let Err(message) = index.checked_offsets(data, count, a) {
+      eprint(message);
+    }
     return false;
   }
-  let order = by_offset(ix);
-  let text = data;
-  let src = pack.memory(text, (name: u8[]): i64 => pack.offset_of(ix, name), a);
-  let cache = pack.cache_new();
-  let chains: i32[] = [];
-  let out: u8[] = [];
-  for k in 0..order.len() {
-    let name = pack.hex_name_at(ix, order[k]);
-    let offset = pack.offset_at(ix, order[k]);
-    let (made, kept) = pack.object_cached(src, offset, cache);
-    cache = kept;
-    let Ok(o) = made else {
-      return false;
-    };
-    if (objects.hash_of(a, o.kind, o.body) != name) {
-      return false;
-    }
-    if (!verbose) {
-      continue;
-    }
-    let Ok(chain) = pack.chain_in(src, offset) else {
-      return false;
-    };
-    let depth = chain.len() - 1;
-    while (chains.len() <= depth) {
-      chains = chains.append(0);
-    }
-    chains = chains.with(depth, chains[depth] + 1);
-    let end = if (k + 1 < order.len()) { pack.offset_at(ix, order[k + 1]) } else { (data.len() - a) as i64 };
-    let line = name + " " + (o.kind + "      ").take(6) + " " + pack.entry_in(pack.whole(text, a), offset).size.to_string() + " " + (end - offset).to_string() + " " + offset.to_string();
-    if (depth > 0) {
-      let base = at_offset(ix, order, chain[1]);
-      line = line + " " + depth.to_string() + " " + pack.hex_name_at(ix, base);
-    }
-    out = out.concat((line + "\n").bytes());
-  }
-  if (verbose) {
-    put(out);
-    if (chains.len() > 0) {
-      put_line("non delta: " + chains[0].to_string() + plural(chains[0]));
-    }
-    for d in 1..chains.len() {
-      if (chains[d] > 0) {
-        put_line("chain length = " + d.to_string() + ": " + chains[d].to_string() + plural(chains[d]));
+  let checked = if (count == ix.count) { verify_listing(a, data, ix, verbose) } else { None };
+  let Some(crcs_ok) = checked else {
+    // Git lists the objects found in the pack even when its index is wrong.
+    if let Ok(built) = index.build(data, index.options(a)) {
+      if let Ok(actual) = pack.index_of(built.idx, a, idx_path) {
+        let error = existing_pack_error(a, data, actual);
+        if (error != "") {
+          eprint(error);
+          return false;
+        }
+        if (verbose) { verify_listing(a, data, actual, true); }
       }
     }
-  }
+    eprint("fatal: sha1 file '" + idx_path + "' validation error");
+    return false;
+  };
   let end = idx.len();
   let pack_sum = hex.encode(data.as_bytes()[data.len() - a:data.len()]);
   let recorded_pack = hex.encode(array.slice(idx, end - 2 * a, end - a));
   let index_sum = objects.digest(a, array.slice(idx, 0, end - a));
-  if (pack_sum != recorded_pack || index_sum != array.slice(idx, end - a, end)) {
+  if (!crcs_ok || pack_sum != recorded_pack || index_sum != array.slice(idx, end - a, end)) {
     eprint("fatal: sha1 file '" + idx_path + "' validation error");
     return false;
   }
