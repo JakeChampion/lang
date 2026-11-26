@@ -5,24 +5,34 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
+type darwinSanCase struct {
+	name       string
+	src        string
+	sanitize   bool
+	wantExit   int
+	wantStderr []string
+	noStderr   []string
+	census     bool
+	env        []string
+}
+
+// darwinAtomicSrc runs one atomic at offset bytes into a 16-byte raw block,
+// then releases the block.
+func darwinAtomicSrc(offset int, call string) string {
+	return "function main(): i32 {\n  unsafe {\n    let p = __alloc(16) as usize;\n    let q = p + " +
+		strconv.Itoa(offset) + " as usize;\n    " + call + ";\n    __free(p, 16);\n  }\n  return 0;\n}\n"
+}
+
 func TestArm64DarwinSanitize(t *testing.T) {
 	bin := buildFernCLI(t)
-	cases := []struct {
-		name       string
-		src        string
-		sanitize   bool
-		wantExit   int
-		wantStderr []string
-		noStderr   []string
-		census     bool
-		env        []string
-	}{
+	cases := []darwinSanCase{
 		{name: "clean_run_is_silent", src: sanCleanSrc, sanitize: true, wantExit: 0, census: true},
 		{
 			name: "use_after_free_reported", src: sanStaleTouchSrc, sanitize: true,
@@ -36,6 +46,19 @@ func TestArm64DarwinSanitize(t *testing.T) {
 			wantStderr: []string{"fern-sanitizer: use-after-free (touched a quarantined block)", "backtrace:"},
 		},
 		{name: "use_after_free_silent_without_sanitize", src: sanStaleTouchSrc, sanitize: false, wantExit: 0},
+		{name: "aligned_atomics_are_silent", src: darwinAtomicSrc(0, "__atomic_cas(q, 0i64, 1i64)"), sanitize: true, wantExit: 0, census: true},
+	}
+	for name, call := range map[string]string{
+		"load":      "__atomic_load_acquire(q)",
+		"store":     "__atomic_store_release(q, 1i64)",
+		"fetch_add": "__atomic_fetch_add(q, 1i64)",
+		"cas":       "__atomic_cas(q, 0i64, 1i64)",
+	} {
+		cases = append(cases, darwinSanCase{
+			name: "misaligned_atomic_" + name + "_reported", src: darwinAtomicSrc(4, call), sanitize: true,
+			wantExit:   e2eharness.ExitSanitizer,
+			wantStderr: []string{"fern-sanitizer: misaligned atomic (an atomic access of an address that is not a multiple of 8)", "backtrace:"},
+		})
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
