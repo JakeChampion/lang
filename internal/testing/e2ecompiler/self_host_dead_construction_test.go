@@ -34,7 +34,7 @@ function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f
 		{"read-kept", `struct P { x: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 @noinline function get(p: P): i32 { return p.x + p.xs[0]; }
-@noinline function f(i: i32): i32 { let a: P = P { x: i, xs: id([i]) }; return get(a); }
+@noinline function f(i: i32): i32 { let a: P = P { x: i, xs: id([i]) }; let read: (P) => i32 = get; return read(a); }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 8, ""},
 		{"update-unread", `struct P { x: i32, y: i32 }
 @noinline function mk(i: i32): P { return P { x: i, y: 1 }; }

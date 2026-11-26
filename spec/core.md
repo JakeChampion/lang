@@ -611,6 +611,7 @@ is the number of slots it leaves.
 | `secret_unmap` | 583 | 2 | 1 |
 | `and_not` | 584 | 2 | 1 |
 | `f32_round` | 585 | 1 | 1 |
+| `rotr` | 586 | 1 | 1 |
 <!-- END ir_effects_run -->
 
 `vpermute` preserves all lane bits in two 128-bit inputs.

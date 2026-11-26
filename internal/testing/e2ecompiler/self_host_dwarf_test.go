@@ -536,13 +536,22 @@ const dwarfStructsSrc = `struct Point { x: i32, y: i32, a: i32, b: i32, c: i32 }
 struct Person { name: string, age: i32, score: i32 }
 struct Rect { origin: Point, w: i32, h: i32 }
 @noinline function point_sum(p: Point): i32 { return p.x + p.y; }
-@noinline function describe(p: Person): i32 { return p.age + p.score; }
-@noinline function area(r: Rect): i32 { return r.w * r.h; }
+function score(p: Person): i32 { return p.age + p.score; }
+@noinline function describe(p: Person): i32 {
+    let f: (Person) => i32 = score;
+    return f(p);
+}
+function product(r: Rect): i32 { return r.w * r.h; }
+@noinline function area(r: Rect): i32 {
+    let f: (Rect) => i32 = product;
+    return f(r);
+}
 function main(): i32 {
     let pt: Point = Point { x: 7, y: 35, a: 0, b: 0, c: 0 };
     let p: Person = Person { name: "Ada", age: 36, score: 99 };
     let r: Rect = Rect { origin: Point { x: 3, y: 4, a: 0, b: 0, c: 0 }, w: 5, h: 6 };
-    return point_sum(pt) + describe(p) + area(r) + r.origin.x;
+    let point_x: (Point) => i32 = (q: Point): i32 => q.x;
+    return point_sum(pt) + describe(p) + area(r) + point_x(r.origin);
 }
 `
 
