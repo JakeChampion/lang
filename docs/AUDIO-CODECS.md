@@ -413,7 +413,8 @@ It also supports mid-side stereo, intensity stereo, noise substitution, and temp
 Packet errors consume the decoder. The caller can create a new one from its retained configuration.
 `Decoder.reset` clears overlap and noise state while retaining transform storage.
 
-HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames return `Unsupported`.
+HE-AAC/SBR/PS, coupling-channel elements, a program configuration that sets the layout, and 960-sample frames return `Unsupported`.
+The decoder accepts a program configuration element in a raw data block when it describes the declared layout and its element tags.
 Protected ADTS frames verify the header CRC and the CRC of each raw data block. A mismatch returns `Checksum`.
 FDK AAC writes the protected test frames and their CRCs (`scripts/gen-aac-crc-vectors.py`).
 These remaining AAC tasks stay open under [#14517](https://github.com/JakeChampion/lang/issues/14517).
@@ -1161,7 +1162,7 @@ Each line names the issue that owns the work.
 
 - MPEG Layers I and II: decoder CPU performance ([#14689](https://github.com/JakeChampion/lang/issues/14689)).
 - MP3: damaged-stream synchronization and more tag formats. No issue owns this work.
-- AAC: HE-AAC/SBR/PS, coupling-channel elements, program configurations, and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
+- AAC: HE-AAC/SBR/PS, coupling-channel elements, a program configuration that sets the layout (channel configuration 0), and 960-sample frames ([#14517](https://github.com/JakeChampion/lang/issues/14517)).
 - MP4/M4A: decode timeline gaps, composition offsets, and further codecs ([#14518](https://github.com/JakeChampion/lang/issues/14518)).
 - ALAC: native ARM64 and Android measurements, and ARM64 Android qualification ([#14685](https://github.com/JakeChampion/lang/issues/14685)).
 - Encoders: AAC and Vorbis have no encoder. The MP3 encoder has no psychoacoustic model, short blocks, bit reservoir, or joint stereo. The Opus encoder is partial, and further FLAC encoder work remains ([#14688](https://github.com/JakeChampion/lang/issues/14688)).
