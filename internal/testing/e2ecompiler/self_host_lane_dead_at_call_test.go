@@ -48,12 +48,11 @@ function main(): i32 {
 }
 `
 
-var laneSlotStore = regexp.MustCompile(`movupd %xmm\d+, -?\d+\(%rbp\)`)
+var laneSlotMove = regexp.MustCompile(`movupd (%xmm\d+, -?\d+\(%rbp\)|-?\d+\(%rbp\), %xmm\d+)`)
 
 // A lane value that no call crosses keeps its register. x86-64 saves no
 // float register across a call, so a value that a call crosses is in a
-// frame slot. The splats move in front of the loop and a call crosses
-// them, so the loop loads them. No step of the loop stores a lane value.
+// frame slot.
 func TestSelfHostLaneDeadAtCallKeepsItsRegister(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -65,14 +64,8 @@ func TestSelfHostLaneDeadAtCallKeepsItsRegister(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := tailCallBody(t, string(asm), "sum_until_zero")
-	loops := loopBodies(body)
-	if len(loops) == 0 {
-		t.Fatalf("no loop in sum_until_zero:\n%s", body)
-	}
-	for _, l := range loops {
-		if stores := laneSlotStore.FindAllString(l, -1); len(stores) != 0 {
-			t.Errorf("the loop of sum_until_zero stores a lane value in its frame %d time(s), want none:\n%s", len(stores), body)
-		}
+	if moves := laneSlotMove.FindAllString(body, -1); len(moves) != 0 {
+		t.Errorf("sum_until_zero moves a lane value through its frame %d time(s), want none:\n%s", len(moves), body)
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		if stderr, code := cli.exitOf(t, laneDeadAtCallProg, target); code != 0 {

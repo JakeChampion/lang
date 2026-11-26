@@ -392,6 +392,132 @@ function test_blend_frame_wide(): test.TestOutcome {
   return test.assert_eq(bad.join(" "), "");
 }
 
+// One channel at `shift` of `color` over `under` with the weight w from 0
+// to 255.
+function covered(color: i32, under: i32, shift: i32, w: i32): i32 {
+  let s = if (shift == 24) { 255 } else { color >> shift & 255 };
+  return (s * w + (under >> shift & 255) * (255 - w)) / 255 << shift;
+}
+
+// A translucent fill blends its color over each pixel it covers as each
+// channel gives, at each alpha, through the steps of 4 pixels and the pixels
+// after them. The other pixels do not change.
+function test_fill_wide(): test.TestOutcome {
+  let bad: string[] = [];
+  for alpha in [1, 77, 128, 200, 254] {
+    for left in [-1, 6] {
+      let color = draw.rgba(200, 31, 97, alpha);
+      let f = frame(19, 3);
+      for y in 0..3 {
+        for x in 0..19 {
+          f.store(x, y, 1, 1, noise(300 + y * 19 + x));
+        }
+      }
+      f.fill(left, 1, 14, 2, color);
+      for y in 0..3 {
+        for x in 0..19 {
+          let under = noise(300 + y * 19 + x);
+          let want = under;
+          if (y >= 1 && x >= left && x < left + 14) {
+            want = covered(color, under, 0, alpha) | covered(color, under, 8, alpha) | covered(color, under, 16, alpha) | covered(color, under, 24, alpha);
+          }
+          if (f.pixel(x, y) != want) {
+            bad = bad.append("alpha " + alpha.to_string() + " at " + left.to_string() + ": " + x.to_string() + "," + y.to_string());
+          }
+        }
+      }
+      free_frame(f);
+    }
+  }
+  return test.assert_eq(bad.join(" "), "");
+}
+
+// One premultiplied channel `v` with the alpha `a` over the channel at
+// `shift` of `under`.
+function over_channel(v: i32, a: i32, under: i32, shift: i32): i32 {
+  let c = v + ((under >> shift & 255) * (255 - a) + 127) / 255;
+  return (if (c > 255) { 255 } else { c }) << shift;
+}
+
+// Wide premultiplied pixels blend over each pixel they cover as each channel
+// gives, through the steps of 4 pixels and the pixels after them. A pixel
+// with an alpha of 0 leaves the pixel under it, also with color bytes.
+function test_blend_wide(): test.TestOutcome {
+  let rgba: u8[] = [];
+  for k in 0..14 * 2 {
+    let p = noise(500 + k);
+    let a = if (k % 5 == 2) { 0 } else { p >> 24 & 255 };
+    rgba = rgba.append((p & 255) as u8).append((p >> 8 & 255) as u8).append((p >> 16 & 255) as u8).append(a as u8);
+  }
+  let bad: string[] = [];
+  for left in [-1, 6] {
+    let f = frame(19, 3);
+    for y in 0..3 {
+      for x in 0..19 {
+        f.store(x, y, 1, 1, noise(700 + y * 19 + x));
+      }
+    }
+    f.blend(left, 1, 14, 2, rgba);
+    for y in 0..3 {
+      for x in 0..19 {
+        let under = noise(700 + y * 19 + x);
+        let want = under;
+        if (y >= 1 && x >= left && x < left + 14) {
+          let k = 4 * ((y - 1) * 14 + x - left);
+          let a = rgba[k + 3] as i32;
+          if (a != 0) {
+            want = over_channel(rgba[k] as i32, a, under, 0) | over_channel(rgba[k + 1] as i32, a, under, 8) | over_channel(rgba[k + 2] as i32, a, under, 16) | over_channel(a, a, under, 24);
+          }
+        }
+        if (f.pixel(x, y) != want) {
+          bad = bad.append("at " + left.to_string() + ": " + x.to_string() + "," + y.to_string());
+        }
+      }
+    }
+    free_frame(f);
+  }
+  return test.assert_eq(bad.join(" "), "");
+}
+
+// A wide coverage map blends its color over each pixel as each channel
+// gives, through the steps of 16 pixels and the pixels after them, with
+// coverages of 0 and 255 among them. The other pixels do not change.
+function test_mask_wide(): test.TestOutcome {
+  let cov: u8[] = [];
+  for k in 0..37 * 2 {
+    let c = if (k % 7 == 3) { 0 } else if (k % 7 == 5) { 255 } else { noise(900 + k) >> 5 & 255 };
+    cov = cov.append(c as u8);
+  }
+  let bad: string[] = [];
+  for color in [draw.rgb(200, 31, 97), draw.rgba(12, 250, 77, 128)] {
+    for left in [-2, 1] {
+      let f = frame(40, 3);
+      for y in 0..3 {
+        for x in 0..40 {
+          f.store(x, y, 1, 1, noise(1100 + y * 40 + x));
+        }
+      }
+      f.mask(left, 1, 37, 2, cov, color);
+      for y in 0..3 {
+        for x in 0..40 {
+          let under = noise(1100 + y * 40 + x);
+          let want = under;
+          if (y >= 1 && x >= left && x < left + 37) {
+            let k = cov[(y - 1) * 37 + x - left] as i32 * (color >> 24 & 255) * 257 + 32768 >> 16;
+            let w = k + (k >> 7);
+            want = channel(color, under, 0, w) | channel(color, under, 8, w) | channel(color, under, 16, w) | channel(color, under, 24, w);
+          }
+          if (f.pixel(x, y) != want) {
+            bad = bad.append("at " + left.to_string() + ": " + x.to_string() + "," + y.to_string());
+          }
+        }
+      }
+      free_frame(f);
+    }
+  }
+  return test.assert_eq(bad.join(" "), "");
+}
+
 function test_mask(): test.TestOutcome {
   let f = frame(3, 2);
   let cov: u8[] = [255 as u8, 128 as u8, 0 as u8, 0 as u8, 255 as u8, 64 as u8];
@@ -506,7 +632,10 @@ function main(): i32 {
   r = r.it("blit copies an offscreen frame", test_offscreen_blit);
   r = r.it("blend_frame blends a frame by an alpha", test_blend_frame);
   r = r.it("blend_frame blends a wide frame as each channel gives", test_blend_frame_wide);
+  r = r.it("a translucent fill blends as each channel gives", test_fill_wide);
+  r = r.it("blend puts wide premultiplied pixels over the frame", test_blend_wide);
   r = r.it("mask blends a colour by a coverage map", test_mask);
+  r = r.it("mask blends a wide coverage map as each channel gives", test_mask_wide);
   r = r.it("blend puts premultiplied colors over the frame", test_blend);
   r = r.it("a blend over a transparent pixel is premultiplied", test_premultiplied);
   r = r.it("a color goes to OKLCH and back", test_lch_round_trip);

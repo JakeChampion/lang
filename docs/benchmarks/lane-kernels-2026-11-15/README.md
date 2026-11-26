@@ -67,30 +67,64 @@ The whole program runs 116,782,626 instructions in place of 321,963,735, and it 
 A step runs 30 instructions on x86-64, and its operations need about 22.
 The index of the step goes through four integer instructions.
 
+### `fill`, `blend` and `mask` (2026-11-26)
+
+A fill with a color that is not opaque blends 4 pixels in one step.
+`blend` puts 4 premultiplied pixels of a `[u8]` over the frame in one step.
+Each divides by 255 as `(x + (x >> 8) + 1) >> 8`, which is exact for each value up to 65,152.
+
+`mask` reads 16 bytes of coverage and blends 16 pixels in one step.
+A swizzle gives each byte the coverage of its pixel, so the weights are lanes of 16 bits.
+`bench/draw_fill.fern`, `bench/draw_rgba.fern` and `bench/draw_mask.fern` each do 8,388,608 pixels.
+The counts are retired instructions of the function that holds the loop, on x86-64-linux, from callgrind.
+The scalar counts are from the compiler of main at 2903c63b, and the lane counts are from the compiler of #17373.
+
+| Program | Scalar | Lanes | Ratio |
+| --- | --: | --: | --: |
+| `draw_fill` | 1,031,798,784 | 58,769,408 | 17.6 |
+| `draw_rgba` | 1,053,627,264 | 114,950,144 | 9.2 |
+| `draw_mask` | 469,422,533 | 108,783,360 | 4.3 |
+
+For each pixel, the fill runs 7.0 instructions in place of 123.
+`blend` runs 13.7 in place of 125.6, and `mask` runs 13.0 in place of 56.0.
+
+## The JPEG decoder (2026-11-26)
+
+The inverse transform of `std/jpeg` does two samples in one step, as lanes of `f64x2`.
+Each lane does the multiplications and additions of its sample in the order that the scalar transform did.
+So each pixel is the same, on x86-64, arm64 and wasm, for each image of the tests and for 24 encoded images.
+The transform writes to the plane, and the pixels go to an array of the full size.
+Before, each block made an array of 64 samples, and each pixel made an array of its samples and appended 4 bytes.
+
+`bench/jpeg_decode.fern` encodes a picture of 512 by 512 pixels at 4:2:0 and decodes it 4 times.
+The counts are retired instructions on x86-64-linux, from callgrind.
+The stage counts are from a copy of the module where each stage is a function that is not inline.
+
+| Stage | Before | After | Ratio |
+| --- | --: | --: | --: |
+| transform and planes | 523,504,316 | 152,316,936 | 3.4 |
+| all of `pixels` | 941,459,962 | 318,883,247 | 3.0 |
+| whole program | 1,081,512,038 | 447,785,889 | 2.4 |
+
+The color conversion is now 159 instructions for each pixel, in place of 400.
+
 ## Lane operations out of loops (#17362)
 
 The compiler merges two lane operations that are the same.
 It moves a lane value that does not change out of a loop.
 A splat of a constant is 6 instructions on x86-64, so a value of constants moves also.
 
-No register keeps a lane value across a call, so a value out of a loop that makes a call goes to a frame slot.
-Each read then loads it again.
-So out of such a loop, a lane value moves only when the loop reads it one time, in the loop of its definition.
+A lane value does not move out of a loop that makes a call that returns.
+An abort of a bounds check does not return, so it does not count.
+No register keeps a lane value across a call, so such a value goes to a frame slot.
 
-The counts are for the whole program on x86-64-linux.
-The counts before are from the compiler of main at c5653abc, which moves a lane value only out of a loop with no call.
-The counts after are from the compiler of #17369.
+#17369 moved a lane value out of a loop with a call when the loop reads it one time.
+On x86-64 that cut `base64_decode` by 38%, because a splat there is 6 instructions.
+On arm64 a splat is 2 or 3 instructions, and the values that moved took most of the lane registers.
+The values of each step then went through the frame: `aarch64/base64_decode.ir` went up 33%, and its `.dr` went from 8.7M to 136.7M.
+So that rule is out, and #17376 has the cause in the register allocator.
 
-| Program | Before | After | Change |
-| --- | --: | --: | --: |
-| `draw_blend` | 87,978,018 | 87,978,018 | 0% |
-| `hex_encode` | 53,833,014 | 53,831,741 | 0% |
-| `hex_decode` | 246,969,703 | 202,934,643 | -18% |
-| `base64_encode` | 65,107,254 | 65,104,200 | 0% |
-| `base64_decode` | 496,619,384 | 307,913,110 | -38% |
-| `utf8_validate` | 174,753,699 | 154,086,855 | -12% |
-
-The blend loop of `draw_blend` has no call, so it is the same before and after.
+The blend loop of `draw_blend` has no call.
 Its step runs 30 instructions: 7.5 for each pixel.
 
 ## What the numbers do not show

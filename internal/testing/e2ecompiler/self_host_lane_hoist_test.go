@@ -11,7 +11,8 @@ import (
 // halves narrows two values with one constant limit for each. rows narrows
 // the 16 bytes at each step of a loop with a constant and an argument that do
 // not change in the loop. The outer loop of calling makes a call, and its
-// inner loop adds a splat.
+// inner loop adds a splat. The loop of checked reads an array, so its only
+// call is the abort of the bounds check, which does not return.
 const laneHoistProg = `@noinline function halves(a: u16x8, b: u16x8): u8x16 {
   return __u16x8_narrow(a, b);
 }
@@ -46,8 +47,23 @@ const laneHoistProg = `@noinline function halves(a: u16x8, b: u16x8): u8x16 {
   return t;
 }
 
+@noinline function checked(xs: [u8], n: i32): i32 {
+  let t = 0;
+  for i in 0..n {
+    t += __u8x16_lane(__u8x16_load_view(xs, i * 16) + __u8x16_splat(1 as u8), 3) as i32;
+  }
+  return t;
+}
+
 function main(): i32 {
   let h = halves(__u16x8_splat(300), __u16x8_splat(7));
+  let xs = __alloc_u8(64);
+  for i in 0..64 {
+    xs = xs.with(i, i as u8);
+  }
+  if (checked(xs, 4) != 4 + 20 + 36 + 52) {
+    return 80;
+  }
   if (__u8x16_lane(h, 0) != 255 as u8 || __u8x16_lane(h, 15) != 7 as u8) {
     return 1;
   }
@@ -93,7 +109,8 @@ func loopBodies(body string) []string {
 // Two lane operations that are the same merge into one, and a lane value
 // that does not change in a loop is made one time in front of it, also when
 // it is made of constants only. A lane value read in an inner loop does not
-// move out of an outer loop that makes a call.
+// move out of an outer loop that makes a call, and a bounds check does not
+// count as a call.
 func TestSelfHostLaneOperationsMergeAndHoist(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
@@ -116,6 +133,12 @@ func TestSelfHostLaneOperationsMergeAndHoist(t *testing.T) {
 		for _, l := range loops {
 			if strings.Contains(l, tc.splat) {
 				t.Errorf("%s: a loop of rows makes a splat:\n%s", tc.target, l)
+			}
+		}
+		// An abort does not return, so the splat of checked moves.
+		for _, l := range loopBodies(tailCallBody(t, text, "checked")) {
+			if strings.Contains(l, tc.splat) {
+				t.Errorf("%s: the loop of checked makes a splat:\n%s", tc.target, l)
 			}
 		}
 		// The splat moves in front of the inner loop. No register keeps it

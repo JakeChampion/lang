@@ -97,11 +97,42 @@ pub function (f: Frame) fill(x: i32, y: i32, w: i32, h: i32, color: i32): void {
     f.store(x, y, w, h, color);
     return;
   }
+  let x0 = clamp(x, 0, f.width);
+  let x1 = clamp(x + w, 0, f.width);
   for row in clamp(y, 0, f.height)..clamp(y + h, 0, f.height) {
-    for col in clamp(x, 0, f.width)..clamp(x + w, 0, f.width) {
-      put(f, col, row, color, 15);
+    cover_row(f.bits + ((row * f.stride + x0) * 4) as usize, x1 - x0, color);
+  }
+}
+
+// `blend` of `color` over each of the `n` pixels at `to`, with the alpha of
+// `color` as the weight w. A step does 4 pixels on lanes of 16 bits: each
+// channel is `(s * w + d * (255 - w)) / 255`, with the alpha of `color` as
+// 255.
+function cover_row(to: usize, n: i32, color: i32): void {
+  let w = alpha_of(color);
+  let r = (color & 255) * w;
+  let g = (color >> 8 & 255) * w;
+  let b = (color >> 16 & 255) * w;
+  let part = __u16x8_of(r, g, b, 255 * w, r, g, b, 255 * w);
+  let keep = __u16x8_splat(255 - w);
+  unsafe {
+    for i in 0..n / 4 {
+      let at = to + (i * 16) as usize;
+      let d = __u8x16_load_ptr(at);
+      let lo = by_255(__u8x16_widen_lo(d) * keep + part);
+      let hi = by_255(__u8x16_widen_hi(d) * keep + part);
+      __u8x16_store(at, __u16x8_narrow(lo, hi));
+    }
+    for i in n / 4 * 4..n {
+      let at = to + (i * 4) as usize;
+      __store_i32(at, blend(color, __load_i32(at), w));
     }
   }
+}
+
+// Each lane of `x` divided by 255, for a lane up to 255 * 255.
+function by_255(x: u16x8): u16x8 {
+  return __u16x8_shr(x + __u16x8_shr(x, 8) + __u16x8_splat(1), 8);
 }
 
 // Writes the pixel word `color` into each pixel of the rectangle at x and y,
@@ -250,23 +281,51 @@ pub function (f: Frame) mask(x: i32, y: i32, w: i32, h: i32, cov: [u8], color: i
   if (x1 <= x0 || y1 <= y0 || cov.len() < w * h || ca == 0) {
     return;
   }
-  let solid = -16777216 | color;
+  for row in y0..y1 {
+    mask_row(f.bits + ((row * f.stride + x0) * 4) as usize, cov, (row - y) * w + x0 - x, x1 - x0, color);
+  }
+}
+
+// `mix_word` of `color` over each of the `n` pixels at `to`, by the coverage
+// in `cov` from the index `from`. The weight of a coverage a is k + (k >> 7),
+// with k = (a * ca * 257 + 32768) >> 16 for the alpha ca of `color`. It is
+// 256 for a k of 255, so the pixel takes `color`. A step does 16 pixels on
+// lanes of 16 bits, and k is (p + (p >> 8) + 128) >> 8 for p = a * ca.
+function mask_row(to: usize, cov: [u8], from: i32, n: i32, color: i32): void {
+  let ca = alpha_of(color);
+  let r = color & 255;
+  let g = color >> 8 & 255;
+  let b = color >> 16 & 255;
+  let part = __u16x8_of(r, g, b, 255, r, g, b, 255);
+  let alpha = __u16x8_splat(ca);
+  let half = __u16x8_splat(128);
+  let all = __u16x8_splat(256);
+  let four = __u8x16_splat(4 as u8);
+  let first = __u8x16_of(0 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8, 1 as u8, 1 as u8, 1 as u8, 2 as u8, 2 as u8, 2 as u8, 2 as u8, 3 as u8, 3 as u8, 3 as u8, 3 as u8);
   unsafe {
-    for row in y0..y1 {
-      let to = f.bits + (row * f.stride * 4) as usize;
-      let from = (row - y) * w - x;
-      for col in x0..x1 {
-        let a = cov[from + col] as i32;
-        if (a != 0) {
-          let at = to + (col * 4) as usize;
-          let k = a * ca * 257 + 32768 >> 16;
-          if (k >= 255) {
-            __store_i32(at, solid);
-          } else {
-            __store_i32(at, mix_word(color, __load_i32(at), k + (k >> 7)));
-          }
-        }
+    for j in 0..n / 16 {
+      let c = __u8x16_load_view(cov, from + j * 16);
+      let pick = first;
+      for q in 0..4 {
+        let at = to + (j * 64 + q * 16) as usize;
+        let a = __u8x16_swizzle(c, pick);
+        pick += four;
+        let d = __u8x16_load_ptr(at);
+        let p = __u8x16_widen_lo(a) * alpha;
+        let k = __u16x8_shr(p + __u16x8_shr(p, 8) + half, 8);
+        let w = k + __u16x8_shr(k, 7);
+        let lo = __u16x8_shr(part * w + __u8x16_widen_lo(d) * (all - w), 8);
+        p = __u8x16_widen_hi(a) * alpha;
+        k = __u16x8_shr(p + __u16x8_shr(p, 8) + half, 8);
+        w = k + __u16x8_shr(k, 7);
+        let hi = __u16x8_shr(part * w + __u8x16_widen_hi(d) * (all - w), 8);
+        __u8x16_store(at, __u16x8_narrow(lo, hi));
       }
+    }
+    for i in n / 16 * 16..n {
+      let at = to + (i * 4) as usize;
+      let k = cov[from + i] as i32 * ca * 257 + 32768 >> 16;
+      __store_i32(at, mix_word(color, __load_i32(at), k + (k >> 7)));
     }
   }
 }
@@ -281,16 +340,37 @@ pub function (f: Frame) blend(x: i32, y: i32, w: i32, h: i32, rgba: [u8]): void 
   if (x1 <= x0 || y1 <= y0 || rgba.len() < 4 * w * h) {
     return;
   }
+  for row in y0..y1 {
+    blend_row(f.bits + ((row * f.stride + x0) * 4) as usize, rgba, 4 * ((row - y) * w + x0 - x), x1 - x0);
+  }
+}
+
+// `premultiplied_over` of each of the `n` pixels of `rgba` from the index
+// `from` over the pixels at `to`. A pixel with an alpha of 0 leaves the pixel
+// under it. A step does 4 pixels on lanes of 16 bits: each channel is
+// `v + (d * (255 - a) + 127) / 255`, held to 255.
+function blend_row(to: usize, rgba: [u8], from: i32, n: i32): void {
+  let alphas = __u8x16_of(3 as u8, 3 as u8, 3 as u8, 3 as u8, 7 as u8, 7 as u8, 7 as u8, 7 as u8, 11 as u8, 11 as u8, 11 as u8, 11 as u8, 15 as u8, 15 as u8, 15 as u8, 15 as u8);
+  let full = __u8x16_splat(255 as u8);
+  let none = __u8x16_splat(0 as u8);
+  let half = __u16x8_splat(127);
   unsafe {
-    for row in y0..y1 {
-      let to = f.bits + (row * f.stride * 4) as usize;
-      for col in x0..x1 {
-        let k = 4 * ((row - y) * w + col - x);
-        let a = rgba[k + 3] as i32;
-        if (a != 0) {
-          let at = to + (col * 4) as usize;
-          __store_i32(at, premultiplied_over(rgba[k] as i32, rgba[k + 1] as i32, rgba[k + 2] as i32, a, __load_i32(at)));
-        }
+    for i in 0..n / 4 {
+      let at = to + (i * 16) as usize;
+      let v = __u8x16_load_view(rgba, from + i * 16);
+      let a = __u8x16_swizzle(v, alphas);
+      let keep = full - a;
+      let d = __u8x16_load_ptr(at);
+      let lo = by_255(__u8x16_widen_lo(d) * __u8x16_widen_lo(keep) + half) + __u8x16_widen_lo(v);
+      let hi = by_255(__u8x16_widen_hi(d) * __u8x16_widen_hi(keep) + half) + __u8x16_widen_hi(v);
+      __u8x16_store(at, __u8x16_select(d, __u16x8_narrow(lo, hi), __u8x16_eq(a, none)));
+    }
+    for i in n / 4 * 4..n {
+      let k = from + 4 * i;
+      let a = rgba[k + 3] as i32;
+      if (a != 0) {
+        let at = to + (i * 4) as usize;
+        __store_i32(at, premultiplied_over(rgba[k] as i32, rgba[k + 1] as i32, rgba[k + 2] as i32, a, __load_i32(at)));
       }
     }
   }

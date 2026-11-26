@@ -867,61 +867,76 @@ function idct_table(): f64[] {
   return out;
 }
 
-// The 64 samples of the block at `base`, after dequantizing with `q`.
-function idct(coef: [i32], base: i32, q: [i32], t: [f64]): u8[] {
-  return idct_columns(idct_rows(coef, base, q, t), t);
-}
-
-// The transform of each row of frequencies v: the samples x.
-function idct_rows(coef: [i32], base: i32, q: [i32], t: [f64]): f64[] {
-  let tmp: f64[] = [];
-  for v in 0..8 {
+// `t` with x and u in place of each other: the factors of the 8 samples for
+// each frequency, in a row.
+function by_frequency(t: [f64]): f64[] {
+  let out = __alloc_f64(64);
+  for u in 0..8 {
     for x in 0..8 {
-      let sum = 0.0;
-      for u in 0..8 {
-        let k = v * 8 + u;
-        let cv = coef[base + k];
-        if (cv != 0) {
-          sum += (cv * q[k]) as f64 * t[x * 8 + u];
-        }
-      }
-      tmp = tmp.append(sum);
-    }
-  }
-  return tmp;
-}
-
-// The transform of each column of `tmp`, shifted by 128 into 0 to 255.
-function idct_columns(tmp: [f64], t: [f64]): u8[] {
-  let out: u8[] = [];
-  for y in 0..8 {
-    for x in 0..8 {
-      let sum = 128.5;
-      for v in 0..8 {
-        sum += tmp[v * 8 + x] * t[y * 8 + v];
-      }
-      out = out.append(clamp255(sum.floor() as i32));
+      out = out.with(u * 8 + x, t[x * 8 + u]);
     }
   }
   return out;
 }
 
-// The samples of component `c`, at its own size in blocks times 8.
-function plane(c: Component, coef: [i32], q: [i32], t: [f64]): u8[] {
-  let w = c.bw * 8;
-  let out: u8[] = [];
-  for i in 0..w * c.bh * 8 {
-    out = out.append(0u8);
+// The 64 samples of the block at `base`, after dequantizing with `q`, written
+// to `out` from `at`, with `w` samples in a row. `tu` is `t` by frequency, and
+// `tmp` holds the transform of the rows. Each step does two samples on lanes
+// of f64, with the operations of one sample in the same order.
+function idct(coef: [i32], base: i32, q: [i32], t: [f64], tu: f64[], own tmp: f64[], own out: u8[], at: i32, w: i32): (f64[], u8[]) {
+  for v in 0..8 {
+    let s0 = __f64x2_splat(0.0);
+    let s1 = s0;
+    let s2 = s0;
+    let s3 = s0;
+    for u in 0..8 {
+      let k = v * 8 + u;
+      let cv = coef[base + k];
+      if (cv != 0) {
+        let c = __f64x2_splat((cv * q[k]) as f64);
+        s0 += c * __f64x2_load(tu, u * 8);
+        s1 += c * __f64x2_load(tu, u * 8 + 2);
+        s2 += c * __f64x2_load(tu, u * 8 + 4);
+        s3 += c * __f64x2_load(tu, u * 8 + 6);
+      }
+    }
+    tmp = __f64x2_with(__f64x2_with(__f64x2_with(__f64x2_with(tmp, v * 8, s0), v * 8 + 2, s1), v * 8 + 4, s2), v * 8 + 6, s3);
   }
+  for y in 0..8 {
+    let s0 = __f64x2_splat(128.5);
+    let s1 = s0;
+    let s2 = s0;
+    let s3 = s0;
+    for v in 0..8 {
+      let c = __f64x2_splat(t[y * 8 + v]);
+      s0 += __f64x2_load(tmp, v * 8) * c;
+      s1 += __f64x2_load(tmp, v * 8 + 2) * c;
+      s2 += __f64x2_load(tmp, v * 8 + 4) * c;
+      s3 += __f64x2_load(tmp, v * 8 + 6) * c;
+    }
+    let row = at + y * w;
+    out = out.with(row, sample(__f64x2_lane(s0, 0))).with(row + 1, sample(__f64x2_lane(s0, 1)));
+    out = out.with(row + 2, sample(__f64x2_lane(s1, 0))).with(row + 3, sample(__f64x2_lane(s1, 1)));
+    out = out.with(row + 4, sample(__f64x2_lane(s2, 0))).with(row + 5, sample(__f64x2_lane(s2, 1)));
+    out = out.with(row + 6, sample(__f64x2_lane(s3, 0))).with(row + 7, sample(__f64x2_lane(s3, 1)));
+  }
+  return (tmp, out);
+}
+
+function sample(sum: f64): u8 {
+  return clamp255(sum.floor() as i32);
+}
+
+// The samples of component `c`, at its own size in blocks times 8.
+function plane(c: Component, coef: [i32], q: [i32], t: [f64], tu: f64[]): u8[] {
+  let w = c.bw * 8;
+  let out = __alloc_u8(w * c.bh * 8);
+  let tmp = __alloc_f64(64);
   for by in 0..c.bh {
     for bx in 0..c.bw {
-      let s = idct(coef, c.off + (by * c.bw + bx) * 64, q, t);
-      for y in 0..8 {
-        let row = (by * 8 + y) * w + bx * 8;
-        for x in 0..8 {
-          out = out.with(row + x, s[y * 8 + x]);
-        }
-      }
+      let (rows, samples) = idct(coef, c.off + (by * c.bw + bx) * 64, q, t, tu, tmp, out, by * 8 * w + bx * 8, w);
+      tmp = rows;
+      out = samples;
     }
   }
   return out;
@@ -937,39 +952,59 @@ function clamp255(v: i32): u8 {
   return v as u8;
 }
 
+// The column of the sample of component `c` for each x of the image.
+function columns(c: Component, d: Decoder): i32[] {
+  let out = __alloc_i32(d.width);
+  for x in 0..d.width {
+    out = out.with(x, x * c.h / d.hmax);
+  }
+  return out;
+}
+
 function pixels(d: Decoder, coef: [i32]): Image {
   let t = idct_table();
+  let tu = by_frequency(t);
   let planes: u8[][] = [];
   for c in d.comps {
     let q = d.quant[c.tq];
     if (q.len() < 64) {
       q = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
     }
-    planes = planes.append(plane(c, coef, q, t));
+    planes = planes.append(plane(c, coef, q, t, tu));
   }
-  let out: u8[] = [];
-  let gray = d.comps.len() == 1;
+  let out = __alloc_u8(d.width * d.height * 4);
+  let c0 = d.comps[0];
+  let p0 = planes[0];
+  let x0 = columns(c0, d);
+  if (d.comps.len() == 1) {
+    for y in 0..d.height {
+      let row0 = y * c0.v / d.vmax * c0.bw * 8;
+      for x in 0..d.width {
+        let g = p0[row0 + x0[x]];
+        let at = 4 * (y * d.width + x);
+        out = out.with(at, g).with(at + 1, g).with(at + 2, g).with(at + 3, 255u8);
+      }
+    }
+    return Image { width: d.width, height: d.height, pixels: out };
+  }
+  let c1 = d.comps[1];
+  let c2 = d.comps[2];
+  let p1 = planes[1];
+  let p2 = planes[2];
+  let x1 = columns(c1, d);
+  let x2 = columns(c2, d);
   for y in 0..d.height {
+    let row0 = y * c0.v / d.vmax * c0.bw * 8;
+    let row1 = y * c1.v / d.vmax * c1.bw * 8;
+    let row2 = y * c2.v / d.vmax * c2.bw * 8;
     for x in 0..d.width {
-      let samples: i32[] = [];
-      for k in 0..d.comps.len() {
-        let c = d.comps[k];
-        let sx = x * c.h / d.hmax;
-        let sy = y * c.v / d.vmax;
-        samples = samples.append(planes[k][sy * c.bw * 8 + sx] as i32);
-      }
-      if (gray) {
-        let g = samples[0] as u8;
-        out = out.append(g).append(g).append(g).append(255u8);
-      } else {
-        let yy = samples[0] as f64;
-        let cb = samples[1] as f64 - 128.0;
-        let cr = samples[2] as f64 - 128.0;
-        out = out.append(clamp255((yy + 1.402 * cr + 0.5).floor() as i32));
-        out = out.append(clamp255((yy - 0.344136 * cb - 0.714136 * cr + 0.5).floor() as i32));
-        out = out.append(clamp255((yy + 1.772 * cb + 0.5).floor() as i32));
-        out = out.append(255u8);
-      }
+      let yy = p0[row0 + x0[x]] as f64;
+      let cb = p1[row1 + x1[x]] as f64 - 128.0;
+      let cr = p2[row2 + x2[x]] as f64 - 128.0;
+      let at = 4 * (y * d.width + x);
+      out = out.with(at, clamp255((yy + 1.402 * cr + 0.5).floor() as i32));
+      out = out.with(at + 1, clamp255((yy - 0.344136 * cb - 0.714136 * cr + 0.5).floor() as i32));
+      out = out.with(at + 2, clamp255((yy + 1.772 * cb + 0.5).floor() as i32)).with(at + 3, 255u8);
     }
   }
   return Image { width: d.width, height: d.height, pixels: out };
