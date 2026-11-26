@@ -50,6 +50,7 @@ The oracle takes about 25 minutes for ECDSA P-256 with SHA-256. `TestSelfHostWyc
 | `wycheproof_x25519` | 518 | 9 |
 | `wycheproof_ed25519` | 210 | 111 |
 | `wycheproof_ecdsa_p256` | 484 | 113 |
+| `wycheproof_ecdsa_p256_table`, the same vectors through `VerifyingKey` | 484 | 113 |
 | `wycheproof_ecdh_p256` | 355 | 12 |
 | `wycheproof_ecdsa_p256_sha512` | 554 | 113 |
 | `wycheproof_ecdsa_p384_sha384` | 504 | 105 |

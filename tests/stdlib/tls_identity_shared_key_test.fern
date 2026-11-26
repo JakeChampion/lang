@@ -33,7 +33,7 @@ function test_ecdsa(): test.TestOutcome {
   let Ok(certificate) = hex.decode(P256_LEAF) else {
     return test.fail("certificate");
   };
-  let Ok(id) = identity.pair([certificate], identity.EcdsaKey(key)) else {
+  let Ok(id) = identity.pair([certificate], identity.EcdsaKey(key.signing_key())) else {
     return test.fail("identity");
   };
   key.erase();

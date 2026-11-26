@@ -202,14 +202,21 @@ function check(pk: string, msg: string, sig: string, want: i32, id: i32): string
 """
 
 
-def ecdsa(name, src, data, title, curve="P256", digest="Sha256"):
+# The same vectors through VerifyingKey, which verifies with the table of the
+# point. Each vector makes its own table.
+ECDSA_TABLE_HELPERS = ECDSA_HELPERS.replace(
+    "  let ok = k.verify(sha2.Sha256, bytes(msg), bytes(sig));",
+    "  let ok = k.verifying_key().verify(sha2.Sha256, bytes(msg), bytes(sig));")
+
+
+def ecdsa(name, src, data, title, curve="P256", digest="Sha256", helpers=ECDSA_HELPERS):
     groups = []
     for g in data["testGroups"]:
         assert g["sha"] == "SHA-" + digest[3:] and g["publicKey"]["curve"] == "secp" + curve[1:] + "r1"
         pk = g["publicKey"]["uncompressed"]
         body = ["check(%s, %s, %s, %d, %d)" % (fern_str(pk), fern_str(t["msg"]), fern_str(t["sig"]), want(t["result"]), t["tcId"]) for t in g["tests"]]
         groups.append(("key %s" % pk[2:18], body))
-    suite(name, src, data, ["std/test", "std/hex", "std/codec", "std/i32", "std/crypto/ecdsa", "std/crypto/sha2"], ECDSA_HELPERS.replace("ecdsa.P256", "ecdsa." + curve).replace("sha2.Sha256", "sha2." + digest), groups, title)
+    suite(name, src, data, ["std/test", "std/hex", "std/codec", "std/i32", "std/crypto/ecdsa", "std/crypto/sha2"], helpers.replace("ecdsa.P256", "ecdsa." + curve).replace("sha2.Sha256", "sha2." + digest), groups, title)
 
 
 # The integer keys in JSON are unsigned values, sometimes padded with a
@@ -473,6 +480,7 @@ def main():
     xdh("wycheproof_x25519_test.fern", "testvectors_v1/x25519_test.json", load(d, "x25519_test.json"), "wycheproof x25519")
     eddsa("wycheproof_ed25519_test.fern", "testvectors_v1/ed25519_test.json", load(d, "ed25519_test.json"), "wycheproof ed25519")
     ecdsa("wycheproof_ecdsa_p256_test.fern", "testvectors_v1/ecdsa_secp256r1_sha256_test.json", load(d, "ecdsa_secp256r1_sha256_test.json"), "wycheproof ecdsa p-256 sha-256")
+    ecdsa("wycheproof_ecdsa_p256_table_test.fern", "testvectors_v1/ecdsa_secp256r1_sha256_test.json", load(d, "ecdsa_secp256r1_sha256_test.json"), "wycheproof ecdsa p-256 sha-256 VerifyingKey", helpers=ECDSA_TABLE_HELPERS)
 
 
 if __name__ == "__main__":
