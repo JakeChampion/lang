@@ -289,7 +289,9 @@ var DirectPrivileged = map[string]bool{
 	"__f32x4_store": true, "__f64x2_load_f32_ptr": true, "__f64x2_load_ptr": true, "__f64x2_store": true,
 	"__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_rc_dec": true,
 	"__fern_rc_inc": true, "__fern_str_dec": true, "__free": true, "__heap_adopt": true,
-	"__heap_mark": true, "__heap_release_to": true, "__load_i32": true, "__load_i64": true,
+	"__heap_mark": true, "__heap_release_to": true,
+	"__i16x8_load_ptr": true, "__i16x8_store": true, "__i32x4_load_ptr": true, "__i32x4_store": true,
+	"__i8x16_load_ptr": true, "__i8x16_store": true, "__load_i32": true, "__load_i64": true,
 	"__load_ptr": true, "__load_u8": true, "__memcpy": true, "__memset": true,
 	"__rc_dec": true, "__rc_get": true, "__rc_inc": true, "__store_i32": true,
 	"__store_i64": true, "__store_ptr": true, "__store_u8": true, "__str_bytes": true,
@@ -300,7 +302,9 @@ var DirectPrivileged = map[string]bool{
 	"__task_inline": true,
 	"__task_leave":  true, "__task_new": true, "__task_park": true, "__task_park_until": true,
 	"__task_set_cancelled": true, "__task_set_ready": true, "__task_timeout": true, "__task_until": true,
-	"__task_wait": true,
+	"__task_wait":      true,
+	"__u16x8_load_ptr": true, "__u16x8_store": true, "__u32x4_load_ptr": true, "__u32x4_store": true,
+	"__u8x16_load_ptr": true, "__u8x16_store": true,
 }
 
 // IsBuiltin reports a builtin function of the language: each one is in

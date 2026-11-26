@@ -231,7 +231,9 @@ pub function direct_privileged(): string[] {
     "__f32x4_store", "__f64x2_load_f32_ptr", "__f64x2_load_ptr", "__f64x2_store",
     "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_rc_dec",
     "__fern_rc_inc", "__fern_str_dec", "__free", "__heap_adopt",
-    "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64",
+    "__heap_mark", "__heap_release_to",
+    "__i16x8_load_ptr", "__i16x8_store", "__i32x4_load_ptr", "__i32x4_store",
+    "__i8x16_load_ptr", "__i8x16_store", "__load_i32", "__load_i64",
     "__load_ptr", "__load_u8", "__memcpy", "__memset",
     "__rc_dec", "__rc_get", "__rc_inc", "__store_i32",
     "__store_i64", "__store_ptr", "__store_u8", "__str_bytes",
@@ -240,6 +242,8 @@ pub function direct_privileged(): string[] {
     "__task_leave", "__task_new", "__task_park", "__task_park_until",
     "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until",
     "__task_wait",
+    "__u16x8_load_ptr", "__u16x8_store", "__u32x4_load_ptr", "__u32x4_store",
+    "__u8x16_load_ptr", "__u8x16_store",
   ];
 }
 

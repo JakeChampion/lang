@@ -192,6 +192,29 @@ function mix_word(src: i32, dst: i32, w: i32): i32 {
   return a << 24 | rb as i32 | g;
 }
 
+// `mix_word` for each of the `n` pixels from `from` over the pixels at `to`.
+// A step does 4 pixels on lanes of 16 bits: each channel is
+// `(s * w + d * (256 - w)) >> 8`, with the alpha of `src` as 255.
+function mix_row(to: usize, from: usize, n: i32, w: i32): void {
+  let opaque = __u16x8_of(0, 0, 0, 255, 0, 0, 0, 255);
+  let k = __u16x8_splat(w);
+  let keep = __u16x8_splat(256 - w);
+  unsafe {
+    for i in 0..n / 4 {
+      let at = (i * 16) as usize;
+      let s = __u8x16_load_ptr(from + at);
+      let d = __u8x16_load_ptr(to + at);
+      let lo = __u16x8_or(__u8x16_widen_lo(s), opaque) * k + __u8x16_widen_lo(d) * keep;
+      let hi = __u16x8_or(__u8x16_widen_hi(s), opaque) * k + __u8x16_widen_hi(d) * keep;
+      __u8x16_store(to + at, __u16x8_narrow(__u16x8_shr(lo, 8), __u16x8_shr(hi, 8)));
+    }
+    for i in n / 4 * 4..n {
+      let at = (i * 4) as usize;
+      __store_i32(to + at, mix_word(__load_i32(from + at), __load_i32(to + at), w));
+    }
+  }
+}
+
 // Blends `src` over the frame with its top left corner at x and y, with the
 // weight `alpha` from 0 to 255 for each pixel.
 pub function (f: Frame) blend_frame(src: Frame, x: i32, y: i32, alpha: i32): void {
@@ -208,15 +231,10 @@ pub function (f: Frame) blend_frame(src: Frame, x: i32, y: i32, alpha: i32): voi
   if (x1 <= x0 || y1 <= y0 || w == 0) {
     return;
   }
-  unsafe {
-    for row in y0..y1 {
-      let to = f.bits + ((row * f.stride + x0) * 4) as usize;
-      let from = src.bits + (((row - y) * src.stride + x0 - x) * 4) as usize;
-      for i in 0..x1 - x0 {
-        let at = (i * 4) as usize;
-        __store_i32(to + at, mix_word(__load_i32(from + at), __load_i32(to + at), w));
-      }
-    }
+  for row in y0..y1 {
+    let to = f.bits + ((row * f.stride + x0) * 4) as usize;
+    let from = src.bits + (((row - y) * src.stride + x0 - x) * 4) as usize;
+    mix_row(to, from, x1 - x0, w);
   }
 }
 
@@ -253,7 +271,6 @@ pub function (f: Frame) mask(x: i32, y: i32, w: i32, h: i32, cov: [u8], color: i
   }
 }
 
-// The pixel word at x and y, or 0 outside the frame.
 // Draws the `w` by `h` premultiplied RGBA pixels of `rgba` over the frame,
 // with their top left at (x, y).
 pub function (f: Frame) blend(x: i32, y: i32, w: i32, h: i32, rgba: [u8]): void {
@@ -286,6 +303,7 @@ function premultiplied_over(r: i32, g: i32, b: i32, a: i32, under: i32): i32 {
   return rgba(part(r, 0), part(g, 8), part(b, 16), part(a, 24));
 }
 
+// The pixel word at x and y, or 0 outside the frame.
 pub function (f: Frame) pixel(x: i32, y: i32): i32 {
   if (x < 0 || y < 0 || x >= f.width || y >= f.height) {
     return 0;

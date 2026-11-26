@@ -9753,6 +9753,9 @@ var UnsafeIntrinsics = map[string]bool{
 	"__alloc": true, "__alloc_reuse": true, "__alloc_u8_uninit": true, "__free": true,
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
 	"__store_u8": true, "__store_i32": true, "__f32x4_store": true, "__f64x2_store": true, "__f32x4_load_ptr": true, "__f64x2_load_ptr": true, "__f64x2_load_f32_ptr": true, "__store_i64": true, "__store_ptr": true,
+	"__u8x16_load_ptr": true, "__u8x16_store": true, "__i8x16_load_ptr": true, "__i8x16_store": true,
+	"__u16x8_load_ptr": true, "__u16x8_store": true, "__i16x8_load_ptr": true, "__i16x8_store": true,
+	"__u32x4_load_ptr": true, "__u32x4_store": true, "__i32x4_load_ptr": true, "__i32x4_store": true,
 	"__mmio_load8": true, "__mmio_load16": true, "__mmio_load32": true, "__mmio_load64": true,
 	"__mmio_store8": true, "__mmio_store16": true, "__mmio_store32": true, "__mmio_store64": true,
 	"__mem_load8": true, "__mem_load16": true, "__mem_load32": true, "__mem_load64": true,
@@ -18103,7 +18106,7 @@ func (c *checker) registerLaneBuiltins() {
 // integerLaneVerbs are the verbs of the builtins of an integer lane type,
 // in the order of the self-hosted checker.
 func integerLaneVerbs(lt ast.LanesType) []string {
-	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "shl", "shr"}
+	verbs := []string{"splat", "of", "lane", "bitmask", "min", "max", "eq", "ne", "lt", "and", "or", "xor", "select", "load", "load_view", "with", "load_ptr", "store", "shl", "shr"}
 	if lt.Width <= 16 {
 		verbs = append(verbs, "add_sat", "sub_sat")
 		if lt.Kind == ast.LaneUnsigned {
@@ -18130,6 +18133,7 @@ func integerLaneVerbs(lt ast.LanesType) []string {
 
 func (c *checker) registerIntegerLaneBuiltins() {
 	i32 := ast.NumberType{}
+	addr := ast.NumberType{Width: ast.WidthPtr, Signed: false}
 	bytes := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
 	for _, lt := range ast.IntegerLanes {
 		e := lt.Elem()
@@ -18146,6 +18150,8 @@ func (c *checker) registerIntegerLaneBuiltins() {
 			"load":      {Params: []ast.Type{bytes, i32}, Result: lt},
 			"load_view": {Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}, i32}, Result: lt},
 			"with":      {Params: []ast.Type{bytes, i32, lt}, Result: bytes},
+			"load_ptr":  {Params: []ast.Type{addr}, Result: lt},
+			"store":     {Params: []ast.Type{addr, lt}, Result: ast.VoidType{}},
 			"shl":       {Params: []ast.Type{lt, i32}, Result: lt},
 			"shr":       {Params: []ast.Type{lt, i32}, Result: lt},
 			"abs":       {Params: []ast.Type{lt}, Result: lt},

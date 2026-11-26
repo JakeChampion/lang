@@ -1153,6 +1153,70 @@ function test_lane_view_loads(): test.TestOutcome {
   return test.assert_eq(bad.join(", "), "");
 }
 
+// The 16 bytes at `p` as an array.
+function raw_bytes(p: usize): u8[] {
+  let out: u8[] = [];
+  unsafe {
+    for k in 0..16 {
+      out = out.append(__load_u8(p + k as usize) as u8);
+    }
+  }
+  return out;
+}
+
+// Each integer lane type loads the 16 bytes at `p`, and stores them at `q`.
+// The bytes at `q` must then be the bytes of `want`.
+function raw_round_trips(name: string, p: usize, q: usize, want: u8[]): string[] {
+  let bad: string[] = [];
+  unsafe {
+    __u8x16_store(q, __u8x16_load_ptr(p));
+    bad = all_of(bad, same_bytes(name + " u8x16", raw_bytes(q), want));
+    __i8x16_store(q, __i8x16_load_ptr(p));
+    bad = all_of(bad, same_bytes(name + " i8x16", raw_bytes(q), want));
+    __u16x8_store(q, __u16x8_load_ptr(p));
+    bad = all_of(bad, same_bytes(name + " u16x8", raw_bytes(q), want));
+    __i16x8_store(q, __i16x8_load_ptr(p));
+    bad = all_of(bad, same_bytes(name + " i16x8", raw_bytes(q), want));
+    __u32x4_store(q, __u32x4_load_ptr(p));
+    bad = all_of(bad, same_bytes(name + " u32x4", raw_bytes(q), want));
+    __i32x4_store(q, __i32x4_load_ptr(p));
+    bad = all_of(bad, same_bytes(name + " i32x4", raw_bytes(q), want));
+  }
+  return bad;
+}
+
+// A load from an address gives the bytes that a load from an array gives,
+// at each alignment. A store writes 16 bytes and no byte next to them.
+function test_lane_raw_memory(): test.TestOutcome {
+  let xs = ramp(48);
+  let bad: string[] = [];
+  unsafe {
+    let p = __alloc(48);
+    let q = __alloc(48);
+    for k in 0..48 {
+      __store_u8(p + k as usize, xs[k] as i32);
+    }
+    for at in 0..33 {
+      __memset(q, 0, 48);
+      let want = byte_lanes(simd.load_u8x16(xs, at));
+      bad = all_of(bad, raw_round_trips("at " + at.to_string(), p + at as usize, q + 16 as usize, want));
+      for k in 0..48 {
+        if ((k < 16 || k >= 32) && __load_u8(q + k as usize) != 0) {
+          bad = bad.append("at " + at.to_string() + " byte " + k.to_string());
+        }
+      }
+    }
+    let lanes = __u32x4_load_ptr(p) + __u32x4_splat(1 as u32);
+    __u32x4_store(q, lanes);
+    if (__load_i32(q) != __load_i32(p) + 1) {
+      bad = bad.append("u32x4 arithmetic");
+    }
+    __free(p, 48);
+    __free(q, 48);
+  }
+  return test.assert_eq(bad.join(", "), "");
+}
+
 // A shuffle reads the first value below index 16 and the second from 16 to
 // 31, and gives 0 above 31.
 function test_lane_shuffle(): test.TestOutcome {
@@ -1210,5 +1274,6 @@ function main(): i32 {
   r = r.it("lane swizzle", test_lane_swizzle);
   r = r.it("lane view loads", test_lane_view_loads);
   r = r.it("lane shuffle", test_lane_shuffle);
+  r = r.it("lane raw memory", test_lane_raw_memory);
   return r.finish();
 }

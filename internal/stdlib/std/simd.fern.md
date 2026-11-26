@@ -1162,6 +1162,8 @@ Lanes of 8 and 16 bits have the sum and the difference with a limit. The limits 
 
 `load` and `with` read and write 16 bytes of a `u8[]`. The low byte of a lane is first.
 
+In an `unsafe` block, the builtins `__T_load_ptr(p)` and `__T_store(p, v)` of each integer lane type `T` read and write the 16 bytes at the address `p`. The address can have any alignment.
+
 ```fern
 <<integer lanes>>=
 // Each lane of `value` moved up by `count` bits. The count is modulo 8.

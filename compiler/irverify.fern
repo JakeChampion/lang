@@ -153,8 +153,9 @@ function mem_width_refusal(kt: i32, w: i32): string {
 // The widths of a lane op that the backends read. A float lane op reads 32
 // as f32x4 and each other width as f64x2. An unpacked group access scales its
 // index by the width on x86-64 and wasm, and by 4 or 8 on arm64, so it also
-// has only 32 and 64. A bitwise op and a group access of packed bytes read
-// no width. The integer lane ops have 8, 16 and 32.
+// has only 32 and 64. A bitwise op, a load or a store at an address, and a
+// group access of packed bytes read no width. The integer lane ops have 8, 16
+// and 32.
 function lane_widths(kt: i32, packed: boolean): i32[] {
   if (kt == ir.K_VPACK) {
     return [32];
@@ -162,7 +163,7 @@ function lane_widths(kt: i32, packed: boolean): i32[] {
   if (kt == ir.K_VLOAD_F32) {
     return [64];
   }
-  if (kt >= ir.K_VAND && kt <= ir.K_VSELECT || (kt == ir.K_VGET || kt == ir.K_VSET) && packed) {
+  if (kt >= ir.K_VAND && kt <= ir.K_VSELECT || kt == ir.K_VLOAD || kt == ir.K_VSTORE || (kt == ir.K_VGET || kt == ir.K_VSET) && packed) {
     return [8, 16, 32, 64];
   }
   if (ir.is_lane_int_kind(kt)) {
