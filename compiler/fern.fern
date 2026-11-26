@@ -2288,11 +2288,11 @@ function size_bytes(text: string): i64 {
   return value * scale;
 }
 
-function bti_property_text(on: boolean): string {
+function branch_protection_text(on: boolean): string {
   if (!on) {
     return "";
   }
-  return "    .section .note.gnu.property,\"a\"\n    .p2align 3\n    .word 4\n    .word 16\n    .word 5\n    .asciz \"GNU\"\n    .word 0xc0000000\n    .word 4\n    .word 1\n    .word 0\n    .text\n";
+  return "    .section .note.gnu.property,\"a\"\n    .p2align 3\n    .word 4\n    .word 16\n    .word 5\n    .asciz \"GNU\"\n    .word 0xc0000000\n    .word 4\n    .word 3\n    .word 0\n    .text\n";
 }
 
 function flag_after_entry(a: string, embedded: boolean): i32 {
@@ -7644,7 +7644,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (shared) {
       out_asm = export_entries(merged, entry_names(merged, shared_roots), true, harden) + import_entries(merged, true) + out_asm;
     }
-    out_asm += bti_property_text(emit_text && harden);
+    out_asm += branch_protection_text(emit_text && harden);
     if (!emit_text && shared) {
       image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
       if (image.len() == 0) {
@@ -7705,7 +7705,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (shared) {
       out_asm = export_entries(merged, entry_names(merged, shared_roots), true, harden) + import_entries(merged, true) + out_asm;
     }
-    out_asm += bti_property_text(emit_text && harden);
+    out_asm += branch_protection_text(emit_text && harden);
     if (!emit_text && shared) {
       image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
       if (image.len() == 0) {

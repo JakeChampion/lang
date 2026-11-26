@@ -476,7 +476,7 @@ pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: 
   buf = util.le32(buf, 1685382481);
   buf = util.le32(buf, 6);
   buf = elf_pad_to(buf, buf.len() + 48);
-  buf = elf_note_ph(buf, elf_bti(note), 0i64, elf_align8(unwind_end));
+  buf = elf_note_ph(buf, elf_branch_protection(note), 0i64, elf_align8(unwind_end));
 
   buf = util.append_all(elf_pad_to(buf, text_off), text);
   if (has_unwind) {
@@ -586,7 +586,7 @@ pub function elf_data_vaddr_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32, 
 }
 
 function elf_code_end(end: i32, note: boolean): i32 {
-  return elf_note_end(end, elf_bti(note));
+  return elf_note_end(end, elf_branch_protection(note));
 }
 
 // A note that the image writer puts after the code, with its own program
@@ -598,12 +598,12 @@ pub function elf_no_note(): ElfNote {
   return ElfNote { p_type: 0, align: 0, bytes: [] };
 }
 
-// The GNU property note that marks an arm64 image as BTI-compatible.
-pub function elf_bti(on: boolean): ElfNote {
+// The GNU property note that marks an arm64 image as BTI- and PAC-compatible.
+pub function elf_branch_protection(on: boolean): ElfNote {
   if (!on) {
     return elf_no_note();
   }
-  return ElfNote { p_type: 1685382483, align: 8, bytes: elf_bti_note() };
+  return ElfNote { p_type: 1685382483, align: 8, bytes: elf_branch_protection_note() };
 }
 
 // The Xen PVH note: a VMM enters the image at `entry` in 32-bit protected mode.
@@ -622,14 +622,14 @@ function elf_note_end(end: i32, note: ElfNote): i32 {
   return elf_align8(end) + note.bytes.len();
 }
 
-pub function elf_bti_note(): i32[] {
+pub function elf_branch_protection_note(): i32[] {
   let b = util.le32([], 4);
   b = util.le32(b, 16);
   b = util.le32(b, 5);
   b = b.append(71).append(78).append(85).append(0);
   b = util.le32(b, -1073741824);
   b = util.le32(b, 4);
-  b = util.le32(b, 1);
+  b = util.le32(b, 3);
   return util.le32(b, 0);
 }
 
@@ -640,12 +640,12 @@ pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32,
 // `relro` is the length of the read-only-after-start region that leads the
 // data segment. `PT_GNU_RELRO` covers it, and the startup protects it.
 pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr() as i64, 2, true, elf_bti(note), true, elf_page_align(), relro, 16);
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr() as i64, 2, true, elf_branch_protection(note), true, elf_page_align(), relro, 16);
 }
 
 // The same layout as a position-independent executable: ET_DYN at base 0, which the kernel loads at a random base.
 pub function elf_image_pie_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean, relro: i32): u8[] {
-  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, 0i64, 3, true, elf_bti(note), true, elf_page_align(), relro, 16);
+  return elf_image_executable(text, hdr, eh, data, machine, entry_off, bss, 0i64, 3, true, elf_branch_protection(note), true, elf_page_align(), relro, 16);
 }
 
 pub function elf_text_vaddr_pie_wx(note: boolean): i32 {
@@ -954,7 +954,7 @@ function elf_so_note(own buf: i32[], note: boolean, off: i32): i32[] {
   if (!note) {
     return buf;
   }
-  return util.append_all(elf_pad_to(buf, off), elf_bti_note());
+  return util.append_all(elf_pad_to(buf, off), elf_branch_protection_note());
 }
 
 function elf_note_ph(own buf: i32[], note: ElfNote, base: i64, off: i32): i32[] {
@@ -980,7 +980,7 @@ pub function elf_text_vaddr_pie(note: boolean): i32 {
 
 // The data address of that image: the note follows the text.
 pub function elf_data_vaddr_pie(text_len: i32, note: boolean): i32 {
-  return elf_data_vaddr_after(elf_note_end(elf_text_vaddr_pie(note) + text_len, elf_bti(note)), elf_page_align());
+  return elf_data_vaddr_after(elf_note_end(elf_text_vaddr_pie(note) + text_len, elf_branch_protection(note)), elf_page_align());
 }
 
 // Kernel translation tables need a page-aligned data segment.
@@ -1084,7 +1084,7 @@ pub function elf_image_kernel_pvh(text: u8[], data: i32[], entry_off: i32, bss: 
 }
 
 pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32, relro: i32, note: boolean): u8[] {
-  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, elf_bti(note), true, elf_page_align(), relro, 16);
+  return elf_image_executable(text, [], [], data, machine, entry_off, bss, 0i64, 3, false, elf_branch_protection(note), true, elf_page_align(), relro, 16);
 }
 
 function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {

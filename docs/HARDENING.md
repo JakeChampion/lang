@@ -61,7 +61,9 @@ build linked with C objects is protected only if they were built with BTI:
 the linker drops the image's BTI property when any input lacks it.
 
 It also marks the image with a `.note.gnu.property` holding
-`GNU_PROPERTY_AARCH64_FEATURE_1_AND` with the BTI bit:
+`GNU_PROPERTY_AARCH64_FEATURE_1_AND` with the BTI bit and the PAC bit. The
+kernel guards the pages for BTI. The PAC bit records that each saved return
+address is signed. A linker keeps a bit only when every input carries it:
 
 - the in-process ELF writer adds a fourth program header, `PT_GNU_PROPERTY`,
   which moves `.text` 56 bytes on (`elf_wx_text_off(true)`);
@@ -132,7 +134,7 @@ read runs once.
 
 On arm64 every export entry starts with `bti c` and `paciasp`, and its
 return authenticates. The object carries `PT_GNU_PROPERTY` with the BTI
-bit. The dynamic loader guards its pages only when every object in the
+bit and the PAC bit. The dynamic loader guards its pages only when every object in the
 process asks for BTI. On x86-64 every export entry starts with `endbr64`.
 The shadow stack belongs to the host process, so a shared object does not
 ask for it.

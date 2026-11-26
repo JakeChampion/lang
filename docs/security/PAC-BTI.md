@@ -7,10 +7,10 @@ The mechanisms are described in `docs/HARDENING.md`, the indirect-call check in 
 ## What -harden emits on arm64-linux
 
 - Every function with a frame signs its return address with `paciasp` before the frame record stores it. Every exit authenticates it with `autiasp`, ahead of the `ret` or the tail call's `b`.
-- Every hand-written runtime frame (`__fern_*` helpers written as assembly text) signs and authenticates the same way, through `rt_frame` and `rt_unframe` in `compiler/asm_arm64_ir.fern`. The stack pointer is the same at both instructions, so the signature matches whatever the helper pushes between them.
+- Every hand-written runtime frame (`__fern_*` helpers written as assembly text) signs and authenticates the same way, through `rt_frame` and `rt_unframe` in `compiler/asm_arm64_ir.fern`. This includes the task, leak-check and sanitizer helpers. The stack pointer is the same at both instructions, so the signature matches whatever the helper pushes between them.
 - Every address-taken function has a stub that starts with `bti c`, and a function value points at the stub. A function's own entry carries no pad, so the BTI target set is exactly the set of address-taken functions.
 - The runtime entry points the kernel reaches, such as the signal catcher, carry `bti jc`.
-- The image carries `PT_GNU_PROPERTY` with the BTI bit, so a kernel with BTI maps the code as guarded pages.
+- The image carries `PT_GNU_PROPERTY` with the BTI bit and the PAC bit. A kernel with BTI maps the code as guarded pages. The PAC bit records that each saved return address is signed.
 - The backtrace walk strips the signature with `xpaclri` before it prints a return address.
 
 Each instruction is in the hint space, so a hardened image runs on a core without the feature.
