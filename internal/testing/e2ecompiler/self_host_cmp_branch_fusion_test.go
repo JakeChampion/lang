@@ -182,10 +182,12 @@ func TestSelfHostCmpBranchFusion(t *testing.T) {
 			wantArm: []string{`cbn?z x[0-9]+, `},
 			deadArm: []string{"cset"},
 		},
+		// An aligned loop top is entered by a jump, so on x86-64 the guard can
+		// branch into the loop (jl) and jump past it.
 		{
 			name:    "loop-guard",
 			src:     "@noinline function f(n: i32): i32 { let i: i32 = 0; let c: i32 = 0; while (i < n) { c = c + 2; i = i + 1; } return c; }\nfunction main(): i32 { return f(3); }",
-			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    jge `},
+			wantX86: []string{`cmpq %r[a-z0-9]+, %r[a-z0-9]+\n    j(ge|l) `},
 			deadX86: []string{"setl", "setz"},
 			wantArm: []string{`cmp x[0-9]+, x[0-9]+\n    b.ge `},
 			deadArm: []string{"cset"},
