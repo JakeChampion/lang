@@ -2391,7 +2391,7 @@ function is_variant_op(kind: i32): boolean {
     || kind == dyn_is() || kind == dyn_as();
 }
 
-function needs_guard(kind: i32): boolean {
+pub function needs_guard(kind: i32): boolean {
   return kind == variant_get() || kind == variant_as() || kind == dyn_as();
 }
 
