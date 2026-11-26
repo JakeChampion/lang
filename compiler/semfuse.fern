@@ -6,6 +6,7 @@ import "./util";
 import "./semarrayreport";
 import "./semreserve";
 import "./optbisect";
+import "./ssabytes";
 import "std/string";
 
 pub struct Fused { funcs: ssasem.Func[], rewritten: boolean[], pipelines: boolean[], sites: semarrayreport.Site[], reserves: semarrayreport.Site[] }
@@ -281,7 +282,7 @@ function calls_bad(f: ssasem.Func, bad: boolean[], index: util.NameIndex): boole
     for ins in b.insts {
       if (ins.kind_tag == ssasem.call()) {
         let at = index.find(ins.str);
-        if (at < 0 || bad[at]) {
+        if (at < 0 && !ssabytes.word_read(ins.str) || at >= 0 && bad[at]) {
           return true;
         }
       }

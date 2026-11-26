@@ -10,8 +10,9 @@ import "./util";
 pub struct Reserved { f: ssasem.Func, changed: boolean, sites: semarrayreport.Site[] }
 
 // When length_of is not -1, bound is the length of that array, read in the loop
-// header, and the reservation reads the length again before the loop.
-struct Plan { counted: semunroll.Counted, phi: i32, bound: i32, length_of: i32, before: i32, zero: i32, reason: i32 }
+// header, and the reservation reads the length again before the loop. `read`
+// is true when the loop reads the array, which rules out a zero fill.
+struct Plan { counted: semunroll.Counted, phi: i32, bound: i32, length_of: i32, before: i32, zero: i32, reason: i32, read: boolean }
 
 const RESERVED: i32 = 0;
 
@@ -49,7 +50,7 @@ pub function reserve(f: ssasem.Func, index: util.NameIndex, bad: boolean[], enab
     while (count < 8) {
       let next = first(out, index, bad);
       if let Some(plan) = next {
-        let fill: Option[ssasem.Func] = if (plan.length_of < 0) { semzerofill.fill(out, plan.counted, plan.phi, plan.bound, plan.before, plan.zero) } else { None };
+        let fill: Option[ssasem.Func] = if (plan.length_of < 0 && !plan.read) { semzerofill.fill(out, plan.counted, plan.phi, plan.bound, plan.before, plan.zero) } else { None };
         let reason = RESERVED;
         if let Some(filled) = fill {
           out = filled;
@@ -176,8 +177,8 @@ function block_at(g: ssa.SFunc, id: i32): i32 {
 }
 
 function checked(f: ssasem.Func, d: ssa.DefSites, hi: i32, phi: ssa.SInst, index: util.NameIndex, bad: boolean[]): Plan {
-  let c = semunroll.counted_shape(f, d, hi);
-  let p = Plan { counted: c, phi: phi.result, bound: -1, length_of: -1, before: -1, zero: -1, reason: SHAPE_UNSUPPORTED };
+  let c = semunroll.counted_region(f, d, hi);
+  let p = Plan { counted: c, phi: phi.result, bound: -1, length_of: -1, before: -1, zero: -1, reason: SHAPE_UNSUPPORTED, read: false };
   if (c.iv < 0 || c.start != 0 || c.step != 1 || c.offset != 0 || !empty(f, d, phi.args[c.entry], 0)) {
     return p;
   }
@@ -211,7 +212,33 @@ function checked(f: ssasem.Func, d: ssa.DefSites, hi: i32, phi: ssa.SInst, index
   if (!scalar_array(f.values[phi.result])) {
     return Plan { ...p, reason: NON_SCALAR };
   }
-  return Plan { ...p, reason: body_reason(f, c, phi, index, bad) };
+  return Plan { ...p, reason: body_reason(f, c, phi, index, bad), read: reads_array(f, c, phi) };
+}
+
+// A read of an element or of the length sees the same array with or without
+// the reserved capacity.
+function array_read(ins: ssa.SInst, array: i32, appended: i32): boolean {
+  if (ins.kind_tag != ssasem.array_get() && ins.kind_tag != ssasem.length() || ins.args.len() == 0 || ins.args[0] != array && ins.args[0] != appended) {
+    return false;
+  }
+  for k in 1..ins.args.len() {
+    if (ins.args[k] == array || ins.args[k] == appended) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function reads_array(f: ssasem.Func, c: semunroll.Counted, phi: ssa.SInst): boolean {
+  let appended = phi.args[c.latch];
+  for bi in util.append_all(c.heads, c.bodies) {
+    for ins in f.graph.blocks[bi].insts {
+      if (array_read(ins, phi.result, appended)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // header_length is the array whose length n is when a loop header reads that
@@ -247,7 +274,7 @@ function body_reason(f: ssasem.Func, c: semunroll.Counted, phi: ssa.SInst, index
   let appended = phi.args[c.latch];
   for bi in util.append_all(c.heads, c.bodies) {
     for ins in f.graph.blocks[bi].insts {
-      if (ins.result != phi.result && ins.result != appended && (util.index_of_i32(ins.args, phi.result) >= 0 || util.index_of_i32(ins.args, appended) >= 0)) {
+      if (ins.result != phi.result && ins.result != appended && !array_read(ins, phi.result, appended) && (util.index_of_i32(ins.args, phi.result) >= 0 || util.index_of_i32(ins.args, appended) >= 0)) {
         return ARRAY_OBSERVED;
       }
       if (ins.kind_tag == ssasem.call()) {
