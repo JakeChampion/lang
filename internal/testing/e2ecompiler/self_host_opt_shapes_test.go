@@ -64,7 +64,8 @@ function main(): i32 { return count_a("banana") - 1; }
 }
 function main(): i32 { return sum_to(10i64) as i32; }
 `,
-		forbid: map[string][]string{"x86-64-linux": {`\bjmp\b`}, "arm64-linux": {`\bb \.L`}}},
+		// On x86-64 the jump that skips the padding of the loop top is outside the loop.
+		forbid: map[string][]string{"x86-64-linux": {`(?s)\.p2align 6\n.*\bjmp\b`}, "arm64-linux": {`\bb \.L`}}},
 	// Short literals compare inline. Keep a longer one to exercise the runtime call too.
 	{name: "literal_compare_no_release", fn: "sym", exit: 6, src: `
 @noinline function sym(k: string): i32 {
