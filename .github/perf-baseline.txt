@@ -60,10 +60,10 @@ x86_64/closure_call.ir	41178167
 x86_64/deflate_decode.ir	26280225
 x86_64/deflate_decode.text	13805
 x86_64/deflate_encode.ir	39049495
-x86_64/deflate_encode.text	7417
+x86_64/deflate_encode.text	7564
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
-x86_64/http_hello.text	16291
+x86_64/http_hello.text	16580
 x86_64/http_hello.ir	21396352
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
@@ -73,7 +73,7 @@ x86_64/map_probe_chain.text	8699
 x86_64/map_probe_chain.ir	223421679
 x86_64/map_string.text	9594
 x86_64/map_string.ir	45873963	2
-x86_64/ordmap_insert.text	5940
+x86_64/ordmap_insert.text	6186
 x86_64/ordmap_insert.ir	66502789
 x86_64/pmap_insert.text	3679
 x86_64/pmap_insert.ir	48660607
@@ -106,7 +106,7 @@ x86_64/tokenize.ir	30310112
 x86_64/utf8_ingest_unchecked.text	8223
 x86_64/utf8_ingest_unchecked.ir	1737264
 x86_64/utf8_ingest_validated.text	8885
-x86_64/utf8_ingest_validated.ir	3229900
+x86_64/utf8_ingest_validated.ir	3373464
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
 # the dev container — paste its block in verbatim. The `.text` half needs no
@@ -137,13 +137,13 @@ aarch64/call_overhead.ir	10313038
 aarch64/closure_call.text	1309
 aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	25490431
-aarch64/deflate_decode.text	14642
+aarch64/deflate_decode.text	15365
 aarch64/deflate_encode.ir	39748600
 aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
-aarch64/http_hello.text	16978
-aarch64/http_hello.ir	22972520
+aarch64/http_hello.text	17267
+aarch64/http_hello.ir	23228523
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8678
@@ -152,7 +152,7 @@ aarch64/map_probe_chain.text	8688
 aarch64/map_probe_chain.ir	215140347
 aarch64/map_string.text	9710
 aarch64/map_string.ir	46464947	2
-aarch64/ordmap_insert.text	6303
+aarch64/ordmap_insert.text	6543
 aarch64/ordmap_insert.ir	82086738
 aarch64/pmap_insert.text	3986
 aarch64/pmap_insert.ir	54692820
@@ -185,7 +185,7 @@ aarch64/tokenize.ir	31880127
 aarch64/utf8_ingest_unchecked.text	8657
 aarch64/utf8_ingest_unchecked.ir	2160668
 aarch64/utf8_ingest_validated.text	9333
-aarch64/utf8_ingest_validated.ir	4195292
+aarch64/utf8_ingest_validated.ir	4246468
 x86_64/perceus_cfold.text	2280
 x86_64/perceus_cfold.ir	35195331
 x86_64/perceus_deriv.text	2999
@@ -245,8 +245,8 @@ aarch64/byte_copy_append.dr	6298434
 aarch64/byte_copy_with.dr	6199460
 aarch64/call_overhead.dr	1187566
 aarch64/closure_call.dr	4842023
-aarch64/deflate_decode.dr	2855096
-aarch64/deflate_encode.dr	6248008
+aarch64/deflate_decode.dr	2912899
+aarch64/deflate_encode.dr	5955599
 aarch64/enum_match.dr	1125004
 aarch64/gather_many.dr	9752960
 aarch64/hex_decode.dr	15885910
@@ -256,7 +256,7 @@ aarch64/int_loop.dr	3000003
 aarch64/map_int.dr	4523391
 aarch64/map_probe_chain.dr	38645307
 aarch64/map_string.dr	9924846 2
-aarch64/ordmap_insert.dr	18665522
+aarch64/ordmap_insert.dr	18883559
 aarch64/perceus_cfold.dr	10672483
 aarch64/perceus_deriv.dr	14395316
 aarch64/perceus_nqueens.dr	8982606
@@ -277,7 +277,7 @@ aarch64/string_slice.dr	2580011
 aarch64/struct_drop.dr	47340142
 aarch64/tokenize.dr	5490013
 aarch64/utf8_ingest_unchecked.dr	456944
-aarch64/utf8_ingest_validated.dr	734148
+aarch64/utf8_ingest_validated.dr	702344
 aarch64/utf8_validate.dr	29588157
 aarch64/video_qtrle.dr	93828773
 x86_64/array_append.dr	1601176
@@ -323,7 +323,7 @@ x86_64/string_slice.dr	2580009
 x86_64/struct_drop.dr	54560074
 x86_64/tokenize.dr	6270008
 x86_64/utf8_ingest_unchecked.dr	440173
-x86_64/utf8_ingest_validated.dr	694973
+x86_64/utf8_ingest_validated.dr	662373
 x86_64/utf8_validate.dr	27641588
 x86_64/video_qtrle.dr	241205955
 aarch64/draw_blend.text	2099
