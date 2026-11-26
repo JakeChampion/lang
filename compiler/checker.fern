@@ -21803,7 +21803,7 @@ function ow_scalar_literal(e: ast.Expr): boolean {
 function ow_takes_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   match (e) {
     ast.ExprIdent(id) => {
-      return lu_keys(ctx).has(lu_key(id.line, id.col)) && !ow_is_owned(ctx, id.name);
+      return !ow_is_owned(ctx, id.name) && lu_keys(ctx).has(lu_key(id.line, id.col));
     },
     ast.ExprFieldAccess(fa) => {
       if let ast.ExprIdent(oid) = fa.obj {
@@ -22196,7 +22196,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       }
       let enclosing = ow_enclosing_field(fa);
       if let ast.ExprIdent(oid) = enclosing.obj {
-        if (lu_keys(ctx).has(lu_field_key(enclosing, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
+        if (!util.has_str(ctx.borrowed, oid.name) && lu_keys(ctx).has(lu_field_key(enclosing, oid))) {
           return true;
         }
       }
