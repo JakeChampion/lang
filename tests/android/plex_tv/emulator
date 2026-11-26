@@ -12,8 +12,15 @@ export PATH=$ANDROID_HOME/platform-tools:$PATH
 
 "$bin/sdkmanager" --licenses < <(yes) > /dev/null
 "$bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
-echo no | "$bin/avdmanager" create avd --force -n plex-tv --package "$image" --device tv_720p
-printf 'hw.cpu.ncore=2\nhw.ramSize=2048\n' >> "$ANDROID_AVD_HOME/plex-tv.avd/config.ini"
+avd=$ANDROID_AVD_HOME/plex-tv.avd
+mkdir -p "$ANDROID_AVD_HOME"
+echo no | "$bin/avdmanager" create avd --force -n plex-tv --package "$image" --device tv_720p -p "$avd"
+if ! "$ANDROID_HOME/emulator/emulator" -list-avds | grep -qx plex-tv; then
+    echo "the emulator does not list the AVD plex-tv; avdmanager has:" >&2
+    "$bin/avdmanager" list avd >&2
+    exit 1
+fi
+printf 'hw.cpu.ncore=2\nhw.ramSize=2048M\n' >> "$avd/config.ini"
 
 mkdir -p "$(dirname "$log")"
 "$ANDROID_HOME/emulator/emulator" -avd plex-tv -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim > "$log" 2>&1 &
