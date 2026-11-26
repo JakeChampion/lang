@@ -748,7 +748,9 @@ function module_config(parent: refs.Repo): config.Config {
   let path = ".gitmodules".bytes();
   let pos = dircache.first_of(ix, path);
   let staged = dircache.has_path(ix, pos, path);
-  if (staged && ix.entries[pos].stage != 0) { return config.empty(); }
+  if (staged && ix.entries[pos].stage != 0) {
+    return config.empty();
+  }
   if let Ok(st) = lstat(file) {
     return if ((st.mode & 61440) == 32768) { config.read(file, file) } else { config.empty() };
   }
@@ -757,7 +759,9 @@ function module_config(parent: refs.Repo): config.Config {
   if (hash != "") {
     let found = store.read(db, hash);
     if let Ok(obj) = found.object {
-      if (obj.kind == "blob") { return config.parse(unsafe { string_from_bytes_unchecked(obj.body) }); }
+      if (obj.kind == "blob") {
+        return config.parse(unsafe { string_from_bytes_unchecked(obj.body) });
+      }
     }
   }
   return config.empty();
@@ -765,19 +769,33 @@ function module_config(parent: refs.Repo): config.Config {
 
 // A checked-out submodule takes precedence over its named module store.
 function submodule_at(parent: refs.Repo, path: string): Option[refs.Repo] {
-  if (parent.top == "") { return None; }
-  if let Some(sub) = refs.checkout_at(parent.top + "/" + path) { return Some(sub); }
-  if (parent.dir != parent.common || parent.config.flag("extensions.submodulepathconfig", false)) { return None; }
+  if (parent.top == "") {
+    return None;
+  }
+  if let Some(sub) = refs.checkout_at(parent.top + "/" + path) {
+    return Some(sub);
+  }
+  if (parent.dir != parent.common || parent.config.flag("extensions.submodulepathconfig", false)) {
+    return None;
+  }
   let modules = parent.common + "/modules";
-  if (stat(modules).is_err()) { return None; }
+  if (stat(modules).is_err()) {
+    return None;
+  }
   let dir = "";
   for e in module_config(parent).entries {
-    if (e.value != path || !e.name.starts_with("submodule.") || !e.name.ends_with(".path") || e.name.len() <= 15) { continue; }
+    if (e.value != path || !e.name.starts_with("submodule.") || !e.name.ends_with(".path") || e.name.len() <= 15) {
+      continue;
+    }
     let name = objects.part(e.name, 10, e.name.len() - 5);
     for part in name.replace("\\", "/").split("/") {
-      if (part == "" || part == "." || part == "..") { return None; }
+      if (part == "" || part == "." || part == "..") {
+        return None;
+      }
     }
-    if (dir != "") { return None; }
+    if (dir != "") {
+      return None;
+    }
     dir = modules + "/" + name;
   }
   return refs.stored_module(dir);
