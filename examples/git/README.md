@@ -351,7 +351,8 @@ With git 2.43, these settings, messages and merges are also different:
   paths. A worktree-specific gitdir setting overrides the shared one.
   The second part is a merge driver of the
   configuration (`merge.NAME.driver`). The third is
-  `merge.renormalize`.
+  `merge.renormalize` for a three-way blob merge or a modify/delete
+  comparison. Gitlink merges and one-sided changes need no conversion.
   For a merge that needs one of them, the port stops with a message
   that names the part. It also stops at a state of the renames that
   git takes for an internal error.

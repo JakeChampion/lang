@@ -1038,5 +1038,7 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	os.Remove(filepath.Join(dir, ".git", "info", "attributes"))
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
 	g.git("config", "merge.renormalize", "true")
+	// A gitlink merge never normalizes file content.
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
 	refuse("merge.renormalize", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
 }

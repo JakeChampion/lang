@@ -30,7 +30,7 @@ import "./walk";
 // and `drivers` records whether each named driver has a command.
 // With a `verbosity` of 5 or more, the messages of an inner merge are kept. `abbrev` is the least length of a short name.
 // `attrs` holds the attributes, or nothing.
-pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
+pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, renormalize: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
 
 // The text of a gap: a part of a merge that the port does not have.
 function gap(what: string): string {
@@ -39,7 +39,7 @@ function gap(what: string): string {
 
 // The settings of git with no configuration.
 pub function defaults(): Options {
-  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
+  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, renormalize: false, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
 }
 
 // The settings of a merge from the configuration, or the message of git
@@ -100,9 +100,7 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
     if (b < 0) {
       return stop("bad boolean config value '" + e.value + "' for 'merge.renormalize'");
     }
-    if (b == 1) {
-      return stop(gap("merge.renormalize"));
-    }
+    o = Options { ...o, renormalize: b == 1 };
   }
   for name in ["diff.renames", "merge.renames"] {
     for e in last_entry(c, name) {
@@ -709,6 +707,9 @@ function driver_of(st: State, path: string): (State, string) {
 // The merge of the blobs `o`, `a` and `b` for `path`, and the name of its
 // blob (`merge_3way` of git). The names of the three sides are `names`.
 function merge_3way(st_in: State, path: string, o: string, a: string, b: string, names: string[], extra_marker: i32): (State, i32, string) {
+  if (st_in.o.renormalize) {
+    return (State { ...st_in, fatal: gap("merge.renormalize") }, CLEAN, "");
+  }
   let plain = names[0] == names[1] && names[1] == names[2];
   let l = if (plain) { Labels { base: st_in.ancestor, ours: st_in.branch1, theirs: st_in.branch2 } } else { Labels { base: st_in.ancestor + ":" + names[0], ours: st_in.branch1 + ":" + names[1], theirs: st_in.branch2 + ":" + names[2] } };
   let (st0, base) = blob_of(st_in, o);
@@ -1633,6 +1634,10 @@ function process_entry(st_in: State, d_in: Dirs, path_in: string, ci_in: Info): 
   } else if (ci.filemask == 3 || ci.filemask == 5) {
     // One side changed the file and the other side deleted it.
     let side = if (ci.filemask == 5) { 2 } else { 1 };
+    // Git compares the normalized base and side for a modify/delete.
+    if (st.o.renormalize && ci.stages[0].mode == ci.stages[side].mode) {
+      return (State { ...st, fatal: gap("merge.renormalize") }, d);
+    }
     ci = Info { ...ci, result: ci.stages[if (st.depth > 0) { 0 } else { side }], clean: false };
     let modify_branch = if (side == 1) { st.branch1 } else { st.branch2 };
     let delete_branch = if (side == 1) { st.branch2 } else { st.branch1 };
