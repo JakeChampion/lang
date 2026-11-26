@@ -90,6 +90,59 @@ function main(): i32 {
 }
 `
 
+// A store of None into a slot after the code spends the old value. A struct
+// update moves the payload out and writes None into the reused box, a
+// retain of the payload comes before the call that spends it, and a cell
+// releases its old value before it writes None.
+const nicheOverwriteProgram = `import "std/array";
+struct Card { id: string, title: string }
+enum Kind { Folder, Named(string) }
+struct State { queue: Card[], fetching: Option[Card], failed: i32, note: string, kind: Option[Kind], path: string }
+@noinline function joined(a: string, b: string): string { return a + "/" + b; }
+@noinline function received(s: State, pause: boolean): State {
+  let Some(card) = s.fetching else { return s; };
+  let next = State { ...s, fetching: None };
+  if (pause) { return State { ...next, queue: [card].concat(next.queue), note: "p" }; }
+  return State { ...next, failed: next.failed + 1, note: card.title + "!" };
+}
+@noinline function saved(s: State, name: string): State {
+  let Some(kind) = s.kind else { return s; };
+  let next = State { ...s, kind: None, failed: s.failed + 1 };
+  match (kind) {
+    Folder => { return State { ...next, path: joined(s.path, name) }; },
+    Named(old) => { return State { ...next, path: joined(joined(s.path, old), name) }; },
+  }
+}
+@noinline function stop(c: Cell[Option[Card]]): i32 {
+  if let Some(active) = c.get() {
+    c.set(None);
+    return active.title.len();
+  }
+  return 0;
+}
+function some_card(o: Option[Card]): boolean { match (o) { Some(_) => { return true; }, None => { return false; } } }
+function some_kind(o: Option[Kind]): boolean { match (o) { Some(_) => { return true; }, None => { return false; } } }
+function card(i: i32): Card { return Card { id: "c" + i.to_string(), title: "t" + i.to_string() }; }
+function main(): i32 {
+  let s = State { queue: [], fetching: None, failed: 0, note: "", kind: None, path: "/r" + "" };
+  for i in 0..100 {
+    s = received(State { ...s, fetching: Some(card(i)) }, i % 2 == 0);
+    s = saved(State { ...s, kind: if (i % 3 == 0) { Some(Folder) } else { Some(Named("n" + i.to_string())) } }, "x");
+    if (s.path.len() > 40) { s = State { ...s, path: "/r" + "" }; }
+  }
+  if (s.queue.len() != 50 || s.failed != 150 || some_card(s.fetching) || some_kind(s.kind)) { return 1; }
+  let none: Option[Card] = None;
+  let c = cell_new(none);
+  let t = 0;
+  for i in 0..10 {
+    if (i % 2 == 0) { c.set(Some(card(i))); }
+    t = t + stop(c);
+  }
+  if (t != 10) { return 2; }
+  return 0;
+}
+`
+
 func TestSelfHostNicheOption(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
@@ -98,6 +151,7 @@ func TestSelfHostNicheOption(t *testing.T) {
 		}{
 			{"payloads", nicheOptionProgram},
 			{"map-get", nicheMapGetProgram},
+			{"overwrite", nicheOverwriteProgram},
 		} {
 			t.Run(target+"/"+probe.name, func(t *testing.T) {
 				stderr, code := cli.exitOf(t, probe.program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
