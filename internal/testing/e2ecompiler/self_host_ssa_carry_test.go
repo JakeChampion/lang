@@ -683,8 +683,8 @@ func TestSelfHostSSABorrowMaskIsOneSbb(t *testing.T) {
 	if !found {
 		t.Errorf("sub_mask makes its mask without one sbbq of a register from itself:\n%s", fn)
 	}
-	if n := strings.Count(fn, "setb"); n != 1 {
-		t.Errorf("sub_mask writes %d carries to a register, want 1 (the carry of its third limb):\n%s", n, fn)
+	if n := strings.Count(fn, "setb"); n != 0 {
+		t.Errorf("sub_mask writes %d carries to a register, want none:\n%s", n, fn)
 	}
 	armOut := filepath.Join(dir, "carries-arm64.s")
 	if report, err := exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", armOut, src, h.stdlib).CombinedOutput(); err != nil {
