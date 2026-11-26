@@ -4204,7 +4204,7 @@ function ssa_rt_call(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSaves
   }
   if (ins.str == "alloc") {
     sym = "__fern_raw_alloc";
-    s = lc_rt_req_alloc(s);
+    s = lc_rt_req_alloc(s.need("raw_alloc"));
   }
   if (asmcore.packed_shift(ins.str) > 0 && ins.str.starts_with("arr_push") && ins.result >= 0 && !s.rc_free_debug) {
     s = arr_push_inline_packed(sym, lp + "apush" + util.i32_to_string(ins.result), (ins.imm & 1) == 1, asmcore.packed_shift(ins.str), saves, s);
@@ -11726,7 +11726,9 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = emit_quarantine(s);
   }
-  s = emit_raw_alloc(s);
+  if (s.has_need("raw_alloc")) {
+    s = emit_raw_alloc(s);
+  }
   if (san_redzone_on(s)) {
     s = emit_san_class(s);
   }

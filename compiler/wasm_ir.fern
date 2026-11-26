@@ -193,6 +193,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (has_kind(kinds, "heap_alloc_count")) {
     out = out.append("@heap_alloc_count");
   }
+  if (has_kind(kinds, "alloc") || has_kind(kinds, "free")) {
+    out = out.append("@raw_user");
+  }
   if (has_kind(kinds, "ret_word") || has_kind(kinds, "call_word")) {
     out = out.append("@ret_word");
   }
@@ -9444,7 +9447,7 @@ function quarantine_funcs(h: WasmHeap, flb: string, flc: string): string {
 
 // The layout and the switches of the wasm heap runtime. Under `san` a release
 // goes to a quarantine of `budget` bytes (0 for no bound).
-pub struct WasmHeap { base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32, rawdir: i32, count: boolean, lc: boolean, san: boolean, budget: i64 }
+pub struct WasmHeap { base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32, rawdir: i32, raw_user: boolean, count: boolean, lc: boolean, san: boolean, budget: i64 }
 
 // Takes `$n` bytes from the heap cursor into `$p` and returns `$p`.
 function bump_wat(): string {
@@ -9471,8 +9474,10 @@ function user_raw_helpers(h: WasmHeap): string {
   let slot = "(i32.add (i32.const " + dir + ") (i32.shl (i32.shr_u (local.get $p) (i32.const 20)) (i32.const 2)))";
   let byte = "(i32.add (local.get $d) (i32.and (i32.shr_u (local.get $p) (i32.const 6)) (i32.const 16383)))";
   let bit = "(i32.shl (i32.const 1) (i32.and (i32.shr_u (local.get $p) (i32.const 3)) (i32.const 7)))";
-  // A new leaf comes from the cursor, so its bytes are zero.
-  let o = "  (func $__fern_rawmap_leaf (result i32)\n    (local $p i32) (local $n i32)\n    (local.set $n (i32.const 16384))\n" + bump_wat();
+  // A new leaf comes from the cursor, so its bytes are zero. The heap
+  // measure does not count it.
+  let o = "  (func $__fern_rawmap_leaf (result i32)\n    (local $p i32) (local $n i32)\n    (local.set $n (i32.const 16384))\n";
+  o += "    (global.set $__fern_rawmap_bytes (i32.add (global.get $__fern_rawmap_bytes) (local.get $n)))\n" + bump_wat();
   o += "  (func $__fern_user_free (param $p i32) (param $n i32)\n    (local $s i32) (local $d i32) (local $a i32) (local $v i32) (local $m i32)\n";
   o = o + "    (if (i32.and (i32.ne (local.get $n) (i32.const 0)) (i32.and (i32.ge_u (local.get $p) (i32.const " + util.i32_to_string(h.base) + ")) (i32.lt_u (local.get $p) (global.get $heap)))) (then\n";
   o = o + "      (local.set $s " + slot + ")\n";
@@ -9507,6 +9512,7 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   o += "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
   o = o + "  (global $__fern_heap_base i32 (i32.const " + hb + "))\n";
   o = o + "  (global $heap (mut i32) (i32.const " + hb + "))\n";
+  o += "  (global $__fern_rawmap_bytes (mut i32) (i32.const 0))\n";
   o = o + "  (global $__fern_heap_pages (mut i32) (i32.const " + util.i32_to_string(pages) + "))\n";
   if (count) {
     o += "  (global $__fern_alloc_count (mut i64) (i64.const 0))\n";
@@ -9639,7 +9645,9 @@ pub function heap_alloc_helpers(h: WasmHeap): string {
   o += "      (i32.store (local.get $slot) (local.get $base))\n";
   o += "      (return)))\n";
   o += "    (call $__fern_large_push (local.get $base) (local.get $bytes)))\n";
-  o += user_raw_helpers(h);
+  if (h.raw_user) {
+    o += user_raw_helpers(h);
+  }
   o += "  (func $__fern_arr_box (param $eb i32) (result i32)\n";
   o += "    (local $base i32) (local $n i32)\n";
   o += "    (local.set $n (i32.and (i32.add (i32.add (i32.const 16) (local.get $eb)) (i32.const 7)) (i32.const -8)))\n";
@@ -10699,8 +10707,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   let fl_base = caggs.offs[cv.len()];
   let lfl_base = fl_base + fl_cells() * 4;
   let rawdir = heap_align8(lfl_base + large_fl_cells() * 4);
+  let raw_user = need(needs, "@raw_user");
   // The shadow stack sits between the free lists and the heap.
-  let shadow_lo = rawdir + rawdir_cells() * 4;
+  let shadow_lo = rawdir + (if (raw_user) { rawdir_cells() * 4 } else { 0 });
   let shadow = shadow_stack_bytes(needs);
   let heap_base = shadow_lo + shadow;
   parts = parts.append(wasm_abort.helpers(abort_offsets, mode));
@@ -10757,7 +10766,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // The quarantine is a part of the heap runtime.
   let quar = san && heaped;
   if (heaped) {
-    let heap = WasmHeap { base: heap_base, fl_base: fl_base, fl_cells: fl_cells(), lfl_base: lfl_base, rawdir: rawdir, count: need(needs, "@heap_alloc_count"), lc: lc, san: san, budget: sw.quarantine };
+    let heap = WasmHeap { base: heap_base, fl_base: fl_base, fl_cells: fl_cells(), lfl_base: lfl_base, rawdir: rawdir, raw_user: raw_user, count: need(needs, "@heap_alloc_count"), lc: lc, san: san, budget: sw.quarantine };
     parts = parts.append(heap_alloc_helpers(heap));
     parts = parts.append(rc_runtime_helpers(heap.base, san));
   }
@@ -13895,7 +13904,7 @@ function emit_wasm_temp_dir(parts: string[]): string[] {
 }
 
 function emit_wasm_heap_bump_bytes(parts: string[]): string[] {
-  return parts.append("    global.get $heap\n    global.get $__fern_heap_base\n    i32.sub\n    i64.extend_i32_u\n");
+  return parts.append("    global.get $heap\n    global.get $__fern_heap_base\n    i32.sub\n    global.get $__fern_rawmap_bytes\n    i32.sub\n    i64.extend_i32_u\n");
 }
 
 function empty_bytes_const(): string {
