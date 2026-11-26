@@ -60,8 +60,9 @@ Unsupported constructs refuse the whole function with a reason.
     makes, such as the `Some` of a map lookup, has all its variants built.
     So a server that never calls `with_tls` links no TLS.
   - Roots are the tree-shaker's (`main`, top-level statements, exports, Drop
-    finalizers, derive-carrying types' methods, async entries), plus the
-    runtime helpers and live map keys' `hash` and `eq`.
+    finalizers, async entries), plus the runtime helpers and live map keys'
+    `hash` and `eq`. A derived method is not a root: a call, a dyn arm or a
+    map key reaches it as it reaches a method that an impl writes.
   - The pass runs only on a whole program: a module its caller has shaken
     to what these roots reach says so (`BuildOpts.whole`), as the CLI, the
     playground and a pruning `asm_load_run` do. A library, a unit of a

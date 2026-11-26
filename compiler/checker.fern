@@ -33092,20 +33092,6 @@ function module_imports_std_json(mod: parser.Module): boolean {
   return false;
 }
 
-function derive_method_name(kind: string): string {
-  return match (kind) {
-    "Display" => "to_string",
-    "Debug" => "to_debug",
-    "Json" => "to_json",
-    "FromJson" => "from_json_value",
-    "Eq" => "eq",
-    "Ord" => "cmp",
-    "Hash" => "hash",
-    "Default" => "default",
-    _ => "",
-  };
-}
-
 function derive_body_suppressed(fn: parser.FuncDecl, keys: string[]): boolean {
   if (keys.len() == 0) {
     return false;
@@ -33133,7 +33119,7 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
       for derive in sd.derives {
         let sdd = e021_derive_one_diag(mod, derive, sd.name, labels, ftys, sd.type_params, sd.line, sd.col);
         if (sdd.len() > 0) {
-          let smn = derive_method_name(parser.derive_simple_name(derive));
+          let smn = parser.derive_method_name(parser.derive_simple_name(derive));
           if (smn.len() > 0) {
             keys = keys.append(sd.name + "." + smn);
           }
@@ -33163,7 +33149,7 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
         edd = [dg_at("E021", "cannot @derive(" + ederive + ") for " + ed.name + ": only a struct has a C layout", ed.line, ed.col)];
       }
       if (edd.len() > 0) {
-        let emn = derive_method_name(parser.derive_simple_name(ederive));
+        let emn = parser.derive_method_name(parser.derive_simple_name(ederive));
         if (emn.len() > 0) {
           keys = keys.append(ed.name + "." + emn);
         }

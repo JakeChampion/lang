@@ -15022,6 +15022,48 @@ function claim_method_name(fd0: FuncDecl, tname: string, keys: string[], traits:
   return MethodClaim { fn: renamed_fd, keys: keys.append(rkey), traits: traits.append(tname) };
 }
 
+pub function derive_method_name(kind: string): string {
+  return match (kind) {
+    "Display" => "to_string",
+    "Debug" => "to_debug",
+    "Json" => "to_json",
+    "FromJson" => "from_json_value",
+    "Eq" => "eq",
+    "Ord" => "cmp",
+    "Hash" => "hash",
+    "Default" => "default",
+    _ => "",
+  };
+}
+
+// The impls of mod and one impl for each trait that a struct or an enum
+// derives, so that a lowering finds a derived method as it finds an
+// explicit one.
+pub function impls_with_derives(mod: Module): ImplInfo[] {
+  let out = mod.impls;
+  let seen: string[] = [];
+  for sd in mod.structs {
+    let owner = sd.name;
+    if (sd.enum_owner.len() > 0) {
+      owner = sd.enum_owner;
+    }
+    for d in sd.derives {
+      let name = derive_simple_name(d);
+      let method = derive_method_name(name);
+      if (method.len() == 0 || util.has_str(seen, owner + " " + d)) {
+        continue;
+      }
+      seen = seen.append(owner + " " + d);
+      let module = "";
+      if (d.len() > name.len()) {
+        module = slice_unchecked(d, 0, d.len() - name.len() - 1).to_owned();
+      }
+      out = out.append(ImplInfo { trait_name: name, impl_type: owner, type_params: [], all_type_params: sd.type_params, bounds: [], method_names: [method], trait_spelling: d, trait_ref: "", assoc_names: [], assoc_values: [], trait_module: module, module: sd.module, line: sd.line, col: sd.col });
+    }
+  }
+  return out;
+}
+
 pub function resolve_dyn_traits(mod: Module): Module {
   let bases: string[] = [];
   let served: string[][] = [];
@@ -15038,7 +15080,7 @@ pub function resolve_dyn_traits(mod: Module): Module {
     served = served.append(own);
   }
   let ix = util.name_index(bases);
-  for im in mod.impls {
+  for im in impls_with_derives(mod) {
     if (im.trait_name.len() > 0 && !ends_with_array_brackets(im.impl_type)) {
       let bn = receiver_base(im.impl_type);
       for ri in trait_closure(mod.trait_reqs, im.trait_name, im.trait_module) {

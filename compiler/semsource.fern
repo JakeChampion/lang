@@ -9606,6 +9606,7 @@ pub function check_views(mod: parser.Module): util.Diag[] {
 }
 
 function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): Built {
+  let impls = parser.impls_with_derives(mod);
   let finalizers = finalized_types(mod);
   let scopes = checker.module_scopes(mod);
   let table = contracts(mod, scopes);
@@ -9613,7 +9614,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   let shadows = shadowed_builtins(mod);
   let views: string[] = [];
   if (scopes.len() > 0) {
-    views = view_types(scopes[0], mod.impls, table);
+    views = view_types(scopes[0], impls, table);
   }
   let decls: Produced[] = [];
   let names: string[] = [];
@@ -9624,7 +9625,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let fd = mod.funcs[i];
     let p = template_entry(parser.decl_key(fd), false, "uninstantiated generic", true);
     if (!generic_decl(fd)) {
-      let made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, layout_of(opts, finalizers));
+      let made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, impls, finalizers, memo, layout_of(opts, finalizers));
       p = made.p;
       memo = made.memo;
     }
@@ -9645,7 +9646,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     }
     let p = refuse("unbounded instantiation");
     if (at < instance_limit()) {
-      let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, layout_of(opts, finalizers));
+      let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, impls, finalizers, memo, layout_of(opts, finalizers));
       p = made.p;
       memo = made.memo;
     }
@@ -10158,6 +10159,7 @@ function entry_decl(fd: parser.FuncDecl, mod: parser.Module): boolean {
   return parser.decl_named_outside(mod, fd) || fd.import_iface != "";
 }
 
+// A Drop finalizer: the release glue calls it, and no body names it.
 function rooted_method(fd: parser.FuncDecl, mod: parser.Module): boolean {
   if (fd.receiver_type == "") {
     return false;
@@ -10165,17 +10167,6 @@ function rooted_method(fd: parser.FuncDecl, mod: parser.Module): boolean {
   for im in mod.impls {
     if (im.trait_name == "Drop" && util.index_of_str(im.method_names, fd.name) >= 0) {
       return true;
-    }
-  }
-  for sd in mod.structs {
-    if (sd.derives.len() > 0) {
-      let owner = sd.name;
-      if (sd.enum_owner.len() > 0) {
-        owner = sd.enum_owner;
-      }
-      if (fd.receiver_type == owner) {
-        return true;
-      }
     }
   }
   return false;
