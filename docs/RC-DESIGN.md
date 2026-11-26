@@ -866,6 +866,20 @@ An abort or `exit` ends the process with `exit_group`, not `exit`, so a
 report inside a host's thread takes the whole host down rather than one
 thread (#12169).
 
+After a fork, each block of the heap below the bump cursor shares its pages
+with the other process. A write to a shared page copies it, 4 KiB at a time,
+also inside a huge page. Thus each process that `proc_fork` gives records
+that cursor in `__fern_fork_mark`.
+
+A large block is a block of 512 KiB or more. When `__fern_alloc` takes a large
+block below the mark from its free list, it calls `__fern_large_reclaim`.
+That routine gives back the whole pages of the block after its first page
+with `MADV_DONTNEED`. A write then takes a fault for a zero page, which can be
+a huge page. `__heap_adopt` sets the mark to zero.
+
+A program that does not fork has no such code, and macOS keeps no mark.
+`TestSelfHostForkGivesBackSharedLargeBlocks` counts the faults.
+
 A new boundary (`spawn`, an `interrupt` attribute) lands with its own check,
 never as a convention.
 
