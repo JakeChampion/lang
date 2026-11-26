@@ -13,6 +13,13 @@ function build(n: i32): i64[] {
 	return xs;
 }
 
+// held reads the element buffer as well as the shape, so the keep-alive
+// below keeps each buffer live and not only the shape of the handle.
+function held(x: ndarray.NdArray[i64]): i32 {
+	if (x.data.len() == 0 && x.len() != 0) { return -1000; }
+	return x.rank();
+}
+
 function main(): i32 {
 	let n: i32 = 64;
 	let probe0: i64 = __heap_bump_bytes();
@@ -315,12 +322,12 @@ function main(): i32 {
 	if (mrsc.get_unchecked([1, 1, 0]) != (0 as i64) - (1 as i64)) { return 170; }
 
 	// The keep-alive: every buffer measured above is still held here.
-	let live: i32 = t.rank() + rv.rank() + sl.rank() + se.rank() + pm.rank() + col.rank()
-		+ r2.rank() + r3.rank() + f1.len() + f2.len() + p.rank() + z.rank() + e.rank()
-		+ rvf.len() + both.rank() + m.rank() + zw.rank() + rows.rank() + ord.rank()
-		+ sc0.rank() + ordrv.rank() + scrv.rank() + one.rank() + rowv.rank() + wide.rank()
-		+ sub.rank() + colv.rank() + diff.rank() + scal.rank() + dbl.rank() + op.rank()
-		+ op2.rank() + dot.rank() + mv.rank() + mmt.rank() + ord2.rank() + ordr.rank();
+	let live: i32 = held(t) + held(rv) + held(sl) + held(se) + held(pm) + held(col)
+		+ held(r2) + held(r3) + f1.len() + f2.len() + held(p) + held(z) + held(e)
+		+ rvf.len() + held(both) + held(m) + held(zw) + held(rows) + held(ord)
+		+ held(sc0) + held(ordrv) + held(scrv) + held(one) + held(rowv) + held(wide)
+		+ held(sub) + held(colv) + held(diff) + held(scal) + held(dbl) + held(op)
+		+ held(op2) + held(dot) + held(mv) + held(mmt) + held(ord2) + held(ordr);
 	if (live != 3 * n * n + 49) { return 110; }
 	return 0;
 }
