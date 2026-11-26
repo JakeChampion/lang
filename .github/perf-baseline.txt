@@ -71,7 +71,7 @@ x86_64/map_int.text	8540
 x86_64/map_int.ir	22567114
 x86_64/map_probe_chain.text	8544
 x86_64/map_probe_chain.ir	222031221
-x86_64/map_string.text	9349
+x86_64/map_string.text	9456
 x86_64/map_string.ir	45796489	2
 x86_64/ordmap_insert.text	5875
 x86_64/ordmap_insert.ir	66342314
