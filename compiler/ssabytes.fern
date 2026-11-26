@@ -43,6 +43,15 @@ pub function swap_name(bytes: i32): string {
   return "__sem_bswap4";
 }
 
+pub function raw_word_read(name: string): boolean {
+  return name == "__raw_arr_ptr" || name == "__raw_data" || name == "__load_u16" || name == "__load_i32" || name == "__load_i64";
+}
+
+// Whether a call of `name` that the word fusion writes only reads memory.
+pub function word_read(name: string): boolean {
+  return word_bytes(name) > 0 || name == swap_name(4) || name == swap_name(8) || raw_word_read(name);
+}
+
 pub function read_word(value: i32, bytes: i32): ir.Op {
   return ir.Op { ...ir.op_call_direct(word_name(bytes), 2), i64_imm: value as i64 + 1 };
 }

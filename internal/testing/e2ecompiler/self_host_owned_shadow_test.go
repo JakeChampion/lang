@@ -43,7 +43,6 @@ function both(own a: State, own b: State): State { return State { n: a.n + b.n }
 				}
 				t.Fatalf("%s: want %q, got %v", label, tc.want, ds)
 			}
-			check("Go", goCheckerDiags(t, dir, src))
 			cmd := exec.Command(bin)
 			if len(runner) > 0 {
 				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)

@@ -1529,8 +1529,8 @@ pub function scalar_params(funcs: ssasem.Func[], names: string[], rewrite: boole
     while (p >= 0) {
       if (split[i][p]) {
         let parts = semscalarreturn.param_parts(f, f.params[p]);
-        f = semscalarreturn.split_param(f, p, parts);
-        m = spliced_modes(m, p, parts.len());
+        f = part_copies_forwarded(semscalarreturn.split_param(f, p, parts), p, parts.len());
+        m = spliced_modes(m, p, parts);
         c = true;
       }
       p -= 1;
@@ -1576,6 +1576,30 @@ function params_forwarded(f: ssasem.Func, name: string, which: boolean[]): ssase
   if (!any) {
     return f;
   }
+  return aliased(f, alias);
+}
+
+// `f` with each copy of a reference part, the parameters `first` to
+// `first + n - 1`, replaced by the part, so that a counted part has one holder.
+function part_copies_forwarded(f: ssasem.Func, first: i32, n: i32): ssasem.Func {
+  let alias = util.minus_ones(f.graph.nvals);
+  let any = false;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssa.COPY && ins.args.len() == 1 && ins.args[0] >= first && ins.args[0] < first + n && !ssasem.is_scalar(f.values[ins.args[0]])) {
+        alias = alias.with(ins.result, ins.args[0]);
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return f;
+  }
+  return aliased(f, alias);
+}
+
+// `f` with each value that `alias` names replaced by its alias.
+function aliased(f: ssasem.Func, alias: i32[]): ssasem.Func {
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
@@ -1632,11 +1656,32 @@ function param_candidates(funcs: ssasem.Func[], names: string[], ix: util.NameIn
     let ok = refs.calls[i] > 0 && !refs.other[i] && rewrite[i] && unnamed[i] && !anchored.has(names[i]) && modes[i].len() == f.params.len() && f.graph.nparams == f.params.len();
     let row: boolean[] = [];
     for t in f.params {
-      row = row.append(ok && semscalarreturn.param_parts(f, t).len() > 0);
+      let parts = semscalarreturn.param_parts(f, t);
+      // A record with a counted part stays whole when the result has as many
+      // fields: the plan can reuse the box of the parameter for the result.
+      row = row.append(ok && parts.len() > 0 && !(counts_a_part(parts) && field_count(f, f.result) == parts.len()));
     }
     out = out.append(row);
   }
   return out;
+}
+
+function counts_a_part(parts: typeinfo.Type[]): boolean {
+  for t in parts {
+    if (!ssasem.is_scalar(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The number of fields of record type `t`, or -1.
+function field_count(f: ssasem.Func, t: typeinfo.Type): i32 {
+  let at = semrecords.find(f.records, t);
+  if (at < 0) {
+    return 0 - 1;
+  }
+  return f.records.list[at].fields.len();
 }
 
 function anchored_callees(funcs: ssasem.Func[]): string[] {
@@ -1847,12 +1892,12 @@ function branched_block(f0: ssasem.Func, bi: i32, b: ssa.SBlock, head: ssa.SInst
   return with_new_block(f, ssa.SBlock { id: join_id, insts: tail, term: b.term, preds: [some_id, none_id] });
 }
 
-function spliced_modes(modes: i32[], at: i32, n: i32): i32[] {
+function spliced_modes(modes: i32[], at: i32, parts: typeinfo.Type[]): i32[] {
   let out: i32[] = [];
   for i in 0..modes.len() {
     if (i == at) {
-      for _ in 0..n {
-        out = out.append(ssasem.value_mode());
+      for t in parts {
+        out = out.append(semscalarreturn.part_mode(t, modes[i]));
       }
     } else {
       out = out.append(modes[i]);
@@ -1959,7 +2004,7 @@ function relay_of(f: ssasem.Func, rec: semrecords.Record, key: string): Relay {
   let parts: typeinfo.Type[][] = [];
   let payloads: typeinfo.Type[][] = [];
   for fl in rec.fields {
-    let p = semscalarreturn.param_parts(f, fl.ty);
+    let p = semscalarreturn.laid_parts(f, fl.ty);
     flat = flat.append(p.len() > 0);
     parts = parts.append(p);
     payloads = payloads.append(semscalarreturn.option_payload(f, fl.ty));

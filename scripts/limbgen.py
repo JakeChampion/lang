@@ -63,7 +63,7 @@ def run(fn_src, fes, words=None):
         env[name] = v
     ret = None
     for line in fn_src.splitlines():
-        m = re.match(r"  let (\w+)(?:: u64)? = (.*);$", line)
+        m = re.match(r"  let (\w+) = (.*);$", line)
         if m:
             env[m.group(1)] = ev(m.group(2), env)
         m = re.match(r"  return Fe \{ l0: (.*), l1: (.*), l2: (.*), l3: (.*) \};$", line)

@@ -14,7 +14,7 @@ func rccertifyDecidedSource() string {
 	return `import "./irverifygate"; import "./ssa";
 
 function inst(kind: i32, result: i32, args: i32[], imm: i32, str: string): ssa.SInst {
-    return ssa.SInst { ir_kind: ssa.lifted_kind(kind, str), kind_tag: kind, result: result, args: args, imm: imm, str: str };
+    return ssa.lifted_inst(kind, result, args, imm, str);
 }
 function block(id: i32, preds: i32[], insts: ssa.SInst[], term: ssa.STerm): ssa.SBlock {
     return ssa.SBlock { id: id, insts: insts, term: term, preds: preds };

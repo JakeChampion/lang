@@ -1301,11 +1301,14 @@ function test_merge_config(): test.TestOutcome {
     return test.fail("the settings with no configuration");
   }
   let set = read("[merge]\n\tconflictStyle = zdiff3\n\trenameLimit = 2k\n\trenames = false\n\tdirectoryRenames = true\n\tdefault = union\n[diff]\n\talgorithm = patience\n[merge \"mine\"]\n\tdriver = true\n");
-  if (set.fatal != "" || set.o.style != linediff.STYLE_ZDIFF3 || set.o.rename_limit != 2048 || set.o.renames || !set.o.dir_moves || set.o.default_driver != "union" || set.o.algo.algorithm != linediff.PATIENCE || set.o.drivers != ["mine"]) {
+  if (set.fatal != "" || set.o.style != linediff.STYLE_ZDIFF3 || set.o.rename_limit != 2048 || set.o.renames || !set.o.dir_moves || set.o.default_driver != "union" || set.o.algo.algorithm != linediff.PATIENCE || set.o.drivers.get("mine") != Some(true)) {
     return test.fail("the settings of a configuration");
   }
   if (read("[diff]\n\trenames = copies\n[merge]\n\tdirectoryRenames = false\n\trenameLimit = 0\n").o.renames != true || read("[merge]\n\tdirectoryRenames = false\n").o.dir_renames || read("[merge]\n\trenameLimit = 0\n").o.rename_limit != 7000) {
     return test.fail("the renames of a configuration");
+  }
+  if (read("[merge]\nrenameLimit = 010\n").o.rename_limit != 8 || read("[merge]\nrenameLimit = +0XfK\n").o.rename_limit != 15360) {
+    return test.fail("octal and hexadecimal rename limits");
   }
   let style = read("[merge]\n\tconflictStyle = bogus\n");
   if (style.error != "error: unknown style 'bogus' given for 'merge.conflictstyle'" || style.fatal != "bad config variable 'merge.conflictstyle' in file '.git/config' at line 2") {

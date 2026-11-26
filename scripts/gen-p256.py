@@ -60,51 +60,48 @@ def shifted_mac(g, x, m):
     lo, k = g.add(x, g.let("%s << 32u64" % m, "lo"))
     return g.let("(%s >> 32u64) + %s" % (m, k), "hi"), lo
 
-# The Montgomery square a * a / R mod P. The 512-bit square takes 10 limb
-# products, against 16 for a product of two values: each cross product
-# counts twice. Then the low half reduces in four rounds, and the high half
-# adds to that, because REDC(lo + hi R) = REDC(lo) + hi.
-def mont_sqr(name, p):
+# The Montgomery square a * a / R mod p: the eight limbs of a * a with each
+# cross product once, doubled, then four rounds that each clear a low limb.
+def mont_sq(name, p, n0, special):
     g = Gen()
     pl = limbs(p)
     a = g.params("a")
-    t = [None] * 8
-    c = None
-    for j in range(1, 4):
-        c, t[j] = g.mac(None, a[0], a[j], c)
-    t[4] = c
-    c = None
-    for j in range(2, 4):
-        c, t[1 + j] = g.mac(t[1 + j], a[1], a[j], c)
-    t[5] = c
-    t[6], t[5] = g.mac(t[5], a[2], a[3], None)
+    w = [None] * 8
+    for i in range(3):
+        c = None
+        for j in range(i + 1, 4):
+            c, w[i + j] = g.mac(w[i + j], a[i], a[j], c)
+        w[i + 4] = c
+    # w[0] is zero and w[7] has no cross product: the doubled sum starts at
+    # w[1], and its carry out is the top limb.
+    t = [None]
     k = None
     for j in range(1, 7):
-        t[j], k = g.add(t[j], t[j], k)
-    t[7] = k
-    d = []
+        s, k = g.add(w[j], w[j], k)
+        t.append(s)
+    t.append(k)
+    c = None
     for i in range(4):
-        hi, lo = g.mac(None, a[i], a[i], None)
-        d += [lo, hi]
-    t[0] = d[0]
-    k = None
-    for j in range(1, 7):
-        t[j], k = g.add(t[j], d[j], k)
-    t[7] = g.let("%s + %s + %s" % (t[7], d[7], k))
-    w = t[:4]
-    for _ in range(4):
-        m = w[0]
-        c, w1 = shifted_mac(g, w[1], m)
-        w2, c = g.add(w[2], c)
-        c, w3 = g.mac(w[3], m, lit(pl[3]), c)
-        w = [w1, w2, w3, c]
-    out = []
-    k = None
-    for j in range(4):
-        x, k = g.add(w[j], t[4 + j], k)
-        out.append(x)
-    out.append(k)
-    return finish(g, name, "a: Fe", out, pl)
+        hi, t[2 * i] = g.mac(t[2 * i], a[i], a[i], c)
+        t[2 * i + 1], c = g.add(t[2 * i + 1], hi)
+    # The square is below 2^512, so the last carry is zero.
+    top = None
+    for i in range(4):
+        if special:
+            m = t[i]
+            c = m
+        else:
+            m = g.let("%s * %s" % (t[i], lit(n0)), "m")
+            c, _ = g.mac(t[i], m, lit(pl[0]), None)
+        for j in range(1, 4):
+            if special and j == 1:
+                c, t[i + j] = shifted_mac(g, t[i + j], m)
+            elif pl[j] == 0:
+                t[i + j], c = g.add(t[i + j], c)
+            else:
+                c, t[i + j] = g.mac(t[i + j], m, lit(pl[j]), c)
+        t[i + 4], top = g.add(t[i + 4], c, top)
+    return finish(g, name, "a: Fe", t[4:8] + [top], pl)
 
 def finish(g, name, params, t, pl):
     d = []
@@ -212,6 +209,7 @@ def check(fns):
         assert run(fns["__borrow"], {"a": a, "b": b}) == (1 if a < b else 0)
         an, bn = a % N, b % N
         assert run(fns["__fn_mul"], {"a": an, "b": bn}) == an * bn * rninv % N
+        assert run(fns["__fn_sqr"], {"a": an}) == an * an * rninv % N
         assert run(fns["__fn_add"], {"a": an, "b": bn}) == (an + bn) % N
         # One operand below the modulus is enough for the product.
         assert run(fns["__fn_mul"], {"a": a, "b": bn}) == a * bn * rninv % N
@@ -219,15 +217,16 @@ def check(fns):
 def region():
     fns = {
         "__fp_mul": mont_mul("__fp_mul", P, n0_of(P), True),
-        "__fp_sqr": mont_sqr("__fp_sqr", P),
+        "__fp_sqr": mont_sq("__fp_sqr", P, n0_of(P), True),
         "__fp_add": mod_add("__fp_add", P),
         "__fp_sub": mod_sub("__fp_sub", P),
         "__fn_mul": mont_mul("__fn_mul", N, n0_of(N), False),
+        "__fn_sqr": mont_sq("__fn_sqr", N, n0_of(N), False),
         "__fn_add": mod_add("__fn_add", N),
         "__borrow": borrow_fn(),
     }
     check(fns)
-    parts = [fns[k] for k in ("__fp_mul", "__fp_sqr", "__fp_add", "__fp_sub", "__fn_mul", "__fn_add", "__borrow")]
+    parts = [fns[k] for k in ("__fp_mul", "__fp_sqr", "__fp_add", "__fp_sub", "__fn_mul", "__fn_sqr", "__fn_add", "__borrow")]
     parts.append(fe_fn("__fp_one", R % P))
     parts.append(fe_fn("__fp_r2", R * R % P))
     parts.append(fe_fn("__fp_b", B * R % P))

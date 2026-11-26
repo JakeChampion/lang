@@ -109,11 +109,12 @@ function job_size(block: i32): i32 {
 }
 
 // The largest job that `grown` makes.
-const MAX_JOB: i32 = 8388608;
+const MAX_JOB: i32 = 2097152;
 
-// The size of the job after a job of `size` bytes. Each job is a process,
-// whose start costs about 3 ms of kernel time, so the jobs after the first
-// ones double up to MAX_JOB. The output does not depend on the size.
+// The size of the job after a job of `size` bytes. Each job goes to a
+// worker through a pipe, so the jobs after the first ones double up to
+// MAX_JOB. A larger job leaves the other processes idle at the end of the
+// input. The output does not depend on the size.
 function grown(size: i32): i32 {
   if (size > MAX_JOB / 2) {
     return size;
@@ -306,16 +307,36 @@ function take(own f: Feed, rd: Reader, size: i32, setdict: boolean, path: string
   return Taken { feed: feed, dict: f.dict, cur: cur, more: more };
 }
 
+// A job as the bytes that a worker of the pool reads: the dictionary, the
+// input, then the length of the dictionary in 4 bytes and 1 when more input
+// follows. The trailer is at the end, so the dictionary stays at the start.
+function job_bytes(t: Taken): u8[] {
+  let n = t.dict.len();
+  let trailer: u8[] = [(n & 255) as u8, (n >> 8 & 255) as u8, (n >> 16 & 255) as u8, (n >> 24 & 255) as u8, if (t.more) { 1 as u8 } else { 0 as u8 }];
+  return t.dict.concat(t.cur).concat(trailer);
+}
+
 // A worker compresses the job and takes the check of its input, so the
-// parent only reads, starts, joins and writes.
-function start_job(s: layout.Settings, zlib: boolean, t: Taken): worker.Worker[JobOut] {
-  let dict = t.dict;
-  let cur = t.cur;
-  let more = t.more;
-  return worker.spawn((): JobOut => {
-    let input = if (dict.len() == 0) { cur } else { dict.concat(cur) };
-    return JobOut { bytes: layout.blocks(s, input, dict.len(), more), len: cur.len(), check: chunk_check(zlib, cur) };
-  });
+// parent only reads, gives, waits and writes. It gives back the deflate
+// data, then the check and the length of the input in 4 bytes each.
+function run_job(s: layout.Settings, zlib: boolean, job: u8[]): u8[] {
+  let end = job.len() - 5;
+  let dlen = gz.le32_of(job, end) as i32;
+  let more = job[end + 4] == 1 as u8;
+  let input = array.slice(job, 0, end);
+  let check = chunk_check(zlib, array.slice(input, dlen, end));
+  let out = layout.blocks(s, input, dlen, more);
+  let len = end - dlen;
+  let c = check as i64;
+  return out.concat([(c & 255i64) as u8, (c >> 8i64 & 255i64) as u8, (c >> 16i64 & 255i64) as u8, (c >> 24i64 & 255i64) as u8, (len & 255) as u8, (len >> 8 & 255) as u8, (len >> 16 & 255) as u8, (len >> 24 & 255) as u8]);
+}
+
+// The output of run_job as a JobOut.
+function job_out(own raw: u8[]): JobOut {
+  let end = raw.len() - 8;
+  let check = gz.le32_of(raw, end);
+  let len = gz.le32_of(raw, end + 4) as i32;
+  return JobOut { bytes: raw.truncate(end), len: len, check: check };
 }
 
 function index_of(xs: i32[], x: i32): i32 {
@@ -345,34 +366,33 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
   let check = c0;
   let clen = 0i64;
   let failed: Option[gz.Fail] = None;
-  let running: worker.Worker[JobOut][] = [];
-  // The number of each running job, and the outputs that wait for their turn.
-  let numbers: i32[] = [];
+  let zlib = c0.zlib;
+  let pool = worker.pool(procs, (job: u8[]): u8[] => run_job(s, zlib, job));
+  // The outputs that wait for their turn, by the ticket of their job.
   let done_numbers: i32[] = [];
   let done: JobOut[] = [];
   let started = 0;
   let written = 0;
   loop {
-    while (!feed.ended && failed.is_none() && running.len() < procs && started - written < 2 * procs) {
+    while (!feed.ended && failed.is_none() && pool.idle() > 0 && started - written < 2 * procs) {
       if (started >= procs) {
         size = grown(size);
       }
       let t = take(feed, rd, size, s.setdict, path);
       feed = t.feed;
       if (feed.failed.is_none()) {
-        running = running.append(start_job(s, c0.zlib, t));
-        numbers = numbers.append(started);
+        let (p2, _) = worker.submit(pool, job_bytes(t));
+        pool = p2;
         started += 1;
       }
     }
-    if (running.len() == 0) {
+    if (pool.pending() == 0) {
       break;
     }
-    let got = worker.wait_any(running);
-    running = got.rest;
-    done_numbers = done_numbers.append(numbers[got.index]);
-    done = done.append(got.value);
-    numbers = without(numbers, got.index);
+    let (p3, ticket, raw) = worker.wait_pool(pool);
+    pool = p3;
+    done_numbers = done_numbers.append(ticket);
+    done = done.append(job_out(raw));
     let at = index_of(done_numbers, written);
     while (at >= 0) {
       let out = done[at];
@@ -389,6 +409,7 @@ function parallel_to(s: layout.Settings, procs: i32, rd: Reader, w: Writer, path
       at = index_of(done_numbers, written);
     }
   }
+  worker.close(pool);
   if let Some(e) = failed {
     return Err(e);
   }

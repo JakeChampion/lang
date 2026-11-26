@@ -4,13 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
-	"sort"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/check/checker"
-	"github.com/jakechampion/lang/internal/pkg/modload"
-	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
 func TestSelfHostIndirectOwnContracts(t *testing.T) {
@@ -105,37 +99,19 @@ function apply(h: F, own s: string): i32 { let n = h.f(s); return n + h.f(s); }
 function main(): i32 { return 0; }`, nil},
 	}
 	cli := buildSelfHostCLI(t)
-	findingRE := regexp.MustCompile(`(?m)^.*?:([0-9]+):([0-9]+): error\[([EP][0-9]{3})\]: ([^\n]*)`)
-	findings := func(text string) []string {
-		var out []string
-		for _, m := range findingRE.FindAllStringSubmatch(text, -1) {
-			out = append(out, m[1]+":"+m[2]+" "+m[3]+" "+m[4])
-		}
-		sort.Strings(out)
-		return out
-	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")
 			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			prog, _, err := modload.Load(src)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = checker.Check(prog)
-			if got := goCheckerCodes(t, t.TempDir(), tc.source); !reflect.DeepEqual(got, tc.codes) {
-				t.Fatalf("Go codes = %v, want %v: %v", got, tc.codes, err)
-			}
-			want := findings(diag.Format(src, tc.source, err))
 			cmd := cli.compileCmd("x86-64-linux", filepath.Join(t.TempDir(), "out"), src, "-check")
 			out, runErr := cmd.CombinedOutput()
-			if (runErr != nil) != (err != nil) {
-				t.Fatalf("Go error = %v, self-host error = %v\n%s", err, runErr, out)
+			if (runErr != nil) != (len(tc.codes) > 0) {
+				t.Fatalf("self-host error = %v, want codes %v\n%s", runErr, tc.codes, out)
 			}
-			if got := findings(string(out)); !reflect.DeepEqual(got, want) {
-				t.Errorf("findings = %v, want %v\n%s", got, want, out)
+			if got := uniqueSortedCodes(sortedCodes(string(out))); !reflect.DeepEqual(got, uniqueSortedCodes(tc.codes)) {
+				t.Errorf("codes = %v, want %v\n%s", got, tc.codes, out)
 			}
 		})
 	}

@@ -7,8 +7,10 @@
 //
 // A name is `section.key`, or `section.subsection.key`. The section and the
 // key have no capital letters in a name. The subsection keeps its case.
+import "core/cmp";
 import "std/array";
 import "std/string";
+import "./objects";
 
 // One entry. `line` is the line of the file where its value ends, from 1.
 // `bare` is true for a key with no `=`: its value is "true", and git
@@ -40,6 +42,90 @@ pub function (c: Config) bad(e: Entry): string {
 // The line of the error of git for the entry `e` with no value.
 pub function missing_value(e: Entry): string {
   return "missing value for '" + e.name + "'";
+}
+
+// The integer of a value of the configuration (`git_parse_int` of git),
+// or the reason why git refuses it.
+pub function integer(value: string): Result[i64, string] {
+  let i = 0;
+  while (i < value.len() && (objects.is_space(value[i]) || value[i] == 11 || value[i] == 12)) {
+    i += 1;
+  }
+  let negative = i < value.len() && value[i] == b'-';
+  if (negative || i < value.len() && value[i] == b'+') {
+    i += 1;
+  }
+  let base = 10;
+  if (i < value.len() && value[i] == b'0') {
+    base = 8;
+    if (i + 1 < value.len() && (value[i + 1] == b'x' || value[i + 1] == b'X')) {
+      base = 16;
+      i += 2;
+    }
+  }
+  let digits = i;
+  let n: u64 = 0;
+  let limit: u64 = 9223372036854775807;
+  if (negative) {
+    limit += 1;
+  }
+  while (i < value.len()) {
+    let digit = objects.hex_digit(value[i]);
+    if (digit < 0 || digit >= base) {
+      break;
+    }
+    if (n > (limit - digit as u64) / (base as u64)) {
+      return Err("out of range");
+    }
+    n = n * (base as u64) + digit as u64;
+    i += 1;
+  }
+  if (i == digits) {
+    return Err("invalid unit");
+  }
+  let unit = objects.part(value, i, value.len()).to_ascii_lower();
+  let factor: u64 = if (unit == "") { 1 } else if (unit == "k") { 1024 } else if (unit == "m") { 1048576 } else if (unit == "g") { 1073741824 } else { 0 };
+  if (factor == 0) {
+    return Err("invalid unit");
+  }
+  let max_int: u64 = if (negative) { 2147483648 } else { 2147483647 };
+  if (n > max_int / factor) {
+    return Err("out of range");
+  }
+  let v = (n * factor) as i64;
+  return Ok(if (negative) { -v } else { v });
+}
+
+// The default object-name length. Zero selects Git's automatic length.
+pub function (c: Config) abbrev(width: i32): Result[i32, string] {
+  let length = 0;
+  for e in c.entries {
+    if (e.name != "core.abbrev") {
+      continue;
+    }
+    if (e.bare) {
+      return Err("error: " + missing_value(e) + "\nfatal: " + c.bad(e));
+    }
+    let low = e.value.to_ascii_lower();
+    if (low == "auto") {
+      length = 0;
+    } else if (low == "" || low == "false" || low == "no" || low == "off") {
+      length = width * 2;
+    } else {
+      match (integer(e.value)) {
+        Ok(n) => {
+          if (n < 4) {
+            return Err("error: abbrev length out of range: " + n.to_string() + "\nfatal: " + c.bad(e));
+          }
+          length = (n as i32).min(width * 2);
+        },
+        Err(reason) => {
+          return Err("fatal: bad numeric config value '" + e.value + "' for '" + e.name + "' in file " + c.file + ": " + reason);
+        }
+      }
+    }
+  }
+  return Ok(length);
 }
 
 // The last value of the name `name`, or None.

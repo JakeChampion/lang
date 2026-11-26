@@ -293,6 +293,110 @@ function phi_induction(f: ssasem.Func, d: ssa.DefSites, shape: Counted, test: i3
   return no_loop();
 }
 
+// As counted_shape, but the body can branch and join inside itself. The body
+// holds no cycle and no exit, and only its last block jumps back to the header.
+pub function counted_region(f: ssasem.Func, d: ssa.DefSites, hi: i32): Counted {
+  let g = f.graph;
+  let h = g.blocks[hi];
+  if (h.preds.len() != 2 || h.id == g.entry) {
+    return no_loop();
+  }
+  let heads = straight_run(f, d, hi, h.id);
+  let t = g.blocks[heads[heads.len() - 1]];
+  if (t.term.kind_tag != ssa.TERM_BRIF || t.term.t == t.term.f) {
+    return no_loop();
+  }
+  let exit_id = t.term.f;
+  let bodies = body_region(f, d, t.id, h.id, t.term.t);
+  if (bodies.len() == 0) {
+    exit_id = t.term.t;
+    bodies = body_region(f, d, t.id, h.id, t.term.f);
+  }
+  if (bodies.len() == 0) {
+    return no_loop();
+  }
+  let latch = util.index_of_i32(h.preds, g.blocks[bodies[bodies.len() - 1]].id);
+  if (latch < 0) {
+    return no_loop();
+  }
+  return induction(f, d, Counted { ...no_loop(), head: hi, heads: heads, bodies: bodies, exit: exit_id, entry: 1 - latch, latch: latch });
+}
+
+// The positions of the body blocks from the test's successor `id`, with the
+// one block that jumps to the header last. A block joins when each of its
+// predecessors is in the body, so a cycle never joins. Empty when a body block
+// leaves the loop.
+function body_region(f: ssasem.Func, d: ssa.DefSites, test_id: i32, head_id: i32, id: i32): i32[] {
+  let g = f.graph;
+  let bi = block_at(g, id);
+  if (bi < 0 || !straight_after(g.blocks[bi], test_id, head_id)) {
+    return [];
+  }
+  let region: i32[] = [bi];
+  let ids: i32[] = [id];
+  let latch = -1;
+  let wave: i32[] = [bi];
+  while (wave.len() > 0) {
+    let joined: i32[] = [];
+    for r in wave {
+      let b = g.blocks[r];
+      let next = taken(f, d, b.term);
+      if (next.len() == 0 && b.term.kind_tag != ssa.TERM_UNREACHABLE) {
+        return [];
+      }
+      for s in next {
+        if (s == head_id) {
+          if (latch >= 0 || next.len() != 1) {
+            return [];
+          }
+          latch = r;
+        } else if (util.index_of_i32(ids, s) < 0) {
+          let si = block_at(g, s);
+          if (si >= 0 && all_in(g.blocks[si].preds, ids)) {
+            region = region.append(si);
+            ids = ids.append(s);
+            joined = joined.append(si);
+          }
+        }
+      }
+    }
+    wave = joined;
+  }
+  if (latch < 0) {
+    return [];
+  }
+  let ordered: i32[] = [];
+  for r in region {
+    for s in taken(f, d, g.blocks[r].term) {
+      if (s != head_id && util.index_of_i32(ids, s) < 0) {
+        return [];
+      }
+    }
+    if (r != latch) {
+      ordered = ordered.append(r);
+    }
+  }
+  return ordered.append(latch);
+}
+
+// The blocks that `t` can go to.
+function taken(f: ssasem.Func, d: ssa.DefSites, t: ssa.STerm): i32[] {
+  let to = jump_target(f, d, t);
+  if (to >= 0) {
+    return [to];
+  }
+  return ssa.successors(t);
+}
+
+function all_in(xs: i32[], set: i32[]): boolean {
+  for x in xs {
+    if (util.index_of_i32(set, x) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
 struct Step { from: i32, by: i32 }
 
 // The header phi that `v` adds a constant to, when the loop computes `v`.

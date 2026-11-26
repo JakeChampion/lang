@@ -1,0 +1,45 @@
+import "../irtables";
+import "../parser";
+import "../util";
+
+function decl(name: string, owner: string): parser.StructDecl {
+  return parser.StructDecl { name: name, fields: [], type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: owner, must_consume: false, secret: false, value_type: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" };
+}
+
+function order(decls: parser.StructDecl[]): string {
+  let out = "";
+  for i in 0..decls.len() {
+    if (i > 0) {
+      out = out + " ";
+    }
+    out = out + irtables.decl_shape(decls[i]);
+  }
+  return out;
+}
+
+function gap(decls: parser.StructDecl[]): string {
+  let g = irtables.enum_tag_gap(decls);
+  if (g.len() == 0) {
+    return "(none)";
+  }
+  return g;
+}
+
+function main(): i32 {
+  let split = [decl("A", "E"), decl("X", ""), decl("B", "E"), decl("P", "F"), decl("A", "E"), decl("C", "E"), decl("Q", "F")];
+  let out = "gap before: " + gap(split) + "\n";
+  let grouped = irtables.enum_grouped(split);
+  out = out + "grouped: " + order(grouped) + "\n";
+  out = out + "gap after: " + gap(grouped) + "\n";
+  out = out + "again: " + order(irtables.enum_grouped(grouped)) + "\n";
+  let tab = irtables.struct_tab(split);
+  let shapes = ["E$A", "E$B", "E$C", "X", "F$P", "F$Q"];
+  for s in shapes {
+    out = out + s + " -> " + util.i32_to_string(irtables.shape_index(tab, s)) + "\n";
+  }
+  let plain = [decl("X", ""), decl("A", "E"), decl("B", "E")];
+  out = out + "kept: " + order(irtables.enum_grouped(plain)) + "\n";
+  out = out + "builtin gap: " + gap(parser.inject_builtin_enums([])) + "\n";
+  write(out);
+  return 0;
+}

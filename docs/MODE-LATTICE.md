@@ -131,44 +131,35 @@ Surface: `own xs: T` on parameters and receivers (`own self`),
 contextual keyword (`internal/syntax/parser/parser.go`;
 `ast.Param.Own`, `internal/syntax/ast/ast.go:2497`).
 
-Native analysis: `checkOwnedParams`
-(`internal/check/checker/checker.go:7428`), a flow-sensitive
-per-function walk threading a `movedSet` (name → consume
-position). `recordExprUses` (checker.go:7538) classifies every
-owned-ident occurrence: projection targets, call callees, binary
-operands, casts, slices, borrowed-position call args, and
-borrowed-self receivers are *borrows*; any other whole-value use
-is a *consume*. Using a consumed binding is E050
-(checker.go:7670); a param live at loop entry must be live again
-on each path back to the loop head, the reachable end of the body
-and each `continue`, or its consume is E050 (`loopBody`); a
-`break` takes its moved set past the loop; branch joins merge only
-non-diverging arms (checker.go:7683); matching an owned
-scrutinee moves its pointer payloads into arm bindings, owned
-for the arm's scope (checker.go:7778-7814). A call scrutinee is
-a temporary that the match takes, so a binding of it that can
-hold no handle is a fresh local, the same as a `let` local: a
-copy does not consume it, and it moves into an `own` parameter
-only at its last use (E051 before that). A binding of a fresh
-call that can hold a handle stays owned, so the handle moves
-once (E050). Consuming
-(`own self`) and `dyn`-trait methods move their receiver
-(checker.go:7315/7350). The call-site guard `guardCallArgs`
-(checker.go:7512) enforces E051: an argument in an `own`
-position must be provably owned — a fresh construction, another
-`own` param, an all-pointer-params-own callee result, a struct
-literal whose field values are owned or hold no handle and whose
-base is owned or keeps only fields that hold no handle
-(`structLitOwned`, `ow_struct_lit_owned`), a variant
-construction whose arguments are owned or hold no handle
-(`variantOwned`, `ow_variant_args_owned`), a read
-`b.f` in the value that a literal `S { ...b, f: v }` gives `f` when
-`b` is owned and `v` names the root of `b` only there
-(`replacedReads`, `ow_replaced_reads`), `with` or `append` on an
-owned array with an owned element (`arrayUpdateOwned`), or the
-self-reassign move shape (`SelfReassignOwnMoveArg`
-checker.go:7388, shared verbatim with the IR so checker and rc
-agree on what moved) — else E051 (checker.go:7523).
+Analysis: `own_diags` in `compiler/checker.fern`. Only the self-host
+checker implements this rule. The Go checker of the oracle does not
+(#16331), and the `diag_e050_*` and `diag_e051_*` conformance cases are
+its second check. The pass is a flow-sensitive walk for each function
+that records where each owned name is consumed. Projection targets,
+call callees, binary operands, casts, slices, borrowed-position call
+arguments and borrowed-self receivers are *borrows*. Any other use of
+the whole value is a *consume*. A use of a consumed binding is E050. A
+parameter that is live at loop entry must be live again on each path
+back to the loop head, at the reachable end of the body and at each
+`continue`, or its consume is E050. A `break` takes its moved set past
+the loop. Branch joins merge only arms that do not diverge. A match on
+an owned scrutinee moves its pointer payloads into the arm bindings.
+A call scrutinee is a temporary that the match takes. A binding of it
+that can hold no handle is a fresh local, the same as a `let` local: a
+copy does not consume it, and it moves into an `own` parameter only at
+its last use (E051 before that). A binding of a fresh call that can
+hold a handle stays owned, so the handle moves once (E050). Consuming
+(`own self`) and `dyn`-trait methods move their receiver. An argument
+in an `own` position must be provably owned: a fresh construction,
+another `own` parameter, a result of a callee whose pointer parameters
+are all `own`, a struct literal whose field values are owned or hold
+no handle and whose base is owned or keeps only fields that hold no
+handle (`ow_struct_lit_owned`), a variant construction whose arguments
+are owned or hold no handle (`ow_variant_args_owned`), a read `b.f` in
+the value that a literal `S { ...b, f: v }` gives `f` when `b` is owned
+and `v` names the root of `b` only there (`ow_replaced_reads`), `with`
+or `append` on an owned array with an owned element, or the
+self-reassign move shape. Any other argument is E051.
 
 Guarantee: affine (at-most-once) consumption of owned params,
 and that nothing borrowed is laundered into an owning sink. This
@@ -470,13 +461,10 @@ NICHE-LANGUAGE-RESEARCH.md "Granule / Clean"). Everything else —
 E050, E051, E053's walk, E063, E065, E067, E049 — is one
 traversal reading and updating `state(binding)`.
 
-Today, natively, that "one traversal" is four-and-a-half:
-`checkOwnedParams`, `checkSliceEscapes`, `checkStrEscapes`,
-`checkMustConsume` run back-to-back per function
-(checker.go:7055-7058) and `checkFipFunctions` runs
-program-level; the self-host mirrors the split (`own_diags`,
+Today that "one traversal" is four-and-a-half walks. The self-host
+checker splits the rules across `own_diags`,
 `slice_escape_diags`, `e065_diags`, `must_consume_diags`,
-`e053_diags`, `e049_*`). They do not disagree — they partition
+`e053_diags` and `e049_*`. They do not disagree — they partition
 the rules — but they quadruple the walk boilerplate (divergence
 joins, loop opacity, binding chase) and each new rule must pick
 a walk to bolt onto. The consolidation is mechanical because

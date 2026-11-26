@@ -1,8 +1,6 @@
 package checker
 
 import (
-	"strings"
-
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
@@ -254,75 +252,4 @@ func directCallsBeforeOwner(stmts []ast.Stmt, owner string) map[*ast.Ident]bool 
 		})
 	}
 	return calls
-}
-
-// lentPathMoved reports a consumed field of the lender that the loan covers:
-// the field that the loan names, or each field when the loan has the whole
-// lender. A wide loan of a named field covers only that field.
-func lentPathMoved(moved map[string]ast.Position, loan callbackLoan) (ast.Position, bool) {
-	head, _, _ := strings.Cut(loan.path, "/")
-	field, named := strings.CutPrefix(head, "f:")
-	if named {
-		at, consumed := moved[loan.param.Name+"."+field]
-		return at, consumed
-	}
-	if head != "" && !loan.wide {
-		return ast.Position{}, false
-	}
-	prefix := loan.param.Name + "."
-	var first ast.Position
-	found := false
-	for path, at := range moved {
-		if strings.HasPrefix(path, prefix) && (!found || positionBefore(at, first)) {
-			first, found = at, true
-		}
-	}
-	return first, found
-}
-
-// movedOperands gives each name that value can move into the local that it
-// initializes: the value, a part of a literal, or the result of a branch.
-func movedOperands(value ast.Expr) []*ast.Ident {
-	switch v := value.(type) {
-	case *ast.Ident:
-		return []*ast.Ident{v}
-	case *ast.StructLit:
-		var out []*ast.Ident
-		for _, field := range v.Fields {
-			out = append(out, movedOperands(field.Value)...)
-		}
-		return out
-	case *ast.TupleLit:
-		var out []*ast.Ident
-		for _, elem := range v.Elems {
-			out = append(out, movedOperands(elem)...)
-		}
-		return out
-	case *ast.ArrayLit:
-		var out []*ast.Ident
-		for _, elem := range v.Elems {
-			out = append(out, movedOperands(elem)...)
-		}
-		return out
-	case *ast.Call:
-		if !v.IsVariantCall {
-			return nil
-		}
-		var out []*ast.Ident
-		for _, arg := range v.Args {
-			out = append(out, movedOperands(arg)...)
-		}
-		return out
-	case *ast.IfExpr:
-		return append(movedOperands(v.Then), movedOperands(v.Else)...)
-	case *ast.MatchExpr:
-		var out []*ast.Ident
-		for _, arm := range v.Arms {
-			out = append(out, movedOperands(arm.Body)...)
-		}
-		return out
-	case *ast.BlockExpr:
-		return movedOperands(v.Tail)
-	}
-	return nil
 }

@@ -2,13 +2,15 @@
 
 This module encodes normalized `f32` PCM as MPEG-1 Layer III frames at a constant bitrate.
 It accepts 32000, 44100 and 48000 Hz, one or two channels, and the 14 MPEG-1 bitrates from 32 to 320 kbit/s.
-Two channels are coded as independent left and right channels. The encoder does not use joint stereo.
+Each stereo frame uses mid-side stereo when it halves the product of the channel energies, and left and right otherwise.
+The encoder does not use intensity stereo.
 
 The analysis filterbank uses the ISO 11172-3 window, and each granule uses the long-block MDCT.
 The encoder does not use short blocks, scalefactors, or a psychoacoustic model.
 Thus the quantization noise has the same shape as the spectrum, and a transient can spread before its attack.
 The encoder does not use the bit reservoir. Each frame holds its own main data.
 The granules of one frame share the main data bytes of that frame.
+In each granule, the channel with less energy is coded first, and the other channel gets the bits that it does not use.
 
 Quantization selects the smallest global gain whose Huffman code fits the bits of its granule.
 `std/audio/mp3/codes` selects the Huffman tables and the region split for each granule.
@@ -245,6 +247,57 @@ function side(own b: codes.Bits, g: Granule): codes.Bits {
   return b.put(0, 1).put(0, 1).put(p.count1_table, 1);
 }
 
+function cap(budget: i32): i32 {
+  return if (budget > 4095) { 4095 } else { budget };
+}
+
+function energy(xr: [f32]): f64 {
+  let sum = 0.0;
+  for v in xr {
+    sum += v as f64 * (v as f64);
+  }
+  return sum;
+}
+
+// Mid-side coding gains when the product of the mid and side energies is less than that of left and right.
+// The encoder requires half the product, so that two uncorrelated channels of equal energy stay left and right.
+function use_midside(spectra: [f32[]]): boolean {
+  let l = 0.0;
+  let r = 0.0;
+  let m = 0.0;
+  let s = 0.0;
+  for gr in 0..2 {
+    let left = spectra[2 * gr];
+    let right = spectra[2 * gr + 1];
+    for i in 0..576 {
+      let a = left[i] as f64;
+      let b = right[i] as f64;
+      l += a * a;
+      r += b * b;
+      m += (a + b) * (a + b);
+      s += (a - b) * (a - b);
+    }
+  }
+  return m * s / 4.0 < 0.5 * l * r;
+}
+
+// M = (L + R) / sqrt(2) and S = (L - R) / sqrt(2). The decoder takes the factor from the global gain.
+function to_midside(spectra: [f32[]]): f32[][] {
+  let output: f32[][] = [];
+  for gr in 0..2 {
+    let left = spectra[2 * gr];
+    let right = spectra[2 * gr + 1];
+    let mid = f32_zeros(576);
+    let side = f32_zeros(576);
+    for i in 0..576 {
+      mid = mid.with(i, (left[i] + right[i]) * 0.70710678f32);
+      side = side.with(i, (left[i] - right[i]) * 0.70710678f32);
+    }
+    output = output.append(mid).append(side);
+  }
+  return output;
+}
+
 // Code the 1152 frames of PCM that start at frame `start` of `input`.
 // fern-lint: allow cyclomatic-complexity
 function frame(own e: Encoder, input: [f32], start: i32, own output: u8[]): (Encoder, u8[]) {
@@ -261,27 +314,44 @@ function frame(own e: Encoder, input: [f32], start: i32, own output: u8[]): (Enc
   let history = e.history;
   let offset = e.offset;
   let previous = e.previous;
-  let granules: Granule[] = [];
-  let used = 0;
+  let spectra: f32[][] = [];
   for gr in 0..2 {
     for ch in 0..e.channels {
       let (h, current) = analyse(e.transform, history, offset, input, start + gr * 576, e.channels, ch);
       history = h;
-      let xr = spectrum(e.transform, previous, 576 * ch, current);
+      spectra = spectra.append(spectrum(e.transform, previous, 576 * ch, current));
       for i in 0..576 {
         previous = previous.with(576 * ch + i, current[i]);
       }
-      let left = 2 * e.channels - granules.len();
-      let budget = (available - used) / left;
-      let g = granule(e.transform, xr, if (budget > 4095) { 4095 } else { budget });
-      used += g.plan.bits;
-      granules = granules.append(g);
     }
     offset = offset - 576 & 511;
   }
+  let midside = e.channels == 2 && use_midside(spectra);
+  if (midside) {
+    spectra = to_midside(spectra);
+  }
+  let granules: Granule[] = [];
+  let used = 0;
+  for gr in 0..2 {
+    let budget = (available - used) / (2 - gr);
+    if (e.channels == 1) {
+      let g = granule(e.transform, spectra[gr], cap(budget));
+      used += g.plan.bits;
+      granules = granules.append(g);
+    } else {
+      // The channel with less energy goes first. The other channel gets the bits that it does not use.
+      let first = if (energy(spectra[2 * gr + 1]) < energy(spectra[2 * gr])) { 1 } else { 0 };
+      let a = granule(e.transform, spectra[2 * gr + first], cap(budget / 2));
+      let b = granule(e.transform, spectra[2 * gr + 1 - first], cap(budget - a.plan.bits));
+      used += a.plan.bits + b.plan.bits;
+      granules = if (first == 0) { granules.append(a).append(b) } else { granules.append(b).append(a) };
+    }
+  }
   let b = codes.Bits { data: __alloc_u8(bytes), pos: 0 };
   b = b.put(65531, 16).put(e.bitrate_index, 4).put(e.rate_index, 2).put(padding, 1).put(0, 1);
-  b = b.put(if (e.channels == 1) { 3 } else { 0 }, 2).put(0, 2).put(0, 1).put(1, 1).put(0, 2);
+  // Mode 1 is joint stereo. Mode extension 2 sets mid-side stereo, with no intensity stereo.
+  let mode = if (e.channels == 1) { 3 } else if (midside) { 1 } else { 0 };
+  b = b.put(mode, 2).put(if (midside) { 2 } else { 0 }, 2).put(0, 1).put(1, 1).put(0, 2);
   b = b.put(0, 9).put(0, if (e.channels == 1) { 5 } else { 3 }).put(0, 4 * e.channels);
   for g in granules {
     b = side(b, g);

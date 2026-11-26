@@ -156,12 +156,12 @@ aarch64/ordmap_insert.text	6303
 aarch64/ordmap_insert.ir	82086738
 aarch64/pmap_insert.text	3986
 aarch64/pmap_insert.ir	54692820
-aarch64/pvec_with.text	3827
-aarch64/pvec_with.ir	46418540
+aarch64/pvec_with.text	3353
+aarch64/pvec_with.ir	41812264
 aarch64/record_update.text	1347
 aarch64/record_update.ir	24587164
 aarch64/sort_inplace.text	1841
-aarch64/sort_inplace.ir	37596128
+aarch64/sort_inplace.ir	36731007
 aarch64/sort_ints.text	2589
 aarch64/sort_ints.ir	23114269
 aarch64/sort_strings.text	4309
@@ -248,14 +248,14 @@ aarch64/closure_call.dr	4842023
 aarch64/deflate_decode.dr	2855096
 aarch64/deflate_encode.dr	6248008
 aarch64/enum_match.dr	1125004
-aarch64/gather_many.dr	10348475
+aarch64/gather_many.dr	9752960
 aarch64/hex_decode.dr	15885910
 aarch64/hex_encode.dr	3287599
 aarch64/http_hello.dr	4148093
 aarch64/int_loop.dr	3000003
 aarch64/map_int.dr	4523391
 aarch64/map_probe_chain.dr	38645307
-aarch64/map_string.dr	10136148 2
+aarch64/map_string.dr	9924846 2
 aarch64/ordmap_insert.dr	18665522
 aarch64/perceus_cfold.dr	10672483
 aarch64/perceus_deriv.dr	14395316
@@ -263,10 +263,10 @@ aarch64/perceus_nqueens.dr	8982606
 aarch64/perceus_rbtree.dr	6196606
 aarch64/perceus_rbtree_ck.dr	7236963
 aarch64/pmap_insert.dr	10552067
-aarch64/pvec_with.dr	12571597
+aarch64/pvec_with.dr	10470955
 aarch64/record_update.dr	1639642
-aarch64/sort_inplace.dr	4612556
-aarch64/sort_ints.dr	2415790
+aarch64/sort_inplace.dr	4365027
+aarch64/sort_ints.dr	2389249
 aarch64/sort_strings.dr	19976031
 aarch64/string_build.dr	7803941
 aarch64/string_count_byte.dr	24608650

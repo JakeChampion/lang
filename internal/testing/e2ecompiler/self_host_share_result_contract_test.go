@@ -62,7 +62,6 @@ func TestSelfHostShareResultContract(t *testing.T) {
 							}
 						}
 					}
-					check("Go", goCheckerDiags(t, project, string(source)))
 					run := exec.Command(bin)
 					if len(runner) > 0 {
 						run = exec.Command(runner[0], append(runner[1:], bin)...)
