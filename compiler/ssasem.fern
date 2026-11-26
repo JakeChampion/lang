@@ -5383,6 +5383,17 @@ pub function rebuilt_variants(own f: Func): Func {
   if (!found) {
     return f;
   }
+  // A reconstructed variant can itself be the source of another one.
+  // Resolve the chain before removing its intermediate definitions.
+  for v in 0..map.len() {
+    let source = map[v];
+    while (map[source] != source) {
+      source = map[source];
+    }
+    if (source != map[v]) {
+      map = map.with(v, source);
+    }
+  }
   let blocks: ssa.SBlock[] = [];
   for b in f.graph.blocks {
     let insts: ssa.SInst[] = [];
