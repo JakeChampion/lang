@@ -152,7 +152,9 @@ pub function checkout_at(top: string): Option[Repo] {
 
 // Open a module store that has no associated checkout.
 pub function stored_module(dir: string): Option[Repo] {
-  if (dir == "" || !is_file(dir + "/HEAD") || !is_dir(common_of(dir) + "/objects")) { return None; }
+  if (dir == "" || !is_file(dir + "/HEAD") || !is_dir(common_of(dir) + "/objects")) {
+    return None;
+  }
   return match (repo_at(dir, "", dir, "")) {
     Ok(r) => Some(r),
     Err(_) => None,
