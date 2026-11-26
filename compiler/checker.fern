@@ -21140,13 +21140,13 @@ function ow_declared_before(decls: ast.StmtVar[], name: string, line: i32, col: 
   return false;
 }
 
-function lu_has(ctx: OwnCtx, key: string): boolean {
+function lu_keys(ctx: OwnCtx): util.NameIndex {
   let lu = ctx.last_use.get();
   if (!lu.known) {
     lu = LastUses { ...lu, known: true, keys: util.name_index(lu_last_use_args(lu_resolved(lu.typed_fn), lu.ofuncs, lu.borrows, lu.lenders, lu.builtins, lu.noret)) };
     ctx.last_use.set(lu);
   }
-  return lu.keys.has(key);
+  return lu.keys;
 }
 
 struct OwnCtx { factories: OclFactoryState, result_body: ast.Stmt[], ret_own: boolean, value_proofs: Cell[OwnDataProofs], owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], enums: parser.EnumDecl[], snames: util.NameIndex, decls: OwnDecls, admit: string, admit_fields: string[], fresh: util.NameIndex, fresh_methods: util.NameIndex, fresh_scrut: util.NameIndex, bound: util.NameIndex, scope: Scope, last_use: Cell[LastUses], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex, loops: string[], jumps: Cell[OwnJump[]], replaced: OwnRead[], sends: string[], lends: Cell[OwnLends] }
@@ -21803,11 +21803,11 @@ function ow_scalar_literal(e: ast.Expr): boolean {
 function ow_takes_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   match (e) {
     ast.ExprIdent(id) => {
-      return lu_has(ctx, lu_key(id.line, id.col)) && !ow_is_owned(ctx, id.name);
+      return lu_keys(ctx).has(lu_key(id.line, id.col)) && !ow_is_owned(ctx, id.name);
     },
     ast.ExprFieldAccess(fa) => {
       if let ast.ExprIdent(oid) = fa.obj {
-        return lu_has(ctx, lu_field_key(fa, oid));
+        return lu_keys(ctx).has(lu_field_key(fa, oid));
       }
       return false;
     },
@@ -21821,7 +21821,7 @@ function ow_takes_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
 // the loop owns is a fresh value.
 function ow_iter_at_last_use(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprIdent(id) = e {
-    return lu_has(ctx, lu_key(id.line, id.col));
+    return lu_keys(ctx).has(lu_key(id.line, id.col));
   }
   return true;
 }
@@ -22196,7 +22196,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       }
       let enclosing = ow_enclosing_field(fa);
       if let ast.ExprIdent(oid) = enclosing.obj {
-        if (lu_has(ctx, lu_field_key(enclosing, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
+        if (lu_keys(ctx).has(lu_field_key(enclosing, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
           return true;
         }
       }
@@ -29389,8 +29389,12 @@ function ow_dies_after_copies(args: ast.Expr[], i: i32, ctx: OwnCtx): boolean {
   let ast.ExprIdent(id) = args[i] else {
     return false;
   };
+  let keys = lu_keys(ctx);
+  if (keys.names.len() == 0) {
+    return false;
+  }
   let key = lu_key(id.line, id.col);
-  let tagged = lu_has(ctx, key + "~") || lu_has(ctx, key + "^~") && ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(id.name)), ctx.decls);
+  let tagged = keys.has(key + "~") || keys.has(key + "^~") && ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(id.name)), ctx.decls);
   if (!tagged || util.has_str(ctx.borrowed, id.name)) {
     return false;
   }
@@ -29406,8 +29410,12 @@ function ow_local_last_use(id: ast.ExprIdent, ctx: OwnCtx): boolean {
   if (util.has_str(ctx.borrowed, id.name)) {
     return false;
   }
+  let keys = lu_keys(ctx);
+  if (keys.names.len() == 0) {
+    return false;
+  }
   let key = lu_key(id.line, id.col);
-  return lu_has(ctx, key) || lu_has(ctx, key + "^") && ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(id.name)), ctx.decls);
+  return keys.has(key) || keys.has(key + "^") && ow_holds_no_handle(typeinfo.spelling(ctx.scope.lookup(id.name)), ctx.decls);
 }
 
 function ow_all_no_handle_in(ts: string[], dx: OwnDecls, free: string[], seen: string[]): boolean {
