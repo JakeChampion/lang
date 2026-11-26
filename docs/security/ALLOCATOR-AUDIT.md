@@ -60,6 +60,7 @@ A hosted arena maps the bitmap after its end, with `MAP_NORESERVE`.
 The kernel backs a page of the bitmap only when a raw free or a raw allocation touches it.
 `__fern_heap_init` and `__heap_adopt` put the bitmap at the start of their region, and the heap starts after it.
 The bitmap thus takes 1/64 of a region that an embedder or a worker gives.
+A program with no user `__alloc` has no bitmap and no bitmap check, but `__heap_adopt` keeps the first 1/64 of its region in each program.
 
 `__fern_rawmap_lo` is the first address that the bitmap covers. A block below it is a block from before an adopt, and its free does not read the bitmap.
 The bitmap is not zeroed. Each bit that a free reads belongs to a block that a user `__alloc` handed out, and that allocation cleared the bit.

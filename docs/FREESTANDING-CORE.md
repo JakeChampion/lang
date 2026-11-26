@@ -775,8 +775,8 @@ __fern_heap_init(base, len)     // rdi/rsi on System V, x0/x1 on AAPCS64
 
 which puts the raw-free bitmap at `base` and seeds `__fern_heap_ptr` (cursor),
 `__fern_heap_base` (high-water reference) and `__fern_heap_end` (`base + len`) over the
-rest. The bitmap takes 1/64 of `len` (`docs/security/ALLOCATOR-AUDIT.md`). **Only the
-seeding moves.** The 16-byte rounding, the
+rest. The bitmap takes 1/64 of `len` when the program calls `__alloc`, and nothing
+otherwise (`docs/security/ALLOCATOR-AUDIT.md`). **Only the seeding moves.** The 16-byte rounding, the
 RC header and the two-tier segregated freelist all work against a region regardless of
 where it came from — `docs/ARENA-DECISION.md` is why there is exactly one cursor pair to
 reseed. Hosted targets keep the lazy `mmap` and do *not* get this symbol; one allocator

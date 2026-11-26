@@ -10566,7 +10566,7 @@ function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitStat
     s = s.write("    mov x0, #1\n");
   }
   s = s.write("    lsl x0, x0, #28\n");
-  s = s.write(mov_imm64("x1", s.heap_limit + rawmap_bytes(s.heap_limit)));
+  s = s.write(mov_imm64("x1", s.heap_limit + rawmap_bytes(s)));
   s = s.write("    mov x2, #3\n");
   if (darwin) {
     s = s.write("    mov x3, #0x1002\n");
@@ -10591,8 +10591,10 @@ function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitStat
   s = s.write("    adrp x3, __fern_heap_end\n");
   s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
   s = s.write("    str x2, [x3]\n");
-  s = s.write("    adrp x3, __fern_rawmap\n    add x3, x3, :lo12:__fern_rawmap\n    str x2, [x3]\n");
-  s = s.write("    adrp x3, __fern_rawmap_lo\n    add x3, x3, :lo12:__fern_rawmap_lo\n    str x0, [x3]\n");
+  if (s.has_need("raw_alloc")) {
+    s = s.write("    adrp x3, __fern_rawmap\n    add x3, x3, :lo12:__fern_rawmap\n    str x2, [x3]\n");
+    s = s.write("    adrp x3, __fern_rawmap_lo\n    add x3, x3, :lo12:__fern_rawmap_lo\n    str x0, [x3]\n");
+  }
   if (!darwin) {
     s = arena_huge_pages(s);
   }
@@ -10604,10 +10606,11 @@ function emit_arena_map(s: asmcore.EmitState, darwin: boolean): asmcore.EmitStat
   return s;
 }
 
-// The bytes of the raw-free bitmap of a hosted arena of `limit` bytes: one
-// bit for each word, and a page more for the bit of the end address.
-function rawmap_bytes(limit: i64): i64 {
-  return limit / 64i64 + 4096i64;
+// The bytes of the raw-free bitmap of the hosted arena: one bit for each
+// word, and a page more for the bit of the end address. A program with no
+// user `__alloc` has no bitmap.
+function rawmap_bytes(s: asmcore.EmitState): i64 {
+  return if (s.has_need("raw_alloc")) { s.heap_limit / 64i64 + 4096i64 } else { 0i64 };
 }
 
 // Puts the raw-free bitmap at `base`, the start of a region of `len` bytes,
@@ -10627,7 +10630,10 @@ function rawmap_carve(len: string, base: string): string {
 function emit_heap_init(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .text\n    .globl __fern_heap_init\n    .type __fern_heap_init, %function\n__fern_heap_init:\n");
   if (s.has_need("heap")) {
-    s = s.write(rawmap_carve("x1", "x0") + "    add x1, x0, x1\n");
+    if (s.has_need("raw_alloc")) {
+      s = s.write(rawmap_carve("x1", "x0"));
+    }
+    s = s.write("    add x1, x0, x1\n");
     s = s.write("    adrp x2, __fern_heap_ptr\n    add x2, x2, :lo12:__fern_heap_ptr\n    str x0, [x2]\n");
     s = s.write("    adrp x2, __fern_heap_base\n    add x2, x2, :lo12:__fern_heap_base\n    str x0, [x2]\n");
     s = s.write("    adrp x2, __fern_heap_end\n    add x2, x2, :lo12:__fern_heap_end\n    str x1, [x2]\n");

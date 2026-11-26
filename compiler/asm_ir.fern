@@ -4440,10 +4440,11 @@ function arena_huge_pages(s: asmcore.EmitState): asmcore.EmitState {
   return s.syscall(28);
 }
 
-// The bytes of the raw-free bitmap of a hosted arena of `limit` bytes: one
-// bit for each word, and a page more for the bit of the end address.
-function rawmap_bytes(limit: i64): i64 {
-  return limit / 64i64 + 4096i64;
+// The bytes of the raw-free bitmap of the hosted arena: one bit for each
+// word, and a page more for the bit of the end address. A program with no
+// user `__alloc` has no bitmap.
+function rawmap_bytes(s: asmcore.EmitState): i64 {
+  return if (s.has_need("raw_alloc")) { s.heap_limit / 64i64 + 4096i64 } else { 0i64 };
 }
 
 // Turns the length of a region in `reg` into the bytes of the bitmap that
@@ -4463,7 +4464,7 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    pushq %r10\n");
   s = s.write("    pushq %r11\n");
   s = s.write("    movl $0x10000000, %edi\n");
-  s = s.write("    movabs $" + (s.heap_limit + rawmap_bytes(s.heap_limit)).to_string() + ", %rsi\n");
+  s = s.write("    movabs $" + (s.heap_limit + rawmap_bytes(s)).to_string() + ", %rsi\n");
   s = s.write("    movl $3, %edx\n");
   s = s.write("    movl $0x4022, %r10d\n");
   s = s.write("    movq $-1, %r8\n");
@@ -4474,11 +4475,12 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jl .Lalloc_map_fail\n");
   s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    movq %rax, __fern_heap_base(%rip)\n");
-  s = s.write("    movq %rax, __fern_rawmap_lo(%rip)\n");
   s = s.write("    movabs $" + s.heap_limit.to_string() + ", %rcx\n");
   s = s.write("    addq %rax, %rcx\n");
   s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
-  s = s.write("    movq %rcx, __fern_rawmap(%rip)\n");
+  if (s.has_need("raw_alloc")) {
+    s = s.write("    movq %rax, __fern_rawmap_lo(%rip)\n    movq %rcx, __fern_rawmap(%rip)\n");
+  }
   s = arena_huge_pages(s);
   s = s.write("    popq %r11\n");
   s = s.write("    popq %r10\n");
@@ -4497,8 +4499,12 @@ function emit_arena_map(s: asmcore.EmitState): asmcore.EmitState {
 function emit_heap_init(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .text\n    .globl __fern_heap_init\n    .type __fern_heap_init, @function\n__fern_heap_init:\n");
   if (s.has_need("heap")) {
-    s = s.write("    movq %rsi, %rax\n" + rawmap_carve("%rax"));
-    s = s.write("    movq %rdi, __fern_rawmap(%rip)\n    addq %rdi, %rsi\n    addq %rax, %rdi\n    movq %rdi, __fern_rawmap_lo(%rip)\n");
+    if (s.has_need("raw_alloc")) {
+      s = s.write("    movq %rsi, %rax\n" + rawmap_carve("%rax"));
+      s = s.write("    movq %rdi, __fern_rawmap(%rip)\n    addq %rdi, %rsi\n    addq %rax, %rdi\n    movq %rdi, __fern_rawmap_lo(%rip)\n");
+    } else {
+      s = s.write("    addq %rdi, %rsi\n");
+    }
     s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n    movq %rdi, __fern_heap_base(%rip)\n    movq %rsi, __fern_heap_end(%rip)\n");
   }
   return s.write("    ret\n.size __fern_heap_init, .-__fern_heap_init\n");
