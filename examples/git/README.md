@@ -344,7 +344,8 @@ With git 2.43, these settings, messages and merges are also different:
   submodule that the two parents changed when its history contains a
   possible merge resolution or cannot be fully read. When the submodule
   checkout is a linked worktree with shared refs and a detached HEAD, the
-  search uses that checkout’s HEAD. A primary or linked worktree
+  search uses that checkout’s HEAD and its private refs under `refs/bisect`,
+  `refs/worktree`, and `refs/rewritten`. A primary or linked worktree
   can use its own named module store through its worktree, staged, or
   committed `.gitmodules`. Configured gitdirs can use absolute or worktree-relative
   paths. A worktree-specific gitdir setting overrides the shared one.

@@ -222,12 +222,27 @@ function packed_refs(common: string, a: i32): Map[string, string] {
 // ref. The hash is "" when no ref has the name.
 pub struct Resolved { hash: string, name: string }
 
+// Git keeps these three namespaces in the current worktree's gitdir.
+const PRIVATE_REF_DIRS: string[] = ["refs/bisect", "refs/worktree", "refs/rewritten"];
+
+function private_ref(name: string): boolean {
+  for dir in PRIVATE_REF_DIRS {
+    if (name.starts_with(dir + "/")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ref_dir(r: Repo, name: string): string {
+  return if (name.starts_with("refs/") && !private_ref(name)) { r.common } else { r.dir };
+}
+
 // The ref `name`, with each `ref: ` followed.
 pub function resolve_ref(r: Repo, name: string): Resolved {
   let at = name;
   for depth in 0..6 {
-    let base = if (at.starts_with("refs/")) { r.common } else { r.dir };
-    let text = match (read_file(base + "/" + at)) {
+    let text = match (read_file(ref_dir(r, at) + "/" + at)) {
       Ok(t) => first_line(t),
       Err(_) => {
         return Resolved { hash: r.packed.get_or(at, ""), name: at };
@@ -298,8 +313,7 @@ pub function dwim_ref(r: Repo, name: string): Dwim {
 
 // The file of the reflog of the ref `name`.
 function log_path(r: Repo, name: string): string {
-  let base = if (name.starts_with("refs/")) { r.common } else { r.dir };
-  return base + "/logs/" + name;
+  return ref_dir(r, name) + "/logs/" + name;
 }
 
 pub function reflog_exists(r: Repo, name: string): boolean {
@@ -367,6 +381,12 @@ function digits(text: string): i64 {
 // loose ref hides the packed ref of its name.
 pub function all_refs(r: Repo): Resolved[] {
   let names = loose_names(r.common + "/refs", "refs");
+  if (r.dir != r.common) {
+    names = names.filter((n: string): boolean => !private_ref(n));
+    for dir in PRIVATE_REF_DIRS {
+      names = names.concat(loose_names(r.dir + "/" + dir, dir));
+    }
+  }
   let out: Resolved[] = [];
   let seen: Map[string, boolean] = Map { };
   for n in names {

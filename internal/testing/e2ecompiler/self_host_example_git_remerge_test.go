@@ -997,6 +997,17 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	}
 	g.git("-C", primary, "worktree", "add", "-q", "--detach", module, other)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	// Each private namespace is visible only in the worktree that owns it.
+	for _, ref := range []string{"refs/bisect/test", "refs/worktree/test", "refs/rewritten/test"} {
+		g.git("-C", primary, "update-ref", ref, solution)
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+		g.git("-C", module, "update-ref", ref, other)
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+		g.git("-C", module, "update-ref", ref, solution)
+		refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+		g.git("-C", primary, "update-ref", "-d", ref)
+		g.git("-C", module, "update-ref", "-d", ref)
+	}
 	g.git("-C", module, "update-ref", "--no-deref", "HEAD", solution)
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
 	g.git("-C", primary, "worktree", "remove", module)
