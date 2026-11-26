@@ -133,6 +133,7 @@ func TestCrossToolchainSharesInstallDeadline(t *testing.T) {
 		exit                 int
 	}{
 		{"cache-hit", "cache-hit", "120 dpkg\n", true, true, false, 0},
+		{"partial-cache-needs-repair", "partial-cache", "120 dpkg\n300 apt-get update\n240 apt-get repair\n240 apt-get install\n", true, true, false, 0},
 		{"older-image-goes-to-apt", "retry-recovers", "300 apt-get update\n300 apt-get update\n240 apt-get install\n", true, false, false, 0},
 		{"retry-recovers", "retry-recovers", "300 apt-get update\n300 apt-get update\n240 apt-get install\n", false, false, false, 0},
 		{"retry-asks-the-next-mirror", "retry-recovers", "300 apt-get update\n300 apt-get update\n240 apt-get install\n", false, false, true, 0},
@@ -182,8 +183,22 @@ timeout() {
   if [ "$tool" = dpkg ]; then
     echo "$limit dpkg" >> "$TRACE"
     if [ "$SCENARIO" = cache-hit ]; then ready=1; return 0; fi
+    if [ "$SCENARIO" = partial-cache ]; then return 1; fi
   else
+    if [ "$SCENARIO" = partial-cache ] && [ "$operation" = install ]; then
+      case " $* " in
+        *" --fix-broken "*)
+          case " $* " in *" qemu-user "*) return 100 ;; esac
+          case " $* " in *" --no-remove "*) ;; *) return 100 ;; esac
+          echo "$limit apt-get repair" >> "$TRACE"
+          repaired=1
+          return 0 ;;
+        *" qemu-user "*) [ "${repaired:-0}" = 1 ] || return 100; ready=1 ;;
+        *) return 100 ;;
+      esac
+    fi
     echo "$limit $tool $operation" >> "$TRACE"
+    if [ "$SCENARIO" = partial-cache ]; then return 0; fi
     calls=$((calls + 1))
     if [ "$SCENARIO" = retry-recovers ]; then
       if [ "$calls" = 1 ]; then return 100; fi
