@@ -28,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function transport(c: conn.Config): conn.Config>>
 
-<<5 function (c: Conn) __stepped(now: Instant): Conn>>
+<<5 function (c: Conn) __stepped(now: time.Instant): Conn>>
 
 <<6 function (c: Conn) __session_event(e: h3.Event): Conn>>
 
@@ -122,7 +122,7 @@ pub function (c: Conn) quic(): conn.Conn {
   return c.quic;
 }
 
-pub function (c: Conn) deadline(): Option[Instant] {
+pub function (c: Conn) deadline(): Option[time.Instant] {
   return c.quic.deadline();
 }
 
@@ -194,29 +194,29 @@ pub function (c: Conn) step(): Step {
   return Step { conn: c.sent().events_taken().tickets_taken(), output: c.datagrams(), events: c.events, tickets: c.tickets(), ecn: c.ecn_codepoint() };
 }
 
-pub function (c: Conn) read(datagram: [u8], now: Instant): Step {
+pub function (c: Conn) read(datagram: [u8], now: time.Instant): Step {
   return c.receive(datagram, now).transmit(now).step();
 }
 
-pub function (c: Conn) read_from(datagram: [u8], path: [u8], ecn: i32, now: Instant): Step {
+pub function (c: Conn) read_from(datagram: [u8], path: [u8], ecn: i32, now: time.Instant): Step {
   return c.receive_from(datagram, path, ecn, now).transmit(now).step();
 }
 
-pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
+pub function (c: Conn) receive(datagram: [u8], now: time.Instant): Conn {
   return Conn { ...c, quic: c.quic.receive(datagram, now) }.__stepped(now);
 }
 
 // receive_from is receive with the address the datagram came from, for a
 // server that follows a client to a new address (conn.Conn.receive_from).
-pub function (c: Conn) receive_from(datagram: [u8], path: [u8], ecn: i32, now: Instant): Conn {
+pub function (c: Conn) receive_from(datagram: [u8], path: [u8], ecn: i32, now: time.Instant): Conn {
   return Conn { ...c, quic: c.quic.receive_from(datagram, path, ecn, now) }.__stepped(now);
 }
 
-pub function (c: Conn) tick(now: Instant): Conn {
+pub function (c: Conn) tick(now: time.Instant): Conn {
   return Conn { ...c, quic: c.quic.tick(now) }.__stepped(now);
 }
 
-pub function (c: Conn) transmit(now: Instant): Conn {
+pub function (c: Conn) transmit(now: time.Instant): Conn {
   return Conn { ...c, quic: c.quic.transmit(now) };
 }
 
@@ -227,7 +227,7 @@ pub function (c: Conn) shutdown(): Conn {
   return Conn { ...c, session: c.session.send_goaway(c.next), stopping: true }.__applied(time.instant_from_nanos(0));
 }
 
-pub function (c: Conn) close(now: Instant): Conn {
+pub function (c: Conn) close(now: time.Instant): Conn {
   return Conn { ...c, quic: c.quic.close(h3.H3_NO_ERROR, "", true, now) };
 }
 ```
@@ -235,8 +235,8 @@ pub function (c: Conn) close(now: Instant): Conn {
 ### `5 function (c: Conn) __stepped(now: Instant): Conn`
 
 ```fern
-<<5 function (c: Conn) __stepped(now: Instant): Conn>>=
-function (c: Conn) __stepped(now: Instant): Conn {
+<<5 function (c: Conn) __stepped(now: time.Instant): Conn>>=
+function (c: Conn) __stepped(now: time.Instant): Conn {
   let evs = c.quic.events;
   let notes = c.quic.stream_events();
   if (evs.len() == 0 && notes.len() == 0) {
@@ -325,7 +325,7 @@ function (c: Conn) __unparked(): Conn {
   return c;
 }
 
-function (c: Conn) __applied(now: Instant): Conn {
+function (c: Conn) __applied(now: time.Instant): Conn {
   let cur = c;
   while (true) {
     let acts = cur.session.actions;
@@ -380,7 +380,7 @@ function __headers_of(e: h3.Event): Option[i64] {
   return None;
 }
 
-function __acts(q: conn.Conn, acts: h3.Action[], now: Instant): conn.Conn {
+function __acts(q: conn.Conn, acts: h3.Action[], now: time.Instant): conn.Conn {
   let cur = q;
   for a in acts {
     cur = __act(cur, a, now);
@@ -388,7 +388,7 @@ function __acts(q: conn.Conn, acts: h3.Action[], now: Instant): conn.Conn {
   return cur;
 }
 
-function __act(q: conn.Conn, a: h3.Action, now: Instant): conn.Conn {
+function __act(q: conn.Conn, a: h3.Action, now: time.Instant): conn.Conn {
   match (a) {
     h3.Write(id, bytes, fin) => {
       return q.written(id, bytes, fin);

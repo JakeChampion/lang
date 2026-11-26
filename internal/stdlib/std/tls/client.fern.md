@@ -58,7 +58,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<15 pub struct Connection>>
 
-<<16 pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, tls.Tl...>>
+<<16 pub function connect(host: string, port: i32, config: Config, timeout: time.Duration): Result[Connection, tls.Tl...>>
 
 <<17 function __handshake_by(own sock: Socket, config: Config, deadline: i64): Result[Connection, tls.TlsError]>>
 
@@ -119,13 +119,13 @@ pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, re
 
 // verified_chain is empty if the issuing session did not verify its peer.
 // max_early is the most early data the ticket allows, 0 when it allows none.
-pub opaque struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: Duration, age_add: u32, received: time.Timestamp, server_name: string, max_early: u32, verified_chain: u8[][] }
+pub opaque struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: time.Duration, age_add: u32, received: time.Timestamp, server_name: string, max_early: u32, verified_chain: u8[][] }
 
 pub function (t: Ticket) wire_identity(): u8[] {
   return t.identity;
 }
 
-pub function (t: Ticket) valid_for(): Duration {
+pub function (t: Ticket) valid_for(): time.Duration {
   return t.lifetime;
 }
 
@@ -694,8 +694,8 @@ pub struct Received { conn: Connection, data: u8[], ended: boolean }
 ### `16 pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, tls.Tl...`
 
 ```fern
-<<16 pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, tls.Tl...>>=
-pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, tls.TlsError] {
+<<16 pub function connect(host: string, port: i32, config: Config, timeout: time.Duration): Result[Connection, tls.Tl...>>=
+pub function connect(host: string, port: i32, config: Config, timeout: time.Duration): Result[Connection, tls.TlsError] {
   let deadline = monotonic_ns() + timeout.as_nanos();
   let addrs: net.IpAddr[] = [];
   match (dns.resolve(host)) {
@@ -717,7 +717,7 @@ pub function connect(host: string, port: i32, config: Config, timeout: Duration)
   return Err(tls.ClosedEarly);
 }
 
-pub function over(own sock: Socket, config: Config, timeout: Duration): Result[Connection, tls.TlsError] {
+pub function over(own sock: Socket, config: Config, timeout: time.Duration): Result[Connection, tls.TlsError] {
   return __handshake_by(sock, config, monotonic_ns() + timeout.as_nanos());
 }
 ```
@@ -841,7 +841,7 @@ pub function (c: Connection) update_keys(request: boolean): Result[Connection, t
   return Ok(Connection { ...c, session: step.session });
 }
 
-pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError] {
+pub function (c: Connection) read(wait: time.Duration): Result[Received, tls.TlsError] {
   if (!c.open.get()) {
     return Err(tls.NetFailed(net.ConnectionAborted));
   }
@@ -1067,7 +1067,7 @@ function __await(sock: Socket, deadline: i64): Result[Option[u8[]], tls.TlsError
   return __recv_fd(sock, time.duration_nanos(left));
 }
 
-function __recv_fd(sock: Socket, wait: Duration): Result[Option[u8[]], tls.TlsError] {
+function __recv_fd(sock: Socket, wait: time.Duration): Result[Option[u8[]], tls.TlsError] {
   match (net.read_deadline(sock, 65536, wait)) {
     Ok(net.Chunk(b)) => {
       return Ok(Some(b));

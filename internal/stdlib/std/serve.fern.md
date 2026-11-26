@@ -20,7 +20,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 function __recv_deadline_default(): Duration>>
+<<3 function __recv_deadline_default(): time.Duration>>
 
 <<4 pub struct Config>>
 
@@ -220,8 +220,8 @@ import "std/http/h2/frame";
 ### `3 function __recv_deadline_default(): Duration`
 
 ```fern
-<<3 function __recv_deadline_default(): Duration>>=
-function __recv_deadline_default(): Duration {
+<<3 function __recv_deadline_default(): time.Duration>>=
+function __recv_deadline_default(): time.Duration {
   return time.duration_seconds(10 as i64);
 }
 ```
@@ -233,28 +233,28 @@ function __recv_deadline_default(): Duration {
 pub struct Config {
   backlog: i32,
   reuse_port: boolean,
-  recv_deadline: Duration,
+  recv_deadline: time.Duration,
   min_data_rate: i32,
-  data_rate_grace: Duration,
+  data_rate_grace: time.Duration,
   response_min_data_rate: i32,
-  response_data_rate_grace: Duration,
-  keep_alive_idle: Duration,
+  response_data_rate_grace: time.Duration,
+  keep_alive_idle: time.Duration,
   keep_alive_requests: i32,
   max_connections: i32,
   max_connections_per_ip: i32,
   max_in_flight: i32,
   workers: i32,
-  shutdown_grace: Duration,
+  shutdown_grace: time.Duration,
   readiness_path: string,
-  drain_deadline: Duration,
+  drain_deadline: time.Duration,
   limits: http.HttpLimits,
   stop_with_parent: boolean,
   stream_bodies: boolean,
   tls: Option[server.Config],
   cookie_jar: boolean,
   http_allow: Option[fetch.Allow],
-  handler_deadline: Duration,
-  background_deadline: Duration,
+  handler_deadline: time.Duration,
+  background_deadline: time.Duration,
   trace: boolean,
   proxy_protocol: boolean,
   metrics: metrics.Registry,
@@ -3629,7 +3629,7 @@ function __pull_write(p: __Pull, bytes: u8[]): i32 {
 }
 
 // The instant `ms` milliseconds from now on the monotonic clock, which is the clock this loop schedules by.
-function __within_ms(ms: i32): Option[Instant] {
+function __within_ms(ms: i32): Option[time.Instant] {
   return Some(time.instant_from_nanos(monotonic_ns() + ms as i64 * 1000000i64));
 }
 
@@ -4058,7 +4058,7 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
   return HandlerDone(http.text(503, ""));
 }
 
-function __bound_ends(bound: Duration, now: i64): i64 {
+function __bound_ends(bound: time.Duration, now: i64): i64 {
   let span: i64 = bound.as_nanos();
   if (span <= 0 as i64) {
     return 0 - 1 as i64;
@@ -4788,7 +4788,7 @@ function __upstream_owned(pool: fetch.Idle, fd: i32): boolean {
 
 function __shared_turn[D: async.Driver](drv: D, pool: fetch.Idle, own c: __Conns, own fls: __Flights, opts: Config): (__Conns, __Flights) {
   let s: fetch.Shared = fetch.shared_of(pool);
-  let idle: Duration = pool.idle;
+  let idle: time.Duration = pool.idle;
   let woken: (__Conns, __Flights) = __shared_woken(drv, s, c, fls, opts);
   c = woken.0;
   fls = woken.1;
@@ -5978,7 +5978,7 @@ function __quic_close[D: async.Driver](drv: D, q: __Quic): void {
     return;
   };
   let pending = q.out.send(sock);
-  let now: Instant = clock.instant();
+  let now: time.Instant = clock.instant();
   let i: i32 = 0;
   while (i < q.conns.len()) {
     let closing: h3q.Conn = q.conns[i].close(now).transmit(now);

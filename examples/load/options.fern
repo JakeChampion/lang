@@ -53,11 +53,11 @@ pub struct Options {
   port: i32,
   target: string,
   requests: i64,
-  duration: Option[Duration],
+  duration: Option[time.Duration],
   // Requests per second, across all connections.
   rate: Option[f64],
   // --burst-delay and --burst-rate: `burst` requests each `burst_delay`.
-  burst_delay: Option[Duration],
+  burst_delay: Option[time.Duration],
   burst: i64,
   // The latency of a request of -q starts when it is due.
   correct: boolean,
@@ -91,8 +91,8 @@ pub struct Options {
   output: string,
   // -u: the unit of the times of the text summary, or "" to select one.
   unit: string,
-  timeout: Option[Duration],
-  connect_timeout: Duration,
+  timeout: Option[time.Duration],
+  connect_timeout: time.Duration,
   keep_alive: boolean,
   // Without --no-pre-lookup, the hosts are looked up before the run.
   pre_lookup: boolean,
@@ -697,11 +697,11 @@ const UNIT_NS: i64[] = [1, 1, 1, 1000, 1000, 1000, 1000000, 1000000, 1000000, 10
 
 // A duration as the humantime crate of oha reads it: one or more numbers,
 // each with a unit, such as `10s`, `500ms`, `1m 30s` or `2min`.
-pub function duration(name: string, value: string): Result[Duration, string] {
+pub function duration(name: string, value: string): Result[time.Duration, string] {
   return humantime(name, value);
 }
 
-function humantime(name: string, value: string): Result[Duration, string] {
+function humantime(name: string, value: string): Result[time.Duration, string] {
   let bad = f"{name} {value} is not a duration such as 10s, 500ms or 1m";
   let n = value.len();
   let i = 0;

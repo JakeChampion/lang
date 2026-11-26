@@ -188,6 +188,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/i32";
+import "std/time";
 import "core/map";
 import "std/string";
 import "std/headers";
@@ -3130,7 +3131,7 @@ function __no_trailers(): HeaderMap {
 
 ```fern
 <<67 pub function chunks_idle(status: i32, next: (i32)>>=
-pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: Duration, filler: u8[]): HttpResponse {
+pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: time.Duration, filler: u8[]): HttpResponse {
   let ms = idle.as_millis();
   if (ms > 2147483647 as i64) {
     ms = 2147483647 as i64;

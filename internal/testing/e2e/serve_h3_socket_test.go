@@ -136,9 +136,9 @@ function main(): i32 {
   let out_count: i32 = 0;
   let in_count: i32 = 0;
   let first: string = "";
-  let started: Instant = clock.instant();
+  let started: time.Instant = clock.instant();
   while (!c.done() && clock.elapsed(started).cmp(time.duration_seconds(15)) < 0) {
-    let now: Instant = clock.instant();
+    let now: time.Instant = clock.instant();
     let next: h3q.Conn = c.transmit(now);
     let out: u8[][] = next.datagrams();
     next = next.sent();

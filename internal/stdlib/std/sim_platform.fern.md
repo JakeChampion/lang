@@ -58,7 +58,7 @@ import "std/http/trace";
 
 ```fern
 <<3 pub struct SimPlatform>>=
-pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow], deadline: Option[Instant], trace: Option[trace.Context] }
+pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.MockPlatform, jar: Option[cookie.Jar], allow: Option[fetch.Allow], deadline: Option[time.Instant], trace: Option[trace.Context] }
 ```
 
 ### `4 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform`
@@ -101,7 +101,7 @@ pub function (p: SimPlatform) with_allow(a: fetch.Allow): SimPlatform {
   return SimPlatform { ...p, allow: Some(a) };
 }
 
-pub function (p: SimPlatform) with_deadline(at: Instant): SimPlatform {
+pub function (p: SimPlatform) with_deadline(at: time.Instant): SimPlatform {
   return SimPlatform { ...p, deadline: Some(at) };
 }
 
@@ -125,7 +125,7 @@ impl platform.Platform for SimPlatform {
     return time.Timestamp { sec: d.sec, nsec: d.nsec };
   }
 
-  function instant(self: SimPlatform): Instant {
+  function instant(self: SimPlatform): time.Instant {
     self.mock.record("instant", "");
     return self.drv.now();
   }
@@ -150,7 +150,7 @@ impl platform.Platform for SimPlatform {
     return self.drv.random_i32();
   }
 
-  function sleep(self: SimPlatform, d: Duration): void {
+  function sleep(self: SimPlatform, d: time.Duration): void {
     self.mock.record("sleep", d.as_millis().to_string());
     let moved = self.drv.advance_to(self.drv.now().add(d));
   }
@@ -171,7 +171,7 @@ impl platform.Platform for SimPlatform {
     return self.mock.peer();
   }
 
-  function deadline(self: SimPlatform): Option[Instant] {
+  function deadline(self: SimPlatform): Option[time.Instant] {
     self.mock.record("deadline", "");
     return self.deadline;
   }

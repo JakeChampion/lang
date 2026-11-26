@@ -71,6 +71,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/headers";
+import "std/time";
 import "std/http";
 import "std/i64";
 import "std/platform";
@@ -631,7 +632,7 @@ function response_drop(resp: i32): void;
 
 ```fern
 <<13 pub struct Limits>>=
-pub struct Limits { connect: Duration, inactivity: Duration, body_cap: i32 }
+pub struct Limits { connect: time.Duration, inactivity: time.Duration, body_cap: i32 }
 
 pub enum ErrorCode {
   DnsTimeout,

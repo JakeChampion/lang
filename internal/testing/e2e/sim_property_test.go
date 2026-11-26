@@ -20,7 +20,7 @@ import "std/sim";
 import "std/i32";
 import "std/i64";
 
-function at_ms(ms: i32): Option[Instant] {
+function at_ms(ms: i32): Option[time.Instant] {
     return Some(sim.at(time.duration_millis(ms as i64)));
 }
 

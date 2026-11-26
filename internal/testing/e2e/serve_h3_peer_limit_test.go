@@ -90,7 +90,7 @@ function added(cs: h3q.Conn[], socks: Socket[], cfg: conn.Config, ip: string): R
   return Ok((cs.append(h3q.client(q, h3.config())), socks.append(sock)));
 }
 
-function driven(cs: h3q.Conn[], socks: Socket[], peer: net.SocketAddr, buf: u8[], now: Instant): h3q.Conn[] {
+function driven(cs: h3q.Conn[], socks: Socket[], peer: net.SocketAddr, buf: u8[], now: time.Instant): h3q.Conn[] {
   let cur: h3q.Conn[] = cs;
   let i: i32 = 0;
   while (i < cur.len()) {
@@ -139,10 +139,10 @@ function main(): i32 {
   let cs: h3q.Conn[] = first.0;
   let socks: Socket[] = first.1;
   let buf: u8[] = __alloc_u8(65536);
-  let started: Instant = clock.instant();
-  let second_at: Instant = started;
+  let started: time.Instant = clock.instant();
+  let second_at: time.Instant = started;
   while (clock.elapsed(started).cmp(time.duration_seconds(60)) < 0) {
-    let now: Instant = clock.instant();
+    let now: time.Instant = clock.instant();
     cs = driven(cs, socks, peer, buf, now);
     if (cs.len() == 1 && cs[0].ready()) {
       let Ok(second) = added(cs, socks, cfg, argv[3]) else {

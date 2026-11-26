@@ -243,7 +243,7 @@ import "std/i64";
 import "std/i32";
 import "std/result";
 
-function now(): Instant {
+function now(): time.Instant {
   return clock.instant();
 }
 
@@ -288,7 +288,7 @@ function get(k0: Cli, path: string): (Cli, string) {
   };
   let k: Cli = Cli { ...k0, c: sent.0 };
   let id: i64 = sent.1;
-  let started: Instant = now();
+  let started: time.Instant = now();
   while (clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
     let evs: h3q.Event[] = k.c.events;
@@ -342,7 +342,7 @@ function main(): i32 {
   };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
   let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, peer: peer, buf: __alloc_u8(65536) };
-  let started: Instant = now();
+  let started: time.Instant = now();
   while (!k.c.ready() && clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
   }
@@ -363,7 +363,7 @@ function main(): i32 {
   let (k1, c0) = count(k);
   let (k2, c1) = count(k1);
   k = k2;
-  let t0: Instant = now();
+  let t0: time.Instant = now();
   i = 0;
   while (i < rounds) {
     let r: (Cli, string) = get(k, "/");
@@ -411,7 +411,7 @@ function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32, i32) {
   let completed: i32 = 0;
   let inflight: i32 = 0;
   let peak: i32 = 0;
-  let last: Instant = now();
+  let last: time.Instant = now();
   while (completed < rounds) {
     let topping: boolean = true;
     while (topping) {
@@ -477,7 +477,7 @@ function main(): i32 {
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
   let warm: i32 = ` + strconv.Itoa(serveAllocsWarm) + `;
   let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, peer: peer, buf: __alloc_u8(65536) };
-  let started: Instant = now();
+  let started: time.Instant = now();
   while (!k.c.ready() && clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
   }
@@ -494,7 +494,7 @@ function main(): i32 {
   let (k1, c0) = count(k);
   let (k2, c1) = count(k1);
   k = k2;
-  let t0: Instant = now();
+  let t0: time.Instant = now();
   let d: (Cli, i32, i32) = drive(k, rounds, m);
   k = d.0;
   let peak: i32 = d.1;
@@ -584,7 +584,7 @@ import "std/time";
 import "std/i32";
 import "std/rand";
 ` + serveAllocsH3Identity + `
-function now(): Instant {
+function now(): time.Instant {
   return clock.instant();
 }
 
@@ -641,7 +641,7 @@ function get(k0: Cli, path: string): (Cli, string) {
   };
   let k: Cli = Cli { ...k0, c: sent.0 };
   let id: i64 = sent.1;
-  let started: Instant = now();
+  let started: time.Instant = now();
   while (clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
     let evs: h3q.Event[] = k.c.events;
@@ -685,7 +685,7 @@ function main(): i32 {
   };
   let to: u8[] = [4u8, 127u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, (port >> 8) as u8, (port & 255) as u8];
   let k: Cli = Cli { c: h3q.client(q, h3.config()), sock: sock, to: to, inbox: net.inbox(8, 65536) };
-  let started: Instant = now();
+  let started: time.Instant = now();
   while (!k.c.ready() && clock.elapsed(started).cmp(time.duration_seconds(30)) < 0) {
     k = pump(k, 10);
   }

@@ -52,13 +52,13 @@ pub function now(): time.Timestamp {
   return time.timestamp_from_unix_millis(now_unix_ms());
 }
 
-pub function instant(): Instant {
+pub function instant(): time.Instant {
   let d = time.duration_nanos(monotonic_ns());
-  return Instant { sec: d.sec, nsec: d.nsec };
+  return time.Instant { sec: d.sec, nsec: d.nsec };
 }
 
 // The monotonic time since `start`.
-pub function elapsed(start: Instant): Duration {
+pub function elapsed(start: time.Instant): time.Duration {
   return instant().since(start);
 }
 ```

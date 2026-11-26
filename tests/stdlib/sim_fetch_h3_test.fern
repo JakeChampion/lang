@@ -257,7 +257,7 @@ function test_alt_svc_values(): test.TestOutcome {
 
 function test_alt_svc_noted_and_expired(): test.TestOutcome {
   let pool = fetch.idle();
-  let now = Instant { sec: 0, nsec: 0 };
+  let now = time.Instant { sec: 0, nsec: 0 };
   pool.note_alt_svc(HOST, 443, "h3=\":8443\"; ma=10", now);
   if (pool.h3_offered(HOST, 443, now.add(time.duration_seconds(9))) != 8443) {
     return test.fail("the alternative was not offered inside its age");

@@ -20,12 +20,12 @@ import "std/string";
 import "std/utf8";
 import "std/rand";
 
-function now(): Instant {
+function now(): time.Instant {
   return clock.instant();
 }
 
 // Whether a connection's next deadline has come.
-function passed(deadline: Option[Instant]): boolean {
+function passed(deadline: Option[time.Instant]): boolean {
   let Some(at) = deadline else {
     return false;
   };
@@ -33,7 +33,7 @@ function passed(deadline: Option[Instant]): boolean {
 }
 
 // When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
-function wait_until(deadline: Option[Instant]): Option[Instant] {
+function wait_until(deadline: Option[time.Instant]): Option[time.Instant] {
   let most = time.duration_millis(100);
   let Some(at) = deadline else {
     return Some(now().add(most));
@@ -68,7 +68,7 @@ function drain(c: h3q.Conn, sock: Socket, buf: u8[]): h3q.Conn {
   }
 }
 
-function wait_for(c: h3q.Conn): Option[Instant] {
+function wait_for(c: h3q.Conn): Option[time.Instant] {
   return wait_until(c.deadline());
 }
 

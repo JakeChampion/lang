@@ -111,7 +111,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<39 function zero_bytes(n: i32): u8[]>>
 
-<<40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]>>
+<<40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]>>
 
 <<41 struct Slot>>
 
@@ -119,7 +119,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<43 function take_reply(sock: Socket, q: Message): Result[Option[Message], DnsError]>>
 
-<<44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]>>
+<<44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]>>
 
 <<45 function send_tcp(ns: net.SocketAddr, framed: u8[]): Result[Socket, DnsError]>>
 
@@ -1092,7 +1092,7 @@ pub struct ResolvConf {
   nameservers: net.SocketAddr[],
   search: string[],
   ndots: i32,
-  timeout: Duration,
+  timeout: time.Duration,
   attempts: i32,
   rotate: boolean,
 }
@@ -1302,7 +1302,7 @@ function now_ms(): i64 {
 }
 
 // The instant `wait_ms` from now on the monotonic clock. None when `wait_ms` is negative.
-function within(wait_ms: i32): Option[Instant] {
+function within(wait_ms: i32): Option[time.Instant] {
   if (wait_ms < 0) {
     return None;
   }
@@ -1328,12 +1328,12 @@ function local_for(ns: net.SocketAddr): net.SocketAddr {
 ### `40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]`
 
 ```fern
-<<40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]>>=
-pub function exchange(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError] {
+<<40 pub function exchange(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]>>=
+pub function exchange(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError] {
   return exchange_many(ns, [q], timeout)[0];
 }
 
-pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout: Duration): Result[Message, DnsError][] {
+pub function exchange_many(ns: net.SocketAddr, qs: Message[], timeout: time.Duration): Result[Message, DnsError][] {
   let deadline = now_ms() + timeout.as_millis();
   let slots: Slot[] = [];
   let i = 0;
@@ -1569,8 +1569,8 @@ function take_reply(sock: Socket, q: Message): Result[Option[Message], DnsError]
 ### `44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]`
 
 ```fern
-<<44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError]>>=
-pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: Duration): Result[Message, DnsError] {
+<<44 pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError]>>=
+pub function exchange_tcp(ns: net.SocketAddr, q: Message, timeout: time.Duration): Result[Message, DnsError] {
   let bytes = encode(q)?;
   let framed: u8[] = [];
   framed = put16(framed, bytes.len());
@@ -1737,7 +1737,7 @@ function unanswered(a: Asked): boolean {
   return true;
 }
 
-function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout: Duration): Asked[] {
+function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout: time.Duration): Asked[] {
   let open: i32[] = [];
   let open_qs: Message[] = [];
   let i = 0;
@@ -2385,7 +2385,7 @@ function prefer_true(for_a: boolean, for_b: boolean): i32 {
 
 ```fern
 <<68 pub struct DialOptions>>=
-pub struct DialOptions { fallback: Duration, timeout: Duration }
+pub struct DialOptions { fallback: time.Duration, timeout: time.Duration }
 ```
 
 ### `69 pub function dial_options(): DialOptions`

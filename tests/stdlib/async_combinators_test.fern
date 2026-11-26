@@ -4,7 +4,7 @@ import "std/clock";
 import "std/sim";
 import "std/time";
 
-function ms(n: i64): Duration {
+function ms(n: i64): time.Duration {
   return time.duration_millis(n);
 }
 
@@ -27,7 +27,7 @@ function napper(n: i64, v: i32, seen: Cell[i32]): async.Future[i32] {
 }
 
 // A future that ends cancelled when it is woken, as a failed input does.
-function failing(at: Instant): async.Future[i32] {
+function failing(at: time.Instant): async.Future[i32] {
   let none: i32[] = [];
   return Pending(async.Wait { set: none, until: Some(at) }, (wake: async.Wake): async.Future[i32] => async.Future.Cancelled);
 }

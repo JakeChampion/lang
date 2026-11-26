@@ -493,7 +493,7 @@ import "std/platform";
 import "std/time";
 function burn(plat: platform.Platform, ns: i64): i32 {
     let x: i32 = 12345;
-    let until: Instant = plat.instant().add(time.duration_nanos(ns));
+    let until: time.Instant = plat.instant().add(time.duration_nanos(ns));
     while (plat.instant().cmp(until) < 0) {
         let i: i32 = 0;
         while (i < 100000) {

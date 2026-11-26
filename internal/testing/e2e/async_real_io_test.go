@@ -90,7 +90,7 @@ func TestAsyncWaitAnyTwoInterestsOnOneDescriptor(t *testing.T) {
 import "std/clock";
 import "std/time";
 
-function soon(): Option[Instant] {
+function soon(): Option[time.Instant] {
     return Some(clock.instant().add(time.duration_millis(2000)));
 }
 

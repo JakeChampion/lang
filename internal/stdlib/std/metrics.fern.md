@@ -374,7 +374,7 @@ pub function server_metrics(): ServerMetrics {
   return ServerMetrics { methods: [], statuses: [], durations: [], accepted: counter("http_server_connections_accepted_total", "Connections accepted."), open: gauge("http_server_open_connections", "Connections open.") };
 }
 
-pub function (m: ServerMetrics) request(method: string, status: i32, took: Duration): ServerMetrics {
+pub function (m: ServerMetrics) request(method: string, status: i32, took: time.Duration): ServerMetrics {
   let ns = took.as_nanos();
   let k = 0;
   while (k < m.methods.len()) {

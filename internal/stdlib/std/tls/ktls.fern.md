@@ -28,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 pub enum Read>>
 
-<<7 pub function read(sock: Socket, wait: Duration): Read>>
+<<7 pub function read(sock: Socket, wait: time.Duration): Read>>
 
 <<8 function __ktls(sock: Socket, op: i32, arg: i32, data: u8[]): i32>>
 ```
@@ -142,8 +142,8 @@ pub enum Read { Opened(i32, u8[]), StreamEnded, NothingYet, WaitCancelled, ReadF
 ### `7 pub function read(sock: Socket, wait: Duration): Read`
 
 ```fern
-<<7 pub function read(sock: Socket, wait: Duration): Read>>=
-pub function read(sock: Socket, wait: Duration): Read {
+<<7 pub function read(sock: Socket, wait: time.Duration): Read>>=
+pub function read(sock: Socket, wait: time.Duration): Read {
   let limit = wait;
   if (limit.cmp(time.duration_millis(1)) < 0) {
     limit = time.duration_millis(1);

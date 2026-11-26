@@ -138,7 +138,7 @@ function describe(r: Result[Outcome, tls.TlsError], resumption: boolean): string
   }
 }
 
-function millis_since(started: Instant): string {
+function millis_since(started: time.Instant): string {
   return clock.elapsed(started).as_millis().to_string();
 }
 

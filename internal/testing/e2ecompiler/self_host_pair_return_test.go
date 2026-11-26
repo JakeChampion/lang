@@ -1337,7 +1337,7 @@ import "std/clock";
 import "std/time";
 
 function main(): i32 {
-  let t: Option[Instant] = Some(clock.instant().add(time.duration_millis(1)));
+  let t: Option[time.Instant] = Some(clock.instant().add(time.duration_millis(1)));
   let total: i32 = 0;
   let a0: i64 = bench.alloc_count();
   for i in 0..20 {

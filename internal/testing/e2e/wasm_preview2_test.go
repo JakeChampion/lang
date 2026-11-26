@@ -1675,9 +1675,10 @@ func TestWasmPreview2HttpHandlerClockAdapterFree(t *testing.T) {
 import "std/http";
 import "std/platform";
 import "std/serve";
+import "std/time";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     let t: i64 = plat.now().unix_millis();
-    let m: Instant = plat.instant();
+    let m: time.Instant = plat.instant();
     let r: i32 = plat.random_i32();
     if (t > 0) { return http.ok("clock-ok"); }
     return http.ok("no-clock");

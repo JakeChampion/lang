@@ -82,7 +82,7 @@ import "std/tls/identity";
 ```fern
 <<2 pub struct Answer>>=
 // `delay` passes before the first byte; `every` passes between chunks of `chunk` bytes.
-pub struct Answer { bytes: u8[], delay: Duration, every: Duration, chunk: i32, close: boolean }
+pub struct Answer { bytes: u8[], delay: time.Duration, every: time.Duration, chunk: i32, close: boolean }
 ```
 
 ### `3 pub function reply(status: i32, body: string): Answer`
@@ -126,11 +126,11 @@ pub function silent(): Answer {
   return Answer { ...reset(), close: false };
 }
 
-pub function (a: Answer) after(delay: Duration): Answer {
+pub function (a: Answer) after(delay: time.Duration): Answer {
   return Answer { ...a, delay: delay };
 }
 
-pub function (a: Answer) in_chunks(size: i32, every: Duration): Answer {
+pub function (a: Answer) in_chunks(size: i32, every: time.Duration): Answer {
   return Answer { ...a, chunk: size, every: every };
 }
 
@@ -172,7 +172,7 @@ pub function (a: Answer) kept(): Answer {
 <<6 pub struct Name>>=
 pub struct Name { host: string, addrs: string[] }
 
-pub struct Listener { addr: string, port: i32, connect: Duration }
+pub struct Listener { addr: string, port: i32, connect: time.Duration }
 
 pub struct Route { addr: string, port: i32, path: string, answers: Answer[] }
 
@@ -189,7 +189,7 @@ pub struct Endpoint { addr: string, port: i32, id: identity.Identity, handler: (
 // back with the time each arrives.
 pub struct Peer { id: i32, endpoint: i32, server: Option[h3q.Parked], inbox: u8[][], due: i64[], open: boolean }
 
-pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], flakes: Flake[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle, endpoints: Endpoint[], peers: Cell[Peer[]], delay: Duration, loss: i32, carried: Cell[i32], h3_served: Cell[i32], h3_accepted: Cell[i32], h3_early: Cell[i32], too_early: boolean }
+pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], flakes: Flake[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle, endpoints: Endpoint[], peers: Cell[Peer[]], delay: time.Duration, loss: i32, carried: Cell[i32], h3_served: Cell[i32], h3_accepted: Cell[i32], h3_early: Cell[i32], too_early: boolean }
 ```
 
 ### `7 pub function new(drv: sim.Sim): Net`
@@ -216,7 +216,7 @@ pub function (n: Net) host(name: string, addrs: string[]): Net {
 }
 
 // A dial to the listener takes `connect` of virtual time.
-pub function (n: Net) listen(addr: string, port: i32, connect: Duration): Net {
+pub function (n: Net) listen(addr: string, port: i32, connect: time.Duration): Net {
   return Net { ...n, listeners: n.listeners.append(Listener { addr: __canon(addr), port: port, connect: connect }) };
 }
 
@@ -242,7 +242,7 @@ pub function (n: Net) serve_h3(addr: string, port: i32, id: identity.Identity, h
 }
 
 // datagram_delay is the time a datagram takes each way. None by default.
-pub function (n: Net) datagram_delay(d: Duration): Net {
+pub function (n: Net) datagram_delay(d: time.Duration): Net {
   return Net { ...n, delay: d };
 }
 
@@ -313,7 +313,7 @@ pub function (n: Net) sent(i: i32): u8[] {
 ```fern
 <<8 impl fetch.Transport for Net>>=
 impl fetch.Transport for Net {
-  function now(self: Net): Instant {
+  function now(self: Net): time.Instant {
     return time.instant_from_nanos(self.drv.clock_ns.get());
   }
   function wall(self: Net): time.Timestamp {
@@ -338,7 +338,7 @@ impl fetch.Transport for Net {
     }
     return Ok(fetch.Lookup { dial: found, named: found, judged: found });
   }
-  function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout: Duration): Result[i32, net.NetError] {
+  function connect(self: Net, addrs: net.IpAddr[], port: i32, timeout: time.Duration): Result[i32, net.NetError] {
     let timeout_ms = timeout.as_millis();
     let fallback_ms = dns.dial_options().fallback.as_millis();
     let start_ms: i64 = 0;
@@ -402,7 +402,7 @@ impl fetch.Transport for Net {
     __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
     return bytes.len();
   }
-  function read(self: Net, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+  function read(self: Net, conn: i32, max: i32, wait: time.Duration): Result[net.Recv, net.NetError] {
     let row = __conn(self, conn);
     let now = self.drv.clock_ns.get();
     let deadline = now + wait.as_nanos();
@@ -483,7 +483,7 @@ impl fetch.Transport for Net {
     __peer_set(self, k, __h3_delivered(self, self.peers.get()[k], data, at));
     return data.len();
   }
-  function datagram_recv(self: Net, conn: i32, max: i32, wait: Duration): Result[net.Recv, net.NetError] {
+  function datagram_recv(self: Net, conn: i32, max: i32, wait: time.Duration): Result[net.Recv, net.NetError] {
     let k = __peer_at(self, conn);
     if (k < 0) {
       return Err(net.Other(9));
@@ -591,7 +591,7 @@ function __h3_delivered(n: Net, p: Peer, data: u8[], at: i64): Peer {
   return __h3_sent(n, p, __h3_answering(n, p.endpoint, s.receive(data, now)), at);
 }
 
-function __h3_server(n: Net, p: Peer, data: u8[], now: Instant): Option[h3q.Conn] {
+function __h3_server(n: Net, p: Peer, data: u8[], now: time.Instant): Option[h3q.Conn] {
   if let Some(parked) = p.server {
     return Some(h3q.unpark(parked));
   }

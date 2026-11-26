@@ -67,7 +67,7 @@ import "std/array";
 ```fern
 <<3 pub struct Event>>=
 // `retry` is the reconnection delay the event asks for, sent in milliseconds.
-pub struct Event { data: string, name: string, id: string, retry: Option[Duration] }
+pub struct Event { data: string, name: string, id: string, retry: Option[time.Duration] }
 ```
 
 ### `4 pub function event(data: string): Event`
@@ -86,7 +86,7 @@ pub function (e: Event) with_id(id: string): Event {
   return Event { ...e, id: id };
 }
 
-pub function (e: Event) with_retry(delay: Duration): Event {
+pub function (e: Event) with_retry(delay: time.Duration): Event {
   return Event { ...e, retry: Some(delay) };
 }
 
@@ -115,7 +115,7 @@ pub function respond(next: (i32) => Option[Event]): HttpResponse {
   return __headed(http.chunks(200, (i: i32): Option[u8[]] => __encoded(next(i))));
 }
 
-pub function respond_with(keep_alive: Duration, next: (i32) => Option[Event]): HttpResponse {
+pub function respond_with(keep_alive: time.Duration, next: (i32) => Option[Event]): HttpResponse {
   return __headed(http.chunks_idle(200, (i: i32): Option[u8[]] => __encoded(next(i)), keep_alive, comment("keep-alive").bytes()));
 }
 
@@ -175,7 +175,7 @@ function __lines(s: string): string[] {
 
 ```fern
 <<6 pub struct Decoder>>=
-pub struct Decoder { buf: u8[], data: string, name: string, last_id: string, retry: Option[Duration], started: boolean }
+pub struct Decoder { buf: u8[], data: string, name: string, last_id: string, retry: Option[time.Duration], started: boolean }
 ```
 
 ### `7 pub function decoder(): Decoder`

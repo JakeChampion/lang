@@ -53,7 +53,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<8 function __tls_client_config(c: Config, scid: [u8], params_bytes: u8[]): handshake.ClientConfig>>
 
-<<9 pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string]>>
+<<9 pub function client(c: Config, entropy: [u8], now: time.Instant, wall: time.Timestamp): Result[Conn, string]>>
 
 <<10 function (c: Conn) __initial_keys(dcid: [u8]): Conn>>
 
@@ -71,15 +71,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<18 function (c: Conn) __fail(code: i64, frame_type: i64, reason: string, now: i64): Conn>>
 
-<<19 pub function (c: Conn) tick(now: Instant): Conn>>
+<<19 pub function (c: Conn) tick(now: time.Instant): Conn>>
 
 <<20 function (c: Conn) __tick(now: i64): Conn>>
 
-<<21 pub function (c: Conn) update_keys(now: Instant): Result[Conn, string]>>
+<<21 pub function (c: Conn) update_keys(now: time.Instant): Result[Conn, string]>>
 
 <<22 function (c: Conn) __promote_keys(send: packet.Keys, recv: packet.Keys, pn: i64, now: i64, remote: boolean)...>>
 
-<<23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn>>
+<<23 pub function (c: Conn) receive(datagram: [u8], now: time.Instant): Conn>>
 
 <<24 function (c: Conn) __datagram(datagram: [u8], now: i64): Conn>>
 
@@ -91,7 +91,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<28 function (c: Conn) __tls_question(e: handshake.Event, now: i64): Conn>>
 
-<<29 pub function (c: Conn) transmit(now: Instant): Conn>>
+<<29 pub function (c: Conn) transmit(now: time.Instant): Conn>>
 
 <<30 function (c: Conn) __datagram_sent(now: i64): Conn>>
 
@@ -170,7 +170,7 @@ pub struct Config {
   // ticket_key seals the session tickets a server issues; empty, it issues
   // none and resumes none. resume is the ticket a client offers.
   ticket_key: u8[],
-  ticket_lifetime: Duration,
+  ticket_lifetime: time.Duration,
   resume: Option[Ticket],
   // early_data has a client send 0-RTT with a ticket that allows it, and a
   // server take 0-RTT and issue tickets that allow it.
@@ -425,9 +425,9 @@ function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[],
 ### `9 pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string]`
 
 ```fern
-<<9 pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string]>>=
+<<9 pub function client(c: Config, entropy: [u8], now: time.Instant, wall: time.Timestamp): Result[Conn, string]>>=
 // `now` reads the monotonic clock the connection's timers run on; `wall` is the time certificates are checked against.
-pub function client(c: Config, entropy: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string] {
+pub function client(c: Config, entropy: [u8], now: time.Instant, wall: time.Timestamp): Result[Conn, string] {
   return __client(c, entropy, time.instant_nanos(now), wall.unix_millis());
 }
 
@@ -466,14 +466,14 @@ function __client(c: Config, entropy: [u8], now: i64, unix_ms: i64): Result[Conn
   }
 }
 
-pub function accept(c: Config, entropy: [u8], first: packet.Header, now: Instant, wall: time.Timestamp): Result[Conn, string] {
+pub function accept(c: Config, entropy: [u8], first: packet.Header, now: time.Instant, wall: time.Timestamp): Result[Conn, string] {
   return __accept(c, entropy, first, first.dcid, None, time.instant_nanos(now), wall.unix_millis());
 }
 
 // accept_validated accepts `first`, an Initial whose token `validated`
 // returned `odcid` for: the client's first Initial named `odcid`, and the
 // Retry that answered it named `first.dcid` (RFC 9000 section 7.3).
-pub function accept_validated(c: Config, entropy: [u8], first: packet.Header, odcid: [u8], now: Instant, wall: time.Timestamp): Result[Conn, string] {
+pub function accept_validated(c: Config, entropy: [u8], first: packet.Header, odcid: [u8], now: time.Instant, wall: time.Timestamp): Result[Conn, string] {
   return __accept(c, entropy, first, odcid, Some(first.dcid), time.instant_nanos(now), wall.unix_millis());
 }
 
@@ -736,7 +736,7 @@ pub function (c: Conn) closed_with(): Option[Close] {
 }
 
 // When the connection next needs a tick, if ever.
-pub function (c: Conn) deadline(): Option[Instant] {
+pub function (c: Conn) deadline(): Option[time.Instant] {
   let at = c.__deadline();
   if (at == 0) {
     return None;
@@ -903,7 +903,7 @@ pub function (c: Conn) buffered(id: i64): i64 {
   return c.streams.buffered(id);
 }
 
-pub function (c: Conn) close(code: i64, reason: string, app: boolean, now: Instant): Conn {
+pub function (c: Conn) close(code: i64, reason: string, app: boolean, now: time.Instant): Conn {
   return c.__close(code, reason, app, time.instant_nanos(now));
 }
 
@@ -943,8 +943,8 @@ function (c: Conn) __drain(why: Close, now: i64): Conn {
 ### `19 pub function (c: Conn) tick(now: Instant): Conn`
 
 ```fern
-<<19 pub function (c: Conn) tick(now: Instant): Conn>>=
-pub function (c: Conn) tick(now: Instant): Conn {
+<<19 pub function (c: Conn) tick(now: time.Instant): Conn>>=
+pub function (c: Conn) tick(now: time.Instant): Conn {
   let ns = time.instant_nanos(now);
   return c.__key_timers(ns).__tick(ns);
 }
@@ -999,8 +999,8 @@ function (c: Conn) __probe_timed_out(now: i64): Conn {
 ### `21 pub function (c: Conn) update_keys(now: Instant): Result[Conn, string]`
 
 ```fern
-<<21 pub function (c: Conn) update_keys(now: Instant): Result[Conn, string]>>=
-pub function (c: Conn) update_keys(now: Instant): Result[Conn, string] {
+<<21 pub function (c: Conn) update_keys(now: time.Instant): Result[Conn, string]>>=
+pub function (c: Conn) update_keys(now: time.Instant): Result[Conn, string] {
   return c.__update_keys(time.instant_nanos(now));
 }
 
@@ -1118,8 +1118,8 @@ function (c: Conn) __key_current(pn: i64, now: i64): Conn {
 ### `23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn`
 
 ```fern
-<<23 pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn>>=
-pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
+<<23 pub function (c: Conn) receive(datagram: [u8], now: time.Instant): Conn>>=
+pub function (c: Conn) receive(datagram: [u8], now: time.Instant): Conn {
   if (c.ecn_in == 0) {
     return c.__receive(datagram, time.instant_nanos(now));
   }
@@ -1132,7 +1132,7 @@ pub function (c: Conn) receive(datagram: [u8], now: Instant): Conn {
 // server moves to a client's new address once a packet from it is
 // authenticated, validating the path; a client drops datagrams from an
 // address that is not its server's (RFC 9000 section 9).
-pub function (c: Conn) receive_from(datagram: [u8], path: [u8], ecn: i32, now: Instant): Conn {
+pub function (c: Conn) receive_from(datagram: [u8], path: [u8], ecn: i32, now: time.Instant): Conn {
   let ns = time.instant_nanos(now);
   let marked = c;
   if (c.ecn_in != (ecn & 3)) {
@@ -2253,8 +2253,8 @@ function __param_error(reason: string): frames.FrameError {
 ### `29 pub function (c: Conn) transmit(now: Instant): Conn`
 
 ```fern
-<<29 pub function (c: Conn) transmit(now: Instant): Conn>>=
-pub function (c: Conn) transmit(now: Instant): Conn {
+<<29 pub function (c: Conn) transmit(now: time.Instant): Conn>>=
+pub function (c: Conn) transmit(now: time.Instant): Conn {
   return c.__transmit(time.instant_nanos(now));
 }
 

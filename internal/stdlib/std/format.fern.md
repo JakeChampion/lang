@@ -411,7 +411,7 @@ pub function bytes(n: i64): string {
 }
 
 // Hours, minutes, seconds, and milliseconds, such as `1h 1m 1s 1ms`.
-pub function duration(d: Duration): string {
+pub function duration(d: time.Duration): string {
   let ms = d.as_millis();
   if (ms == 0) {
     return "0ms";
@@ -472,7 +472,7 @@ pub function (e: DurationParseError) to_string(): string {
   return e.message();
 }
 
-pub function parse_duration(s: string): Result[Duration, DurationParseError] {
+pub function parse_duration(s: string): Result[time.Duration, DurationParseError] {
   let n = s.len();
   let i = 0;
   let total: i64 = 0;

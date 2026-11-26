@@ -1519,7 +1519,7 @@ pub function (r: TestRunner) bench(name: string, iterations: i32, fn: () => void
 }
 
 // Fails when the median iteration takes longer than `budget`.
-pub function (r: TestRunner) bench_max(name: string, iterations: i32, fn: () => void, budget: Duration): TestRunner {
+pub function (r: TestRunner) bench_max(name: string, iterations: i32, fn: () => void, budget: time.Duration): TestRunner {
   let max_us = budget.as_micros();
   if (iterations <= 0) {
     return r.it(name, () => fail("bench: iterations must be > 0"));
@@ -1548,7 +1548,7 @@ pub function (r: TestRunner) bench_max(name: string, iterations: i32, fn: () => 
   return r.it(name, () => Pass);
 }
 
-pub function assert_elapsed_lt(start: Instant, limit: Duration): TestOutcome {
+pub function assert_elapsed_lt(start: time.Instant, limit: time.Duration): TestOutcome {
   let elapsed = clock.elapsed(start);
   if (elapsed.cmp(limit) < 0) {
     return Pass;
@@ -1557,7 +1557,7 @@ pub function assert_elapsed_lt(start: Instant, limit: Duration): TestOutcome {
     + "us elapsed, expected < " + limit.as_micros().to_string() + "us");
 }
 
-pub function assert_close_to_now(actual: time.Timestamp, max_skew: Duration): TestOutcome {
+pub function assert_close_to_now(actual: time.Timestamp, max_skew: time.Duration): TestOutcome {
   let skew = clock.now().since(actual);
   let magnitude = skew;
   if (skew.is_negative()) {

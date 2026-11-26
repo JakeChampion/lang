@@ -69,6 +69,10 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 function f(): i32 { let d = time.Date { year: 2026, month: 6, day: 15 }; let s = time.Span { years: 0, months: 0, weeks: 0, days: 3, hours: 0, minutes: 0, seconds: 0, nanos: 0 }; return d.month * 100 + d.day + s.days; } function main(): i32 { return f(); }`, 106},
 		{"user-struct-span-beside-std-time", `import "std/time";
 struct Span { n: i32 } struct Date { n: i32 } function main(): i32 { let s: Span = Span { n: 3 }; let d = Date { n: 4 }; return s.n + d.n + time.date_of(2026, 6, 15).day; }`, 22},
+		{"module-struct-duration-instant", `import "std/time";
+function main(): i32 { let d = time.Duration { sec: 2, nsec: 500000000 }; let start = time.Instant { sec: 10, nsec: 0 }; let i = start.add(d); if (i.since(start) != d || !(start < i)) { return 1; } return i.sec as i32 + d.to_string().len(); }`, 19},
+		{"user-struct-instant-beside-std-time", `import "std/time";
+struct Instant { n: i32 } struct Duration { n: i32 } function main(): i32 { let i: Instant = Instant { n: 3 }; let d = Duration { n: 4 }; return i.n + d.n + time.duration_seconds(5).as_seconds() as i32; }`, 12},
 		{"subword-arr-field", `struct BW { data: u8[] } function bw_new(): BW { let e: u8[] = []; return BW { data: e }; } function (w: BW) push(b: u8): BW { let data: u8[] = w.data; data = data.append(b); return BW { ...w, data: data }; } function (w: BW) sum(): i32 { let data: u8[] = w.data; let t: i32 = 0; let i: i32 = 0; while (i < data.len()) { t = t + (data[i] as i32); i = i + 1; } return t; } function main(): i32 { let w = bw_new(); w = w.push(10 as u8); w = w.push(20 as u8); w = w.push(33 as u8); return w.sum(); }`, 63},
 		{"module-byteswriter", `import "std/io_buffered";
 function main(): i32 { let w: io_buffered.BytesWriter = io_buffered.BytesWriter { data: [] }; w = io_buffered.BytesWriter { ...w, data: w.data.append(65 as u8) }; w = io_buffered.BytesWriter { ...w, data: w.data.append(66 as u8) }; w = io_buffered.BytesWriter { ...w, data: w.data.append(67 as u8) }; return w.data.len(); }`, 3},

@@ -89,7 +89,7 @@ import "std/http";
 
 ```fern
 <<3 pub struct MockPlatform>>=
-pub struct MockPlatform { sink: Cell[MockCall[]], envs: Map[string, string], configs: Map[string, string], secrets: Map[string, string], wall: time.Timestamp, mono: Instant, random: i32, answers: Map[string, Result[HttpResponse, fetch.FetchError]], files: Map[string, MockFile], dirs: Map[string, boolean], peer: Option[net.SocketAddr], deadline: Option[Instant], trace: Option[trace.Context], cancelled: boolean }
+pub struct MockPlatform { sink: Cell[MockCall[]], envs: Map[string, string], configs: Map[string, string], secrets: Map[string, string], wall: time.Timestamp, mono: time.Instant, random: i32, answers: Map[string, Result[HttpResponse, fetch.FetchError]], files: Map[string, MockFile], dirs: Map[string, boolean], peer: Option[net.SocketAddr], deadline: Option[time.Instant], trace: Option[trace.Context], cancelled: boolean }
 
 pub struct MockCall { name: string, args: string }
 
@@ -121,7 +121,7 @@ pub function (m: MockPlatform) with_now(t: time.Timestamp): MockPlatform {
   return MockPlatform { ...m, wall: t };
 }
 
-pub function (m: MockPlatform) with_instant(at: Instant): MockPlatform {
+pub function (m: MockPlatform) with_instant(at: time.Instant): MockPlatform {
   return MockPlatform { ...m, mono: at };
 }
 
@@ -146,7 +146,7 @@ pub function (m: MockPlatform) with_peer(addr: Option[net.SocketAddr]): MockPlat
   return MockPlatform { ...m, peer: addr };
 }
 
-pub function (m: MockPlatform) with_deadline(at: Instant): MockPlatform {
+pub function (m: MockPlatform) with_deadline(at: time.Instant): MockPlatform {
   return MockPlatform { ...m, deadline: Some(at) };
 }
 
@@ -173,7 +173,7 @@ impl platform.Platform for MockPlatform {
     return self.wall;
   }
 
-  function instant(self: MockPlatform): Instant {
+  function instant(self: MockPlatform): time.Instant {
     self.record("instant", "");
     return self.mono;
   }
@@ -198,7 +198,7 @@ impl platform.Platform for MockPlatform {
     return self.random;
   }
 
-  function sleep(self: MockPlatform, d: Duration): void {
+  function sleep(self: MockPlatform, d: time.Duration): void {
     self.record("sleep", d.as_millis().to_string());
   }
 
@@ -230,7 +230,7 @@ impl platform.Platform for MockPlatform {
     return Err(NotFound(path));
   }
 
-  function deadline(self: MockPlatform): Option[Instant] {
+  function deadline(self: MockPlatform): Option[time.Instant] {
     self.record("deadline", "");
     return self.deadline;
   }

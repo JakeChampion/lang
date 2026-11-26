@@ -22,7 +22,7 @@ pub function fixed(start: i64, rate: f64): Schedule {
   return Schedule { ...closed(start), rate: Some(rate) };
 }
 
-pub function bursts(start: i64, burst: i64, delay: Duration): Schedule {
+pub function bursts(start: i64, burst: i64, delay: time.Duration): Schedule {
   return Schedule { ...closed(start), burst: burst, delay: delay.as_nanos() };
 }
 
@@ -65,7 +65,7 @@ pub function (s: Schedule) starts(k: i64, now: i64): Option[i64] {
 // How long the reactor can wait at `now` for request `k`. The wait of the
 // reactor has whole milliseconds and does not end early. Thus in the last
 // millisecond before the request is due, the wait is zero and the loop polls.
-pub function (s: Schedule) wait(k: i64, now: i64): Duration {
+pub function (s: Schedule) wait(k: i64, now: i64): time.Duration {
   let ns = s.due(k) - now;
   if (ns < 1000000) {
     return time.DURATION_ZERO;

@@ -12,7 +12,7 @@ import "std/string";
 
 // A three-way tie: three tasks wait for the same virtual instant, so the task
 // that runs first is entirely the seeded draw.
-function arrive(d: sim.Sim, at: Instant, first: Cell[i32], me: i32): i32 {
+function arrive(d: sim.Sim, at: time.Instant, first: Cell[i32], me: i32): i32 {
     let moved: boolean = d.advance_to(at);
     if (first.get() < 0) {
         first.set(me);
@@ -23,7 +23,7 @@ function arrive(d: sim.Sim, at: Instant, first: Cell[i32], me: i32): i32 {
 function tie3(seed: i64): i32 {
     let d: sim.Sim = sim.new(seed);
     let first: Cell[i32] = cell_new(0 - 1);
-    let at: Instant = sim.at(time.duration_nanos(5000000));
+    let at: time.Instant = sim.at(time.duration_nanos(5000000));
     let entries: (() => i32)[] = [
         (): i32 => arrive(d, at, first, 0),
         (): i32 => arrive(d, at, first, 1),

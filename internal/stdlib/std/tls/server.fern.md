@@ -46,13 +46,13 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 const TICKET_AAD: string>>
 
-<<14 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket>>
+<<14 pub function issue_ticket(key: [u8], lifetime: time.Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket>>
 
 <<15 function __same(a: [u8], b: [u8]): boolean>>
 
 <<16 pub struct Connection>>
 
-<<17 pub function accept(own sock: Socket, config: Config, timeout: Duration): Result[Connection, tls.TlsError]>>
+<<17 pub function accept(own sock: Socket, config: Config, timeout: time.Duration): Result[Connection, tls.TlsError]>>
 
 <<18 function __handshake_on(sock: Socket, config: Config, deadline: i64): Result[Shook, tls.TlsError]>>
 
@@ -103,7 +103,7 @@ import "std/utf8";
 
 ```fern
 <<3 pub struct Config>>=
-pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: Duration, ticket_key: u8[], client_roots: Option[verify.Roots], ocsp_response: u8[] }
+pub struct Config { identity: identity.Identity, alpn: string[], tickets: boolean, ticket_lifetime: time.Duration, ticket_key: u8[], client_roots: Option[verify.Roots], ocsp_response: u8[] }
 ```
 
 ### `4 pub function config(id: identity.Identity, ticket_key: [u8]): Result[Config, tls.TlsError]`
@@ -144,7 +144,7 @@ pub function (c: Config) with_alpn(protocols: string[]): Config {
   return Config { ...c, alpn: protocols };
 }
 
-pub function (c: Config) with_ticket_lifetime(d: Duration): Config {
+pub function (c: Config) with_ticket_lifetime(d: time.Duration): Config {
   return Config { ...c, ticket_lifetime: d };
 }
 
@@ -539,8 +539,8 @@ pub const TICKET_ENTROPY: i32 = 16;
 ### `14 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket`
 
 ```fern
-<<14 pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket>>=
-pub function issue_ticket(key: [u8], lifetime: Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket {
+<<14 pub function issue_ticket(key: [u8], lifetime: time.Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket>>=
+pub function issue_ticket(key: [u8], lifetime: time.Duration, srv: handshake.Server, entropy: [u8], now: i64, early: boolean): message.NewSessionTicket {
   let nonce = [0 as u8];
   let seconds = lifetime.as_millis() / (1000 as i64);
   if (seconds > TICKET_LIFETIME_MAX) {
@@ -794,8 +794,8 @@ pub struct Received { conn: Connection, data: u8[], ended: boolean }
 ### `17 pub function accept(own sock: Socket, config: Config, timeout: Duration): Result[Connection, tls.TlsError]`
 
 ```fern
-<<17 pub function accept(own sock: Socket, config: Config, timeout: Duration): Result[Connection, tls.TlsError]>>=
-pub function accept(own sock: Socket, config: Config, timeout: Duration): Result[Connection, tls.TlsError] {
+<<17 pub function accept(own sock: Socket, config: Config, timeout: time.Duration): Result[Connection, tls.TlsError]>>=
+pub function accept(own sock: Socket, config: Config, timeout: time.Duration): Result[Connection, tls.TlsError] {
   match (__handshake_on(sock, config, monotonic_ns() + timeout.as_nanos())) {
     Ok(shook) => {
       return Ok(Connection { sock: sock, session: shook.session, pending: shook.pending, ended: shook.ended, open: cell_new(true) });
@@ -897,7 +897,7 @@ pub function (c: Connection) update_keys(request: boolean): Result[Connection, t
   return Ok(Connection { ...c, session: step.session });
 }
 
-pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError] {
+pub function (c: Connection) read(wait: time.Duration): Result[Received, tls.TlsError] {
   if (!c.open.get()) {
     return Err(tls.NetFailed(net.ConnectionAborted));
   }
@@ -1119,7 +1119,7 @@ function __await(sock: Socket, deadline: i64): Result[Option[u8[]], tls.TlsError
   return __recv_fd(sock, time.duration_nanos(left));
 }
 
-function __recv_fd(sock: Socket, wait: Duration): Result[Option[u8[]], tls.TlsError] {
+function __recv_fd(sock: Socket, wait: time.Duration): Result[Option[u8[]], tls.TlsError] {
   match (net.read_deadline(sock, 65536, wait)) {
     Ok(net.Chunk(b)) => {
       return Ok(Some(b));

@@ -1773,7 +1773,7 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 
 // A stdlib module owns each of these names, so a program can declare them.
 func TestModuleOwnedStructNamesAreNotReserved(t *testing.T) {
-	for _, name := range []string{"Url", "BytesWriter", "Date", "Time", "DateTime", "Span"} {
+	for _, name := range []string{"Url", "BytesWriter", "Date", "Time", "DateTime", "Span", "Instant", "Duration"} {
 		if IsReservedName(name) {
 			t.Errorf("IsReservedName(%q) = true", name)
 		}

@@ -724,7 +724,7 @@ function main(): i32 {
 import "std/i64";
 import "std/time";
 function main(): i32 {
-    let d: Duration = time.duration_millis(2500 as i64);
+    let d: time.Duration = time.duration_millis(2500 as i64);
     print(d.sec.to_string());
     print(d.nsec.to_string());
     return 0;
@@ -1390,11 +1390,11 @@ import "std/time";
 function main(): i32 {
     // 1000.5 + 5.75 = 1006.25 (carry: 500e6 + 750e6 = 1.25e9 → +1 sec, 250e6 ns).
     let t1: time.Timestamp = time.Timestamp { sec: 1000 as i64, nsec: 500000000 };
-    let sum: time.Timestamp = t1.add(Duration { sec: 5 as i64, nsec: 750000000 });
+    let sum: time.Timestamp = t1.add(time.Duration { sec: 5 as i64, nsec: 750000000 });
     print(sum.sec.to_string() + "." + sum.nsec.to_string());
 
     // Exact 1-second carry: 999_999_999 + 1 = 1_000_000_000 → +1 sec.
-    let edge: time.Timestamp = (time.Timestamp { sec: 0 as i64, nsec: 999999999 }).add(Duration { sec: 0 as i64, nsec: 1 });
+    let edge: time.Timestamp = (time.Timestamp { sec: 0 as i64, nsec: 999999999 }).add(time.Duration { sec: 0 as i64, nsec: 1 });
     print(edge.sec.to_string() + "." + edge.nsec.to_string());
     return 0;
 }`,
@@ -1407,7 +1407,7 @@ import "std/i64";
 import "std/time";
 function main(): i32 {
     let t: time.Timestamp = time.Timestamp { sec: 1000 as i64, nsec: 0 };
-    let back: time.Timestamp = t.add(Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
+    let back: time.Timestamp = t.add(time.Duration { sec: (0 as i64) - (10 as i64), nsec: 0 });
     print(back.sec.to_string());
     return 0;
 }`,
@@ -1422,11 +1422,11 @@ function main(): i32 {
     let a: time.Timestamp = time.Timestamp { sec: 1000 as i64, nsec: 200000000 };
     let b: time.Timestamp = time.Timestamp { sec: 1005 as i64, nsec: 700000000 };
     // b - a = 5.5s
-    let fwd: Duration = b.since(a);
+    let fwd: time.Duration = b.since(a);
     print(fwd.sec.to_string() + "+" + fwd.nsec.to_string());
     // Borrow case: a - b should produce nsec >= 0 by adjustment.
     // a.nsec(200M) - b.nsec(700M) = -500M → borrow 1 sec, nsec = 500M.
-    let rev: Duration = a.since(b);
+    let rev: time.Duration = a.since(b);
     print(rev.sec.to_string() + "+" + rev.nsec.to_string());
     return 0;
 }`,

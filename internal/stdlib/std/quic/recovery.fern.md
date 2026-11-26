@@ -24,17 +24,17 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<4 pub function new(max_datagram: i32, server: boolean): Recovery>>
 
-<<6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: Duration, now: Instant, largest_sent:...>>
+<<6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: time.Duration, now: time.Instant, largest_sent:...>>
 
 <<7 function __acked_of(sent: Sent[], ack: frames.Ack): Sent[]>>
 
 <<8 function (r: Recovery) __on_lost(lost: Sent[], now: i64): Recovery>>
 
-<<9 pub function (r: Recovery) pto(space: i32): Duration>>
+<<9 pub function (r: Recovery) pto(space: i32): time.Duration>>
 
 <<10 function (r: Recovery) __earliest_loss(): (i64, i32)>>
 
-<<11 pub function (r: Recovery) on_timeout(now: Instant): Recovery>>
+<<11 pub function (r: Recovery) on_timeout(now: time.Instant): Recovery>>
 ```
 
 ### `module introduction`
@@ -66,9 +66,9 @@ pub const APPLICATION: i32 = 2;
 
 pub const PACKET_THRESHOLD: i64 = 3;
 
-pub const GRANULARITY: Duration = Duration { sec: 0, nsec: 1000000 };
+pub const GRANULARITY: time.Duration = time.Duration { sec: 0, nsec: 1000000 };
 
-pub const INITIAL_RTT: Duration = Duration { sec: 0, nsec: 333000000 };
+pub const INITIAL_RTT: time.Duration = time.Duration { sec: 0, nsec: 333000000 };
 
 pub const PERSISTENT_CONGESTION_THRESHOLD: i64 = 3;
 
@@ -79,7 +79,7 @@ pub enum Resend {
 }
 
 // ect is whether the packet left marked ECT(0).
-pub struct Sent { pn: i64, at: Instant, size: i32, ack_eliciting: boolean, in_flight: boolean, ect: boolean, resend: Resend[] }
+pub struct Sent { pn: i64, at: time.Instant, size: i32, ack_eliciting: boolean, in_flight: boolean, ect: boolean, resend: Resend[] }
 
 // ce is the largest ECN-CE count the peer has reported for the space.
 struct Space { sent: Sent[], largest_acked: i64, loss_time: i64, last_ack_eliciting: i64, ce: i64 }
@@ -127,7 +127,7 @@ pub function new(max_datagram: i32, server: boolean): Recovery {
   return Recovery { spaces: [empty, empty, empty], latest_rtt: 0 as i64, smoothed_rtt: INITIAL_RTT.as_nanos(), rttvar: INITIAL_RTT.as_nanos() / 2, min_rtt: 0 as i64, first_rtt_sample: 0 as i64, pto_count: 0, max_ack_delay: 0 as i64, max_datagram: md, bytes_in_flight: 0 as i64, cwnd: window, ssthresh: frames.MAX_VARINT, recovery_start: -1i64, handshake_confirmed: false, peer_validated: server, acked: [], lost: [], probe: -1, refused: 0 as i64 };
 }
 
-pub function (r: Recovery) with_max_ack_delay(d: Duration): Recovery {
+pub function (r: Recovery) with_max_ack_delay(d: time.Duration): Recovery {
   return Recovery { ...r, max_ack_delay: d.as_nanos() };
 }
 
@@ -175,8 +175,8 @@ pub function (r: Recovery) on_sent(space: i32, p: Sent): Recovery {
 ### `6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: Duration, now: Instant, largest_sent:...`
 
 ```fern
-<<6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: Duration, now: Instant, largest_sent:...>>=
-pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: Duration, now: Instant, largest_sent: i64): Recovery {
+<<6 pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: time.Duration, now: time.Instant, largest_sent:...>>=
+pub function (r: Recovery) on_ack(space: i32, ack: frames.Ack, ack_delay: time.Duration, now: time.Instant, largest_sent: i64): Recovery {
   return r.__on_ack(space, ack, ack_delay.as_nanos(), time.instant_nanos(now), largest_sent);
 }
 
@@ -460,8 +460,8 @@ function __max(a: i64, b: i64): i64 {
 ### `9 pub function (r: Recovery) pto(space: i32): Duration`
 
 ```fern
-<<9 pub function (r: Recovery) pto(space: i32): Duration>>=
-pub function (r: Recovery) pto(space: i32): Duration {
+<<9 pub function (r: Recovery) pto(space: i32): time.Duration>>=
+pub function (r: Recovery) pto(space: i32): time.Duration {
   return time.duration_nanos(r.pto_ns(space));
 }
 
@@ -484,7 +484,7 @@ pub(package) function (r: Recovery) timer_ns(): i64 {
 }
 
 // When the loss or probe timer fires next, if one is armed.
-pub function (r: Recovery) timer(): Option[Instant] {
+pub function (r: Recovery) timer(): Option[time.Instant] {
   let at = r.timer_ns();
   if (at == 0) {
     return None;
@@ -544,8 +544,8 @@ function __eliciting_in(s: Space): boolean {
 ### `11 pub function (r: Recovery) on_timeout(now: Instant): Recovery`
 
 ```fern
-<<11 pub function (r: Recovery) on_timeout(now: Instant): Recovery>>=
-pub function (r: Recovery) on_timeout(at: Instant): Recovery {
+<<11 pub function (r: Recovery) on_timeout(now: time.Instant): Recovery>>=
+pub function (r: Recovery) on_timeout(at: time.Instant): Recovery {
   let now = time.instant_nanos(at);
   let (loss, space) = r.__earliest_loss();
   let (pto, pspace) = r.__pto_time();
@@ -575,7 +575,7 @@ pub function (r: Recovery) discard(space: i32): Recovery {
   return Recovery { ...r, spaces: r.spaces.with(space, Space { ...s, sent: [], loss_time: 0 as i64, last_ack_eliciting: 0 as i64 }), bytes_in_flight: flight, pto_count: 0 };
 }
 
-pub function (r: Recovery) smoothed(): Duration {
+pub function (r: Recovery) smoothed(): time.Duration {
   return time.duration_nanos(r.smoothed_rtt);
 }
 ```
