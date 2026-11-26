@@ -58,12 +58,12 @@ x86_64/call_overhead.ir	7238001
 x86_64/closure_call.text	1065
 x86_64/closure_call.ir	41178167
 x86_64/deflate_decode.ir	26280225
-x86_64/deflate_decode.text	13805
+x86_64/deflate_decode.text	14602
 x86_64/deflate_encode.ir	39049495
-x86_64/deflate_encode.text	7417
+x86_64/deflate_encode.text	7564
 x86_64/enum_match.text	1036
 x86_64/enum_match.ir	29250077
-x86_64/http_hello.text	16291
+x86_64/http_hello.text	16580
 x86_64/http_hello.ir	21396352
 x86_64/int_loop.text	298
 x86_64/int_loop.ir	12000077
@@ -73,7 +73,7 @@ x86_64/map_probe_chain.text	8699
 x86_64/map_probe_chain.ir	223421679
 x86_64/map_string.text	9594
 x86_64/map_string.ir	45873963	2
-x86_64/ordmap_insert.text	5940
+x86_64/ordmap_insert.text	6186
 x86_64/ordmap_insert.ir	66502789
 x86_64/pmap_insert.text	3679
 x86_64/pmap_insert.ir	48660607
@@ -137,12 +137,12 @@ aarch64/call_overhead.ir	10313038
 aarch64/closure_call.text	1309
 aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	25490431
-aarch64/deflate_decode.text	14642
+aarch64/deflate_decode.text	15365
 aarch64/deflate_encode.ir	39748600
 aarch64/deflate_encode.text	7906
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
-aarch64/http_hello.text	16978
+aarch64/http_hello.text	17267
 aarch64/http_hello.ir	22972520
 aarch64/int_loop.text	376
 aarch64/int_loop.ir	18000085
@@ -152,7 +152,7 @@ aarch64/map_probe_chain.text	8688
 aarch64/map_probe_chain.ir	215140347
 aarch64/map_string.text	9710
 aarch64/map_string.ir	46464947	2
-aarch64/ordmap_insert.text	6303
+aarch64/ordmap_insert.text	6543
 aarch64/ordmap_insert.ir	82086738
 aarch64/pmap_insert.text	3986
 aarch64/pmap_insert.ir	54692820
