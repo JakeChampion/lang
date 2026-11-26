@@ -4090,11 +4090,18 @@ function verify_one(a: i32, file: string, verbose: boolean): boolean {
       return false;
     },
   };
-  if let Err(message) = index.header_count(data) {
-    eprint(message);
-    return false;
-  }
+  let count = match (index.header_count(data)) {
+    Ok(n) => n,
+    Err(message) => {
+      eprint(message);
+      return false;
+    },
+  };
   if (!pack_checksum_ok(a, data)) {
+    // Read the streams to distinguish a bad object from a damaged trailer.
+    if let Err(message) = index.checked_offsets(data, count, a) {
+      eprint(message);
+    }
     return false;
   }
   let order = by_offset(ix);

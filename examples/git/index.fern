@@ -443,26 +443,35 @@ pub function header_count(data: string): Result[i32, string] {
   return Ok(data[8] as i32 << 24 | data[9] as i32 << 16 | data[10] as i32 << 8 | data[11] as i32);
 }
 
+// Locate the trailer by reading the declared objects, then verify it.
+pub function checked_offsets(data: string, count: i32, raw: i32): Result[i64[], string] {
+  // The unsigned count cannot exceed the number of bytes in the input.
+  if (count < 0) {
+    return Err("fatal: early EOF");
+  }
+  let offsets = offsets_of(data, count, raw)?;
+  let end = offsets[count] as i32;
+  if (end > data.len() - raw) {
+    return Err("fatal: early EOF");
+  }
+  let view = data.as_bytes();
+  if (hex.encode(objects.digest(raw, view[0:end])) != hex.encode(view[end:end + raw])) {
+    return Err("fatal: pack is corrupted (SHA1 mismatch)");
+  }
+  if (end + raw != data.len()) {
+    return Err("fatal: pack has junk at the end");
+  }
+  return Ok(offsets);
+}
+
 // The index of the packfile `data`. `first` gives the names of the objects
 // in parts that are in order and that cover the packfile: a caller with
 // workers gives each part to one worker. `local` gives an object of the
 // repository for a thin pack, or None.
 pub function build_with(data: string, o: Options, first: (string, i64[]) => string[][], local: (string) => Option[objects.Object]): Result[Built, string] {
   let raw = o.width;
-  let n = data.len();
   let count = header_count(data)?;
-  let offsets = offsets_of(data, count, raw)?;
-  let end = offsets[count] as i32;
-  if (end + raw > n) {
-    return Err("fatal: early EOF");
-  }
-  let view = data.as_bytes();
-  if (hex.encode(objects.digest(o.width, view[0:end])) != hex.encode(view[end:end + raw])) {
-    return Err("fatal: pack is corrupted (SHA1 mismatch)");
-  }
-  if (end + raw != n) {
-    return Err("fatal: pack has junk at the end");
-  }
+  let offsets = checked_offsets(data, count, raw)?;
   let parts: string[] = [];
   for part in first(data, offsets) {
     parts = parts.concat(part);

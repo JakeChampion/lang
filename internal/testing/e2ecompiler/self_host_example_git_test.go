@@ -634,7 +634,7 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 			compare("", "verify-pack", "-v", idx)
 			rewriteFile(t, idx, originalIndex)
 
-			// One changed byte in the middle of the packfile: git and the port refuse it.
+			// Match the diagnostic for damage to the header, an object, or the trailer.
 			packed := strings.TrimSuffix(idx, ".idx") + ".pack"
 			data, err := os.ReadFile(packed)
 			if err != nil {
@@ -646,12 +646,26 @@ func TestSelfHostExampleGitPacked(t *testing.T) {
 				rewriteFile(t, packed, changed)
 				compare("", "verify-pack", "-v", idx)
 			}
+			rewriteFile(t, packed, data)
+
+			// Verify the damaged copy while the repository still has a sound pack.
+			copyBase := filepath.Join(t.TempDir(), "copy")
+			if err := os.WriteFile(copyBase+".idx", fileBytes(t, idx), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			badSum := bytes.Clone(data)
+			badSum[len(badSum)-1] ^= 0x40
+			for _, changed := range [][]byte{data[:len(data)-1], append(bytes.Clone(data), 0), badSum} {
+				if err := os.WriteFile(copyBase+".pack", changed, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				compare("", "verify-pack", copyBase+".idx")
+				compare("", "verify-pack", "-v", copyBase+".idx")
+			}
 			data[len(data)/2] ^= 0x40
 			rewriteFile(t, packed, data)
-			_, _, wantCode := oracle.run(t, top, "", "verify-pack", idx)
-			if _, _, gotCode := port.run(t, top, "", "verify-pack", idx); wantCode == 0 || gotCode != wantCode {
-				t.Errorf("verify-pack of a changed packfile: the port gives exit %d and git gives %d", gotCode, wantCode)
-			}
+			compare("", "verify-pack", idx)
+			compare("", "verify-pack", "-v", idx)
 		})
 	}
 }
