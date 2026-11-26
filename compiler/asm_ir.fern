@@ -12306,6 +12306,32 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   return true;
 }
 
+// The blocks that a backward jump reaches, by block index: the tops of the
+// loops as the terminators emit them, after rotation and forwarding. Each
+// top starts a 64-byte line, so the code before a loop does not move it.
+function ssa_loop_tops(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[]): boolean[] {
+  let out = __alloc_bool(f.blocks.len());
+  for bi in 0..f.blocks.len() {
+    let t = f.blocks[bi].term;
+    let succ: i32[] = [];
+    if (t.kind_tag == ssa.TERM_BR && ssa_rotates(f, fr, bi, t.target)) {
+      let h = f.blocks[ssa.block_index(fr.blk_pos, t.target)].term;
+      succ = [h.t, h.f];
+    } else if (t.kind_tag == ssa.TERM_BR) {
+      succ = [t.target];
+    } else if (t.kind_tag == ssa.TERM_BRIF) {
+      succ = [t.t, t.f];
+    }
+    for id in succ {
+      let ti = ssa.block_index(fr.blk_pos, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, id));
+      if (ti >= 0 && ti <= bi) {
+        out = out.with(ti, true);
+      }
+    }
+  }
+  return out;
+}
+
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t = blk.term;
   if (t.kind_tag == ssa.TERM_RET) {
@@ -12649,6 +12675,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1, ssa_konst: imm.konst, ssa_konst_value: imm.value };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, s);
   let frame_homes = reg_of;
+  let tops = if (s.size) { __alloc_bool(f.blocks.len()) } else { ssa_loop_tops(f, fr, reg_of) };
   let pos = 0;
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
@@ -12657,6 +12684,9 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       next = f.blocks[bi + 1].id;
     }
     s = asmcore.ssa_x0_forget(s);
+    if (tops[bi]) {
+      s = s.write("    .p2align 6\n");
+    }
     s = s.lab_def(ssa_blab(fr, lp, blk.id));
     let early = split.early.len() > 0 && split.early[bi];
     let reg_of = if (early) { early_homes.homes } else { frame_homes };

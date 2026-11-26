@@ -284,12 +284,12 @@ jobs:
       - name: Record the reports in refs/notes/perf
         if: ${{ !cancelled() && github.event_name == 'push' && matrix.host == 'x86_64' }}
         run: |
-          set -euo pipefail
-          scripts/perf-history record append-cliff-x86_64 "${{ runner.temp }}/cliff-report.txt"
-          scripts/perf-history record selfhost-size-x86_64 "${{ runner.temp }}/selfhost-size-report.txt"
-          scripts/perf-history record selfhost-alloc-x86_64 "${{ runner.temp }}/alloc-report.txt"
-          scripts/perf-history record profile-costs-x86_64 "${{ runner.temp }}/profile-costs-report.txt"
-          scripts/perf-history record certify-census-x86_64 "${{ runner.temp }}/certify-report.txt"
+          scripts/perf-history record \
+            append-cliff-x86_64 "${{ runner.temp }}/cliff-report.txt" \
+            selfhost-size-x86_64 "${{ runner.temp }}/selfhost-size-report.txt" \
+            selfhost-alloc-x86_64 "${{ runner.temp }}/alloc-report.txt" \
+            profile-costs-x86_64 "${{ runner.temp }}/profile-costs-report.txt" \
+            certify-census-x86_64 "${{ runner.temp }}/certify-report.txt"
 
       - name: Upload the reports
         if: ${{ always() && matrix.host == 'x86_64' }}
