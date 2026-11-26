@@ -4922,10 +4922,6 @@ function callable_typevar_name(t: typeinfo.Type): string {
   return tvar_name(t);
 }
 
-function type_from_name(name: string): typeinfo.Type {
-  return type_from_spelling(name, type_names([], [], []));
-}
-
 function call_through_fn_value(c: ast.ExprCall, s: Scope): typeinfo.Type {
   if (desugared_lambda(c.callee)) {
     return t_unknown("immediately-invoked lambda: typed from its branches, not its value");
@@ -5061,13 +5057,14 @@ pub function builtin_sig(name: string): typeinfo.Type {
   }
   let close = util.index_of_sub(row, "): ");
   let inner = slice_unchecked(row, name.len() + 1, close).to_owned();
+  let names = type_names([], [], []);
   let params: typeinfo.Type[] = [];
   if (inner.len() > 0) {
     for p in parser.split_top_commas(inner) {
-      params = params.append(type_from_name(p));
+      params = params.append(type_from_spelling(p, names));
     }
   }
-  return t_func(params, type_from_name(slice_unchecked(row, close + 3, row.len()).to_owned()));
+  return t_func(params, type_from_spelling(slice_unchecked(row, close + 3, row.len()).to_owned(), names));
 }
 
 // Scalar display signatures are completed by private runtime source bodies.
