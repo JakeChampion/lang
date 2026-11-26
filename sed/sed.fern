@@ -344,12 +344,23 @@ function read_label(c0: Comp): (Comp, string) {
   return (savchar(c), label);
 }
 
+// GNU sed tests the first delimiter byte by itself. In a UTF-8 locale,
+// NUL and an incomplete character cannot delimit a command. glibc also
+// accepts the lead bytes of five-byte and six-byte encodings.
+function check_delimiter(c: Comp, slash: i32): void {
+  let last_lead = if (target_os() == "linux") { 0xfd } else { 0xf4 };
+  if (c.o.utf8 && (slash == 0 || slash >= 0xc2 && slash <= last_lead)) {
+    bad_prog(c, "delimiter character is not a single-byte character");
+  }
+}
+
 // match_slash reads up to the closing delimiter. A regex turns \n into a
 // newline. An escaped delimiter loses its backslash, but \& keeps it in a
 // replacement whose delimiter is &. In a regex, a bracket expression is
 // copied as it is: the delimiter does not end it, and a backslash in it is
 // a literal character.
 function match_slash(c0: Comp, slash: i32, regex: boolean): (Comp, u8[], boolean) {
+  check_delimiter(c0, slash);
   let c = c0;
   let h = buf_new(32);
   let found = false;
