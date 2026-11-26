@@ -767,8 +767,8 @@ function module_config(parent: refs.Repo): config.Config {
 function submodule_at(parent: refs.Repo, path: string): Option[refs.Repo] {
   if (parent.top == "") { return None; }
   if let Some(sub) = refs.checkout_at(parent.top + "/" + path) { return Some(sub); }
-  if (parent.dir != parent.common || parent.config.flag("extensions.submodulepathconfig", false)) { return None; }
-  let modules = parent.common + "/modules";
+  if (parent.config.flag("extensions.submodulepathconfig", false)) { return None; }
+  let modules = parent.dir + "/modules";
   if (stat(modules).is_err()) { return None; }
   let dir = "";
   for e in module_config(parent).entries {
@@ -793,7 +793,7 @@ function submodule_absent(repo: refs.Repo, path: string): boolean {
   if (!missing_or_empty_dir(repo.top + "/" + path + "/.git")) {
     return false;
   }
-  return missing_or_empty_dir(repo.common + "/modules") && (repo.common == repo.dir || missing_or_empty_dir(repo.dir + "/modules"));
+  return missing_or_empty_dir(repo.dir + "/modules");
 }
 
 enum SubmoduleHistory { FastForward(Version), Rewind, MissingCommit(string), Diverged, Unresolved }

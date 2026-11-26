@@ -879,6 +879,23 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	g.git("commit", "-qm", "track module location")
 	g.git("update-index", "--force-remove", ".gitmodules")
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	// Each linked worktree has its own module stores. The same named
+	// store in the primary worktree must not resolve this merge.
+	linked := filepath.Join(t.TempDir(), "linked")
+	g.git("worktree", "add", "-q", "--detach", linked, "HEAD")
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	linkedModules := filepath.Join(g.git("-C", linked, "rev-parse", "--absolute-git-dir"), "modules")
+	if err := os.MkdirAll(linkedModules, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkedStore := filepath.Join(linkedModules, "Library")
+	if err := os.Rename(storedGit, linkedStore); err != nil {
+		t.Fatal(err)
+	}
+	gitCompare(t, oracle, port, linked, "", "log", "--remerge-diff", "--raw", "-p", "-1", reversed)
+	if err := os.Rename(linkedStore, storedGit); err != nil {
+		t.Fatal(err)
+	}
 	g.git("reset", "--soft", "HEAD^")
 	if err := os.Rename(storedGit, workGit); err != nil {
 		t.Fatal(err)
