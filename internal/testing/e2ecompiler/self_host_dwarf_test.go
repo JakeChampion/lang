@@ -676,12 +676,17 @@ struct Heading { dir: Direction, speed: i32 }
     }
     return -1;
 }
-@noinline function pace(h: Heading): i32 { return h.speed + turn(h.dir); }
+@noinline function pace(h: Heading): i32 {
+    let boxed = headings(h);
+    return boxed[0].speed + turn(h.dir);
+}
 function main(): i32 {
     let d: Direction = South;
     let h: Heading = Heading { dir: West, speed: 5 };
     return turn(d) + pace(h);
 }
+
+@noinline function headings(x: Heading): Heading[] { return [x]; }
 `
 
 func dwarfVarType(t *testing.T, d *dwarf.Data, fn, name string) dwarf.Type {
