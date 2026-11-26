@@ -30,7 +30,7 @@ import "./walk";
 // and `drivers` records whether each named driver has a command.
 // With a `verbosity` of 5 or more, the messages of an inner merge are kept. `abbrev` is the least length of a short name.
 // `attrs` holds the attributes, or nothing.
-pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, renormalize: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
+pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, renormalize: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, driver_error: Option[(string, string)], drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
 
 // The text of a gap: a part of a merge that the port does not have.
 function gap(what: string): string {
@@ -39,7 +39,7 @@ function gap(what: string): string {
 
 // The settings of git with no configuration.
 pub function defaults(): Options {
-  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, renormalize: false, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
+  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, renormalize: false, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", driver_error: None, drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
 }
 
 // The settings of a merge from the configuration, or the message of git
@@ -147,7 +147,13 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
     }
     // The name of a driver is the part between `merge.` and the last dot.
     let last = e.name.last_index_of(".").unwrap_or(-1);
-    if (e.name.starts_with("merge.") && last > 6) {
+    let is_driver = e.name.starts_with("merge.") && last > 6;
+    let needs_value = e.name == "merge.default" || is_driver && (e.name.ends_with(".name") || e.name.ends_with(".driver") || e.name.ends_with(".recursive"));
+    // Git reads the driver settings only when a blob merge selects a driver.
+    if (e.bare && needs_value && o.driver_error.is_none()) {
+      o = Options { ...o, driver_error: Some(("error: " + config.missing_value(e), c.bad(e))) };
+    }
+    if (is_driver) {
       let name = objects.part(e.name, 6, last);
       let has_command = e.name.ends_with(".driver") || o.drivers.get_or(name, false);
       o = Options { ...o, drivers: o.drivers.insert(name, has_command) };
@@ -678,6 +684,10 @@ function blob_of(st: State, hash: string): (State, u8[]) {
 
 // The driver of the merge of `path` (`find_ll_merge_driver` of git).
 function driver_of(st: State, path: string): (State, string) {
+  if let Some(err) = st.o.driver_error {
+    let (warning, fatal) = err;
+    return (State { ...st, warnings: st.warnings.append(warning), fatal: fatal }, "text");
+  }
   let value = if (st.o.attrs.len() > 0) { attr.value_of(st.o.attrs[0], path, "merge") } else { attr.UNSPECIFIED };
   if (value == attr.SET) {
     return (st, "text");

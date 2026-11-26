@@ -716,6 +716,12 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 				gitCompare(t, oracle, port, dir, "", "log", "-1", "base")
 				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-1", "rename-delete-1")
 			}
+			for _, entry := range []string{"[merge]\ndefault", "[merge \"custom\"]\nname", "[merge \"custom\"]\ndriver", "[merge \"custom\"]\nrecursive", "[merge \"custom\"]\nunknown"} {
+				g.write(".git/config", string(configBytes)+"\n"+entry+"\n")
+				for _, ref := range []string{"content-1", "rename-delete-1"} {
+					gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "-1", ref)
+				}
+			}
 			g.write(".git/config", string(configBytes))
 			// The attributes of a path select the driver of its merge and
 			// the size of its conflict markers.
