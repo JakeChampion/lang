@@ -169,10 +169,10 @@ function tangle_module(path: string, doc: string, src: string): Resolved {
     return Resolved { ...res_none(), err: "a multi-file literate document tangles to several modules, not one importable module", err_path: doc };
   }
   match (literate.tangle(src)) {
-    literate.TangleOk(o) => {
+    Ok(o) => {
       return Resolved { ...res_none(), src: o.code, ok: true, shown: path, map: util.LineMap { doc: doc, lits: o.lits, shifts: o.shifts } };
     },
-    literate.TangleErr(e) => {
+    Err(e) => {
       return Resolved { ...res_none(), err: e.msg, err_path: doc + ":" + util.i32_to_string(e.line) + ":" + util.i32_to_string(e.col) };
     }
   }

@@ -353,32 +353,31 @@ function marker_col(text: string): i32 {
   return leading_ws(text).len() + 1;
 }
 
-pub struct ExpandOk { lines: string[], lits: i32[], shifts: i32[] }
+// A tangle failure at a document position.
+pub struct Error { msg: string, line: i32, col: i32 }
 
-pub struct ExpandErr { msg: string, line: i32, col: i32 }
+struct Lines { lines: string[], lits: i32[], shifts: i32[] }
 
-pub type ExpandResult = ExpandOk | ExpandErr;
-
-function no_lines(): ExpandOk {
-  return ExpandOk { lines: [], lits: [], shifts: [] };
+function no_lines(): Lines {
+  return Lines { lines: [], lits: [], shifts: [] };
 }
 
-function emit_line(o: ExpandOk, indent: string, text: string, line: i32): ExpandOk {
+function emit_line(o: Lines, indent: string, text: string, line: i32): Lines {
   let de = de_escape(text);
-  return ExpandOk { lines: o.lines.append(indent + de), lits: o.lits.append(line), shifts: o.shifts.append(indent.len() - (text.len() - de.len())) };
+  return Lines { lines: o.lines.append(indent + de), lits: o.lits.append(line), shifts: o.shifts.append(indent.len() - (text.len() - de.len())) };
 }
 
-function append_lines(o: ExpandOk, more: ExpandOk): ExpandOk {
+function append_lines(o: Lines, more: Lines): Lines {
   let out = o;
   for k in 0..more.lines.len() {
-    out = ExpandOk { lines: out.lines.append(more.lines[k]), lits: out.lits.append(more.lits[k]), shifts: out.shifts.append(more.shifts[k]) };
+    out = Lines { lines: out.lines.append(more.lines[k]), lits: out.lits.append(more.lits[k]), shifts: out.shifts.append(more.shifts[k]) };
   }
   return out;
 }
 
-function expand(pieces: Piece[], name: string, indent: string, active: string[]): ExpandResult {
+function expand(pieces: Piece[], name: string, indent: string, active: string[]): Result[Lines, Error] {
   if (stack_has(active, name)) {
-    return ExpandErr { msg: "literate: chunk \"<<" + name + ">>\" is defined in terms of itself (cyclic chunk reference)", line: header_line(pieces, name), col: 1 };
+    return Err(Error { msg: "literate: chunk \"<<" + name + ">>\" is defined in terms of itself (cyclic chunk reference)", line: header_line(pieces, name), col: 1 });
   }
   let active2 = active.append(name);
   let out = no_lines();
@@ -389,67 +388,43 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
       if (is_ref(t)) {
         let rn = ref_name(t);
         if (!chunk_defined(pieces, rn)) {
-          return ExpandErr { msg: undefined_ref(rn), line: pieces[i].line, col: marker_col(text) };
+          return Err(Error { msg: undefined_ref(rn), line: pieces[i].line, col: marker_col(text) });
         }
-        let sub = expand(pieces, rn, indent + leading_ws(text), active2);
-        match (sub) {
-          ExpandOk(o) => {
-            out = append_lines(out, o);
-          },
-          _ => {
-            return sub;
-          }
-        }
+        out = append_lines(out, expand(pieces, rn, indent + leading_ws(text), active2)?);
       } else {
         out = emit_line(out, indent, text, pieces[i].line);
       }
     }
   }
-  return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
+  return Ok(out);
 }
 
-pub struct TangleOk { code: string, lits: i32[], shifts: i32[] }
-
-pub struct TangleErr { msg: string, line: i32, col: i32 }
-
-pub type TangleResult = TangleOk | TangleErr;
+pub struct Tangled { code: string, lits: i32[], shifts: i32[] }
 
 pub function is_program(src: string): boolean {
   return chunk_defined(parse_pieces(src), "*") || parse_file_pieces(src).len() > 0;
 }
 
-pub function tangle(src: string): TangleResult {
+pub function tangle(src: string): Result[Tangled, Error] {
   let pieces = parse_pieces(src);
   if (!chunk_defined(pieces, "*")) {
-    return TangleErr { msg: "literate: no root chunk \"<<*>>\" defined (every literate program needs a `<<*>>=` block to tangle from)", line: 1, col: 1 };
+    return Err(Error { msg: "literate: no root chunk \"<<*>>\" defined (every literate program needs a `<<*>>=` block to tangle from)", line: 1, col: 1 });
   }
   let empty: string[] = [];
-  let r = expand(pieces, "*", "", empty);
-  match (r) {
-    ExpandOk(o) => {
-      return TangleOk { code: join_lines(o.lines), lits: o.lits, shifts: o.shifts };
-    },
-    ExpandErr(e) => {
-      return TangleErr { msg: e.msg, line: e.line, col: e.col };
-    }
-  }
+  return Ok(tangled(expand(pieces, "*", "", empty)?));
 }
 
-pub function tangle_chunk(src: string, name: string): TangleResult {
+pub function tangle_chunk(src: string, name: string): Result[Tangled, Error] {
   let pieces = parse_pieces(src);
   if (!chunk_defined(pieces, name)) {
-    return TangleErr { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1, col: 1 };
+    return Err(Error { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1, col: 1 });
   }
   let empty: string[] = [];
-  let r = expand(pieces, name, "", empty);
-  match (r) {
-    ExpandOk(o) => {
-      return TangleOk { code: join_lines(o.lines), lits: o.lits, shifts: o.shifts };
-    },
-    ExpandErr(e) => {
-      return TangleErr { msg: e.msg, line: e.line, col: e.col };
-    }
-  }
+  return Ok(tangled(expand(pieces, name, "", empty)?));
+}
+
+function tangled(o: Lines): Tangled {
+  return Tangled { code: join_lines(o.lines), lits: o.lits, shifts: o.shifts };
 }
 
 pub function unused_chunks(src: string): string[] {
@@ -579,7 +554,7 @@ function path_is_entry(fp: FilePiece[], path: string): boolean {
   return false;
 }
 
-function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResult {
+function expand_file(fp: FilePiece[], chunks: Piece[], path: string): Result[Lines, Error] {
   let out = no_lines();
   for i in 0..fp.len() {
     if (fp[i].path == path) {
@@ -588,86 +563,53 @@ function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResu
       if (is_ref(t)) {
         let rn = ref_name(t);
         if (!chunk_defined(chunks, rn)) {
-          return ExpandErr { msg: undefined_ref(rn), line: fp[i].line, col: marker_col(text) };
+          return Err(Error { msg: undefined_ref(rn), line: fp[i].line, col: marker_col(text) });
         }
         let empty: string[] = [];
-        let sub = expand(chunks, rn, leading_ws(text), empty);
-        match (sub) {
-          ExpandOk(o) => {
-            out = append_lines(out, o);
-          },
-          _ => {
-            return sub;
-          }
-        }
+        out = append_lines(out, expand(chunks, rn, leading_ws(text), empty)?);
       } else {
         out = emit_line(out, "", text, fp[i].line);
       }
     }
   }
-  return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
+  return Ok(out);
 }
 
 pub struct FileResult { path: string, code: string, is_entry: boolean, lits: i32[], shifts: i32[] }
 
-pub struct FileTangleOk { files: FileResult[] }
-
-pub struct FileTangleErr { msg: string, line: i32, col: i32 }
-
-pub type FileTangleResult = FileTangleOk | FileTangleErr;
-
-pub function tangle_files(src: string): FileTangleResult {
+pub function tangle_files(src: string): Result[FileResult[], Error] {
   let chunks = parse_pieces(src);
   let fp = parse_file_pieces(src);
   let paths = file_paths(fp);
   if (paths.len() == 0) {
-    return FileTangleErr { msg: "literate: no `file=PATH` blocks defined (a multi-file document needs at least one ```fern file=… root)", line: 1, col: 1 };
+    return Err(Error { msg: "literate: no `file=PATH` blocks defined (a multi-file document needs at least one ```fern file=… root)", line: 1, col: 1 });
   }
   let results: FileResult[] = [];
   for i in 0..paths.len() {
     let p = paths[i];
     if (path_escapes(p)) {
-      return FileTangleErr { msg: "literate: `file=" + p + "` must name a file below the output directory (no absolute path, no `..` segment)", line: fence_line(src, p), col: 1 };
+      return Err(Error { msg: "literate: `file=" + p + "` must name a file below the output directory (no absolute path, no `..` segment)", line: fence_line(src, p), col: 1 });
     }
-    let r = expand_file(fp, chunks, p);
-    match (r) {
-      ExpandOk(o) => {
-        results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p), lits: o.lits, shifts: o.shifts });
-      },
-      ExpandErr(e) => {
-        return FileTangleErr { msg: e.msg, line: e.line, col: e.col };
-      }
-    }
+    let o = expand_file(fp, chunks, p)?;
+    results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p), lits: o.lits, shifts: o.shifts });
   }
-  return FileTangleOk { files: results };
+  return Ok(results);
 }
 
 pub struct Doctest { name: string, line: i32, code: string, lits: i32[], shifts: i32[] }
 
-pub struct DoctestsOk { tests: Doctest[] }
-
-pub struct DoctestsErr { msg: string, line: i32, col: i32 }
-
-pub type DoctestsResult = DoctestsOk | DoctestsErr;
-
-pub function doctests(src: string): DoctestsResult {
+pub function doctests(src: string): Result[Doctest[], Error] {
   let d = parse(src);
   let chunks = pieces_of(d);
   let tests: Doctest[] = [];
   for b in d.blocks {
     if (b.kind == TEST) {
       let body: FilePiece[] = [];
-      match (expand_file(append_body(body, d, b), chunks, b.name)) {
-        ExpandOk(o) => {
-          tests = tests.append(Doctest { name: b.name, line: b.line, code: join_lines(o.lines), lits: o.lits, shifts: o.shifts });
-        },
-        ExpandErr(e) => {
-          return DoctestsErr { msg: e.msg, line: e.line, col: e.col };
-        }
-      }
+      let o = expand_file(append_body(body, d, b), chunks, b.name)?;
+      tests = tests.append(Doctest { name: b.name, line: b.line, code: join_lines(o.lines), lits: o.lits, shifts: o.shifts });
     }
   }
-  return DoctestsOk { tests: tests };
+  return Ok(tests);
 }
 
 pub function entry_file(files: FileResult[]): string {

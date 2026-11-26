@@ -5,10 +5,10 @@ import "std/test";
 function tangle_code(src: string): string {
   let r = literate.tangle(src);
   match (r) {
-    literate.TangleOk(o) => {
+    Ok(o) => {
       return o.code;
     },
-    literate.TangleErr(e) => {
+    Err(e) => {
       return "";
     }
   }
@@ -17,10 +17,10 @@ function tangle_code(src: string): string {
 function is_err(src: string): boolean {
   let r = literate.tangle(src);
   match (r) {
-    literate.TangleOk(o) => {
+    Ok(o) => {
       return false;
     },
-    literate.TangleErr(e) => {
+    Err(e) => {
       return true;
     }
   }
@@ -29,10 +29,10 @@ function is_err(src: string): boolean {
 function err_line(src: string): i32 {
   let r = literate.tangle(src);
   match (r) {
-    literate.TangleOk(o) => {
+    Ok(o) => {
       return -1;
     },
-    literate.TangleErr(e) => {
+    Err(e) => {
       return e.line;
     }
   }
@@ -41,24 +41,24 @@ function err_line(src: string): i32 {
 function tf_files(src: string): literate.FileResult[] {
   let r = literate.tangle_files(src);
   match (r) {
-    literate.FileTangleOk(o) => {
-      return o.files;
+    Ok(fs) => {
+      return fs;
     },
-    literate.FileTangleErr(e) => {
+    Err(e) => {
       let empty: literate.FileResult[] = [];
       return empty;
     }
   }
 }
 
-function tangled(src: string): literate.TangleOk {
+function tangled(src: string): literate.Tangled {
   match (literate.tangle(src)) {
-    literate.TangleOk(o) => {
-      return literate.TangleOk { code: o.code, lits: o.lits, shifts: o.shifts };
+    Ok(o) => {
+      return o;
     },
-    literate.TangleErr(e) => {}
+    Err(e) => {}
   }
-  return literate.TangleOk { code: "", lits: [], shifts: [] };
+  return literate.Tangled { code: "", lits: [], shifts: [] };
 }
 
 function lines_are(got: i32[], want: i32[]): boolean {
@@ -189,10 +189,10 @@ function test_files(): test.TestOutcome {
 
   let r6 = literate.tangle_files("```fern file=m.fern\n<<nope>>\n```\n");
   match (r6) {
-    literate.FileTangleOk(o) => {
+    Ok(o) => {
       return test.fail("accepted an undefined file chunk");
     },
-    literate.FileTangleErr(e) => {
+    Err(e) => {
       if (e.line != 2) {
         return test.fail("wrong file-chunk error line");
       }
@@ -273,21 +273,21 @@ function test_blocks(): test.TestOutcome {
 function test_doctests(): test.TestOutcome {
   let s26 = "```fern\n<<h>>=\nfn h() {}\n```\n```fern test name=\"adds\"\n<<h>>\nfn main() {}\n```\n```fern test\nfn main() {}\n```\n";
   match (literate.doctests(s26)) {
-    literate.DoctestsOk(o) => {
-      if (o.tests.len() != 2 || o.tests[0].name != "adds" || o.tests[0].code != "fn h() {}\nfn main() {}" || !lines_are(o.tests[0].lits, [3, 7])
-        || o.tests[1].name != "" || o.tests[1].line != 9) {
+    Ok(ts) => {
+      if (ts.len() != 2 || ts[0].name != "adds" || ts[0].code != "fn h() {}\nfn main() {}" || !lines_are(ts[0].lits, [3, 7])
+        || ts[1].name != "" || ts[1].line != 9) {
         return test.fail("doctest contents or source map");
       }
     },
-    literate.DoctestsErr(e) => {
+    Err(e) => {
       return test.fail("rejected valid doctests");
     }
   }
   match (literate.doctests("```fern test\n<<nope>>\n```\n")) {
-    literate.DoctestsOk(o) => {
+    Ok(o) => {
       return test.fail("accepted an undefined doctest chunk");
     },
-    literate.DoctestsErr(e) => {
+    Err(e) => {
       if (e.line != 2 || e.col != 1) {
         return test.fail("wrong doctest error position");
       }

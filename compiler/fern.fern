@@ -3699,10 +3699,10 @@ function entry_sources(path: string, src: string): (Sources, string) {
     return multi_file_sources(path, src);
   }
   match (literate.tangle(src)) {
-    literate.TangleOk(o) => {
+    Ok(o) => {
       return (Sources { ...plain, srcs: [o.code], maps: [util.LineMap { doc: path, lits: o.lits, shifts: o.shifts }] }, "");
     },
-    literate.TangleErr(e) => {
+    Err(e) => {
       return (plain, tangle_error(path, e.line, e.col, e.msg));
     }
   }
@@ -3712,10 +3712,10 @@ function multi_file_sources(path: string, src: string): (Sources, string) {
   let none = Sources { paths: [], srcs: [], maps: [], open: modloader.no_buffers() };
   let files: literate.FileResult[] = [];
   match (literate.tangle_files(src)) {
-    literate.FileTangleOk(o) => {
-      files = o.files;
+    Ok(fs) => {
+      files = fs;
     },
-    literate.FileTangleErr(e) => {
+    Err(e) => {
       return (none, tangle_error(path, e.line, e.col, e.msg));
     }
   }
@@ -4236,10 +4236,10 @@ function run_doctests(path: string, root: string, target: string, embed_dir: str
   }
   let tests: literate.Doctest[] = [];
   match (literate.doctests(src)) {
-    literate.DoctestsOk(o) => {
-      tests = o.tests;
+    Ok(ts) => {
+      tests = ts;
     },
-    literate.DoctestsErr(e) => {
+    Err(e) => {
       eprint_tangle_error(path, e.line, e.col, e.msg);
       return 1;
     }
@@ -4335,10 +4335,10 @@ function run_tangle(path: string, out_path: string, chunk: string, weave_it: boo
   }
   if (chunk.len() > 0) {
     match (literate.tangle_chunk(src, chunk)) {
-      literate.TangleOk(o) => {
+      Ok(o) => {
         return write_generated(end_with_newline(o.code), out_path);
       },
-      literate.TangleErr(e) => {
+      Err(e) => {
         eprint_tangle_error(path, e.line, e.col, e.msg);
         return 1;
       }
@@ -4347,30 +4347,30 @@ function run_tangle(path: string, out_path: string, chunk: string, weave_it: boo
   let files = literate.parse_file_pieces(src);
   if (files.len() > 0) {
     match (literate.tangle_files(src)) {
-      literate.FileTangleOk(o) => {
+      Ok(fs) => {
         if (out_path.len() > 0) {
-          return tangle_write_files(o.files, out_path);
+          return tangle_write_files(fs, out_path);
         }
         let out = "";
-        for i in 0..o.files.len() {
+        for i in 0..fs.len() {
           if (i > 0) {
             out += "\n";
           }
-          out = out + "// ==> " + o.files[i].path + " <==\n" + end_with_newline(o.files[i].code);
+          out = out + "// ==> " + fs[i].path + " <==\n" + end_with_newline(fs[i].code);
         }
         return write_generated(out, "");
       },
-      literate.FileTangleErr(e) => {
+      Err(e) => {
         eprint_tangle_error(path, e.line, e.col, e.msg);
         return 1;
       }
     }
   }
   match (literate.tangle(src)) {
-    literate.TangleOk(o) => {
+    Ok(o) => {
       return write_generated(end_with_newline(o.code), out_path);
     },
-    literate.TangleErr(e) => {
+    Err(e) => {
       eprint_tangle_error(path, e.line, e.col, e.msg);
       return 1;
     }
