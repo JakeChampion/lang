@@ -7,12 +7,12 @@ import "std/test";
 
 function flatten_source(src: string): parser.Module {
   let none: string[] = [];
-  return flatten.flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none, none, none, none, []);
+  return flatten.flatten_qualified(parser.parse_module(lexer.tokenize(src)), none, none, none, none, none, none, none, [], util.name_index(none));
 }
 
 function mangle_source(src: string, prefix: string): parser.Module {
   let none: string[] = [];
-  return flatten.mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none, none, []);
+  return flatten.mangle_module(parser.parse_module(lexer.tokenize(src)), prefix, none, none, none, none, none, none, none, [], util.name_index(none));
 }
 
 function test_prefix_collisions(): test.TestOutcome {
@@ -245,7 +245,7 @@ function test_mangled_declarations(): test.TestOutcome {
 
 function test_type_names(): test.TestOutcome {
   // A single bucket suffices for these small declaration tables.
-  let ctx = flatten.RewriteCtx { type_params: [], modnames: ["lexer", "test"], modprefixes: ["lexer", "test"], prefix: "lx", declnames: ["Token"], declnames_mangled: ["lx__Token"], dn_head: [0], dn_next: [-1], locals: util.name_index([]), enumnames: [], imported_enums: [], ivar_names: ["Fail"], ivar_mangled: ["test__Fail"], variant_scope: ["lexer", "test"], reexport_keys: [], reexport_targets: [], own_variants: [] };
+  let ctx = flatten.RewriteCtx { type_params: [], modnames: ["lexer", "test"], modprefixes: ["lexer", "test"], prefix: "lx", declnames: ["Token"], declnames_mangled: ["lx__Token"], dn_head: [0], dn_next: [-1], locals: util.name_index([]), enumnames: [], imported_enums: [], ivar_names: ["Fail"], ivar_mangled: ["test__Fail"], variant_scope: ["lexer", "test"], reexport_keys: [], reexport_targets: [], own_variants: [], method_paths: util.name_index([]) };
   for (source, expected) in [
     ("lexer.Token[]", "lexer__Token[]"),
     ("Token[]", "lx__Token[]"),

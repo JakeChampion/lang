@@ -39,7 +39,8 @@ import "std/crypto/sha2";
 		{"aes-gcm-raw-key-seal-removed", b + `aes_gcm.seal(b, b, b, b);`, "seal"},
 		{"chacha-raw-key-open-removed", b + `chacha20poly1305.open(b, b, b, b);`, "open"},
 		{"ed25519-seed-sign-removed", b + `ed25519.sign(b, b);`, "sign"},
-		{"ecdsa-free-verify-removed", b + `let Ok(k) = ecdsa.public_key(ecdsa.P256, b) else { return 1; }; ecdsa.verify(k, sha2.Sha256, b, b);`, "verify"},
+		{"ecdsa-qualified-verify-is-the-method", b + `let Ok(k) = ecdsa.public_key(ecdsa.P256, b) else { return 1; }; let ok: boolean = ecdsa.verify(k, sha2.Sha256, b, b);`, ""},
+		{"ecdsa-raw-point-verify-removed", b + `ecdsa.verify(b, sha2.Sha256, b, b);`, "verify"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
