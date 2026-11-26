@@ -12107,7 +12107,21 @@ function ssa_jump(fr: SsaFrame, lp: string, to: i32, next: i32, s: asmcore.EmitS
   return ssa_branch(s, J_JMP, ssa_blab(fr, lp, to));
 }
 
-function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
+// The branch to `tl` when the condition of the block is true.
+function ssa_branch_true(s: asmcore.EmitState, fu: SsaFuse, tr: string, tl: asmcore.Lab): asmcore.EmitState {
+  if (fu.n > 0 && fu.tag == 0) {
+    return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, tl);
+  }
+  if (fu.n > 0) {
+    return ssa_cmp_branch(s, fu, !fu.inverted, tl);
+  }
+  return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, tl);
+}
+
+// `top` is the padded loop top that comes next in the layout, or -1. The
+// branch does not fall into it, and enters it with the conditional jump when
+// it can.
+function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, top: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t = blk.term;
   let tv = t.cond;
   if (fu.n > 0) {
@@ -12128,15 +12142,13 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     s = sn.state;
     fl = sn.lab;
   }
-  if (!stub && ssa.same_fallthrough(f, fr.blk_pos, fr.imm, reg_of, t.f, next) && !ssa.edge_moves(f, fr.blk_pos, fr.imm, reg_of, blk.id, t.t)) {
-    let tl = ssa_blab(fr, lp, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, t.t));
-    if (fu.n > 0 && fu.tag == 0) {
-      return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, tl);
-    }
-    if (fu.n > 0) {
-      return ssa_cmp_branch(s, fu, !fu.inverted, tl);
-    }
-    return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, tl);
+  let into_t = !ssa.edge_moves(f, fr.blk_pos, fr.imm, reg_of, blk.id, t.t);
+  if (!stub && ssa.same_fallthrough(f, fr.blk_pos, fr.imm, reg_of, t.f, next) && into_t) {
+    return ssa_branch_true(s, fu, tr, ssa_blab(fr, lp, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, t.t)));
+  }
+  if (!stub && into_t && top >= 0 && ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, t.t) == top) {
+    s = ssa_branch_true(s, fu, tr, ssa_blab(fr, lp, top));
+    return ssa_jump_on(f, fr, reg_of, lp, t.f, next, s);
   }
   if (fu.n > 0 && fu.tag == 0) {
     s = ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JNZ, fl);
@@ -12332,7 +12344,7 @@ function ssa_loop_tops(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[]): boolean[] {
   return out;
 }
 
-function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, top: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
   let t = blk.term;
   if (t.kind_tag == ssa.TERM_RET) {
     if (t.value >= 0 && t.value < fr.lanes.len() && fr.lanes[t.value]) {
@@ -12349,12 +12361,12 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     if (ssa_rotates(f, fr, ssa.block_index(fr.blk_pos, blk.id), t.target)) {
       let h = f.blocks[ssa.block_index(fr.blk_pos, t.target)];
       let hfu = ssa_fuse(ssa_fuse_view(fr), h);
-      return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
+      return ssa_brif(f, fr, h, reg_of, lp, next, top, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
     }
     return ssa_jump_on(f, fr, reg_of, lp, t.target, next, s);
   }
   if (t.kind_tag == ssa.TERM_BRIF) {
-    return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s);
+    return ssa_brif(f, fr, blk, reg_of, lp, next, top, fu, s);
   }
   return ssa_emit_epilogue(fr, ssa_zero(s, "%rax"));
 }
@@ -12685,6 +12697,10 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     }
     s = asmcore.ssa_x0_forget(s);
     if (tops[bi]) {
+      // No block falls into a padded top (ssa_term), but the prologue does.
+      if (bi == 0) {
+        s = ssa_branch(s, J_JMP, ssa_blab(fr, lp, blk.id));
+      }
       s = s.write("    .p2align 6\n");
     }
     s = s.lab_def(ssa_blab(fr, lp, blk.id));
@@ -12729,7 +12745,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     s = ssa_fused_test(fr, reg_of, fu, asmcore.ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
     if (!tailed) {
-      s = ssa_term(f, if (early) { fr_early } else { fr }, blk, reg_of, lp, next, fu, s);
+      let padded = bi + 1 < f.blocks.len() && tops[bi + 1];
+      s = ssa_term(f, if (early) { fr_early } else { fr }, blk, reg_of, lp, if (padded) { -1 } else { next }, if (padded) { next } else { -1 }, fu, s);
     }
     pos = pos + blk.insts.len() + 1;
   }

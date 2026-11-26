@@ -1274,6 +1274,10 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 		if !add.MatchString(fn) {
 			t.Errorf("%s: step's add does not land in the product's register %s:\n%s", c.target, m[1], fn)
 		}
+		// On x86-64 the jump that enters the loop over the padding of its top is outside the loop.
+		if pad := strings.Index(loop, ".p2align 6"); pad >= 0 {
+			loop = loop[pad:]
+		}
 		if n := len(c.jump.FindAllString(loop, -1)); n != 1 {
 			t.Errorf("%s: first_over has %d unconditional jumps, want the back edge alone:\n%s", c.target, n, loop)
 		}

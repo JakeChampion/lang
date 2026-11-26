@@ -23,20 +23,20 @@ function tangle_summary(src: string): string {
   let code = 0;
   let refused = 0;
   match (literate.tangle(src)) {
-    literate.TangleOk(o) => {
+    Ok(o) => {
       code = o.code.len();
     },
-    literate.TangleErr(e) => {
+    Err(e) => {
       refused = e.msg.len();
     }
   }
   let files = 0;
   let files_refused = 0;
   match (literate.tangle_files(src)) {
-    literate.FileTangleOk(o) => {
-      files = o.files.len();
+    Ok(fs) => {
+      files = fs.len();
     },
-    literate.FileTangleErr(e) => {
+    Err(e) => {
       files_refused = e.msg.len();
     }
   }
