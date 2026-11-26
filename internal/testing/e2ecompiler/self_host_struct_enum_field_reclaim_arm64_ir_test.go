@@ -29,15 +29,14 @@ function main(): i32 {
     return r + t.n;
 }`, "struct_enum_field_arm64_shape", 12)
 
-	run(t, `enum Shape { Circle, Square, Rect(i32) }
+	run(t, `enum Shape { Circle, Square, Rect(i32[]) }
 struct Tagged { e: Shape, n: i32 }
-@noinline function runtime(n: i32): i32 { return n; }
+@noinline function tagged(i: i32): Tagged { return Tagged { e: Rect([i, i + 1]), n: i }; }
 function churn(n: i32): i32 {
     let bad: i32 = 0; let i: i32 = 0;
     while (i < n) {
-        let s: Shape = Rect(runtime(9));
-        let t: Tagged = Tagged { e: s, n: 1 };
-        match (t.e) { Rect(v) => { if (v != 9) { bad = 1; } }, _ => { bad = 1; } }
+        let t: Tagged = tagged(i);
+        match (t.e) { Rect(v) => { if (v[0] != t.n || v[1] != i + 1) { bad = 1; } }, _ => { bad = 1; } }
         i = i + 1;
     }
     return bad;

@@ -12,7 +12,8 @@ import (
 // with one count, and a box with two counts.
 const takenApartProg = `enum Item { Num(i64), Text(string) }
 
-struct Pair { left: Item, right: Item, weight: i64 }
+// Five fields keep the record boxed across the call to left_of.
+struct Pair { left: Item, right: Item, weight: i64, x: i64, y: i64 }
 
 enum Shape { Dot, Line(Item, Item), Ring(Item) }
 
@@ -33,7 +34,7 @@ enum Shape { Dot, Line(Item, Item), Ring(Item) }
 function main(): i32 {
   let total = 0i64;
   for i in 0..1000 {
-    let p = Pair { left: Num(i as i64), right: Text("ab"), weight: 3i64 };
+    let p = Pair { left: Num(i as i64), right: Text("ab"), weight: 3i64, x: 0i64, y: 0i64 };
     total += value(left_of(p));
     let s = Line(Num(2i64), Num(i as i64));
     total += value(head_of(s));

@@ -111,9 +111,8 @@ func nested {
     v6 = array_get v0 v5
     v7 = tuple_new v4 v6
     v8 = array_new
-    v9 = tuple_get 0 v7
     v10 = const_int 0
-    v11 = binary == v9 v10
+    v11 = binary == v4 v10
     brif v11 b1 b2
   b1:
     v12 = const_int 0
@@ -1300,7 +1299,7 @@ func opt_len {
     v3 = variant_is Some v2
     brif v3 b2 b3
   b2:
-    v4 = variant_get 0 Some v2
+    v4 = variant_as Some v2
     v5 = length v4
     br b1
   b3:
@@ -1320,7 +1319,7 @@ func wrap_opt {
     v0 = param 0
     v1 = const_str
     v2 = binary + v0 v1
-    v3 = variant_new Some v2
+    v3 = variant_up Some v2
     ret v3
 }
 
@@ -2872,7 +2871,7 @@ func keyed_recs {
     v17 = variant_is Some v16
     brif v17 b2 b3
   b2:
-    v18 = variant_get 0 Some v16
+    v18 = variant_as Some v16
     v19 = record_get 1 v18
     v20 = record_get 0 v19
     br b1
@@ -3238,24 +3237,21 @@ func tm_line {
   b0:
     v0 = param 0
     v1 = const_int 2
-    v2 = tuple_new v0 v1
     v3 = const_int 0
     v4 = const_bool 1
     br b1
   b1:
-    v5 = tuple_get 0 v2
-    v6 = tuple_get 1 v2
     v7 = const_bool 0
     v8 = const_bool 1
     br b7
   b7:
     v9 = const_int 1
-    v10 = binary == v5 v9
+    v10 = binary == v0 v9
     brif v10 b4 b5
   b4:
     v11 = const_bool 1
     v12 = const_int 10
-    v13 = binary * v6 v12
+    v13 = binary * v1 v12
     br b3
   b5:
     br b8
@@ -3263,7 +3259,7 @@ func tm_line {
     v16 = const_bool 1
     br b3
   b3:
-    v19 = phi v5 v13
+    v19 = phi v0 v13
     ret v19
 }
 
