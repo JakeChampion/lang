@@ -833,3 +833,27 @@ func TestSelfHostSSACarryAcrossBorrowChainStaysInRegister(t *testing.T) {
 		t.Errorf("add_mod_p stores a value to a frame slot:\n%s", fn)
 	}
 }
+
+// A carry in the flags reads no register. So each add of the chain of
+// add_mod_p writes the register of its left operand, with no copy.
+func TestSelfHostSSACarryChainAddsInPlace(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_add_mod_p")
+	chain := regexp.MustCompile(`(?m)^\s+addq %r\w+, %r\w+\n\s+adcq %r\w+, %r\w+\n\s+adcq %r\w+, %r\w+\n\s+adcq %r\w+, %r\w+\n\s+setb `)
+	if !chain.MatchString(fn) {
+		t.Errorf("add_mod_p should add its four limbs with addq and three adcq, and copy no operand first:\n%s", fn)
+	}
+}
