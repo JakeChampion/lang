@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
 // rawMemory is the byte arena behind __alloc. A value's own memory has no
@@ -135,6 +137,46 @@ func builtinRawFree(ip *Interp, args []Value) (Value, error) {
 		return nil, err
 	}
 	return Void{}, ip.raw.release("__free", a[0], a[1])
+}
+
+func (i *Interp) bytesDataArgument(expr ast.Expr, env *env) ast.Expr {
+	call, ok := expr.(*ast.Call)
+	if !ok || len(call.Args) != 1 {
+		return nil
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || id.Name != "__bytes_data" {
+		return nil
+	}
+	if _, bound := env.get(id.Name); bound && !id.Builtin {
+		return nil
+	}
+	if _, defined := i.Funcs[id.Name]; defined {
+		return nil
+	}
+	return call.Args[0]
+}
+
+func builtinRawMemcpyFromView(ip *Interp, args []Value) (Value, error) {
+	const name = "__memcpy"
+	dst, ok := args[0].(Number)
+	n, sizeOK := args[2].(Number)
+	if !ok || !sizeOK {
+		return nil, fmt.Errorf("%s: destination and length must be numbers", name)
+	}
+	b, err := byteView(name, args[1])
+	if err != nil {
+		return nil, err
+	}
+	if n < 0 || int64(n) > int64(len(b)) {
+		return nil, fmt.Errorf("%s: length %d exceeds source view bounds [0, %d]", name, n, len(b))
+	}
+	span, err := ip.raw.span(name, int64(dst), int64(n))
+	if err != nil {
+		return nil, err
+	}
+	copy(span, b[:n])
+	return Void{}, nil
 }
 
 func builtinRawMemcpy(ip *Interp, args []Value) (Value, error) {
