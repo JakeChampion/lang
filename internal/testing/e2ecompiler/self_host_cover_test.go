@@ -91,6 +91,18 @@ function main(): void {
 	}
 }
 
+func TestSelfHostCoverDistinguishesExitsOnOneLine(t *testing.T) {
+	const src = `function main(): i32 {
+    { let exit: (i32) => i32 = (n: i32): i32 => n; exit(9); } exit(0);
+    return 17;
+}
+`
+	const want = "fern-cover: ENTRY:2 3\nfern-cover: ENTRY:3 0\n"
+	if got := coverRun(t, src, []string{"-cover"}, nil); got != want {
+		t.Errorf("coverage report = %q, want %q", got, want)
+	}
+}
+
 func TestSelfHostCoverFromEnvironment(t *testing.T) {
 	const src = "function main(): i32 {\n    return 0;\n}\n"
 	if report := coverRun(t, src, nil, []string{"FERN_COVER=1"}); !strings.Contains(report, "fern-cover: ENTRY:2 1\n") {
