@@ -4959,7 +4959,7 @@ function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr
       for d in p.steps[si].drops {
         let slots = donor_slots(f, vr, b, d);
         if (slots >= 0 && (d >= links.len() || links[d] < 0) && !static_box(p, d)
-          && claim_ahead(f, p, vr, target, slots)) {
+          && claim_ahead(f, p, vr, b.id, target, slots)) {
           at = at.append(b.insts.len());
           values = values.append(d);
           edges = edges.append(target);
@@ -4973,21 +4973,32 @@ function dying_unclaimed(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], vr
   return Dying { at: at, values: values, edges: edges };
 }
 
-// Whether block `id`, or a block on the chain of single successors after it,
-// builds a value of `slots` slots.
-function claim_ahead(f: ssasem.Func, p: Plan, vr: VariantReads, id: i32, slots: i32): boolean {
-  let at = id;
-  for _ in 0..f.graph.blocks.len() {
-    let b = f.graph.blocks[vr.at[at]];
-    if (first_claim_of(f, p, b, slots) >= 0) {
-      return true;
+// Whether each path from block `id` reaches a block that builds a value of
+// `slots` slots. A path that leaves the function or returns to block `from`,
+// where the value died, does not.
+function claim_ahead(f: ssasem.Func, p: Plan, vr: VariantReads, from: i32, id: i32, slots: i32): boolean {
+  let seen = __alloc_bool(f.graph.blocks.len());
+  let work = [id];
+  while (work.len() > 0) {
+    let at = work[work.len() - 1];
+    work = util.drop_last_i32(work);
+    let k = vr.at[at];
+    if (seen[k]) {
+      continue;
     }
-    if (ssa.successor_count(b.term) != 1) {
+    seen = seen.with(k, true);
+    let b = f.graph.blocks[k];
+    if (first_claim_of(f, p, b, slots) >= 0) {
+      continue;
+    }
+    if (at == from || ssa.successor_count(b.term) == 0) {
       return false;
     }
-    at = ssa.successor_id(b.term, 0);
+    for which in 0..ssa.successor_count(b.term) {
+      work = work.append(ssa.successor_id(b.term, which));
+    }
   }
-  return false;
+  return true;
 }
 
 function claimed_from(c: Claims, slots: i32, pos: i32): boolean {
