@@ -13,6 +13,6 @@
 # moves the rows too, with no change to the certifier.
 x86_64/fern_main.unproved	769	0
 wasm32/checker.unproved	74	0
-x86_64/checker.refuted	5373	0
+x86_64/checker.refuted	5387	0
 x86_64/checker.weakened	228	0
 x86_64/checker.missed	229	0
