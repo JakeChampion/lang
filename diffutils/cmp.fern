@@ -259,11 +259,12 @@ function open_input(cfg: Cfg, name: string): Input {
   }
 }
 
-function fill(cfg: Cfg, inp: Input): Input {
+function fill(cfg: Cfg, inp: Input, left: u64): Input {
   if (inp.eof || inp.pos < inp.buf.len()) {
     return inp;
   }
-  match (inp.r.read_chunk_bytes(CHUNK)) {
+  let n = if (left < CHUNK as u64) { left as i32 } else { CHUNK };
+  match (inp.r.read_chunk_bytes(n)) {
     Ok(chunk) => {
       return Input { ...inp, buf: chunk, pos: 0, eof: chunk.len() == 0 };
     },
@@ -292,7 +293,7 @@ function skip_input(cfg: Cfg, inp: Input, n: u64, st: Option[FileStat]): Input {
   let left = n;
   let i = inp;
   while (left > 0 as u64) {
-    i = fill(cfg, i);
+    i = fill(cfg, i, left);
     if (i.eof) {
       return i;
     }
@@ -491,8 +492,9 @@ function at_eof(cfg: Cfg, run: Run): i32 {
 function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
   let run = Run { inputs: inputs, at: 0 as u64, lines: 0 as u64, last: 0 as u8, differ: false, out: buf_new(CHUNK) };
   while (run.at < cfg.limit) {
-    let a = fill(cfg, run.inputs[0]);
-    let b = fill(cfg, run.inputs[1]);
+    let left = cfg.limit - run.at;
+    let a = fill(cfg, run.inputs[0], left);
+    let b = fill(cfg, run.inputs[1], left);
     run = Run { ...run, inputs: [a, b] };
     if (a.eof || b.eof) {
       return at_eof(cfg, run);
@@ -500,10 +502,6 @@ function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
     let n = a.buf.len() - a.pos;
     if (b.buf.len() - b.pos < n) {
       n = b.buf.len() - b.pos;
-    }
-    let left = cfg.limit - run.at;
-    if (left < n as u64) {
-      n = left as i32;
     }
     run = compare_span(cfg, run, width, n);
   }
@@ -523,6 +521,16 @@ function same_file(s0: Option[FileStat], s1: Option[FileStat]): boolean {
   return a.ino != 0i64 && a.dev == b.dev && a.ino == b.ino;
 }
 
+function same_offset(a: Reader, b: Reader): boolean {
+  let Ok(first) = a.seek(0 as i64, 1) else {
+    return false;
+  };
+  let Ok(second) = b.seek(0 as i64, 1) else {
+    return false;
+  };
+  return first == second;
+}
+
 function main(): i32 {
   let argv = args();
   let parsed = parse(argv);
@@ -540,10 +548,15 @@ function main(): i32 {
   }
   let inputs: Input[] = [open_input(cfg, names[0]), open_input(cfg, names[1])];
   let stats: Option[FileStat][] = [input_stat(inputs[0]), input_stat(inputs[1])];
-  if (same_file(stats[0], stats[1]) && cfg.skip[0] == cfg.skip[1]) {
+  let same = same_file(stats[0], stats[1]);
+  let regular = match (stats[0]) { Some(st) => st.is_file, None => false };
+  if (same && cfg.skip[0] == cfg.skip[1] && (names[0] == names[1] || !regular)) {
     return 0;
   }
   let width = if (cfg.verbose) { offset_width(cfg, stats) } else { 1 };
   inputs = [skip_input(cfg, inputs[0], cfg.skip[0], stats[0]), skip_input(cfg, inputs[1], cfg.skip[1], stats[1])];
+  if (same && regular && names[0] != names[1] && same_offset(inputs[0].r, inputs[1].r)) {
+    return 0;
+  }
   return compare(cfg, inputs, width);
 }

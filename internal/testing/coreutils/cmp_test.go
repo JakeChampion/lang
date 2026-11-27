@@ -1,7 +1,10 @@
 package coreutils
 
 import (
+	"errors"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -145,6 +148,73 @@ func cmpCases(t *testing.T) []invocation {
 
 func TestCmpParity(t *testing.T) {
 	requireParity(t, "cmp", cmpCases(t))
+}
+
+// Read the rest of stdin after cmp exits, as the next command in a shell group does.
+func TestCmpInputPosition(t *testing.T) {
+	const data = "0123456789"
+	dir := t.TempDir()
+	path := writeFile(t, dir, "input", data)
+	other := writeFile(t, dir, "copy", data)
+	bin := fernBin(t, "cmp")
+	for _, tc := range []struct {
+		name   string
+		pipe   bool
+		start  int64
+		args   []string
+		status int
+		rest   string
+	}{
+		{"bounded file", false, 0, []string{"-n", "3", "-", other}, 0, "3456789"},
+		{"bounded pipe", true, 0, []string{"-n", "3", other, "-"}, 0, "3456789"},
+		{"skip and compare pipe", true, 0, []string{"-i", "2", "-n", "3", "-", other}, 0, "56789"},
+		{"skip only pipe", true, 0, []string{"-i", "2", "-n", "0", "-", other}, 0, "23456789"},
+		{"same inode different positions", false, 1, []string{"-n", "2", "-", path}, 1, "3456789"},
+		{"same inode equal positions after skips", false, 1, []string{path, "-", "3", "2"}, 0, "3456789"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var in *os.File
+			var err error
+			if tc.pipe {
+				var out *os.File
+				in, out, err = os.Pipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer in.Close()
+				_, err = io.WriteString(out, data)
+				out.Close()
+			} else {
+				in, err = os.Open(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer in.Close()
+				_, err = in.Seek(tc.start, io.SeekStart)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			argv := crossArgv(bin, tc.args...)
+			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd.Stdin = in
+			output, err := cmd.CombinedOutput()
+			var exited *exec.ExitError
+			if err != nil && !errors.As(err, &exited) {
+				t.Fatal(err)
+			}
+			if code := cmd.ProcessState.ExitCode(); code != tc.status {
+				t.Fatalf("exit %d, want %d: %s", code, tc.status, output)
+			}
+			rest, err := io.ReadAll(in)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(rest) != tc.rest {
+				t.Errorf("remaining stdin %q, want %q", rest, tc.rest)
+			}
+		})
+	}
 }
 
 func TestCmpHelpVersion(t *testing.T) {
