@@ -3824,11 +3824,19 @@ function twin_into(defs: ssa.SInst[], own t: Twins, v: i32): Twins {
   t = twin_into(defs, t, d.args[0]);
   let p = t.same[d.args[0]];
   for k in t.kids[p] {
-    if (defs[k].kind_tag == d.kind_tag && defs[k].imm == d.imm && defs[k].str == d.str && (d.args.len() == 1 || defs[k].args[1] == d.args[1])) {
+    if (defs[k].kind_tag == d.kind_tag && twin_imm(defs[k]) == twin_imm(d) && defs[k].str == d.str && (d.args.len() == 1 || defs[k].args[1] == d.args[1])) {
       return Twins { ...t, same: t.same.with(v, k) };
     }
   }
   return Twins { same: t.same.with(v, v), kids: t.kids.with(p, t.kids[p].append(v)) };
+}
+
+// A checked read and a proven read of one element read the same value.
+function twin_imm(d: ssa.SInst): i32 {
+  if (d.kind_tag == array_get() && (d.imm == 1 || d.imm == below_proven())) {
+    return 0;
+  }
+  return d.imm;
 }
 
 function twin_arity(kind: i32): i32 {

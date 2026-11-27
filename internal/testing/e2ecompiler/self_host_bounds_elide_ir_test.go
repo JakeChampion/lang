@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -239,6 +240,52 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 			}
 		})
 	}
+
+	// The write recomputes the index of the read before it, so the write needs
+	// no check. A write to another index keeps its check. The start and the
+	// count come from args(), so no constant proves an index.
+	layer := func(write string, size int) string {
+		return `const Q: i32 = 3329;
+function csubq(x: i32): i32 { let r = x - Q; return r + (r >> 31 & Q); }
+function reduce(x: i32): i32 { return csubq(x - (x as i64 * 1290167 >> 32) as i32 * Q); }
+function layer(own f: i32[], zeta: i32, start: i32, len: i32): i32[] {
+    let j = start;
+    while (j < start + len) {
+        let t = reduce(zeta * f[j + len]);
+        let a = f[j];
+        f = f.with(` + write + `, csubq(a - t + Q));
+        f = f.with(j, csubq(a + t));
+        j += 1;
+    }
+    return f;
+}
+function main(): i32 {
+    let m = args().len();
+    let f = __alloc_i32(` + strconv.Itoa(size) + `);
+    for i in 0..f.len() { f = f.with(i, i * 7 % 13); }
+    f = layer(f, 17, m - 1, m + 3);
+    return (f[1] + f[5]) % 200;
+}
+`
+	}
+	t.Run("recomputed_index_write", func(t *testing.T) {
+		recomputed := layer("j + len", 8)
+		other := layer("j + len + 1", 9)
+		got := strings.Count(emit(recomputed), "jae __fern_oob_abort")
+		base := strings.Count(emit(other), "jae __fern_oob_abort")
+		if got >= base {
+			t.Fatalf("the write to the index of the read kept its check: %d checks, against %d for a write to another index", got, base)
+		}
+		for name, prog := range map[string]string{"recomputed": recomputed, "other": other} {
+			want := interpExit(t, interpBin, prog)
+			if code := runExit(t, buildBin(t, gcc, dir, "belide_recomputed_"+name, emit(prog))); code != want {
+				t.Errorf("%s exited %d, want %d (interp oracle)", name, code, want)
+			}
+		}
+		if code := runExit(t, buildBin(t, gcc, dir, "belide_recomputed_short", emit(layer("j + len + 1", 8)))); code != 134 {
+			t.Errorf("a write past the end exited %d, want 134 (bounds check must remain)", code)
+		}
+	})
 
 	t.Run("read_after_increment_stays_checked", func(t *testing.T) {
 		src := `function main(): i32 { let xs: i32[] = [1, 2, 3]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { i = i + 1; s = s + xs[i]; } return s; }`

@@ -159,21 +159,73 @@ pub function sign_tested_reads_with(f: ssasem.Func, facts: ParamFacts): SignTest
 // length, so the root of a chain of `with` names the array. Only a
 // write uses these proofs: semhoist moves a read above a write, but it does
 // not move a write, and an access that it moves runs earlier.
-struct Seen { arr: i32[], block: i32[], pos: i32[], next: i32[], head: i32[] }
+struct Seen { arr: i32[], block: i32[], pos: i32[], next: i32[], head: i32[], keys: i32[] }
 
 function accesses(f: ssasem.Func, g: Graph): Seen {
-  let s = Seen { arr: [], block: [], pos: [], next: [], head: util.minus_ones(f.values.len()) };
+  let s = Seen { arr: [], block: [], pos: [], next: [], head: util.minus_ones(f.values.len()), keys: index_keys(g) };
   for b in 0..f.graph.blocks.len() {
     let insts = f.graph.blocks[b].insts;
     for k in 0..insts.len() {
       let ins = insts[k];
       if (element_access(ins)) {
-        let idx = ssa.copy_root(g.defs, ins.args[1]);
-        s = Seen { arr: s.arr.append(array_root(g, ins.args[0])), block: s.block.append(b), pos: s.pos.append(k), next: s.next.append(s.head[idx]), head: s.head.with(idx, s.arr.len()) };
+        let idx = s.keys[ins.args[1]];
+        s = Seen { ...s, arr: s.arr.append(array_root(g, ins.args[0])), block: s.block.append(b), pos: s.pos.append(k), next: s.next.append(s.head[idx]), head: s.head.with(idx, s.arr.len()) };
       }
     }
   }
   return s;
+}
+
+// keys[v] is the first value that computes what v computes: v itself, an
+// earlier i32 constant of the same value, or an earlier value with the same
+// operator on operands of the same keys. Thus `j + 1` that a loop computes
+// for a read and again for a write is one index.
+struct Keys { key: i32[], kids: i32[][], consts: util.NameIndex, first: i32[] }
+
+function index_keys(g: Graph): i32[] {
+  let n = g.defs.len();
+  let kids: i32[][] = [];
+  for v in 0..n {
+    kids = kids.append([]);
+  }
+  let k = Keys { key: util.minus_ones(n), kids: kids, consts: util.name_index([]), first: [] };
+  for v in 0..n {
+    k = key_into(g, k, v, 0);
+  }
+  return k.key;
+}
+
+function key_into(g: Graph, own k: Keys, v: i32, depth: i32): Keys {
+  if (k.key[v] >= 0) {
+    return k;
+  }
+  let r = ssa.copy_root(g.defs, v);
+  if (r != v && r >= 0 && r < k.key.len()) {
+    k = key_into(g, k, r, depth + 1);
+    return Keys { ...k, key: k.key.with(v, k.key[r]) };
+  }
+  let d = g.defs[v];
+  if (d.result == v && d.kind_tag == ssa.CONST_INT && d.str == "" && g.i32s[v]) {
+    let name = d.imm.to_string();
+    let at = k.consts.find(name);
+    if (at >= 0) {
+      return Keys { ...k, key: k.key.with(v, k.first[at]) };
+    }
+    return Keys { ...k, key: k.key.with(v, v), consts: k.consts.added(name), first: k.first.append(v) };
+  }
+  if (depth > 32 || d.result != v || d.kind_tag != ssa.BINARY || d.args.len() != 2 || d.args[0] < 0 || d.args[0] >= k.key.len() || d.args[1] < 0 || d.args[1] >= k.key.len()) {
+    return Keys { ...k, key: k.key.with(v, v) };
+  }
+  k = key_into(g, k, d.args[0], depth + 1);
+  k = key_into(g, k, d.args[1], depth + 1);
+  let a = k.key[d.args[0]];
+  let b = k.key[d.args[1]];
+  for c in k.kids[a] {
+    if (g.defs[c].str == d.str && g.defs[c].imm == d.imm && k.key[g.defs[c].args[1]] == b) {
+      return Keys { ...k, key: k.key.with(v, c) };
+    }
+  }
+  return Keys { ...k, key: k.key.with(v, v), kids: k.kids.with(a, k.kids[a].append(v)) };
 }
 
 function element_access(ins: ssa.SInst): boolean {
@@ -197,7 +249,7 @@ function array_root(g: Graph, v: i32): i32 {
 // position k of block b: earlier in b, or in a block that dominates b.
 function accessed_before(g: Graph, s: Seen, dom: ssadeps.Dom, b: i32, k: i32, ins: ssa.SInst): boolean {
   let arr = array_root(g, ins.args[0]);
-  let e = s.head[ssa.copy_root(g.defs, ins.args[1])];
+  let e = s.head[s.keys[ins.args[1]]];
   while (e >= 0) {
     if (s.arr[e] == arr && (s.block[e] == b && s.pos[e] < k || s.block[e] != b && ssadeps.dom_holds(dom, b, s.block[e]))) {
       return true;
