@@ -236,8 +236,7 @@ function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
   };
 }
 
-// One input: its name, its reader, its buffered bytes and the read position.
-struct Input { name: string, r: Reader, buf: u8[], pos: i32, eof: boolean }
+struct Input { name: string, r: Reader }
 
 function trouble(msg: string): void {
   gnu.error(msg);
@@ -245,20 +244,19 @@ function trouble(msg: string): void {
 }
 
 function open_input(cfg: Cfg, name: string): Input {
-  let empty: u8[] = [];
   if (name == "-") {
-    return Input { name: name, r: stdin(), buf: empty, pos: 0, eof: false };
+    return Input { name: name, r: stdin() };
   }
   match (open_reader(name)) {
     Ok(r) => {
-      return Input { name: name, r: r, buf: empty, pos: 0, eof: false };
+      return Input { name: name, r: r };
     },
     Err(e) => {
       if (cfg.quiet) {
         exit(EXIT_TROUBLE);
       }
       trouble(name + ": " + gnu.io_error_text(e));
-      return Input { name: name, r: stdin(), buf: empty, pos: 0, eof: true };
+      return Input { name: name, r: stdin() };
     }
   }
 }
@@ -313,18 +311,18 @@ function read_block(r: Reader, n: i32): Result[u8[], IoError] {
   return Ok(bytes);
 }
 
-function fill(inp: Input, left: u64, block_size: i32): Input {
-  if (inp.eof || inp.pos < inp.buf.len()) {
-    return inp;
-  }
-  let n = if (left < block_size as u64) { left as i32 } else { block_size };
+function block_length(left: u64, block_size: i32): i32 {
+  return if (left < block_size as u64) { left as i32 } else { block_size };
+}
+
+function input_bytes(inp: Input, n: i32): u8[] {
   match (read_block(inp.r, n)) {
     Ok(chunk) => {
-      return Input { ...inp, buf: chunk, pos: 0, eof: chunk.len() == 0 };
+      return chunk;
     },
     Err(e) => {
       trouble(inp.name + ": " + gnu.io_error_text(e));
-      return inp;
+      return [];
     }
   }
 }
@@ -342,20 +340,15 @@ function position(inp: Input, skip: u64, needed: boolean): Option[i64] {
 }
 
 // A non-seekable input consumes its skip by reading.
-function skip_bytes(inp: Input, n: u64, block_size: i32): Input {
+function skip_bytes(inp: Input, n: u64, block_size: i32): void {
   let left = n;
-  let i = inp;
-  while (left > 0 as u64) {
-    i = fill(i, left, block_size);
-    if (i.eof) {
-      return i;
+  while (left > 0u64) {
+    let want = block_length(left, block_size);
+    if (input_bytes(inp, want).len() < want) {
+      return;
     }
-    let have = (i.buf.len() - i.pos) as u64;
-    let take = if (have < left) { have } else { left };
-    i = Input { ...i, pos: i.pos + take as i32 };
-    left -= take;
+    left -= want as u64;
   }
-  return i;
 }
 
 function input_stat(inp: Input): Option[FileStat] {
@@ -501,22 +494,20 @@ function newlines(buf: u8[], lo: i32, hi: i32): u64 {
 
 // compare_span compares `n` bytes of the two buffers. It reports the first
 // difference, or with -l lists each one.
-function compare_span(cfg: Cfg, run: Run, width: i32, n: i32): Run {
-  let a = run.inputs[0];
-  let b = run.inputs[1];
+function compare_span(cfg: Cfg, run: Run, width: i32, a: u8[], b: u8[], n: i32): Run {
   let done = 0;
   while (done < n) {
-    let k = __mismatch_bytes(a.buf, a.pos + done, b.buf, b.pos + done, n - done);
+    let k = __mismatch_bytes(a, done, b, done, n - done);
     if (k >= n - done) {
       break;
     }
     let off = done + k;
-    let ca = a.buf[a.pos + off];
-    let cb = b.buf[b.pos + off];
+    let ca = a[off];
+    let cb = b[off];
     run = Run { ...run, differ: true };
     if (!cfg.verbose) {
       if (!cfg.quiet && !cfg.null_output) {
-        let lines = run.lines + newlines(a.buf, a.pos, a.pos + off);
+        let lines = run.lines + newlines(a, 0, off);
         report(cfg, run, ca, cb, run.at + off as u64 + 1 as u64, lines + 1 as u64);
       }
       return run;
@@ -526,23 +517,14 @@ function compare_span(cfg: Cfg, run: Run, width: i32, n: i32): Run {
   }
   let lines = run.lines;
   if (!cfg.verbose && !cfg.null_output) {
-    lines += newlines(a.buf, a.pos, a.pos + n);
+    lines += newlines(a, 0, n);
   }
-  let last = if (n > 0) { a.buf[a.pos + n - 1] } else { run.last };
-  let inputs: Input[] = [Input { ...a, pos: a.pos + n }, Input { ...b, pos: b.pos + n }];
-  return Run { ...run, inputs: inputs, at: run.at + n as u64, lines: lines, last: last };
+  let last = if (n > 0) { a[n - 1] } else { run.last };
+  return Run { ...run, at: run.at + n as u64, lines: lines, last: last };
 }
 
-// at_eof reports the input that ended first. Both ending together is equal.
-function at_eof(cfg: Cfg, run: Run): i32 {
-  let a = run.inputs[0];
-  let b = run.inputs[1];
-  let status = if (run.differ) { EXIT_DIFFER } else { 0 };
-  if (a.eof && b.eof) {
-    return status;
-  }
+function at_eof(cfg: Cfg, run: Run, name: string): i32 {
   if (!cfg.quiet) {
-    let name = if (a.eof) { a.name } else { b.name };
     if (run.at == 0 as u64) {
       gnu.error("EOF on " + name + " which is empty");
     } else if (cfg.verbose || cfg.null_output) {
@@ -561,20 +543,21 @@ function compare(cfg: Cfg, inputs: Input[], width: i32, block_size: i32): i32 {
   let status = 0;
   // Even a zero-byte read can report an input error.
   while (true) {
-    let left = cfg.limit - run.at;
-    let a = fill(run.inputs[0], left, block_size);
-    let b = fill(run.inputs[1], left, block_size);
-    run = Run { ...run, inputs: [a, b] };
-    if (a.eof || b.eof) {
-      status = at_eof(cfg, run);
+    let want = block_length(cfg.limit - run.at, block_size);
+    let a = input_bytes(inputs[0], want);
+    let b = input_bytes(inputs[1], want);
+    let n = if (a.len() < b.len()) { a.len() } else { b.len() };
+    run = compare_span(cfg, run, width, a, b, n);
+    if (run.differ && !cfg.verbose) {
+      status = EXIT_DIFFER;
       break;
     }
-    let n = a.buf.len() - a.pos;
-    if (b.buf.len() - b.pos < n) {
-      n = b.buf.len() - b.pos;
+    if (a.len() != b.len()) {
+      let shorter = if (a.len() < b.len()) { inputs[0] } else { inputs[1] };
+      status = at_eof(cfg, run, shorter.name);
+      break;
     }
-    run = compare_span(cfg, run, width, n);
-    if (run.at >= cfg.limit || run.differ && !cfg.verbose) {
+    if (n < want || run.at >= cfg.limit) {
       status = if (run.differ) { EXIT_DIFFER } else { 0 };
       break;
     }
@@ -655,10 +638,10 @@ function main(): i32 {
   }
   let block_size = input_block_size(stats);
   if (pos0.is_none() && cfg.skip[0] > 0u64) {
-    inputs = inputs.with(0, skip_bytes(inputs[0], cfg.skip[0], block_size));
+    skip_bytes(inputs[0], cfg.skip[0], block_size);
   }
   if (pos1.is_none() && cfg.skip[1] > 0u64) {
-    inputs = inputs.with(1, skip_bytes(inputs[1], cfg.skip[1], block_size));
+    skip_bytes(inputs[1], cfg.skip[1], block_size);
   }
   let status = compare(cfg, inputs, width, block_size);
   if (shared_stdin(inputs)) {
