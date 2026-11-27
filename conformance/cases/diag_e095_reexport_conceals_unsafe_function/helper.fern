@@ -1,0 +1,5 @@
+pub unsafe function raw(): i32 {
+    unsafe {
+        return 7;
+    }
+}
