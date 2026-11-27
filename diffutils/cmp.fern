@@ -1,4 +1,5 @@
 import "std/string";
+import "../coreutils/lib/filetype";
 import "../coreutils/lib/gnu";
 
 const OPT_PRINT_BYTES: i32 = 1;
@@ -49,7 +50,7 @@ function help_text(): string {
   return out;
 }
 
-struct Cfg { print_bytes: boolean, verbose: boolean, quiet: boolean, limit: u64, skip: u64[] }
+struct Cfg { print_bytes: boolean, verbose: boolean, quiet: boolean, null_output: boolean, limit: u64, skip: u64[] }
 
 function usage_error(msg: string): void {
   gnu.error(msg);
@@ -207,7 +208,7 @@ function parse(argv: string[]): (Cfg, string[]) {
     gnu.flag("", "silent", OPT_QUIET), gnu.flag("v", "", gnu.version_id()),
   ];
   let skip: u64[] = [0 as u64, 0 as u64];
-  let cfg = Cfg { print_bytes: false, verbose: false, quiet: false, limit: 18446744073709551615 as u64, skip: skip };
+  let cfg = Cfg { print_bytes: false, verbose: false, quiet: false, null_output: false, limit: 18446744073709551615 as u64, skip: skip };
   let g = gnu.getopt_new(argv, opts, "cmp", help_text(), EXIT_TROUBLE).in_package("diffutils");
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
@@ -455,6 +456,9 @@ function compare_span(cfg: Cfg, run: Run, width: i32, n: i32): Run {
     if (k >= n - done) {
       break;
     }
+    if (cfg.null_output) {
+      exit(EXIT_DIFFER);
+    }
     let off = done + k;
     let ca = a.buf[a.pos + off];
     let cb = b.buf[b.pos + off];
@@ -466,7 +470,7 @@ function compare_span(cfg: Cfg, run: Run, width: i32, n: i32): Run {
     done = off + 1;
   }
   let lines = run.lines;
-  if (!cfg.verbose) {
+  if (!cfg.verbose && !cfg.null_output) {
     lines += newlines(a.buf, a.pos, a.pos + n);
   }
   let last = if (n > 0) { a.buf[a.pos + n - 1] } else { run.last };
@@ -488,7 +492,7 @@ function at_eof(cfg: Cfg, run: Run): i32 {
     let name = if (a.eof) { a.name } else { b.name };
     if (run.at == 0 as u64) {
       gnu.error("EOF on " + name + " which is empty");
-    } else if (cfg.verbose) {
+    } else if (cfg.verbose || cfg.null_output) {
       gnu.error("EOF on " + name + " after byte " + f"{run.at}");
     } else if (run.last == b'\n') {
       gnu.error("EOF on " + name + " after byte " + f"{run.at}" + ", line " + f"{run.lines}");
@@ -535,6 +539,15 @@ function same_file(s0: Option[FileStat], s1: Option[FileStat]): boolean {
   return a.ino != 0i64 && a.dev == b.dev && a.ino == b.ino;
 }
 
+function stdout_is_null(): boolean {
+  let Ok(out) = stdout().stat() else { return false; };
+  if (!filetype.is_chr(out.mode)) {
+    return false;
+  }
+  let Ok(device) = stat("/dev/null") else { return false; };
+  return same_file(Some(out), Some(device));
+}
+
 function same_offset(a: Reader, b: Reader): boolean {
   let Ok(first) = a.seek(0 as i64, 1) else {
     return false;
@@ -570,6 +583,9 @@ function main(): i32 {
   inputs = [skip_input(inputs[0], cfg.skip[0], stats[0]), skip_input(inputs[1], cfg.skip[1], stats[1])];
   if (same && regular && names[0] != names[1] && same_offset(inputs[0].r, inputs[1].r)) {
     return 0;
+  }
+  if (!cfg.quiet && stdout_is_null()) {
+    cfg = Cfg { ...cfg, null_output: true, verbose: false };
   }
   let width = 1;
   if (cfg.verbose || cfg.quiet) {

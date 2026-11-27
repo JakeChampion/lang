@@ -115,6 +115,7 @@ const (
 	stdoutCaptured stdoutMode = iota
 	stdoutClosed
 	stdoutFull
+	stdoutNull
 )
 
 type outcome struct {
@@ -772,6 +773,9 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		}
 	case stdoutClosed:
 		cmd.Stdout = (*os.File)(nil)
+		overran = inv.runBounded(cmd, closeSlaves)
+	case stdoutNull:
+		cmd.Stdout = nil // os/exec connects an unset Stdout to the null device.
 		overran = inv.runBounded(cmd, closeSlaves)
 	case stdoutFull:
 		if runtime.GOOS != "linux" {
