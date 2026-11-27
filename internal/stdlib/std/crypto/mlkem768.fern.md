@@ -182,6 +182,9 @@ function __add(own f: i32[], g: [i32], count: i32): i32[] {
   return f;
 }
 
+// The input coefficients are below Q. A butterfly adds with no reduction,
+// so after layer n a coefficient is below (n + 1) * Q. The last loop reduces
+// each one.
 function __ntt(own f: i32[], at: i32): i32[] {
   let k = 1;
   let len = 128;
@@ -194,20 +197,27 @@ function __ntt(own f: i32[], at: i32): i32[] {
       while (j < start + len) {
         let t = __reduce(zeta * f[j + len]);
         let a = f[j];
-        f = f.with(j + len, __csubq(a - t + Q));
-        f = f.with(j, __csubq(a + t));
+        f = f.with(j + len, a - t + Q);
+        f = f.with(j, a + t);
         j += 1;
       }
       start += 2 * len;
     }
     len /= 2;
   }
+  for i in at..at + 256 {
+    f = f.with(i, __reduce(f[i]));
+  }
   return f;
 }
 
+// The input coefficients are below Q. A sum stays unreduced, so the
+// coefficients of a layer are below `lift`, which doubles with each layer.
+// The largest product, in the last layer, is below 2^31.
 function __inv_ntt(own f: i32[], at: i32): i32[] {
   let k = 127;
   let len = 2;
+  let lift = Q;
   while (len <= 128) {
     let start = at;
     while (start < at + 256) {
@@ -217,13 +227,14 @@ function __inv_ntt(own f: i32[], at: i32): i32[] {
       while (j < start + len) {
         let t = f[j];
         let u = f[j + len];
-        f = f.with(j, __csubq(t + u));
-        f = f.with(j + len, __reduce(zeta * (u - t + Q)));
+        f = f.with(j, t + u);
+        f = f.with(j + len, __reduce(zeta * (u - t + lift)));
         j += 1;
       }
       start += 2 * len;
     }
     len *= 2;
+    lift *= 2;
   }
   let i = at;
   while (i < at + 256) {
