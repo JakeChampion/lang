@@ -32,38 +32,41 @@ It does not report the maximum live payload or resident pages.
 Both counters stop before report construction.
 
 Raw results include compiler, binary, and source hashes in [memory-m4.json](../benchmarks/results/memory-m4.json).
-The compiler reports `fern 154843af7962` and includes the append and computed-scrutinee fixes.
+The compiler reports `fern 8f1d021a557a`, which is main on 2026-11-27.
 The measured compiler and library sources stayed fixed during collection.
 The collector rejects changes to measured sources, tools, or its own script during collection.
-The compiler source includes main at 8a30c340b and both image-engine compiler fixes.
 
 ## Observations
 
 | Mode | Operations | Allocations | Fresh demand, bytes |
 | --- | ---: | ---: | ---: |
-| Unique pixel updates | 16 | 145 | 20,704 |
-| Unique pixel updates | 128 | 1,041 | 20,704 |
-| Shared input updates | 16 | 156 | 41,232 |
-| Shared input updates | 128 | 1,052 | 41,232 |
-| Retained image versions | 16 | 448 | 328,984 |
-| Retained image versions | 128 | 3,587 | 2,629,984 |
-| Discarded output rows | 16 | 44,220 | 1,800 |
-| Discarded output rows | 128 | 353,676 | 1,800 |
-| Retained output rows | 16 | 44,367 | 6,176 |
-| Retained output rows | 128 | 354,834 | 38,352 |
-| Cancelled output rows | 16 | 18,988 | 1,544 |
-| Cancelled output rows | 128 | 151,820 | 1,544 |
-| Discarded eager outputs | 16 | 754,104 | 26,248 |
-| Discarded eager outputs | 128 | 6,032,776 | 26,248 |
-| Retained eager outputs | 16 | 754,251 | 105,144 |
-| Retained eager outputs | 128 | 6,033,934 | 693,888 |
+| Unique pixel updates | 16 | 4 | 20,592 |
+| Unique pixel updates | 128 | 4 | 20,592 |
+| Shared input updates | 16 | 7 | 41,096 |
+| Shared input updates | 128 | 7 | 41,096 |
+| Retained image versions | 16 | 67 | 328,488 |
+| Retained image versions | 128 | 518 | 2,626,800 |
+| Discarded output rows | 16 | 7,502 | 1,616 |
+| Discarded output rows | 128 | 59,918 | 1,616 |
+| Retained output rows | 16 | 7,521 | 5,272 |
+| Retained output rows | 128 | 60,052 | 32,072 |
+| Cancelled output rows | 16 | 2,366 | 1,464 |
+| Cancelled output rows | 128 | 18,830 | 1,464 |
+| Discarded eager outputs | 16 | 114,771 | 25,968 |
+| Discarded eager outputs | 128 | 918,147 | 25,968 |
+| Retained eager outputs | 16 | 114,790 | 104,144 |
+| Retained eager outputs | 128 | 918,281 | 687,512 |
 
-The shared-input path costs more fresh storage than the unique-input path in this probe.
+The unique and shared update paths make a constant number of allocations at both request counts.
+The unique path writes each update into the storage of its input.
+The shared path copies the input one time, and then it writes the copy in place.
+Thus the shared-input path costs more fresh storage than the unique-input path in this probe.
+
 Retained image versions and retained rows increase fresh demand as the operation count increases.
 Discarded eager outputs, discarded rows, and cancelled rows reuse allocator storage across these two request counts.
 These observations do not prove a bound for other dimensions, graphs, input codecs, or longer executions.
 
-The row path still performs many allocations per request.
+The row path still performs about 470 allocations per request, and the eager path about 7,200.
 The allocation count does not measure bytes copied or elapsed CPU time.
 Fresh demand includes capacity and released slots that the allocator does not yet reuse.
 The difference from logical payload size is not an isolated allocator-overhead measurement.
