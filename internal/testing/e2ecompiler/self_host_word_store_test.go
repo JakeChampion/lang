@@ -89,6 +89,16 @@ function le32_loop(own d: u8[], at: i32, v: u32): u8[] {
   return d;
 }
 
+@noinline
+function lane(own d: u8[], at: i32, v: u64, n: i32): u8[] {
+  let i = 0;
+  while (i < 8 && at + i < n) {
+    d = d.with(at + i, (v >> (i * 8) as u64 & 255 as u64) as u8);
+    i += 1;
+  }
+  return d;
+}
+
 function sum(d: u8[]): i32 {
   let s = 0;
   for b in d {
@@ -130,7 +140,21 @@ function main(): i32 {
   }
   if (ll[0] != 0u8 || ll[9] != 0u8 || bl[0] != 0u8 || bl[9] != 0u8) { return 13; }
   if (wl[1] != 1u8 || wl[4] != 4u8 || wl[0] != 0u8 || wl[5] != 0u8) { return 14; }
+  for n in [0, 2, 4, 9, 10, 30] {
+    let w = lane(__alloc_u8(10), 1, 0x0807060504030201u64, n);
+    for i in 0..10 {
+      let want = if (i >= 1 && i < 9 && i < n) { i as u8 } else { 0u8 };
+      if (w[i] != want) { return 15; }
+    }
+  }
+  let held = __alloc_u8(9);
+  let shared = held;
+  let lc = lane(shared, 1, 0x0807060504030201u64, 9);
+  if (sum(held) != 0 || lc[1] != 1u8 || lc[8] != 8u8) { return 16; }
   if (args().len() > 1) {
+    if (args()[1] == "lane") {
+      return sum(lane(__alloc_u8(12), args().len() + 3, 7u64, 100));
+    }
     if (args()[1] == "loop") {
       return sum(le64_loop(__alloc_u8(12), args().len() + 3, 7u64));
     }
@@ -163,7 +187,8 @@ var wordStores = map[string][3]*regexp.Regexp{
 var byteSwap = map[string]string{"x86-64-linux": "bswap", "arm64-linux": "rev ", "wasm32-wasi": "bswap"}
 
 // A chain of byte writes that fills the bytes of one integer is one word
-// store, on each target, also when it comes from an unrolled loop (#17409).
+// store, on each target, also when it comes from an unrolled loop or from
+// the unrolled copy of a loop that also stops at a bound (#17409).
 func TestSelfHostWordStore(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "wordstore.fern")
@@ -206,6 +231,17 @@ func TestSelfHostWordStore(t *testing.T) {
 					t.Errorf("%s: %s has a byte swap %v, want %v:\n%s", target, name, !big, big, body)
 				}
 			}
+			// A loop that also stops at a bound n is versioned: a test of
+			// at + 7 < n selects the unrolled copy, which is one word store.
+			var laneBody string
+			if target == "wasm32-wasi" {
+				laneBody = strings.Join(wasmFuncBodies(string(text), "$lane "), "\n")
+			} else {
+				laneBody = asmFuncBody(t, string(text), "__fn_lane.r")
+			}
+			if got := len(re[1].FindAllString(laneBody, -1)); got != 1 {
+				t.Errorf("%s: lane has %d of %s, want 1:\n%s", target, got, re[1], laneBody)
+			}
 			if stderr, code := cli.exitOfFile(t, src, target, nil); code != 0 {
 				t.Errorf("%s: exit %d, want 0\n%s", target, code, stderr)
 			}
@@ -214,6 +250,9 @@ func TestSelfHostWordStore(t *testing.T) {
 			}
 			if stderr, code := cli.exitOfFileArgs(t, src, target, nil, []string{"loop"}); code != 134 {
 				t.Errorf("%s: an unrolled write past the end exits %d, want the bounds abort 134\n%s", target, code, stderr)
+			}
+			if stderr, code := cli.exitOfFileArgs(t, src, target, nil, []string{"lane"}); code != 134 {
+				t.Errorf("%s: a bounded write past the end exits %d, want the bounds abort 134\n%s", target, code, stderr)
 			}
 		})
 	}

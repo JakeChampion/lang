@@ -9681,7 +9681,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let inlined = inline_leaves(sp.all, names, mod, opts, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size || !opts.passes.range_proofs);
+    all = version_loops(prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(unroll_bounded_loops(without_unnamed(inlined.all, names, inlined.spliced, mod), opts.passes.range_proofs))), names, mod, opts.array_report, opts.passes), names, mod, opts, true), opts.stack_phi_joins), opts.size || !opts.passes.range_proofs);
     if (opts.passes.range_proofs) {
       all = sign_tested_reads(caller_ranges(all, names, mod));
     }
@@ -10379,6 +10379,22 @@ function unroll_loops(all: Produced[], names: string[], range_proofs: boolean): 
     let p = all[i];
     if (p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "unroll", names[i])) {
       let u = semunroll.unroll(p.func);
+      if (u.loops > 0) {
+        p = Produced { ...p, func: if (range_proofs) { range_rewrites(u.f) } else { u.f }, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
+function unroll_bounded_loops(all: Produced[], range_proofs: boolean): Produced[] {
+  let sw = optbisect.switches();
+  let out: Produced[] = [];
+  for old in all {
+    let p = old;
+    if (p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "unroll", p.func.graph.name)) {
+      let u = semunroll.unroll_bounded(p.func);
       if (u.loops > 0) {
         p = Produced { ...p, func: if (range_proofs) { range_rewrites(u.f) } else { u.f }, analysis: None };
       }
