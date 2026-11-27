@@ -313,23 +313,32 @@ function input_stat(inp: Input): Option[FileStat] {
   };
 }
 
+// An opened regular file may already be positioned partway through its data.
+function remaining_size(input: Input, stat: Option[FileStat]): Option[u64] {
+  if let Some(st) = stat {
+    if (st.is_file && st.size >= 0i64) {
+      if let Ok(pos) = input.r.seek(0i64, 1) {
+        return Some(if (pos < st.size) { (st.size - pos) as u64 } else { 0u64 });
+      }
+    }
+  }
+  return None;
+}
+
 // The width of the byte numbers of -l: the digits of the largest offset that
 // the comparison can reach.
-function offset_width(cfg: Cfg, stats: Option[FileStat][]): i32 {
-  let max = if (cfg.limit <= OFF_MAX) { cfg.limit as i64 } else { OFF_MAX as i64 };
-  for f in 0..2 {
-    if let Some(st) = stats[f] {
-      if (st.is_file) {
-        let left = st.size - cfg.skip[f] as i64;
-        if (left < max) {
-          max = left;
-        }
+function offset_width(limit: u64, first: Option[u64], second: Option[u64]): i32 {
+  let max = if (limit < OFF_MAX) { limit } else { OFF_MAX };
+  for size in [first, second] {
+    if let Some(left) = size {
+      if (left < max) {
+        max = left;
       }
     }
   }
   let width = 1;
-  while (max / (10 as i64) != 0 as i64) {
-    max = max / (10 as i64);
+  while (max / 10u64 != 0u64) {
+    max = max / 10u64;
     width += 1;
   }
   return width;
@@ -558,10 +567,23 @@ function main(): i32 {
   if (same && cfg.skip[0] == cfg.skip[1] && (names[0] == names[1] || !regular)) {
     return 0;
   }
-  let width = if (cfg.verbose) { offset_width(cfg, stats) } else { 1 };
   inputs = [skip_input(inputs[0], cfg.skip[0], stats[0]), skip_input(inputs[1], cfg.skip[1], stats[1])];
   if (same && regular && names[0] != names[1] && same_offset(inputs[0].r, inputs[1].r)) {
     return 0;
+  }
+  let width = 1;
+  if (cfg.verbose || cfg.quiet) {
+    let first = remaining_size(inputs[0], stats[0]);
+    let second = remaining_size(inputs[1], stats[1]);
+    if (cfg.verbose) {
+      width = offset_width(cfg.limit, first, second);
+    } else if let Some(a) = first {
+      if let Some(b) = second {
+        if (a != b && (a < cfg.limit || b < cfg.limit)) {
+          return EXIT_DIFFER;
+        }
+      }
+    }
   }
   return compare(cfg, inputs, width);
 }
