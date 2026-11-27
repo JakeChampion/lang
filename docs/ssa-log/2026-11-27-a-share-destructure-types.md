@@ -15,6 +15,7 @@ Callgrind counted instructions with verification enabled.
 
 | Fixed source | Main instructions | Branch instructions | Instructions saved |
 | --- | ---: | ---: | ---: |
+| `compiler/checker.fern` (check only) | 15,057,150,205 | 15,036,071,205 | 21,079,000 |
 | `destructure_tuple_and_struct_forms/main.fern` | 20,074,347 | 19,972,482 | 101,865 |
 
 Both compilers produced the same native binary for the fixture.
@@ -22,3 +23,20 @@ The focused suite covered 24 programs on x86-64 Linux, ARM64 Linux, and WASI.
 Both compilers produced the same bytes and execution results for all 72 comparisons.
 For the WASI case with exit code 136, a wrapper checked the full return value.
 All 12 error fixtures produced identical JSON diagnostics.
+
+
+The six fixed checker targets produced identical binaries.
+The HTTP component and both freestanding assembly outputs also matched.
+The 526 error fixtures retained the same JSON diagnostics and exit codes.
+
+## Performance baselines
+
+Both compilers copied 58,274,576 bytes in 1,020,179 shared-array copies on the main checker source.
+On the branch source both copied 58,278,272 bytes in 1,020,358 copies.
+
+The certifier refuted 5,346 mutants on the branch and 5,347 on main.
+It weakened 229 and 230 respectively.
+Eight of 2,360 per-function records changed.
+The generated code for `bind_stmt` had two fewer sites for the certifier to mutate.
+Seven other functions changed the classification of one mutant each.
+Both compilers missed 227 mutants.
