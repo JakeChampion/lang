@@ -414,6 +414,26 @@ function pick(name: string): Case {
         let b11: ssa.SBlock = block(11, [8, 9, 14], [inst(8, 16, [4, 4, 15], 0, ""), const_int(17, 2), call(18, "__fern_alloc_reuse", [16, 17]), fresh_box(19), store(18, 8, 19)], ret(18));
         return Case { f: func(2, 20, [b0, b1, b3, b4, b5, b6, b7, b8, b9, b2, b12, b13, b14, b11]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "reuse-through-a-phi-of-two-tokens" || name == "reuse-through-a-phi-of-two-tokens-leaked") {
+        // Each arm makes a token of the box, and a block that only branches
+        // on joins the two tokens. The construction after it reuses the box
+        // through that phi, so the phi is a token of the box.
+        let b0: ssa.SBlock = block(0, [], [param(0), param(1)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [call(2, "__fern_rc_is_unique", [0]), const_int(3, 0)], brif(2, 3, 4));
+        let b3: ssa.SBlock = block(3, [1], [call(4, "__sem_drop_T", [0])], br(5));
+        let b4: ssa.SBlock = block(4, [1], [call(5, "__fern_rc_dec", [0])], br(5));
+        let b5: ssa.SBlock = block(5, [3, 4], [inst(8, 6, [0, 3], 0, "")], br(10));
+        let b2: ssa.SBlock = block(2, [0], [call(7, "__fern_rc_is_unique", [0]), const_int(8, 0)], brif(7, 6, 7));
+        let b6: ssa.SBlock = block(6, [2], [call(9, "__sem_drop_T", [0])], br(8));
+        let b7: ssa.SBlock = block(7, [2], [call(10, "__fern_rc_dec", [0])], br(8));
+        if (name == "reuse-through-a-phi-of-two-tokens-leaked") {
+            b7 = block(7, [2], [], br(8));
+        }
+        let b8: ssa.SBlock = block(8, [6, 7], [inst(8, 11, [0, 8], 0, "")], br(10));
+        let b10: ssa.SBlock = block(10, [5, 8], [inst(8, 12, [6, 11], 0, "")], br(11));
+        let b11: ssa.SBlock = block(11, [10], [const_int(13, 2), call(14, "__fern_alloc_reuse", [12, 13]), fresh_box(15), store(14, 8, 15)], ret(14));
+        return Case { f: func(2, 16, [b0, b1, b3, b4, b5, b2, b6, b7, b8, b10, b11]), modes: [counted, value], returns_unit: true };
+    }
     if (name == "token-reuse-through-a-phi-an-outside-arm-nulls") {
         // #12334: a match's arm reads the payload off the box under its
         // token and the next construction reuses the box through a phi the
@@ -986,7 +1006,7 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"sparse-unused-terminator-field", nil, 0},
 		{"sparse-counted-param", []string{"leaked at return of v0"}, 0},
 		{"sparse-token", []string{"spent without a unit of v268"}, 0},
-		{"sparse-null-phi", nil, 1},
+		{"sparse-null-phi", nil, 0},
 		{"sparse-loop-leak", []string{"leaked where it dies of v259"}, 0},
 		{"double-release", []string{"spent without a unit of v0"}, 0},
 		{"fresh-returned", nil, 0},
@@ -1038,7 +1058,9 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"token-reuse-nulls-the-slot-read", []string{"spent without a unit of v4"}, 0},
 		{"token-reuse-puts-back-and-stores-elsewhere", nil, 0},
 		{"token-reuse-puts-back-and-stores-elsewhere-unretained", []string{"spent without a unit of v4"}, 0},
-		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 1},
+		{"reuse-through-a-phi-of-two-tokens", nil, 0},
+		{"reuse-through-a-phi-of-two-tokens-leaked", []string{"leaked where it dies of v0"}, 2},
+		{"token-reuse-through-a-phi-an-outside-arm-nulls", nil, 0},
 		{"reuse-of-a-loop-box-through-its-token", nil, 0},
 		{"pair-word-settled-past-its-token-test", nil, 0},
 		{"loop-box-copied-under-its-null-token", nil, 0},
@@ -1056,8 +1078,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"loop-reuses-its-carried-box-leaked", []string{"leaked where it dies of v2"}, 0},
 		{"loop-reuses-its-carried-box-released-twice", []string{"spent without a unit of v2"}, 0},
 		{"token-box-copied-before-its-test", nil, 0},
-		{"reuse-past-a-join-null-first", nil, 1},
-		{"null-tested-against-an-outside-null", nil, 1},
+		{"reuse-past-a-join-null-first", nil, 0},
+		{"null-tested-against-an-outside-null", nil, 0},
 		{"leak-in-a-loop-body", []string{"leaked where it dies of v1"}, 0},
 		{"exit-ends-the-path", nil, 0},
 		{"unit-held-into-an-exit", nil, 0},

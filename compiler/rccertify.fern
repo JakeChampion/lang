@@ -3831,9 +3831,13 @@ function phi_input(own p: Progress, w: Walk, a: i32): Fed {
 }
 
 // The box that a reuse token names: the token is a phi whose inputs are
-// that box or zero, so it is the box when it is not zero. -1 if `ins` is not
-// a token.
+// that box, zero, or a token of that box, so it is the box when it is not
+// zero. -1 if `ins` is not a token.
 function token_box(w: Walk, ins: ssa.SInst): i32 {
+  return token_box_at(w, ins, 0);
+}
+
+function token_box_at(w: Walk, ins: ssa.SInst, depth: i32): i32 {
   if (ins.kind_tag != ssa.PHI || ins.result < 0) {
     return -1;
   }
@@ -3845,11 +3849,18 @@ function token_box(w: Walk, ins: ssa.SInst): i32 {
     }
     if (zero_at(w, a)) {
       zero = true;
-    } else if (box >= 0 && w.root[a] != box) {
-      return -1;
-    } else {
-      box = w.root[a];
+      continue;
     }
+    let r = w.root[a];
+    let inner = nested_token_box(w, r, w.root[ins.result], depth);
+    if (inner >= 0) {
+      r = inner;
+      zero = true;
+    }
+    if (box >= 0 && r != box) {
+      return -1;
+    }
+    box = r;
   }
   if (!zero || box < 0 || box == w.root[ins.result] || w.idx[box] < 0) {
     return -1;
@@ -3857,15 +3868,28 @@ function token_box(w: Walk, ins: ssa.SInst): i32 {
   return box;
 }
 
+// The box of `r` where `r` is a token that is not `outer`, or -1.
+function nested_token_box(w: Walk, r: i32, outer: i32, depth: i32): i32 {
+  if (r == outer || depth >= 8) {
+    return -1;
+  }
+  return token_box_at(w, def_in(w, r), depth + 1);
+}
+
 // A token input makes its box a twin keyed on the token: on the edge where
 // the token is the box, the token takes the unit of the box, and on the edge
-// where the token is zero, the box keeps it.
+// where the token is zero, the box keeps it. An input that is a token of the
+// same box is the token on this edge. Its twins take the key of the token.
 function token_fed(own p: Progress, w: Walk, ins: ssa.SInst, a: i32): Fed {
   let box = token_box(w, ins);
   if (box < 0) {
     return phi_input(p, w, a);
   }
   let t = w.root[ins.result];
+  if (!zero_at(w, a) && w.root[a] != box) {
+    p = move_key(p, w.root[a], t);
+    return count_input(p, w, a);
+  }
   let kb = w.idx[box];
   if (is_twin(p.state[kb]) && flat(p.state[kb]) >= 0) {
     p = Progress { ...p, state: p.state.with(kb, flat(p.state[kb])) };
@@ -3910,6 +3934,17 @@ function flatten_key(own p: Progress, t: i32): Progress {
   for k in 0..p.state.len() {
     if (is_twin(p.state[k]) && twin_key(p.state[k]) == t) {
       p = Progress { ...p, state: p.state.with(k, flat(p.state[k])) };
+    }
+  }
+  return p;
+}
+
+// The twins keyed on `from` take the key `to`.
+function move_key(own p: Progress, from: i32, to: i32): Progress {
+  for k in 0..p.state.len() {
+    let s = p.state[k];
+    if (is_twin(s) && twin_key(s) == from) {
+      p = Progress { ...p, state: p.state.with(k, twin(to, twin_same(s), twin_apart(s))) };
     }
   }
   return p;
