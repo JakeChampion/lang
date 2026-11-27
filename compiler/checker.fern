@@ -20417,7 +20417,28 @@ function ocl_call(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   if (ocl_plain(call.ty, facts)) {
     return [];
   }
-  return ocl_merge(ocl_call_environment(call, facts), ocl_method_loans(call, facts));
+  return ocl_merge(ocl_merge(ocl_call_environment(call, facts), ocl_method_loans(call, facts)), ocl_function_loans(call, facts));
+}
+
+// The borrowed arguments of a declared function lend to its result.
+function ocl_function_loans(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
+  let Some(lenders) = facts.methods else {
+    return [];
+  };
+  let ast.ExprIdent(id) = call.callee else {
+    return [];
+  };
+  let row = lenders.names.find(id.name);
+  if (row < 0 || facts.names.has(id.name)) {
+    return [];
+  }
+  let out: OclCapture[] = [];
+  for i in 0..call.args.len() {
+    if (lu_lends(lenders.rows[row], i)) {
+      out = ocl_lent_loans(out, call.args[i], facts);
+    }
+  }
+  return out;
 }
 
 function ocl_call_environment(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
@@ -25855,7 +25876,23 @@ function lu_field_path_dead(fx: LuFn, site: LuSite, q: ast.ExprIdent, field: str
   if let ast.StmtReturn(_) = inner.stmts[inner.idx] {
     return true;
   }
-  return !lu_path_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, lu_binding_level(site.frames, q.name), field);
+  let scope = lu_binding_level(site.frames, q.name);
+  // A path that a match tag takes is dead when every arm leaves the statement.
+  if let ast.StmtMatch(m) = inner.stmts[inner.idx] {
+    if (lu_mentions_at(m.scrutinee, q) && m.arms.len() > 0) {
+      let reach = LuReach { noret: fx.noret, frames: site.frames, level: site.frames.len() - 1, scope: scope, field: field };
+      let settled = true;
+      for arm in m.arms {
+        if (lu_stmts_settle(reach, arm.body, q.name) != LU_SETTLED) {
+          settled = false;
+        }
+      }
+      if (settled) {
+        return true;
+      }
+    }
+  }
+  return !lu_path_live_from(fx.noret, site.frames, site.frames.len() - 1, q.name, scope, field);
 }
 
 struct LuFieldReads { name: string, field: string, n: i32 }
@@ -29542,7 +29579,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
   let names: string[] = [];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0) {
-      let lend: boolean[] = [!fn.receiver_own && !ow_holds_no_handle(fn.receiver_type, dx)];
+      let lend: boolean[] = [!fn.receiver_own && ow_handle_kinds_meet(fn.receiver_type, ow_result_spelling(fn), fn, dx)];
       let callbacks: boolean[] = [false];
       for param in fn.params {
         lend = lend.append((!param.own || param.type_name == "fn") && ow_param_can_lend(fn, param, ofuncs, dx));
@@ -29595,7 +29632,122 @@ function ow_param_can_lend(fn: parser.FuncDecl, param: ast.ParamDecl, ofuncs: Ow
   if (util.has_str(fn.all_type_params, tn)) {
     return true;
   }
-  return ow_decl_type_is_pointer(fn, tn, ofuncs) && !ow_holds_no_handle(tn, dx);
+  return ow_decl_type_is_pointer(fn, tn, ofuncs) && ow_handle_kinds_meet(tn, ow_result_spelling(fn), fn, dx);
+}
+
+function ow_result_spelling(fn: parser.FuncDecl): string {
+  return parser.fn_tag_spelling(fn.ret_type, fn.ret_fn_ret, fn.ret_fn_param_types);
+}
+
+// A value of type tn can lend a handle to a result of type ret only when the
+// two types can hold a handle of one kind.
+function ow_handle_kinds_meet(tn: string, ret: string, fn: parser.FuncDecl, dx: OwnDecls): boolean {
+  let given = ow_handle_kinds(tn, dx, fn.all_type_params, []);
+  let held = ow_handle_kinds(ret, dx, fn.all_type_params, []);
+  if (given.len() == 0 || held.len() == 0) {
+    return false;
+  }
+  if (util.has_str(given, "*") || util.has_str(held, "*")) {
+    return true;
+  }
+  for kind in given {
+    if (util.has_str(held, kind)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The kinds of handle that a value of type tn can hold: the names of the
+// handle types, or "*" for any kind. A type parameter in open, a callback,
+// and a name with no declaration can hold any kind. The type parameters of a
+// declaration add nothing, because the arguments of its use count instead.
+// seen holds the declarations on the path.
+function ow_handle_kinds(tn: string, dx: OwnDecls, open: string[], seen: string[]): string[] {
+  let none: string[] = [];
+  let n = tn.len();
+  if (tn == "fn" || parser.top_arrow_at(tn) >= 0 || util.has_str(open, tn)) {
+    return ["*"];
+  }
+  if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
+    return ow_handle_kinds(slice_unchecked(tn, 0, n - 2).to_owned(), dx, open, seen);
+  }
+  if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
+    return ow_handle_kinds(slice_unchecked(tn, 1, n - 1).to_owned(), dx, open, seen);
+  }
+  if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
+    return ow_all_handle_kinds(parser.split_top_commas(slice_unchecked(tn, 1, n - 1).to_owned()), dx, open, seen);
+  }
+  if (ow_no_handle_in(tn, dx, [], seen)) {
+    return none;
+  }
+  let name = tn;
+  let kinds = none;
+  let at = util.index_of_sub(tn, "[");
+  if (at > 0 && tn[n - 1] == b']') {
+    name = slice_unchecked(tn, 0, at).to_owned();
+    kinds = ow_all_handle_kinds(parser.split_top_commas(slice_unchecked(tn, at + 1, n - 1).to_owned()), dx, open, seen);
+  }
+  if (name == "Option" || name == "Result" || name == "Cell" || name == "Map" || util.has_str(seen, name)) {
+    return kinds;
+  }
+  if (dx.consuming.has(name) || semtypes.is_fd_handle_name(name)) {
+    return ow_add_kind(kinds, name);
+  }
+  return ow_merge_kinds(kinds, ow_decl_handle_kinds(name, dx, open, seen.append(name)));
+}
+
+function ow_decl_handle_kinds(name: string, dx: OwnDecls, open: string[], seen: string[]): string[] {
+  let kinds: string[] = [];
+  let found = false;
+  for sd in dx.structs {
+    if (sd.name == name && sd.enum_owner == "" || sd.enum_owner == name) {
+      found = true;
+      for f in sd.fields {
+        let ft = f.type_name.trim();
+        if (!util.has_str(sd.type_params, ft)) {
+          kinds = ow_merge_kinds(kinds, ow_handle_kinds(ft, dx, open, seen));
+        }
+      }
+    }
+  }
+  for al in dx.aliases {
+    if (al.name == name && al.variants.len() > 0) {
+      found = true;
+      for i in 0..al.variants.len() {
+        let member = al.variants[i];
+        if (i < al.variant_args.len() && al.variant_args[i].len() > 0) {
+          member = member + "[" + al.variant_args[i].join(", ") + "]";
+        }
+        if (!util.has_str(al.type_params, member)) {
+          kinds = ow_merge_kinds(kinds, ow_handle_kinds(member, dx, open, seen));
+        }
+      }
+    }
+  }
+  return if (found) { kinds } else { ["*"] };
+}
+
+function ow_all_handle_kinds(ts: string[], dx: OwnDecls, open: string[], seen: string[]): string[] {
+  let kinds: string[] = [];
+  for t in ts {
+    kinds = ow_merge_kinds(kinds, ow_handle_kinds(t.trim(), dx, open, seen));
+  }
+  return kinds;
+}
+
+function ow_merge_kinds(own kinds: string[], more: string[]): string[] {
+  for kind in more {
+    kinds = ow_add_kind(kinds, kind);
+  }
+  return kinds;
+}
+
+function ow_add_kind(own kinds: string[], kind: string): string[] {
+  if (util.has_str(kinds, kind)) {
+    return kinds;
+  }
+  return kinds.append(kind);
 }
 
 function ow_sig_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {

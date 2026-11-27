@@ -1,0 +1,41 @@
+// spec: RH-44
+// A field of an `own` parameter moves to an `own` parameter in a match tag
+// when every arm leaves the statement. The path after the match reads the
+// field only on the other branch.
+
+struct Handle { id: i32, log: Cell[string] }
+
+function (own h: Handle) close(): void {
+  h.log.set(h.log.get() + "closed " + h.id.to_string() + "\n");
+}
+
+struct Pair { h: Handle, n: i32 }
+
+function take(own h: Handle): Option[i32] {
+  let id = h.id;
+  h.close();
+  return if (id > 0) { Some(id) } else { None };
+}
+
+function settle(own p: Pair): i32 {
+  if (p.n > 0) {
+    match (take(p.h)) {
+      Some(v) => {
+        return v;
+      },
+      None => {
+        return 0;
+      }
+    }
+  }
+  p.h.close();
+  return -1;
+}
+
+function main(): i32 {
+  let log = cell_new("");
+  let a = settle(Pair { h: Handle { id: 5, log: log }, n: 1 });
+  let b = settle(Pair { h: Handle { id: 6, log: log }, n: 0 });
+  print(log.get() + a.to_string() + " " + b.to_string());
+  return 0;
+}

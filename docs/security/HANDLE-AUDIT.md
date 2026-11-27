@@ -105,8 +105,17 @@ A `Socket` held as a `Socket` is refused the same way.
 | A local read out of a borrowed structure, passed to an `own` parameter at its last use, when its type cannot hold a handle | accepted | `local_read_from_borrowed_struct_moves_at_last_use` |
 | A handle read out of a borrowed structure, passed to an `own` parameter at its last use | `E051` | `diag_e051_handle_local_read_from_borrowed_struct` |
 | A fresh local that an assignment gives a borrowed handle, or an alias of a borrowed parameter, passed to an `own` parameter or consumed by a method | `E051` | `diag_e051_fresh_local_reassigned_from_a_borrow` |
+| A record that a function makes from its borrowed `Writer`, used after the close of the `Writer` | `E050` | `diag_e050_handle_kept_by_borrowing_call` |
+| The result of a function that returns its borrowed `Reader`, read after the close of the `Reader` | `E050` | `diag_e050_handle_returned_by_borrowing_call` |
+| A result that holds a handle of another kind than the borrowed argument or receiver, used after the close of the argument | accepted | `handle_lent_only_to_a_result_of_its_kind` |
 
 The rows for `diag_e051_variant_result_borrows_its_payload` and `diag_e051_local_from_borrowing_call` close two holes that the consuming close exposed.
+
+A declared function lends each borrowed argument to its result, and a declared method also lends its receiver.
+An argument lends only when the result type can hold a handle of a kind that the argument type can hold.
+A type parameter, a callback and a type with no declaration can hold every kind.
+Before this rule, a function could keep a borrowed `Writer` in the record that it returned.
+A write through the record after the close went to the next file that took the descriptor number.
 A variant constructor carries its payload, so its result borrows what the payload borrows.
 
 A generic type parameter can hold a handle after substitution.
@@ -220,6 +229,7 @@ The proof uses an unchanged parameter, no whole-owner read, and one read of that
 | A payload taken in a loop from a field of an unpacked local | accepted | `handle_payload_closes_in_loop_from_unpack` |
 | A field closed by a call that reads other fields of its owner | accepted | `handle_field_closes_beside_other_field_reads` |
 | A field moved by a call that reads the same field in another argument | `E051` | `diag_e051_handle_field_moved_beside_same_field` |
+| A field of an `own` parameter closed by a call in a match tag whose arms all leave the statement | accepted | `owned_field_moves_in_match_tag` |
 | An own parameter closed each round of a loop | `E050` | `diag_e050_owned_handle_consumed_inside_loop` |
 
 Both checkers report the same code at the same position for each row.

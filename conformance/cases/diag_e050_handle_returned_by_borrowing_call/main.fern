@@ -1,0 +1,28 @@
+// spec: RH-42
+// A function that returns its borrowed Reader lends the Reader to its result.
+// A read through the result after the close of the Reader is refused at
+// compile time.
+
+function pass(r: Reader): Reader {
+  return r;
+}
+
+function read_late(path: string): Result[void, IoError] {
+  let r: Reader = open_reader(path)?;
+  let again = pass(r);
+  r.close()?;
+  again.read_chunk(16)?;
+  return Ok(());
+}
+
+function main(): i32 {
+  match (read_late("/dev/null")) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}
