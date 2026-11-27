@@ -111,6 +111,10 @@ struct J { a: i32, b: i32 }
   for i in 0..n { s += __u8x16_lane(__u8x16_load(b, i * 16 + off), 15) as i32; }
   return s;
 }
+@noinline function reverse_into(own b: i32[], a: i32[], n: i32): i32[] {
+  for i in 0..n { b = b.with(n - 1 - i, a[i]); }
+  return b;
+}
 enum Op { Set(Slot), Skip(i32) }
 struct Slot { name: string, at: i32 }
 @noinline function named(ops: Op[], from: i32, name: string): i32 {
@@ -147,6 +151,8 @@ const versionedMain = `function main(): i32 {
   let f = fill(fseq(8), 4);
   if (f[0] != 0.0 || f[3] != 1.0 || f[5] != 2.0 || f[7] != 3.0) { return 13; }
   if (bytes(bseq(32), 0, 2) != 46 || bytes(bseq(40), 8, 2) != 62) { return 14; }
+  let r = reverse_into(seq(10), seq(10), 10);
+  if (r[0] != 27 || r[9] != 0 || r[4] != 15) { return 15; }
   return 0;
 }`
 
@@ -185,6 +191,8 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 				"snake":     "snake(seq(10), seq(12), 0, 0, 11, 11)",
 				"back":      "back(seq(10), seq(10), 11, 11, 0, 0)",
 				"diagonals": "diagonals(seq(8), 5, -4, 4, 1000).len()",
+				// The last write of n - 1 - i is past the end of seq(9).
+				"reverse_into": "reverse_into(seq(9), seq(10), 10).len()",
 				// The indices 0 to 7 fit, but the counter steps past the top of
 				// the i32 range, so it wraps and the next index is 10.
 				"wraps":  "wraps(seq(10), 2147483640, 2147483647, 2147483640)",
@@ -219,7 +227,7 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 			for _, c := range []struct {
 				name          string
 				reads, checks int
-			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}, {"scaled", 2, 1}} {
+			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}, {"scaled", 2, 1}, {"reverse_into", 2, 2}} {
 				body := asmFunction(string(asm), "__fn_"+c.name+":")
 				if got, checks := len(load.FindAllString(body, -1)), strings.Count(body, "oob_abort"); got != c.reads || checks != c.checks {
 					t.Errorf("%s has %d element reads and %d checks, want %d and %d: two versions of the loop\n%s", c.name, got, checks, c.reads, c.checks, body)
