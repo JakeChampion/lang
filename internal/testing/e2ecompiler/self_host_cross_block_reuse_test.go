@@ -145,6 +145,12 @@ function main(): i32 { let read: (M) => i32 = key; let sum: i32 = 0; let i: i32 
 @noinline function get(p: P): i32 { return p.x + p.y; }
 function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let u: i32 = 0; let i: i32 = 0; while (i < 3) { let c: P = P { x: i, y: n }; if (i > n) { u = u + 1; } u = u + get(a); a = c; i = i + 1; } let t: i32 = get(a); let r: i32 = 0; if (t > 3) { r = 1; } let b: P = P { x: t * 3, y: 4 }; return u + r + get(b); }
 function main(): i32 { return f(2); }`, 26, 4},
+		{"carried-past-a-fork", `struct C { at: i32, bit: i32, bad: boolean }
+@noinline function skip(input: [u8], own c: C, max: i32): C { let count: i32 = 0; while (!c.bad) { let bits: i32 = 8 - c.bit; if ((input[c.at] as i32 & (1 << bits) - 1) != 0) { return c; } count = count + 8; if (count > max) { return C { ...c, bad: true }; } c = C { at: c.at + 1, bit: 0, bad: false }; } return c; }
+function main(): i32 { let input: u8[] = [0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 1u8, 0u8, 0u8, 0u8, 1u8]; let c: C = C { at: 0, bit: 0, bad: false }; let r: i32 = 0; while (r < 4) { c = skip(input, c, 1000); c = C { ...c, at: c.at + 1 }; r = r + 1; } return c.at; }`, 16, 1},
+		{"fork-with-an-arm-that-builds-nothing", `struct C { at: i32, bit: i32, bad: boolean }
+@noinline function skip(input: [u8], own c: C, own spare: C, max: i32): C { let count: i32 = 0; while (!c.bad) { let bits: i32 = 8 - c.bit; if ((input[c.at] as i32 & (1 << bits) - 1) != 0) { return c; } count = count + 8; if (count > max) { return spare; } c = C { at: c.at + 1, bit: 0, bad: false }; } return c; }
+function main(): i32 { let input: u8[] = [0u8, 0u8, 0u8, 1u8]; let stop: C = skip(input, C { at: 0, bit: 0, bad: false }, C { at: 40, bit: 0, bad: true }, 8); let pass: C = skip(input, C { at: 0, bit: 0, bad: false }, C { at: 50, bit: 0, bad: true }, 1000); return stop.at + pass.at; }`, 43, 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
