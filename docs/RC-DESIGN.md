@@ -649,8 +649,9 @@ and another box on the other edge. A retain or a release of a twin with one
 side changes the count of that side. A parameter is its own box, so as a phi
 input it is a twin of itself with one side. A twin with one side meets a twin
 of another key as its count. Another use that a twin cannot describe
-reads the twin as one count. A reuse token is a phi whose inputs are one box
-or null, and it gives that box a twin of the token. Where the token is the
+reads the twin as one count. A reuse token is a phi whose inputs are one box,
+null, or a token of that box. It gives that box a twin of the token. On the
+edge of a token input, the twins keyed on that input take the key of the phi. Where the token is the
 box, the token takes the unit of the box. Where the token is null, the box
 keeps its unit. A test of the token against null decides the side on each
 edge. A block that defines the token again reads each twin of the token as
