@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -162,9 +163,10 @@ func TestSelfHostHardenShared(t *testing.T) {
 		if out := hardenSharedRun(t, run(unguarded, "8")); out != hardenSharedWant {
 			t.Fatalf("a call past the pad of an object with no property printed %q, want %q", out, hardenSharedWant)
 		}
-		cmd := run(guarded, "8")
+		cmd := withoutCoreDump(run(guarded, "8"))
 		out, err := cmd.CombinedOutput()
-		if err == nil || cmd.ProcessState.ExitCode() != 132 && !strings.Contains(string(out), "signal 4") {
+		// A native run ends on the signal, and it has no exit code.
+		if err == nil || signalOf(err) != syscall.SIGILL && cmd.ProcessState.ExitCode() != 132 && !strings.Contains(string(out), "signal 4") {
 			t.Fatalf("a call past the pad of the guarded object: %v\n%s\nwant SIGILL", err, out)
 		}
 		t.Logf("shared-object BTI fault control passed (qemu=%t)", qemu != "")

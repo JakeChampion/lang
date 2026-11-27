@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"debug/elf"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -270,6 +271,24 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		auth := binary.LittleEndian.AppendUint32(nil, 0xd50323bf)
 		if bytes.Count(img, sign) == 0 || bytes.Count(img, auth) < bytes.Count(img, sign) {
 			t.Fatalf("the -harden image has %d paciasp and %d autiasp, want every framed function to sign and each of its exits to authenticate", bytes.Count(img, sign), bytes.Count(img, auth))
+		}
+		if n, faults := signedStateRows(t, plain); n != 0 || len(faults) != 0 {
+			t.Errorf("an image built without -harden has %d signed-state unwind rows: %v", n, faults)
+		}
+		n, faults := signedStateRows(t, hard)
+		if n == 0 {
+			t.Fatal("the -harden image has no signed-state unwind row, so an unwinder reads each signed return address as a plain one")
+		}
+		for _, fault := range faults {
+			t.Error(fault)
+		}
+		// The control proves that the walk reports a row with no signature.
+		unpaired := filepath.Join(dir, "unpaired-rows")
+		if err := os.WriteFile(unpaired, bytes.ReplaceAll(img, auth, binary.LittleEndian.AppendUint32(nil, 0xd503201f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if _, faults := signedStateRows(t, unpaired); len(faults) == 0 {
+			t.Fatal("the unwind row check accepts an image whose signed-state rows follow no autiasp")
 		}
 		if authenticated {
 			// PACIASP is also a BTI target, so the control keeps a pad in its place.
@@ -776,4 +795,135 @@ func signalOf(err error) syscall.Signal {
 		return 0
 	}
 	return ws.Signal()
+}
+
+// signedStateRows walks the call frame instructions of the image's .eh_frame
+// and counts the DW_CFA_AARCH64_negate_ra_state rows. A fault is a paciasp
+// or an autiasp that an FDE covers with no such row directly after it, or a
+// row at any other address.
+func signedStateRows(t *testing.T, path string) (rows int, faults []string) {
+	t.Helper()
+	name := filepath.Base(path)
+	fault := func(format string, args ...any) {
+		faults = append(faults, name+": "+fmt.Sprintf(format, args...))
+	}
+	img, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := elf.NewFile(bytes.NewReader(img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileOff := func(vaddr uint64) uint64 {
+		for _, p := range f.Progs {
+			if p.Type == elf.PT_LOAD && vaddr >= p.Vaddr && vaddr < p.Vaddr+p.Filesz {
+				return vaddr - p.Vaddr + p.Off
+			}
+		}
+		t.Fatalf("%s: no PT_LOAD holds %#x", name, vaddr)
+		return 0
+	}
+	var hdr *elf.Prog
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_GNU_EH_FRAME {
+			hdr = p
+		}
+	}
+	if hdr == nil {
+		t.Fatalf("%s has no PT_GNU_EH_FRAME", name)
+	}
+	// The second header field is the pc-relative address of .eh_frame.
+	ehVAddr := uint64(int64(hdr.Vaddr+4) + int64(int32(binary.LittleEndian.Uint32(img[hdr.Off+4:]))))
+	uleb := func(b []byte) (uint64, []byte) {
+		var v uint64
+		for shift := 0; ; shift += 7 {
+			c := b[0]
+			b = b[1:]
+			v |= uint64(c&0x7f) << shift
+			if c&0x80 == 0 {
+				return v, b
+			}
+		}
+	}
+	codeAlign := map[uint64]uint64{}
+	flips := map[uint64]bool{}
+	for vaddr := ehVAddr; ; {
+		off := fileOff(vaddr)
+		ln := uint64(binary.LittleEndian.Uint32(img[off:]))
+		if ln == 0 {
+			break
+		}
+		body := img[off+4 : off+4+ln]
+		cie := binary.LittleEndian.Uint32(body)
+		if cie == 0 {
+			aug, rest, ok := bytes.Cut(body[5:], []byte{0})
+			if !ok || string(aug) != "zR" {
+				t.Fatalf("%s: a CIE with the augmentation %q, want zR", name, aug)
+			}
+			codeAlign[vaddr], _ = uleb(rest)
+			vaddr += 4 + ln
+			continue
+		}
+		caf, ok := codeAlign[vaddr+4-uint64(cie)]
+		if !ok {
+			t.Fatalf("%s: the FDE at %#x names no CIE", name, vaddr)
+		}
+		start := uint64(int64(vaddr+8) + int64(int32(binary.LittleEndian.Uint32(body[4:]))))
+		end := start + uint64(binary.LittleEndian.Uint32(body[8:]))
+		augLen, ins := uleb(body[12:])
+		ins = ins[augLen:]
+		loc := start
+		for len(ins) > 0 {
+			op := ins[0]
+			ins = ins[1:]
+			operands := 0
+			switch {
+			case op>>6 == 1:
+				loc += uint64(op&0x3f) * caf
+			case op>>6 == 2:
+				operands = 1
+			case op>>6 == 3, op == 0x00, op == 0x0a, op == 0x0b:
+			case op == 0x02:
+				loc += uint64(ins[0]) * caf
+				ins = ins[1:]
+			case op == 0x03:
+				loc += uint64(binary.LittleEndian.Uint16(ins)) * caf
+				ins = ins[2:]
+			case op == 0x04:
+				loc += uint64(binary.LittleEndian.Uint32(ins)) * caf
+				ins = ins[4:]
+			case op == 0x0c:
+				operands = 2
+			case op == 0x0d, op == 0x0e:
+				operands = 1
+			case op == 0x2d:
+				if flips[loc] {
+					fault("two signed-state rows at %#x", loc)
+				}
+				flips[loc] = true
+				rows++
+			default:
+				t.Fatalf("%s: the FDE of %#x has the call frame instruction %#x, which this walk does not read", name, start, op)
+			}
+			for ; operands > 0; operands-- {
+				_, ins = uleb(ins)
+			}
+		}
+		for pc := start; pc+4 <= end; pc += 4 {
+			w := binary.LittleEndian.Uint32(img[fileOff(pc):])
+			if w != 0xd503233f && w != 0xd50323bf {
+				continue
+			}
+			if !flips[pc+4] {
+				fault("no signed-state row follows the paciasp or autiasp at %#x", pc)
+			}
+			delete(flips, pc+4)
+		}
+		vaddr += 4 + ln
+	}
+	for pc := range flips {
+		fault("a signed-state row at %#x follows no paciasp or autiasp", pc)
+	}
+	return rows, faults
 }
