@@ -1943,8 +1943,43 @@ function phi_count(insts: SInst[]): i32 {
   return count;
 }
 
+// The operands of each instruction as the emitted code of a carry chain
+// reads them. A carry in the flags reads no register, and the second add of
+// `x + y + carry` reads x and y. A carry in the flags and the first add of
+// `x + y + carry` get no home.
+struct CarryReads { f: SFunc, no_home: boolean[] }
+
+function carry_reads(f: SFunc, no_home: boolean[]): CarryReads {
+  let roles = carry_roles(f, use_counts(f));
+  if (roles.len() == 0) {
+    return CarryReads { f: f, no_home: no_home };
+  }
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    for k in 0..blk.insts.len() {
+      let ins = blk.insts[k];
+      let role = carry_role(roles, ins);
+      if (role == CARRY_FLAG || role == CARRY_SKIP) {
+        no_home = no_home.with(ins.result, true);
+      }
+      if (role == CARRY_FLAG || role == CARRY_KEEP) {
+        ins = SInst { ...ins, args: [] };
+      } else if (role == CARRY_LINK) {
+        ins = SInst { ...ins, args: blk.insts[k - 1].args };
+      }
+      insts = insts.append(ins);
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  return CarryReads { f: SFunc { ...f, blocks: blocks }, no_home: no_home };
+}
+
 pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[], crossing_all: boolean[], lens: i32[], costs: SpillCosts): Alloc {
   no_home = unhomed_call_results(f, no_home);
+  let reads = carry_reads(f, no_home);
+  f = reads.f;
+  no_home = reads.no_home;
   let cold_calls = cold.len() > 0;
   let wish = return_prefs(f, pref, abi_reg);
   let big = 2000000000;

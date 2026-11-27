@@ -11635,8 +11635,13 @@ function ssa_carried_sum(ins: ssa.SInst, result: i32, carried: boolean, reg_of: 
   if (carried) {
     op = if (ins.ir_kind == ir.K_SUB) { "sbbq" } else { "adcq" };
   }
+  let shares_right = ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[result];
+  if (shares_right && ins.ir_kind == ir.K_ADD) {
+    ins = ssa.SInst { ...ins, args: [ins.args[1], ins.args[0]] };
+    shares_right = false;
+  }
   let d = ssa_spilled_dst(fr, reg_of, ins.args[0], result);
-  if (ssa_in_x(reg_of, ins.args[1]) && reg_of[ins.args[1]] == reg_of[result]) {
+  if (shares_right) {
     d = "%r11";
   }
   s = ssa_load_value(fr, reg_of, ins.args[0], d, s);
