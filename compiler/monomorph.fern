@@ -894,7 +894,7 @@ function mono_stmt(st: ast.Stmt, env: parser.MEnv, funcs: parser.MFns, ins: pars
       if (ty.len() == 0) {
         ty = parser.mono_infer(v.init, env, funcs);
       }
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }, renv: parser.menv_bind_destructure(env.ebind(v.name, ty), v.destr, ty), rins2: iv.rins };
+      return RStmtOne { rstmt: ast.StmtVar { decl_id: v.decl_id, name: v.name, type_name: v.type_name, init: iv.rexpr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }, renv: parser.menv_bind_destructure(env.ebind(v.name, ty), v.destr, ty), rins2: iv.rins };
     },
     ast.StmtReturn(r) => {
       let rv = mono_call_expected(r.value, ret_ty, env, funcs, ins);
@@ -2728,7 +2728,7 @@ function ms_stmt(st: ast.Stmt, env: parser.MEnv, gstructs: parser.StructDecl[], 
       let ninit = retype_assoc_ctor(iv.rexpr, ta.ty, gstructs, funcs);
       let vr = parser.mg_ty(v.fn_ret, gstructs, iv.rins);
       let vl = mg_ty_list(v.fn_param_types, gstructs, vr.mins);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.tys, destr: destr, header: v.header }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
+      return RStmtOne { rstmt: ast.StmtVar { decl_id: v.decl_id, name: v.name, type_name: ta.ty, init: ninit, line: v.line, col: v.col, fn_ret: vr.ty, fn_param_types: vl.tys, destr: destr, header: v.header }, renv: env.ebind(v.name, ms_var_ty(ta.ty, v.init, ninit, env, gstructs, funcs)), rins2: vl.mins };
     },
     ast.StmtReturn(r) => {
       let rv = ms_expr_to(r.value, ret_ty, env, gstructs, funcs, ins);
@@ -4061,7 +4061,7 @@ function me_stmt(st: ast.Stmt, env: parser.MEnv, ret_ty: string, enums: parser.E
         vty = me_scrutinee_type(v.init, env, enums, structs, funcs, ins);
       }
       let ninit = retype_enum_assoc(iv.rexpr, nslot.ty, enums, funcs);
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params, destr: v.destr, header: v.header }, renv: me_bind_var(env, v, vty, enums, structs, funcs, ins), rins2: cins };
+      return RStmtOne { rstmt: ast.StmtVar { decl_id: v.decl_id, name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params, destr: v.destr, header: v.header }, renv: me_bind_var(env, v, vty, enums, structs, funcs, ins), rins2: cins };
     },
     ast.StmtReturn(r) => {
       let rv = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
