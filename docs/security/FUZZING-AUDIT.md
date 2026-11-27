@@ -153,6 +153,8 @@ Other seeds carry a frame of 65535 by 65535 pixels, a lossless frame and a file 
 
 Every input runs in a child process under two budgets, 20 seconds of wall time and 512 MiB of resident memory.
 A hang, a signal or a budget breach fails the input whatever the exit status.
+An input that passes the wall time runs one more time, unless it reads a stdin stream.
+Only two timeouts are a hang, because a stalled host also causes one timeout.
 An input over 64 KiB is skipped.
 The seeds are in each target's `f.Add` list. They include a window of a real image around its manifest, a manifest line without its newline, and the magic repeated. They also include the compiler's own emitted text for a small program, malformed directives, and empty input.
 

@@ -43,7 +43,27 @@ type fuzzRun struct {
 }
 
 func runUnderBudget(cmd *exec.Cmd) fuzzRun {
-	ctx, cancel := context.WithTimeout(context.Background(), fuzzTimeBudget)
+	return runWithin(cmd, fuzzTimeBudget)
+}
+
+// runWithin runs cmd one more time when the first run passes the time limit.
+// A reader that hangs on an input hangs each time, and a stalled host does
+// not. A command with a stdin stream has no second run, because the first
+// run read the stream.
+func runWithin(cmd *exec.Cmd, limit time.Duration) fuzzRun {
+	r := runOnce(cmd, limit)
+	if !r.timedOut || cmd.Stdin != nil {
+		return r
+	}
+	r = runOnce(cmd, limit)
+	if !r.timedOut {
+		fmt.Fprintf(os.Stderr, "budget: %s passed %s one time and then completed, which is a delay of the host\n", filepath.Base(cmd.Path), limit)
+	}
+	return r
+}
+
+func runOnce(cmd *exec.Cmd, limit time.Duration) fuzzRun {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	self, err := os.Executable()
 	if err != nil {
