@@ -487,8 +487,6 @@ function at_eof(cfg: Cfg, run: Run): i32 {
   let a = run.inputs[0];
   let b = run.inputs[1];
   let status = if (run.differ) { EXIT_DIFFER } else { 0 };
-  run_output_flush(run, true);
-  buf_free(run.out);
   if (a.eof && b.eof) {
     return status;
   }
@@ -509,6 +507,7 @@ function at_eof(cfg: Cfg, run: Run): i32 {
 
 function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
   let run = Run { inputs: inputs, at: 0 as u64, lines: 0 as u64, last: 0 as u8, differ: false, out: buf_new(CHUNK) };
+  let status = 0;
   // Even a zero-byte read can report an input error.
   while (true) {
     let left = cfg.limit - run.at;
@@ -516,7 +515,8 @@ function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
     let b = fill(run.inputs[1], left);
     run = Run { ...run, inputs: [a, b] };
     if (a.eof || b.eof) {
-      return at_eof(cfg, run);
+      status = at_eof(cfg, run);
+      break;
     }
     let n = a.buf.len() - a.pos;
     if (b.buf.len() - b.pos < n) {
@@ -524,12 +524,13 @@ function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
     }
     run = compare_span(cfg, run, width, n);
     if (run.at >= cfg.limit || run.differ && !cfg.verbose) {
+      status = if (run.differ) { EXIT_DIFFER } else { 0 };
       break;
     }
   }
   run_output_flush(run, true);
   buf_free(run.out);
-  return if (run.differ) { EXIT_DIFFER } else { 0 };
+  return status;
 }
 
 function same_file(s0: Option[FileStat], s1: Option[FileStat]): boolean {
