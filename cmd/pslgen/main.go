@@ -269,7 +269,7 @@ function __labels(host: string): string[] {
 }
 
 function __join(labels: string[], from: i32): string {
-  return array.slice(labels, from, labels.len()).join(".");
+  return labels.slice(from, labels.len()).join(".");
 }
 
 function __rule(r: string): boolean {
