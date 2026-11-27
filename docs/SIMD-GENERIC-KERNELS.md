@@ -351,8 +351,9 @@ of them. No PR leaves a type on main that a backend refuses.
     vector register for one.
   - A direct call passes lane parameter p in the float class's location p
     (`%xmm3` up on x86-64, `q<p>` on arm64) and returns a lane result in
-    `%xmm3` / `q0`. A lane value never takes a callee-saved float register,
-    because AAPCS64 saves only the low 64 bits of `v8`-`v15`.
+    `%xmm3` / `q0`. A lane value that a call crosses never takes a
+    callee-saved float register, because AAPCS64 saves only the low 64 bits
+    of `v8`-`v15`. A lane value that no call crosses can take one.
 
 ### Array fusion (slice 5b)
 

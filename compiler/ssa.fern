@@ -2435,7 +2435,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     oi += 1;
   }
   if (nfs > 0) {
-    reg_of = lanes_off_saved(f, reg_of, nregs + nsaved + nf);
+    reg_of = lanes_off_saved(f, reg_of, nregs + nsaved + nf, crossing_all, cum_all, lo, hi);
   }
   reg_of = spilled_phi_cycles(f, reg_of);
   let shape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
@@ -2492,10 +2492,12 @@ function memory_phis(phis: i32[], reg_of: i32[]): boolean {
   return true;
 }
 
-function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32): i32[] {
+// A call keeps only the low half of a saved float register, so a lane value
+// that lives across a call cannot stay in one.
+function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32, crossing_all: boolean[], cum_all: i32[], lo: i32[], hi: i32[]): i32[] {
   let lanes = lane_values(f);
   for v in 0..lanes.len() {
-    if (lanes[v] && reg_of[v] >= saved_from) {
+    if (lanes[v] && reg_of[v] >= saved_from && spans_hard([], crossing_all, false, cum_all, lo[v], hi[v], v)) {
       reg_of = reg_of.with(v, -1);
     }
   }
@@ -8075,6 +8077,7 @@ pub function hoisted_invariants(f: SFunc): Formed {
   }
   let at = block_positions(f);
   let latch = furthest_latches(f, at);
+  let inner = innermost_loops(latch);
   let preds = position_preds(f, at);
   let defs = inst_defs(f);
   let def_pos = def_positions(f);
@@ -8089,7 +8092,9 @@ pub function hoisted_invariants(f: SFunc): Formed {
     let last = latch[h];
     let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
     if (pre >= 0) {
-      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() }, defs, def_pos, h, last, !loop_calls(blocks, h, last));
+      let nvals = f.nvals + made.len();
+      let reloaded = if (loop_calls(blocks, h, last)) { reloaded_values(blocks, def_pos, inner, h, last, nvals) } else { __alloc_bool(nvals) };
+      let inv = invariant_values(blocks, SFunc { ...f, blocks: blocks, nvals: nvals }, defs, def_pos, h, last, reloaded);
       let moving: SInst[] = [];
       let originals: i32[] = [];
       let copies: i32[] = [];
@@ -8179,9 +8184,8 @@ pub function hoisted_invariants(f: SFunc): Formed {
   return Formed { f: rewrite_through(moved, flat), repl: flat };
 }
 
-// A call in the loop from `h` to `last` that returns. No lane register is
-// kept across it, so a lane value that moves in front of such a loop takes a
-// frame slot. An abort does not return, so no value has to live through it.
+// A call in the loop from `h` to `last`. No lane register is kept across a
+// call, so a lane value that moves in front of such a loop takes a frame slot.
 function loop_calls(blocks: SBlock[], h: i32, last: i32): boolean {
   for bi in h..=last {
     for ins in blocks[bi].insts {
@@ -8194,17 +8198,17 @@ function loop_calls(blocks: SBlock[], h: i32, last: i32): boolean {
 }
 
 // The values of the loop from `h` to `last` that can move in front of it: a
-// pure integer computation of operands defined before the loop, of constants,
-// or of values that move. At least one operand of an integer computation must
-// not be a constant: a computation of constants only gains nothing in front of
-// the loop, and it holds a register across the loop there. A lane value of
-// constants moves, because each build of it costs several instructions, but
-// only out of a loop with no call (`lanes`).
-function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32, lanes: boolean): boolean[] {
+// pure integer or lane computation of operands defined before the loop, of
+// constants, or of values that move. An integer computation must read one
+// operand that is not a constant: one of constants only gains nothing in front
+// of the loop, and it holds a register across the loop there. A lane value of
+// constants takes more than one instruction to make, so it moves. A lane value
+// that `reloaded` marks stays.
+function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i32[], h: i32, last: i32, reloaded: boolean[]): boolean[] {
   let inv = __alloc_bool(f.nvals);
   for bi in h..=last {
     for ins in blocks[bi].insts {
-      if (!hoistable(ins, defs) || !lanes && lane_inst(ins)) {
+      if (!hoistable(ins, defs) || pure_lane(ins) && reloaded[ins.result]) {
         continue;
       }
       let ok = true;
@@ -8220,7 +8224,7 @@ function invariant_values(blocks: SBlock[], f: SFunc, defs: SInst[], def_pos: i3
           ok = false;
         }
       }
-      if (ok && (reads_non_constant || lane_inst(ins))) {
+      if (ok && (reads_non_constant || pure_lane(ins))) {
         inv = inv.with(ins.result, true);
       }
     }
@@ -8248,6 +8252,36 @@ function hoistable(ins: SInst, defs: SInst[]): boolean {
     return d >= 0 && d < defs.len() && is_constant(defs[d], defs.len()) && !const_is(defs, d, 0i64) && !const_is(defs, d, -1i64);
   }
   return int_binary(ins) && !ir.is_int_cmp_kind(ins.ir_kind);
+}
+
+// The position of the header of the innermost loop that holds each block, or
+// -1. The loops nest, so a later header is a loop inside an earlier one.
+function innermost_loops(latch: i32[]): i32[] {
+  let out = util.minus_ones(latch.len());
+  for h in 0..latch.len() {
+    for bi in h..=latch[h] {
+      out = out.with(bi, h);
+    }
+  }
+  return out;
+}
+
+// The values of the loop from `h` to `last` that the loop reads more than one
+// time, or in a loop inside the loop of their definition. No register keeps a
+// lane value across a call, so a lane value that moves out of a loop with a
+// call goes to a frame slot, and each read loads it again.
+function reloaded_values(blocks: SBlock[], def_pos: i32[], inner: i32[], h: i32, last: i32, nvals: i32): boolean[] {
+  let reads = __alloc_i32(nvals);
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      for a in ins.args {
+        if (a >= 0 && a < nvals && def_pos[a] >= h && def_pos[a] <= last) {
+          reads = reads.with(a, if (inner[def_pos[a]] != inner[bi]) { 2 } else { reads[a] + 1 });
+        }
+      }
+    }
+  }
+  return reads.map((n: i32): boolean => n > 1);
 }
 
 // The position of the one block outside the loop from `h` to `last` that
