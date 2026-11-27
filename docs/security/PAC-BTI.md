@@ -20,20 +20,28 @@ Each instruction is in the hint space, so a hardened image runs on a core withou
 | Claim | Where it is recorded |
 |---|---|
 | The instructions are present and counted | `TestSelfHostHardenArm64` counts the pads, the signatures and the authentications in the in-process image |
-| A removed pad faults under BTI | the test's BTI fault control, which also turns the software indirect-call compare off, under QEMU 8.2.2 and on the native ARM shard |
+| A removed pad faults under BTI | the test's BTI fault control, which also turns the software indirect-call compare off, under QEMU 8.2.2 and natively on the BTI host below |
 | A removed signature faults under PAC | the test's PAC fault control, under QEMU and on the native ARM shard (run 40405443296, kernel 6.17.0-1022-azure, `PAC fault control passed (native)`) |
 | A removed signature faults in the image the in-process assembler writes | the test's direct-image PAC control, which puts `bti c` in place of every `paciasp` and must fault, then puts `nop` in place of every `autiasp` and must run, under QEMU and on the native ARM shard |
 | A removed signature on a runtime frame faults under PAC | the test's runtime frame control, which removes the `paciasp` of `__fern_alloc` alone, under QEMU and on the native ARM shard |
+| The unwind rows record the signed state of the return address | the test's walk of `.eh_frame` in the in-process image, which requires one `DW_CFA_AARCH64_negate_ra_state` row directly after each `paciasp` and each `autiasp` and no such row at a different address. An image with `nop` in place of each `autiasp` must fail the walk, and an image built without `-harden` must have no such row |
+| A backtrace through signed frames prints plain code addresses | the test's backtrace case, which builds with `-harden -backtrace` and aborts two frames deep |
 | A forged function pointer is refused before the branch | `TestSelfHostForwardEdgeCFI` under QEMU |
-| A call past the pad of a shared object's export faults under BTI | `TestSelfHostHardenShared`, which puts `nop` in place of PAC and requires the fault with the property header and a run without it, under QEMU |
+| A call past the pad of a shared object's export faults under BTI | `TestSelfHostHardenShared`, which puts `nop` in place of PAC and requires the fault with the property header and a run without it, under QEMU and natively on the BTI host below |
 | The Android executable and shared object carry the note | `TestSelfHostHardenAndroid`, which requires the note in the arm64-android `-harden` images and runs the hardened executables of both Android targets |
 | What a process runs with | `std/mitigations` reads `/proc/self/status`, the auxiliary vector, the memory map flags and `prctl` |
 
 QEMU user mode emulates PAC and BTI, so a QEMU result is emulated evidence.
 The native ARM shard gives physical evidence for PAC on one host and one function sample.
-BTI enforcement on physical hardware is not yet recorded, because the native runner did not request the BTI control.
+
+The native ARM shard does not list `bti` in `/proc/cpuinfo`, so the BTI controls do not run natively in CI.
+The physical BTI record is a manual run on 2026-11-27 of `TestSelfHostHardenArm64` and `TestSelfHostHardenShared` with no QEMU.
+The host was an arm64 Linux virtual machine on an Apple CPU (implementer `0x61`), with kernel 7.0.12-linuxkit and glibc 2.36.
+Its `/proc/cpuinfo` lists `bti`, `paca` and `pacg`.
+The tests logged `BTI fault control passed (native)` two times and `shared-object BTI fault control passed (qemu=false)`.
 
 ## Remaining limits
 
 - The PAC key is the kernel's per-process key. There is no key rotation on `fork`, which the kernel handles.
-- The physical BTI fault test waits for a runner that requests it, and the physical PAC record covers one host.
+- The physical BTI record and the physical PAC record each cover one host. No CI runner enforces BTI, so CI gives emulated evidence only for the BTI controls.
+- BTI enforcement on an Android device is not recorded.
