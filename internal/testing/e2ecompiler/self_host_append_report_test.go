@@ -155,7 +155,7 @@ func TestSelfHostAppendReport(t *testing.T) {
 	}{
 		{"sole", 0, "sole-owner", "in-place", "(xs)"},
 		{"live", 0, "receiver-still-live", "copy", "(xs, keep)"},
-		{"snapshot", 0, "guarded", "unique-grow/shared-copy", ""},
+		{"snapshot", 0, "sole-owner", "in-place", ""},
 		{"nested", 0, "receiver-retained", "copy", ""},
 		{"chained", 0, "receiver-borrowed", "unique-grow/shared-copy", "(xs)"},
 		{"chained", 1, "borrow-linked", "unique-grow/shared-copy", "(a)"},

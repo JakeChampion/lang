@@ -22,6 +22,9 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"pipe-empty-call", `function inc(x: i32): i32 { return x + 1; }
+function add(x: i32, y: i32): i32 { return x + y; }
+function main(): i32 { return 1 |> inc() |> add(2) |> add(3, _); }`},
 	{"nested-owned-results", `function main(): i32 {
   function make(): own i32[] { return [7]; }
   function step(own xs: i32[]): own i32[] { return xs.append(1); }
