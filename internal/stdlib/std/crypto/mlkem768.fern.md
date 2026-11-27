@@ -255,6 +255,7 @@ function __mul_acc(own acc: i32[], at: i32, a: [i32], ai: i32, b: [i32], bi: i32
   return acc;
 }
 
+@inline
 function __basemul(own acc: i32[], at: i32, a: [i32], ai: i32, b: [i32], bi: i32, g: i32): i32[] {
   let a0 = a[ai];
   let a1 = a[ai + 1];
