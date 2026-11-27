@@ -200,7 +200,8 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 		})
 	}
 
-	noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = 5; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+	// More passes than an unroll takes, so the loop and its check stay.
+	noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; let n: i32 = 20; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
 	for _, d := range []struct{ name, src string }{
 		{"for_in", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; for x in xs { s = s + x; } return s; }`},
 		{"len_guard", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`},
