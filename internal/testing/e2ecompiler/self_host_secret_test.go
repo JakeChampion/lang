@@ -18,7 +18,9 @@ import (
 // each class that the 48-byte arrays can have on a target. The control is
 // the same record without the attribute: it must read the secret bytes back.
 // "shared"
-// returns the byte array from the key, so that array must keep its bytes.
+// returns the byte array from the key, so that array must keep its bytes. A
+// freed block can hold a stack address with a byte of 65, so the scan counts
+// a byte only when the other byte of its pair is also 65.
 const secretSrc = `@secret
 struct Key { bytes: u8[], words: u64[], n: i32 }
 
@@ -63,7 +65,7 @@ function stale(): i32 {
       for k in 0..8 {
         let p: usize = __alloc(size * 8);
         for i in 0..size * 8 {
-          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
         }
       }
     }
@@ -91,7 +93,8 @@ function main(): i32 {
 // released. The record has seven fields, and the scan of the size classes
 // takes its freed box back. The fields `a`, `b`, `e` and `f` and the four
 // bytes of `c` hold the byte 65, which is 36 bytes. The control is the same
-// record without the attribute.
+// record without the attribute. The scan counts a byte only when the other
+// byte of its pair is also 65, because a freed block can hold a stack address.
 const secretScalarsSrc = `@secret
 struct Key { a: u64, b: i64, c: i32, d: f64, e: u64, f: u64, g: boolean }
 
@@ -134,7 +137,7 @@ function stale(): i32 {
       for k in 0..8 {
         let p: usize = __alloc(size * 8);
         for i in 0..size * 8 {
-          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+          if (__load_u8(p + (i as usize)) == 65 as u8 && __load_u8(p + ((i ^ 1) as usize)) == 65 as u8) { found += 1; }
         }
       }
     }
@@ -160,7 +163,9 @@ function main(): i32 {
 // takes raw blocks of each size class from 24 to 72 bytes, so it finds the
 // box of the nested record, the box of the tuple and their arrays. The
 // control is the same record without the attribute. "shared" returns the
-// nested record from the key, so that record must keep its fields.
+// nested record from the key, so that record must keep its fields. The scan
+// counts whole words that equal the secret word, because a freed block can
+// hold a stack address with a byte of 65.
 const secretNestedSrc = `struct Half { a: u64, b: u64, c: u64, words: u64[] }
 
 @secret
@@ -209,8 +214,8 @@ function stale(): i32 {
     for size in 3..10 {
       for k in 0..8 {
         let p: usize = __alloc(size * 8);
-        for i in 0..size * 8 {
-          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+        for i in 0..size {
+          if (__load_i64(p + ((i * 8) as usize)) == 4702111234474983745) { found += 8; }
         }
       }
     }
@@ -782,7 +787,9 @@ function main(): i32 {
 // type with a finalizer when it holds the field alone. The finalizer runs
 // first and prints whether the fields are still whole, and the wipe follows.
 // The control is the same record without the attribute. "shared" returns the
-// record from the key, so that record must keep its fields.
+// record from the key, so that record must keep its fields. A freed block can
+// hold a stack address with a byte of 65, so the scan counts whole words that
+// equal the secret word.
 const secretFinalizedSrc = `import "core/mem";
 
 struct Res { a: u64, b: u64, words: u64[] }
@@ -848,8 +855,8 @@ function stale(): i32 {
     for size in 3..10 {
       for k in 0..8 {
         let p: usize = __alloc(size * 8);
-        for i in 0..size * 8 {
-          if (__load_u8(p + (i as usize)) == 65 as u8) { found += 1; }
+        for i in 0..size {
+          if (__load_i64(p + ((i * 8) as usize)) == 4702111234474983745) { found += 8; }
         }
       }
     }
