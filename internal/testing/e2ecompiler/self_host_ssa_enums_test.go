@@ -17,6 +17,20 @@ graph = ssa.SFunc { name: "measure", nparams: 1, nvals: 7, entry: 7, takes_env: 
 ] };
 `
 
+// The test reads xs[0] with a checked read. The projection reads the element
+// at args again with an unchecked read, whose imm differs from the first.
+func semanticTwinReads(args string) string {
+	return `
+let shapes: typeinfo.Type = typeinfo.TypeArray { elem: shape, view: false };
+params = [shapes]; types = [shapes, i32t, shape, bt, shape, ia, i32t, i32t, i32t]; result = i32t;
+graph = ssa.SFunc { name: "first", nparams: 1, nvals: 9, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(1, 1, [], 0), inst(1, 8, [], 1), inst(ssasem.array_get(), 2, [0, 1], 0), variant_test(3, 2, "Full")], term: branch_on(3) },
+    ssa.SBlock { id: 17, preds: [7], insts: [inst(ssasem.array_get(), 4, ` + args + `, 1), variant_field(5, 4, 0, "Full"), inst(1, 6, [], 0), inst(ssasem.array_get(), 7, [5, 6], 0)], term: ret(7) },
+    ssa.SBlock { id: 27, preds: [7], insts: [], term: ret(1) }
+] };
+`
+}
+
 const semanticSingleVariant = `
 let absent = semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeNever { tag: 0 } }] };
 enums = [semrecords.Enum { ...shapeEnum, variants: [full, absent] }];
@@ -37,6 +51,8 @@ func semanticEnumCases() []struct{ name, change, want string } {
 		{"enum-never-construction", `enums = [semrecords.Enum { ...shapeEnum, variants: [dot, full, semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeNever { tag: 0 } }] }] }]; let b = graph.blocks[2]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(2, ssa.SBlock { ...b, insts: b.insts.with(1, variant_make(6, "Line", [5])) }) };`, "variant field type"},
 		{"enum-unguarded-projection", `let b = graph.blocks[0]; graph = ssa.SFunc { ...graph, blocks: graph.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, t: 27, f: 17 } }) };`, "unguarded variant projection"},
 		{"enum-projection-other-test", `graph = change(graph, 1, variant_test(1, 0, "Line"));`, "unguarded variant projection"},
+		{"enum-proven-twin-read", semanticTwinReads("[0, 1]"), ""},
+		{"enum-other-index-read", semanticTwinReads("[0, 8]"), "unguarded variant projection"},
 		{"enum-missing-schema", "enums = [];", "missing variant schema"},
 		{"enum-unknown-variant", `graph = change(graph, 1, variant_test(1, 0, "Blob"));`, "unknown variant"},
 		{"enum-test-type", "types = types.with(1, i32t);", "variant test type"},
