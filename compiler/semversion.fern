@@ -479,7 +479,7 @@ function counter_at(s: Shape, v: i32): i32 {
 function fixed_length(f: ssasem.Func, ix: Index, s: Shape, v: i32): i32 {
   let d = ix.defs;
   let r = root(d, v);
-  if (!plain_array(f.values[r])) {
+  if (!typeinfo.is_array(f.values[r])) {
     return -1;
   }
   if (!home_in(ix, r, s.blocks)) {
@@ -495,14 +495,6 @@ function fixed_length(f: ssasem.Func, ix: Index, s: Shape, v: i32): i32 {
     return -1;
   }
   return p.args[entry];
-}
-
-// An array that is not a view, whose length the test can read.
-function plain_array(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    return !a.view;
-  }
-  return false;
 }
 
 function root(d: ssa.SInst[], v: i32): i32 {
