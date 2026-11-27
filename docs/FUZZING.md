@@ -261,7 +261,8 @@ readers, TLS record, handshake message, server and client handshake, PEM,
 X.509 and chain verifier readers, DEFLATE, gzip, zlib, zstd and Brotli
 decoders, DNS message, protobuf and JPEG readers, JSON parser, URL parser and UTF-8 validator. The DEFLATE, gzip and zlib targets
 must agree with Go's decoders on every input. Each input runs in a child process under a time and
-a memory budget. The targets run from
+a memory budget. An input that passes the time budget runs one more time, and only two
+timeouts count as a hang, because a stalled host also causes one timeout. The targets run from
 committed seeds on every pull request. `docs/security/FUZZING-AUDIT.md` has the
 targets, the encoding the verifier driver reads, the accepted outcomes and
 the triage rule.

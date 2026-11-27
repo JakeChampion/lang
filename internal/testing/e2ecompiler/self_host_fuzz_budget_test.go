@@ -6,12 +6,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 )
+
+// budgetMarkerEnv names the file that the stall-once fixture makes in its
+// first run.
+const budgetMarkerEnv = "FERN_BUDGET_FIXTURE_MARKER"
 
 func budgetFixture(mode string) *exec.Cmd {
 	cmd := exec.Command(os.Args[0], "--fern-budget-fixture", mode)
@@ -42,6 +47,12 @@ func budgetFixtureMain(mode string) int {
 		syscall.Kill(os.Getpid(), syscall.SIGKILL)
 	case "timeout":
 		time.Sleep(time.Minute)
+	case "stall-once":
+		marker := os.Getenv(budgetMarkerEnv)
+		if _, err := os.Stat(marker); err != nil {
+			os.WriteFile(marker, nil, 0o644)
+			time.Sleep(time.Minute)
+		}
 	default:
 		return 2
 	}
@@ -84,9 +95,29 @@ func TestRunUnderBudget(t *testing.T) {
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
-		r := runUnderBudget(budgetFixture("timeout"))
+		r := runWithin(budgetFixture("timeout"), time.Second)
 		if !r.timedOut || !strings.Contains(budgetFault("control", r, nil), "hung past 20s") {
 			t.Fatalf("target timeout did not fail the budget: %+v", r)
+		}
+	})
+	t.Run("one stall", func(t *testing.T) {
+		cmd := budgetFixture("stall-once")
+		marker := filepath.Join(t.TempDir(), "stalled")
+		cmd.Env = append(cmd.Env, budgetMarkerEnv+"="+marker)
+		r := runWithin(cmd, time.Second)
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("the first run did not stall: %v", err)
+		}
+		if r.timedOut || !r.exited || r.code != 0 || budgetFault("control", r, nil) != "" {
+			t.Fatalf("a target that stalls one time failed the budget: %+v", r)
+		}
+	})
+	t.Run("stall with stdin", func(t *testing.T) {
+		cmd := budgetFixture("stall-once")
+		cmd.Env = append(cmd.Env, budgetMarkerEnv+"="+filepath.Join(t.TempDir(), "stalled"))
+		cmd.Stdin = strings.NewReader("input")
+		if r := runWithin(cmd, time.Second); !r.timedOut {
+			t.Fatalf("a target with a stdin stream ran a second time: %+v", r)
 		}
 	})
 	t.Run("missing target", func(t *testing.T) {
