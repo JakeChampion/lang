@@ -359,7 +359,9 @@ func TestArrayLiteralCheckIsLinear(t *testing.T) {
 		return time.Since(start)
 	}
 	for _, elem := range []string{"1.5", "7", "[1.5, 2.5]"} {
-		smallSrc, largeSrc := program(5000, elem), program(20000, elem)
+		// Below about 20000 elements the check data stays in cache, and the
+		// ratio of a linear check reaches 8.6.
+		smallSrc, largeSrc := program(20000, elem), program(80000, elem)
 		// The fastest of five runs of each size, taken in turn, so that a slow
 		// spell of a busy machine falls on both sizes.
 		var small, large time.Duration
@@ -372,7 +374,7 @@ func TestArrayLiteralCheckIsLinear(t *testing.T) {
 			}
 		}
 		if large > 8*small {
-			t.Errorf("elements %s: 5000 took %v and 20000 took %v; four times the elements must take less than eight times as long", elem, small, large)
+			t.Errorf("elements %s: 20000 took %v and 80000 took %v; four times the elements must take less than eight times as long", elem, small, large)
 		}
 	}
 }
