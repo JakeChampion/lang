@@ -20,8 +20,6 @@ const EXIT_DIFFER: i32 = 1;
 
 const EXIT_TROUBLE: i32 = 2;
 
-const CHUNK: i32 = 65536;
-
 const OFF_MAX: u64 = 9223372036854775807;
 
 function help_text(): string {
@@ -389,25 +387,60 @@ function offset_width(limit: u64, first: Option[u64], second: Option[u64]): i32 
   return width;
 }
 
-struct Run { inputs: Input[], at: u64, lines: u64, last: u8, differ: boolean, out: usize }
+struct Run { inputs: Input[], at: u64, lines: u64, last: u8, differ: boolean, out: usize, output_size: i32, write_failed: boolean }
 
 function shared_stdin(inputs: Input[]): boolean {
   return inputs[0].name == "-" && inputs[1].name == "-";
 }
 
-function run_output_flush(run: Run, force: boolean): Run {
-  let n = buf_len(run.out);
-  if (n == 0 || !force && n < CHUNK) {
-    return run;
+// stdio flushes a terminal at the newline and other outputs when a block fills.
+function output_block_size(): i32 {
+  if (isatty(1)) {
+    return 0;
   }
-  let text = buf_take_bytes(run.out);
-  if let Err(e) = stdout().write_bytes(text) {
-    // GNU checks the input closes before reporting a buffered output error.
-    if (!shared_stdin(run.inputs)) {
-      trouble("standard output: " + gnu.io_error_text(e));
+  if let Ok(st) = stdout().stat() {
+    if (st.blksize > 0 && st.blksize <= 2147483647) {
+      if (target_os() == "linux" && st.blksize > 8192) {
+        return 8192;
+      }
+      return st.blksize as i32;
     }
   }
+  return if (target_os() == "darwin") { 1024 } else { 8192 };
+}
+
+function output_line(run: Run, line: string): Run {
+  buf_push(run.out, line);
+  let n = buf_len(run.out);
+  if (n <= run.output_size) {
+    return run;
+  }
+  let bytes = buf_take_bytes(run.out);
+  let count = n;
+  if (run.output_size > 0) {
+    count = (n - 1) / run.output_size * run.output_size;
+    buf_push_bytes_range(run.out, bytes, count, n);
+  }
+  if let Err(_) = stdout().write_bytes(bytes[:count]) {
+    return Run { ...run, write_failed: true };
+  }
   return run;
+}
+
+function finish_output(run: Run): void {
+  let bytes = buf_take_bytes(run.out);
+  buf_free(run.out);
+  if (bytes.len() > 0) {
+    if let Err(e) = stdout().write_bytes(bytes) {
+      if (!run.write_failed && !shared_stdin(run.inputs)) {
+        trouble("standard output: " + gnu.io_error_text(e));
+      }
+    }
+  }
+  // GNU checks input closes before diagnosing a failed output stream.
+  if (run.write_failed && !shared_stdin(run.inputs)) {
+    trouble("write failed");
+  }
 }
 
 function visible(c: u8): string {
@@ -458,13 +491,13 @@ function pad_right(s: string, width: i32): string {
 }
 
 // report gives the first difference, at byte `at` of line `line`.
-function report(cfg: Cfg, run: Run, a: u8, b: u8, at: u64, line: u64): void {
+function report(cfg: Cfg, run: Run, a: u8, b: u8, at: u64, line: u64): Run {
   let names = run.inputs[0].name + " " + run.inputs[1].name;
   let text = names + " differ: char " + f"{at}" + ", line " + f"{line}" + "\n";
   if (cfg.print_bytes) {
     text = names + " differ: byte " + f"{at}" + ", line " + f"{line}" + " is " + octal3(a) + " " + visible(a) + " " + octal3(b) + " " + visible(b) + "\n";
   }
-  buf_push(run.out, text);
+  return output_line(run, text);
 }
 
 function verbose_line(cfg: Cfg, run: Run, width: i32, a: u8, b: u8, at: u64): Run {
@@ -474,8 +507,7 @@ function verbose_line(cfg: Cfg, run: Run, width: i32, a: u8, b: u8, at: u64): Ru
   } else {
     line = line + " " + octal3(b) + "\n";
   }
-  buf_push(run.out, line);
-  return run_output_flush(run, false);
+  return output_line(run, line);
 }
 
 // The number of newlines in buf[lo..hi].
@@ -508,7 +540,7 @@ function compare_span(cfg: Cfg, run: Run, width: i32, a: u8[], b: u8[], n: i32):
     if (!cfg.verbose) {
       if (!cfg.quiet && !cfg.null_output) {
         let lines = run.lines + newlines(a, 0, off);
-        report(cfg, run, ca, cb, run.at + off as u64 + 1 as u64, lines + 1 as u64);
+        run = report(cfg, run, ca, cb, run.at + off as u64 + 1 as u64, lines + 1 as u64);
       }
       return run;
     }
@@ -539,7 +571,8 @@ function at_eof(cfg: Cfg, run: Run, name: string): i32 {
 }
 
 function compare(cfg: Cfg, inputs: Input[], width: i32, block_size: i32): i32 {
-  let run = Run { inputs: inputs, at: 0 as u64, lines: 0 as u64, last: 0 as u8, differ: false, out: buf_new(CHUNK) };
+  let output_size = output_block_size();
+  let run = Run { inputs: inputs, at: 0 as u64, lines: 0 as u64, last: 0 as u8, differ: false, out: buf_new(0), output_size: output_size, write_failed: false };
   let status = 0;
   // Even a zero-byte read can report an input error.
   while (true) {
@@ -562,8 +595,7 @@ function compare(cfg: Cfg, inputs: Input[], width: i32, block_size: i32): i32 {
       break;
     }
   }
-  run_output_flush(run, true);
-  buf_free(run.out);
+  finish_output(run);
   return status;
 }
 
