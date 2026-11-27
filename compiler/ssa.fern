@@ -2201,6 +2201,8 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let cbase = 0;
   let sat = nregs;
   let cabi = abi_reg;
+  // The last value that held each register, so a fresh pick can leave a register to a mate of that value.
+  let freed_by = util.minus_ones(nregs + nsaved + nf + nfs);
   let oi = 0;
   while (oi < order.len()) {
     if (oi == split) {
@@ -2239,6 +2241,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       let nr: i32[] = [];
       for ai in 0..act_val.len() {
         if (act_hi[ai] < lo[v]) {
+          freed_by = freed_by.with(act_reg[ai], act_val[ai]);
           if (act_reg[ai] >= sat) {
             free_s = free_s.append(act_reg[ai]);
           } else {
@@ -2395,6 +2398,8 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
         if (phi_only.len() == 0) {
           phi_only = phi_results(f);
           phi_none = __alloc_bool(f.nvals + 1);
+        }
+        if (mate_lo.start.len() == 0) {
           mate_lo = mate_starts(mates, def_a, def_b, lo, hi, f.nvals);
         }
         let saved = Lender { cbase: sat, sat: sat + nsaved, cabi: -1, abi_ok: true, phi: phi_none, keeps: phi_only, wanted: mate_lo, first: false };
@@ -2454,13 +2459,15 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
         reg_of = reg_of.with(v, -1);
       }
     } else {
-      let reg = 0;
-      if (from_caller) {
-        reg = pick;
+      if (mate_lo.start.len() == 0) {
+        mate_lo = mate_starts(mates, def_a, def_b, lo, hi, f.nvals);
+      }
+      let fresh = FreshPick { free: free, free_s: free_s, from_caller: from_caller, pick: pick, keep_abi: call_def[v] == 1 && pick == cabi, cabi: cabi };
+      let reg = fresh_reg(fresh, fixed, freed_by, mate_lo, shared_with, lo[v], hi[v]);
+      if (index_of_reg(free, reg) >= 0) {
         free = remove_reg(free, reg);
       } else {
-        reg = free_s[free_s.len() - 1];
-        free_s = util.drop_last_i32(free_s);
+        free_s = remove_reg(free_s, reg);
       }
       reg_of = reg_of.with(v, reg);
       act_val = act_val.append(v);
@@ -3964,6 +3971,45 @@ function chain_wanted(ms: MateStarts, holder: i32, shared_with: i32[], from: i32
     m = shared_with[m];
   }
   return false;
+}
+
+struct FreshPick { free: i32[], free_s: i32[], from_caller: boolean, pick: i32, keep_abi: boolean, cabi: i32 }
+
+// The register for a value that no candidate places: the pick from the caller
+// registers, or else the last saved register. When a mate of the last holder
+// of that register starts in `lo` to `hi`, a register that no mate wants
+// replaces it, so the mate can share.
+function fresh_reg(p: FreshPick, fixed: ssafixed.Table, freed_by: i32[], ms: MateStarts, shared_with: i32[], lo: i32, hi: i32): i32 {
+  let reg = if (p.from_caller) { p.pick } else { p.free_s[p.free_s.len() - 1] };
+  if (p.keep_abi || !chain_wanted(ms, freed_by[reg], shared_with, lo, hi)) {
+    return reg;
+  }
+  let other: i32 = -1;
+  if (p.from_caller) {
+    other = unwanted_reg(p.free, p.cabi, fixed, freed_by, ms, shared_with, lo, hi);
+  }
+  if (other < 0) {
+    other = unwanted_reg(p.free_s, -1, fixed, freed_by, ms, shared_with, lo, hi);
+  }
+  if (other >= 0) {
+    return other;
+  }
+  return reg;
+}
+
+// A free register whose last holder has a mate that starts in `lo` to `hi`
+// costs that mate its share. This gives the last free register that no such
+// mate wants, or -1.
+function unwanted_reg(regs: i32[], abi_reg: i32, fixed: ssafixed.Table, freed_by: i32[], ms: MateStarts, shared_with: i32[], lo: i32, hi: i32): i32 {
+  let i = regs.len() - 1;
+  while (i >= 0) {
+    let r = regs[i];
+    if (r != abi_reg && ssafixed.allows(fixed, r, lo, hi) && !chain_wanted(ms, freed_by[r], shared_with, lo, hi)) {
+      return r;
+    }
+    i -= 1;
+  }
+  return -1;
 }
 
 // A register from `first` to before `last` has values that hold it to `until`
