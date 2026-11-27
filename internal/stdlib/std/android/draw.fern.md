@@ -504,19 +504,38 @@ pub function (img: Image) scaled(w: i32, h: i32): Image {
   let px = img.pixels;
   let sx = img.width as f64 / (w as f64);
   let sy = img.height as f64 / (h as f64);
-  let out: u8[] = [];
+  let cols = __alloc_i32(2 * w);
+  let weights = __alloc_f64(w);
+  for x in 0..w {
+    let (x0, x1, tx) = nearest(x, sx, img.width);
+    cols = cols.with(2 * x, x0 * 4).with(2 * x + 1, x1 * 4);
+    weights = weights.with(x, tx);
+  }
+  let half = __f64x2_splat(0.5);
+  // 2^52: a whole number from 0 to 255 plus it has that number in its low byte.
+  let point = __f64x2_splat(4503599627370496.0);
+  let out = __alloc_u8(w * h * 4);
   for y in 0..h {
     let (y0, y1, ty) = nearest(y, sy, img.height);
+    let up = y0 * img.width * 4;
+    let down = y1 * img.width * 4;
+    let tyv = __f64x2_splat(ty);
     for x in 0..w {
-      let (x0, x1, tx) = nearest(x, sx, img.width);
-      let a = (y0 * img.width + x0) * 4;
-      let b = (y0 * img.width + x1) * 4;
-      let c = (y1 * img.width + x0) * 4;
-      let d = (y1 * img.width + x1) * 4;
-      for k in 0..4 {
-        let top = px[a + k] as f64 + (px[b + k] as f64 - px[a + k] as f64) * tx;
-        let bottom = px[c + k] as f64 + (px[d + k] as f64 - px[c + k] as f64) * tx;
-        out = out.append((top + (bottom - top) * ty + 0.5) as u8);
+      let txv = __f64x2_splat(weights[x]);
+      let a = up + cols[2 * x];
+      let b = up + cols[2 * x + 1];
+      let c = down + cols[2 * x];
+      let d = down + cols[2 * x + 1];
+      // Two channels in each step, each lane with the operations of one.
+      // A channel is from 0 to 255.5, so its floor is the cast to u8.
+      for k in [0, 2] {
+        let pa = __f64x2_of(px[a + k] as f64, px[a + k + 1] as f64);
+        let pc = __f64x2_of(px[c + k] as f64, px[c + k + 1] as f64);
+        let top = pa + (__f64x2_of(px[b + k] as f64, px[b + k + 1] as f64) - pa) * txv;
+        let bottom = pc + (__f64x2_of(px[d + k] as f64, px[d + k + 1] as f64) - pc) * txv;
+        let v = __f64x2_floor(top + (bottom - top) * tyv + half) + point;
+        let at = (y * w + x) * 4 + k;
+        out = out.with(at, (__f64x2_lane_bits(v, 0) & 255u64) as u8).with(at + 1, (__f64x2_lane_bits(v, 1) & 255u64) as u8);
       }
     }
   }
@@ -568,15 +587,13 @@ pub function (f: Frame) image(x: i32, y: i32, w: i32, h: i32, img: Image): void 
   if (x1 <= x0 || y1 <= y0 || img.pixels.len() < img.width * img.height * 4) {
     return;
   }
-  let px = img.pixels;
+  // An image and a frame hold the bytes of a pixel in the same order, so each
+  // row is a copy.
+  let n = (x1 - x0) * 4;
   for row in y0..y1 {
     let from = ((sy + row - dy) * img.width + sx + x0 - dx) * 4;
     unsafe {
-      let to = f.bits + ((row * f.stride + x0) * 4) as usize;
-      for i in 0..x1 - x0 {
-        let k = from + i * 4;
-        __store_i32(to + (i * 4) as usize, rgba(px[k] as i32, px[k + 1] as i32, px[k + 2] as i32, px[k + 3] as i32));
-      }
+      __memcpy(f.bits + ((row * f.stride + x0) * 4) as usize, __bytes_data(img.pixels[from:from + n]), n);
     }
   }
 }

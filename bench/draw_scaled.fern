@@ -1,0 +1,17 @@
+import "std/android/draw";
+
+function main(): i32 {
+  let px = __alloc_u8(600 * 300 * 4);
+  let s = 7;
+  for i in 0..600 * 300 * 4 {
+    s = s * 1103515245 + 12345 & 2147483647;
+    px = px.with(i, (s >> 19 & 255) as u8);
+  }
+  let img = draw.Image { width: 600, height: 300, pixels: px };
+  let acc = 0;
+  for r in 0..8 {
+    let out = img.scaled(512 - r, 256);
+    acc = acc * 31 + out.pixel(r * 37, r * 11);
+  }
+  return (acc & 2147483647) % 97;
+}

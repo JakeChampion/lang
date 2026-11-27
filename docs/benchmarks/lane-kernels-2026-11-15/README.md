@@ -88,6 +88,23 @@ The scalar counts are from the compiler of main at 2903c63b, and the lane counts
 For each pixel, the fill runs 7.0 instructions in place of 123.
 `blend` runs 13.7 in place of 125.6, and `mask` runs 13.0 in place of 56.0.
 
+### `image` (2026-11-27)
+
+An `Image` and a `Frame` hold the 4 bytes of a pixel in the same order.
+So `image` copies each row of its box with one `__memcpy`, in place of a pack and a store for each pixel.
+`bench/draw_image.fern` copies 512 by 256 pixels 64 times.
+`image` and the copies that it calls run 9,396,713 instructions in place of 260,073,897: 1.1 for each pixel in place of 31.0.
+
+`scaled` does two channels in one step, as lanes of `f64x2`, with the operations of one channel in each lane.
+A channel is from 0 to 255.5, so its floor is the cast to `u8`.
+The step reads the byte from the bits of the lane, as the color conversion of `std/jpeg` does.
+It makes the source columns and weights of each x one time, and writes to an array of the full size.
+Each pixel is the same as before, on x86-64, arm64 and wasm, for 20 pairs of sizes.
+
+`bench/draw_scaled.fern` scales 600 by 300 pixels to about 512 by 256, 8 times.
+The code of `std/android/draw` runs 292,594,019 instructions in place of 497,435,183: 279 for each pixel in place of 474.
+The conversions of each byte to `f64` are most of what stays.
+
 ## The JPEG decoder (2026-11-26)
 
 The inverse transform of `std/jpeg` does two samples in one step, as lanes of `f64x2`.
@@ -107,6 +124,17 @@ The stage counts are from a copy of the module where each stage is a function th
 | whole program | 1,081,512,038 | 447,785,889 | 2.4 |
 
 The color conversion is now 159 instructions for each pixel, in place of 400.
+
+### The color conversion on lanes (2026-11-27)
+
+The color conversion does two pixels in one step, as lanes of `f64x2`, with the operations of one pixel in each lane.
+After the floor and the limits of 0 and 255, a lane gets 2^52 added.
+A whole number from 0 to 255 is then the low byte of the bits of the lane.
+So the step reads each byte with no conversion to an integer.
+Each pixel is the same as before, on x86-64, arm64 and wasm, for the same 30 images.
+
+The color conversion runs 90,029,303 instructions in place of 166,566,311: 85.9 for each pixel in place of 158.8.
+The whole program runs 369,118,297 instructions in place of 447,785,889.
 
 ## Lane operations out of loops (#17362)
 
