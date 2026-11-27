@@ -186,6 +186,7 @@ TestSelfHostArm64LitPoolGas 6
 TestSelfHostArm64LitPoolPerFunction 2
 TestSelfHostArm64LitPoolRange 5
 TestSelfHostArm64LoadStore 6
+TestSelfHostArm64LogicalImmediate 104
 TestSelfHostArm64MemOffsetsMatchGas 5
 TestSelfHostArm64ModloadNativeBuild 128
 TestSelfHostArm64MovWideConstants 6
@@ -569,6 +570,7 @@ TestSelfHostCLIBuildsForEveryNativeTarget 218
 TestSelfHostCLIByteViewEscape 7
 TestSelfHostCLIFileEntryIsolation 4
 TestSelfHostCLIFlagRules 4
+TestSelfHostCLIMessageForm 132
 TestSelfHostCLIPrunesStdlibImportClosureX86_64 3
 TestSelfHostCLIStage2X86_64 67
 TestSelfHostCLIStderrIsOneLine 3
@@ -3364,6 +3366,7 @@ TestSelfHostStrBinopOperandBorrowWasmIR 2
 TestSelfHostStrBlockScopeSweepIRArm64 3
 TestSelfHostStrBlockScopeSweepWasmIR 2
 TestSelfHostStrBlockScopeSweepX86_64 3
+TestSelfHostStrBytesEveryTarget 72
 TestSelfHostStrChainReceiverIRArm64 3
 TestSelfHostStrChainReceiverIRX86_64 3
 TestSelfHostStrChainReceiverWasmIR 2
@@ -4249,7 +4252,7 @@ TestSelfHostZeroArgFnValueIRX86_64 2
 TestSelfHostZeroDropsNoCall 2
 TestSelfHostZeroSlotsPaired 2
 TestShippedFernAddURL 135
-TestShippedFernFetch 3
+TestShippedFernFetch 118
 TestShippedFernFetchFlatArchive 72
 TestShippedFernFetchRefusals 127
 TestShippedFernLiterateTakesOneDocument 92
