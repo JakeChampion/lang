@@ -34,9 +34,9 @@ pub struct SemTok { line: i32, col: i32, len: i32, kind: i32 }
 pub function semantic_tokens(p: lspquery.Program, m: i32): SemTok[] {
   let v = lspquery.view_of(p);
   let x = Ctx { toks: lspquery.module_toks(p, m), aliases: lspquery.quals_of(v, m).aliases };
-  let kinds: i32[] = [];
+  let kinds: Option[i32][] = [];
   for t in x.toks {
-    kinds = kinds.append(-1);
+    kinds = kinds.append(None);
   }
   let body = body_classes(v.types, m, x);
   kinds = applied(kinds, decl_classes(p, m, x, body));
@@ -44,8 +44,8 @@ pub function semantic_tokens(p: lspquery.Program, m: i32): SemTok[] {
   kinds = applied(kinds, types);
   let out: SemTok[] = [];
   for i in 0..x.toks.len() {
-    if (kinds[i] >= 0) {
-      out = out.append(SemTok { line: x.toks[i].line, col: x.toks[i].col, len: x.toks[i].text.len(), kind: kinds[i] });
+    if let Some(kind) = kinds[i] {
+      out = out.append(SemTok { line: x.toks[i].line, col: x.toks[i].col, len: x.toks[i].text.len(), kind: kind });
     }
   }
   return out;
@@ -55,31 +55,38 @@ struct Ctx { toks: lspquery.Tok[], aliases: string[] }
 
 struct Mark { i: i32, kind: i32 }
 
-function applied(own kinds: i32[], marks: Mark[]): i32[] {
+function applied(own kinds: Option[i32][], marks: Mark[]): Option[i32][] {
   for mk in marks {
-    if (kinds[mk.i] < 0) {
-      kinds = kinds.with(mk.i, mk.kind);
+    if let None = kinds[mk.i] {
+      kinds = kinds.with(mk.i, Some(mk.kind));
     }
   }
   return kinds;
 }
 
 function marked(x: Ctx, i: i32, kind: i32, own acc: Mark[]): Mark[] {
-  if (i < 0 || i >= x.toks.len() || kind < 0 || !x.toks[i].ident && !util.has_str(x.aliases, x.toks[i].text)) {
+  if (i < 0 || i >= x.toks.len() || !x.toks[i].ident && !util.has_str(x.aliases, x.toks[i].text)) {
     return acc;
   }
   return acc.append(Mark { i: i, kind: kind });
 }
 
-function node_at(x: Ctx, line: i32, col: i32, kind: i32, own acc: Mark[]): Mark[] {
+function mark_known(x: Ctx, i: i32, kind: Option[i32], own acc: Mark[]): Mark[] {
+  if let Some(k) = kind {
+    return marked(x, i, k, acc);
+  }
+  return acc;
+}
+
+function node_at(x: Ctx, line: i32, col: i32, kind: Option[i32], own acc: Mark[]): Mark[] {
   let i: i32 = match (lspquery.tok_at(x.toks, line, col)) { Some(found) => found, None => { return acc; } };
   if (!x.toks[i].ident && x.toks[i].text == ".") {
-    return marked(x, i + 1, kind, acc);
+    return mark_known(x, i + 1, kind, acc);
   }
   if (qualifies(x, i)) {
-    return marked(x, i + 2, kind, marked(x, i, T_NAMESPACE, acc));
+    return mark_known(x, i + 2, kind, marked(x, i, T_NAMESPACE, acc));
   }
-  return marked(x, i, kind, acc);
+  return mark_known(x, i, kind, acc);
 }
 
 function qualifies(x: Ctx, i: i32): boolean {
@@ -135,7 +142,7 @@ function stmt_class(x: Ctx, st: ast.Stmt, params: string[], own acc: Mark[]): Ma
   match (st) {
     ast.StmtAssign(a) => {
       if (local(a.target)) {
-        return node_at(x, a.target_line, a.target_col, local_kind(a.target, params), acc);
+        return node_at(x, a.target_line, a.target_col, Some(local_kind(a.target, params)), acc);
       }
     },
     ast.StmtMatch(m) => {
@@ -193,16 +200,16 @@ function expr_class(s: checker.Scope, x: Ctx, e: ast.Expr, params: string[], own
     },
     ast.ExprCall(call) => {
       if let ast.ExprFieldAccess(fa) = call.callee {
-        return node_at(x, fa.line, fa.col, member_kind(s, fa, T_METHOD), acc);
+        return node_at(x, fa.line, fa.col, Some(member_kind(s, fa, T_METHOD)), acc);
       }
     },
     ast.ExprFieldAccess(fa) => {
-      return node_at(x, fa.line, fa.col, member_kind(s, fa, T_PROPERTY), acc);
+      return node_at(x, fa.line, fa.col, Some(member_kind(s, fa, T_PROPERTY)), acc);
     },
     ast.ExprStructLit(sl) => {
-      acc = node_at(x, sl.line, sl.col, T_STRUCT, acc);
+      acc = node_at(x, sl.line, sl.col, Some(T_STRUCT), acc);
       for i in 0..sl.field_lines.len() {
-        acc = node_at(x, sl.field_lines[i], sl.field_cols[i], T_PROPERTY, acc);
+        acc = node_at(x, sl.field_lines[i], sl.field_cols[i], Some(T_PROPERTY), acc);
       }
     },
     _ => {}
@@ -228,40 +235,40 @@ function local_kind(symbol: string, params: string[]): i32 {
   return T_VARIABLE;
 }
 
-function ident_kind(s: checker.Scope, name: string, params: string[]): i32 {
+function ident_kind(s: checker.Scope, name: string, params: string[]): Option[i32] {
   if (local(name)) {
-    return local_kind(name, params);
+    return Some(local_kind(name, params));
   }
   return global_kind(s, name);
 }
 
-function global_kind(s: checker.Scope, name: string): i32 {
+function global_kind(s: checker.Scope, name: string): Option[i32] {
   if (checker.variant_enum(s, name).len() > 0) {
-    return T_ENUM_MEMBER;
+    return Some(T_ENUM_MEMBER);
   }
   if let Some(sig) = checker.func_sig(s, name) {
     if (sig.is_const) {
-      return T_VARIABLE;
+      return Some(T_VARIABLE);
     }
-    return T_FUNCTION;
+    return Some(T_FUNCTION);
   }
   if (parser.is_builtin_function(name)) {
-    return T_FUNCTION;
+    return Some(T_FUNCTION);
   }
   return type_kind(s, name);
 }
 
-function type_kind(s: checker.Scope, name: string): i32 {
+function type_kind(s: checker.Scope, name: string): Option[i32] {
   if let Some(u) = checker.enum_sig(s, name) {
     if (u.is_enum) {
-      return T_ENUM;
+      return Some(T_ENUM);
     }
-    return T_TYPE;
+    return Some(T_TYPE);
   }
   if (s.has_struct(name)) {
-    return T_STRUCT;
+    return Some(T_STRUCT);
   }
-  return -1;
+  return None;
 }
 
 function decl_classes(p: lspquery.Program, m: i32, x: Ctx, own acc: Mark[]): Mark[] {
@@ -303,12 +310,12 @@ function symbol_kind(kind: i32): i32 {
   return T_VARIABLE;
 }
 
-function type_classes(v: lspquery.View, tparams: string[], m: i32, x: Ctx, kinds: i32[]): Mark[] {
+function type_classes(v: lspquery.View, tparams: string[], m: i32, x: Ctx, kinds: Option[i32][]): Mark[] {
   let s = checker.module_scope(v.types);
   let q = lspquery.quals_of(v, m);
   let out: Mark[] = [];
   for i in 0..x.toks.len() {
-    if (kinds[i] < 0 && !lspquery.punct_before(x.toks, i, ".")) {
+    if (kinds[i].is_none() && !lspquery.punct_before(x.toks, i, ".")) {
       out = type_class(s, q, tparams, x, i, out);
     }
   }
@@ -319,22 +326,22 @@ function type_class(s: checker.Scope, q: flatten.Qualifiers, tparams: string[], 
   let t = x.toks[i];
   if (qualifies(x, i)) {
     let name = flatten.qualified_name(q, t.text, x.toks[i + 2].text);
-    return marked(x, i + 2, global_kind(s, name), marked(x, i, T_NAMESPACE, acc));
+    return mark_known(x, i + 2, global_kind(s, name), marked(x, i, T_NAMESPACE, acc));
   }
   if (!t.ident) {
     return acc;
   }
-  let kind: i32 = -1;
+  let kind: Option[i32] = None;
   if (q.own.len() > 0) {
     kind = type_kind(s, util.mangled(q.own, t.text));
   }
-  if (kind < 0) {
+  if let None = kind {
     kind = type_kind(s, t.text);
   }
-  if (kind < 0 && util.has_str(tparams, "0_" + t.text)) {
-    kind = T_TYPE;
+  if (kind.is_none() && util.has_str(tparams, "0_" + t.text)) {
+    kind = Some(T_TYPE);
   }
-  return marked(x, i, kind, acc);
+  return mark_known(x, i, kind, acc);
 }
 
 function type_params(mod: parser.Module): string[] {
