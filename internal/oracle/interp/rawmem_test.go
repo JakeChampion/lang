@@ -265,3 +265,54 @@ func TestRawMemoryRefusesABrokenObligation(t *testing.T) {
 		}
 	}
 }
+
+// The early return of `?` in an argument passes through a call that pins a
+// __bytes_data argument, and through one that pins nothing.
+func TestBytesDataKeepsTheEarlyReturnOfTry(t *testing.T) {
+	src := `function refused(): Result[i32, string] {
+  return Err("no");
+}
+
+function first_byte(p: usize, n: i32): i32 {
+  let b: i32 = 0;
+  unsafe {
+    b = __load_u8(p) + n;
+  }
+  return b;
+}
+
+function try_in_argument(): Result[i32, string] {
+  return Ok(first_byte(0 as usize, refused()?));
+}
+
+function try_after_pin(): Result[i32, string] {
+  let a: u8[] = [9];
+  let n: i32 = 0;
+  unsafe {
+    n = first_byte(__bytes_data(a), refused()?);
+  }
+  return Ok(n);
+}
+
+function try_returns_early(): i32 {
+  let n: i32 = 0;
+  match (try_in_argument()) {
+    Ok(v) => { n = v; },
+    Err(e) => { n = 1; },
+  }
+  match (try_after_pin()) {
+    Ok(v) => { n = n + v; },
+    Err(e) => { n = n + 10; },
+  }
+  return n;
+}
+
+function main(): i32 {
+  return try_returns_early();
+}
+`
+	val, _ := runCapture(t, src)
+	if val != "11" {
+		t.Fatalf("try_returns_early() = %s, want 11", val)
+	}
+}

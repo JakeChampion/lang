@@ -3,6 +3,7 @@ package interp
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -395,4 +396,13 @@ func (i *Interp) unpin(pins []*bytesPin) error {
 		}
 	}
 	return nil
+}
+
+// unpinAfter unpins after a call ends with err. It keeps err as it is, so a
+// control signal such as the early return of `?` still reaches its handler.
+func (i *Interp) unpinAfter(err error, pins []*bytesPin) error {
+	if uerr := i.unpin(pins); uerr != nil {
+		return errors.Join(err, uerr)
+	}
+	return err
 }

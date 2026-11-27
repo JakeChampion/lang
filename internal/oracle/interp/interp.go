@@ -8115,7 +8115,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		v, pin, err := i.pinArg(a, env)
 		if err != nil {
 			disownAll(args[:held])
-			return nil, errors.Join(err, i.unpin(pins))
+			return nil, i.unpinAfter(err, pins)
 		}
 		if pin != nil {
 			pins = append(pins, pin)
@@ -8129,7 +8129,7 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 	disownAll(args[:held])
 	if pins != nil {
 		v, err := i.callWith(c, env, callee, receiver, args)
-		return v, errors.Join(err, i.unpin(pins))
+		return v, i.unpinAfter(err, pins)
 	}
 	return i.callWith(c, env, callee, receiver, args)
 }
