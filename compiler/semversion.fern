@@ -811,9 +811,7 @@ function split_exit(x: ssa.SBlock, vmap: i32[], own values: typeinfo.Type[]): Ex
 // a block after it reads, and `renamed[k]` maps each such value to its phi.
 // `below[b]` is the exit that dominates the block at position `b`, or -1.
 // `ok` is false when a block that no exit dominates reads a value of the
-// loop, or when a block after the loop has a projection that needs a guard:
-// the guard can be a test in the loop, and the verifier does not follow it
-// through a phi.
+// loop.
 struct Joined { phis: ssa.SInst[][], values: typeinfo.Type[], renamed: i32[][], below: i32[], ok: boolean }
 
 function live_out(f: ssasem.Func, ix: Index, s: Shape, vmap: i32[], own values: typeinfo.Type[]): Joined {
@@ -825,12 +823,6 @@ function live_out(f: ssasem.Func, ix: Index, s: Shape, vmap: i32[], own values: 
       if (ssadeps.dom_holds(dom, pos, ix.at[s.exits[k]])) {
         below = below.with(pos, k);
       }
-    }
-  }
-  let guarded = false;
-  for pos in 0..g.blocks.len() {
-    if (below[pos] >= 0 && g.blocks[pos].insts.any((ins: ssa.SInst): boolean => ssasem.needs_guard(ins.kind_tag))) {
-      guarded = true;
     }
   }
   let renamed: i32[][] = [];
@@ -861,7 +853,7 @@ function live_out(f: ssasem.Func, ix: Index, s: Shape, vmap: i32[], own values: 
       let v = uses[u];
       let k = wheres[u];
       if (v >= 0 && v < vmap.len() && vmap[v] >= 0) {
-        if (k < 0 || guarded) {
+        if (k < 0) {
           return Joined { phis: [], values: values, renamed: [], below: [], ok: false };
         }
         if (renamed[k][v] < 0) {

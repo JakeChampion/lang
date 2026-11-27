@@ -111,7 +111,7 @@ const versionedMain = `function main(): i32 {
   if (w[0] != -2 || w[3] != 12 || w[9] != 30 || w[1] != 3) { return 8; }
   if (wraps(a, 3, 9, 3) != 36) { return 9; }
   let ops: Op[] = [Op.Skip(1), Op.Set(Slot { name: "a", at: 7 }), Op.Set(Slot { name: "b", at: 9 })];
-  if (named(ops, 0, "b") != 9 || named(ops, 2, "a") != -1) { return 10; }
+  if (named(ops, 0, "b") != 9 || named(ops, 2, "a") != -1 || named(ops, h[0], "a") != 7) { return 10; }
   return 0;
 }`
 
@@ -121,6 +121,12 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "version.fern")
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	// The tag test of an element of `ops`, one in each version of the loop
+	// of named.
+	tags := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`cmpl \$\d+, -4\(%r\w+\)`),
+		"arm64-linux":  regexp.MustCompile(`ldr w\d+, \[x\d+, #-4\]`),
 	}
 	loads := map[string]*regexp.Regexp{
 		"x86-64-linux": regexp.MustCompile(`movslq 8\(%r\w+,%r\w+,4\)`),
@@ -143,6 +149,7 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 				// The indices 0 to 7 fit, but the counter steps past the top of
 				// the i32 range, so it wraps and the next index is 10.
 				"wraps": "wraps(seq(10), 2147483640, 2147483647, 2147483640)",
+				"named": "named([Op.Skip(1)], -1, \"a\")",
 			}
 			for name, call := range past {
 				out := versionedLoops + "function main(): i32 { return " + call + "; }"
@@ -173,6 +180,12 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 				if got, checks := len(load.FindAllString(body, -1)), strings.Count(body, "oob_abort"); got != c.reads || checks != c.checks {
 					t.Errorf("%s has %d element reads and %d checks, want %d and %d: two versions of the loop\n%s", c.name, got, checks, c.reads, c.checks, body)
 				}
+			}
+			// The block after the loop projects the element that the loop
+			// tested, through the phi that joins the two versions.
+			body = asmFunction(string(asm), "__fn_named:")
+			if got := len(tags[target].FindAllString(body, -1)); got != 2 {
+				t.Errorf("named has %d tag tests, want two versions of the loop\n%s", got, body)
 			}
 		})
 	}

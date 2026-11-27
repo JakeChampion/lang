@@ -2391,7 +2391,7 @@ function is_variant_op(kind: i32): boolean {
     || kind == dyn_is() || kind == dyn_as();
 }
 
-pub function needs_guard(kind: i32): boolean {
+function needs_guard(kind: i32): boolean {
   return kind == variant_get() || kind == variant_as() || kind == dyn_as();
 }
 
@@ -3705,6 +3705,12 @@ function settled(f: Func, value: i32, bi: i32, g: Guards): Known {
 }
 
 function settled_ways(f: Func, value: i32, g: Guards): Known[] {
+  return flowed(f, value, g, g.at[f.graph.entry], Known { held: [], gone: [] });
+}
+
+// What holds of `value` in each block that the block at position `start`
+// dominates, when `seed` holds of it at the start of that block.
+function flowed(f: Func, value: i32, g: Guards, start: i32, seed: Known): Known[] {
   let n = f.graph.blocks.len();
   let known: Known[] = [];
   let seen = __alloc_bool(n);
@@ -3713,14 +3719,17 @@ function settled_ways(f: Func, value: i32, g: Guards): Known[] {
     known = known.append(Known { held: [], gone: [] });
     i += 1;
   }
-  let entry = g.at[f.graph.entry];
-  seen = seen.with(entry, true);
+  known = known.with(start, seed);
+  seen = seen.with(start, true);
   let changed = true;
   while (changed) {
     changed = false;
     for i in 0..n {
+      if (i == start || !ssadeps.dom_holds(g.dom, i, start)) {
+        continue;
+      }
       let m = met_at(f, value, g, known, seen, i);
-      if (i != entry && m.any && (!seen[i] || !same_known(m.known, known[i]))) {
+      if (m.any && (!seen[i] || !same_known(m.known, known[i]))) {
         known = known.with(i, m.known);
         seen = seen.with(i, true);
         changed = true;
@@ -3889,7 +3898,154 @@ function guarded(f: Func, ins: ssa.SInst, bi: i32, g: Guards): boolean {
   if (guarded_by(f, ins, settled(f, ins.args[0], bi, g))) {
     return true;
   }
-  return guarded_by(f, ins, settled_ways(f, ins.args[0], g)[bi]);
+  if (guarded_by(f, ins, settled_ways(f, ins.args[0], g)[bi])) {
+    return true;
+  }
+  let joined = joined_ways(f, ins.args[0], g, 3);
+  return joined.len() > 0 && guarded_by(f, ins, joined[bi]);
+}
+
+// A value read through a phi holds a variant when, on each edge into the
+// block of the phi, its twin with the operand of that edge in place of the
+// phi holds it. Loop versioning joins the two versions of a tested value, or
+// of the counter of a read, in such a phi. `depth` bounds the phis of phis it
+// follows. The result is empty when no phi is in the reads of `value`.
+function joined_ways(f: Func, value: i32, g: Guards, depth: i32): Known[] {
+  let m = read_phi(g, value);
+  if (depth == 0 || m < 0) {
+    return [];
+  }
+  let phi = g.defs[m];
+  let at = -1;
+  for pos in 0..f.graph.blocks.len() {
+    if (at < 0 && f.graph.blocks[pos].insts.any((ins: ssa.SInst): boolean => ins.kind_tag == ssa.PHI && ins.result == m)) {
+      at = pos;
+    }
+  }
+  if (at < 0 || phi.args.len() != f.graph.blocks[at].preds.len()) {
+    return [];
+  }
+  let b = f.graph.blocks[at];
+  let homes = value_homes(f, g.defs.len());
+  let met = Met { any: false, known: Known { held: [], gone: [] } };
+  for k in 0..b.preds.len() {
+    let p = b.preds[k];
+    let pi: i32 = -1;
+    if (p >= 0 && p < g.at.len()) {
+      pi = g.at[p];
+    }
+    if (pi < 0) {
+      return [];
+    }
+    let w = incoming(Edge { g: g, homes: homes, phi: m, join: at, operand: phi.args[k], pred: pi }, value);
+    if (w < 0) {
+      return [];
+    }
+    let out = edge_known(f, w, g, pi, known_ways(f, w, g, depth - 1)[pi], b.id);
+    if (met.any) {
+      met = Met { any: true, known: Known { held: common(met.known.held, out.held), gone: common(met.known.gone, out.gone) } };
+    } else {
+      met = Met { any: true, known: out };
+    }
+  }
+  return flowed(f, value, g, at, met.known);
+}
+
+// The first phi in the reads that make `value`, or -1.
+function read_phi(g: Guards, value: i32): i32 {
+  if (value < 0 || value >= g.defs.len()) {
+    return -1;
+  }
+  let d = g.defs[value];
+  if (d.kind_tag == ssa.PHI && d.result == value) {
+    return value;
+  }
+  if (d.result != value || twin_arity(d.kind_tag) == 0 || d.args.len() != twin_arity(d.kind_tag)) {
+    return -1;
+  }
+  for a in d.args {
+    let m = read_phi(g, a);
+    if (m >= 0) {
+      return m;
+    }
+  }
+  return -1;
+}
+
+// The edge from the block at position `pred` into the block at position
+// `join`, where the phi `phi` takes `operand`.
+struct Edge { g: Guards, homes: i32[], phi: i32, join: i32, operand: i32, pred: i32 }
+
+// A read on the edge that computes `value` with the operand of the edge in
+// place of the phi, or -1. Each other value of the read is defined before the
+// join, and the read on the edge is defined before its end, so the two read
+// the same values.
+function incoming(e: Edge, value: i32): i32 {
+  if (value == e.phi) {
+    return e.operand;
+  }
+  let g = e.g;
+  let d = g.defs[value];
+  if (d.result != value || twin_arity(d.kind_tag) == 0 || d.args.len() != twin_arity(d.kind_tag) || read_phi(g, value) < 0) {
+    let home = e.homes[value];
+    if (home < 0 || home == e.join || !ssadeps.dom_holds(g.dom, e.join, home)) {
+      return -1;
+    }
+    return value;
+  }
+  let args: i32[] = [];
+  for x in d.args {
+    let y = incoming(e, x);
+    if (y < 0) {
+      return -1;
+    }
+    args = args.append(y);
+  }
+  for u in 0..g.defs.len() {
+    let c = g.defs[u];
+    if (c.result == u && c.kind_tag == d.kind_tag && twin_imm(c) == twin_imm(d) && c.str == d.str && c.args.len() == args.len()
+      && twin_of(g, c.args[0]) == twin_of(g, args[0]) && (args.len() == 1 || c.args[1] == args[1])
+      && e.homes[u] >= 0 && ssadeps.dom_holds(g.dom, e.pred, e.homes[u])) {
+      return u;
+    }
+  }
+  return -1;
+}
+
+// The position of the block that defines each value, or -1.
+function value_homes(f: Func, n: i32): i32[] {
+  let homes = util.minus_ones(n);
+  for pos in 0..f.graph.blocks.len() {
+    for ins in f.graph.blocks[pos].insts {
+      if (ins.result >= 0 && ins.result < n) {
+        homes = homes.with(ins.result, pos);
+      }
+    }
+  }
+  return homes;
+}
+
+function known_ways(f: Func, value: i32, g: Guards, depth: i32): Known[] {
+  let ways = settled_ways(f, value, g);
+  let joined = joined_ways(f, value, g, depth);
+  if (joined.len() == 0) {
+    return ways;
+  }
+  let out: Known[] = [];
+  for i in 0..ways.len() {
+    out = out.append(Known { held: union_str(ways[i].held, joined[i].held), gone: union_str(ways[i].gone, joined[i].gone) });
+  }
+  return out;
+}
+
+function union_str(a: string[], b: string[]): string[] {
+  let out = a;
+  for n in b {
+    if (!util.has_str(out, n)) {
+      out = out.append(n);
+    }
+  }
+  return out;
 }
 
 function guarded_by(f: Func, ins: ssa.SInst, known: Known): boolean {

@@ -31,6 +31,28 @@ graph = ssa.SFunc { name: "first", nparams: 1, nvals: 9, entry: 7, takes_env: fa
 `
 }
 
+// Each side tests the element at its own index, and the join reads the
+// element at the phi of the two indices again, as loop versioning leaves a
+// read after the loop. `test` is the body of the second side.
+func semanticJoinedReads(test string) string {
+	return `
+let shapes: typeinfo.Type = typeinfo.TypeArray { elem: shape, view: false };
+params = [shapes, i32t, i32t, bt];
+types = [shapes, i32t, i32t, bt, shape, bt, shape, bt, i32t, shape, ia, i32t, i32t, i32t]; result = i32t;
+graph = ssa.SFunc { name: "joined", nparams: 4, nvals: 14, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1), inst(6, 2, [], 2), inst(6, 3, [], 3)], term: ssa.STerm { ...branch_on(3), t: 17, f: 27 } },
+    ssa.SBlock { id: 17, preds: [7], insts: [inst(ssasem.array_get(), 4, [0, 1], 0), variant_test(5, 4, "Full")], term: ssa.STerm { ...branch_on(5), t: 37, f: 47 } },
+    ssa.SBlock { id: 27, preds: [7], insts: ` + test + `},
+    ssa.SBlock { id: 37, preds: [17], insts: [], term: br(67) },
+    ssa.SBlock { id: 57, preds: [27], insts: [], term: br(67) },
+    ssa.SBlock { id: 67, preds: [37, 57], insts: [
+        inst(ssa.PHI, 8, [1, 2], 0), inst(ssasem.array_get(), 9, [0, 8], 1), variant_field(10, 9, 0, "Full"), inst(1, 11, [], 0), inst(ssasem.array_get(), 12, [10, 11], 0)
+    ], term: ret(12) },
+    ssa.SBlock { id: 47, preds: [17, 27], insts: [inst(1, 13, [], 0)], term: ret(13) }
+] };
+`
+}
+
 const semanticSingleVariant = `
 let absent = semrecords.Variant { ...line, fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeNever { tag: 0 } }] };
 enums = [semrecords.Enum { ...shapeEnum, variants: [full, absent] }];
@@ -53,6 +75,9 @@ func semanticEnumCases() []struct{ name, change, want string } {
 		{"enum-projection-other-test", `graph = change(graph, 1, variant_test(1, 0, "Line"));`, "unguarded variant projection"},
 		{"enum-proven-twin-read", semanticTwinReads("[0, 1]"), ""},
 		{"enum-other-index-read", semanticTwinReads("[0, 8]"), "unguarded variant projection"},
+		{"enum-joined-tested-reads", semanticJoinedReads(`[inst(ssasem.array_get(), 6, [0, 2], 0), variant_test(7, 6, "Full")], term: ssa.STerm { ...branch_on(7), t: 57, f: 47 } `), ""},
+		{"enum-joined-untested-edge", semanticJoinedReads(`[inst(ssasem.array_get(), 6, [0, 2], 0), variant_test(7, 6, "Full")], term: ssa.STerm { ...branch_on(7), t: 47, f: 57 } `), "unguarded variant projection"},
+		{"enum-joined-other-read", semanticJoinedReads(`[inst(ssasem.array_get(), 6, [0, 1], 0), variant_test(7, 6, "Full")], term: ssa.STerm { ...branch_on(7), t: 57, f: 47 } `), "unguarded variant projection"},
 		{"enum-missing-schema", "enums = [];", "missing variant schema"},
 		{"enum-unknown-variant", `graph = change(graph, 1, variant_test(1, 0, "Blob"));`, "unknown variant"},
 		{"enum-test-type", "types = types.with(1, i32t);", "variant test type"},

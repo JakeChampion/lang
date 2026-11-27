@@ -107,8 +107,10 @@ joins the values of the two versions.
 The copy doubles the code of the loop. Thus a loop of more than 160
 instructions keeps one version, and so does each loop of a `-size` build. The
 copies of one function add at most as many instructions as the function has.
-A loop also keeps one version when a block after it has a variant
-projection. The guard of that projection can be a test in the loop.
+A block after the loop can project a variant that a test in the loop
+guards. The guard verifier follows that test through the phi of the exit:
+on each edge into the exit, the read with the operand of that edge in place
+of the phi must hold the variant.
 
 ## Allocation size (#8457)
 
