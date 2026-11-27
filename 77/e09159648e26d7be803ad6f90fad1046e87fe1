@@ -722,3 +722,8 @@ tls/server/go.bulk_mbytes_per_s	364.7
 tls/server/curl.bulk_mbytes_per_s	408.3
 tls/server/handshakes_per_s	794.0
 tls/server/resumed_handshakes_per_s	934.8
+
+# lane: net-h2spec
+h2spec/passed	146
+h2spec/failed	0
+h2spec/skipped	0
