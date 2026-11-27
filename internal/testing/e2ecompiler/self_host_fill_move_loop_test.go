@@ -436,3 +436,94 @@ func TestSelfHostFillMoveKeepsOtherElements(t *testing.T) {
 		})
 	}
 }
+
+// zeros fills each element of a new array with zero. The other functions
+// have a fill that must stay: past writes one element more than the array
+// has, ones writes a value that is not zero, tail starts at element 1, and
+// again fills an array that it did not make.
+const zeroFillOfNewArray = `@noinline function zeros(n: i32): i32[] {
+  let a = __alloc_i32(n);
+  for i in 0..n { a = a.with(i, 0); }
+  return a;
+}
+@noinline function past(n: i32): i32[] {
+  let a = __alloc_i32(n);
+  for i in 0..n + 1 { a = a.with(i, 0); }
+  return a;
+}
+@noinline function ones(n: i32): i32[] {
+  let a = __alloc_i32(n);
+  for i in 0..n { a = a.with(i, 1); }
+  return a;
+}
+@noinline function tail(n: i32): i32[] {
+  let a = __alloc_i32(n);
+  for i in 1..n { a = a.with(i, 0); }
+  return a;
+}
+@noinline function again(own a: i32[], n: i32): i32[] {
+  for i in 0..n { a = a.with(i, 0); }
+  return a;
+}
+@noinline function sum(a: i32[]): i32 {
+  let s = 0;
+  for v in a { s += v; }
+  return s;
+}
+`
+
+const zeroFillOfNewArrayMain = `function main(): i32 {
+  let z = zeros(300);
+  if (z.len() != 300 || sum(z) != 0) { return 1; }
+  if (zeros(0).len() != 0) { return 2; }
+  let o = ones(6);
+  if (sum(o) != 6) { return 3; }
+  let cleared = again(o, 6);
+  if (cleared.len() != 6 || sum(cleared) != 0) { return 4; }
+  if (sum(again(ones(6), 4)) != 2) { return 5; }
+  if (sum(tail(5)) != 0) { return 6; }
+  return 0;
+}`
+
+// A typed allocation makes each element zero, so a loop that then writes zero
+// to each element of the new array does nothing, and the compiler removes it.
+// The allocation and the loop must take the same count, or the loop can leave
+// the array and must abort.
+func TestSelfHostZeroFillOfNewArrayIsRemoved(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	program := zeroFillOfNewArray + zeroFillOfNewArrayMain
+	src := filepath.Join(t.TempDir(), "zeros.fern")
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		asm, err := os.ReadFile(cli.emit(t, src, target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		const fill = "__fern_arr_fill_u32"
+		if body := tailCallBody(t, string(asm), "zeros"); strings.Contains(body, fill) {
+			t.Errorf("%s: zeros fills the array that its allocation zeroed:\n%s", target, body)
+		}
+		for _, name := range []string{"ones", "again"} {
+			if body := tailCallBody(t, string(asm), name); !strings.Contains(body, fill) {
+				t.Errorf("%s: %s has no call of %s, so the test does not see the fill that zeros must not have:\n%s", target, name, fill, body)
+			}
+		}
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		if stderr, code := cli.exitOf(t, program, target, "FERN_LEAKCHECK=1", "FERN_SANITIZE=1"); code != 0 {
+			t.Errorf("%s: exit %d, want 0\n%s", target, code, stderr)
+		}
+		stderr, code := cli.exitOf(t, zeroFillOfNewArray+"function main(): i32 { return past(3).len(); }", target)
+		if target == "wasm32-wasi" {
+			if code == 0 {
+				t.Errorf("%s: a loop one past the new array exits 0, want a trap\n%s", target, stderr)
+			}
+			continue
+		}
+		if code != 134 || !strings.Contains(stderr, "fern: array index out of range") {
+			t.Errorf("%s: a loop one past the new array exits %d, want array abort 134\n%s", target, code, stderr)
+		}
+	}
+}
