@@ -11422,7 +11422,7 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
     return s;
   }
   if (ssa.wide_product_at(blk, ii - 1)) {
-    return ssa_mul_wide(blk.insts[ii - 1], ins, reg_of, s);
+    return ssa_mul_wide(blk.insts[ii - 1], ins, reg_of, ssa_rdx_factor(blk, ii - 2, reg_of) == ins.args[0], s);
   }
   let role = ssa.carry_role(fr.carry, ins);
   if (role == ssa.CARRY_HEAD) {
@@ -11455,14 +11455,77 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   return ssa_inst(ins, reg_of, lp, fr, r, s);
 }
 
+function ssa_mul_lo_dst(lo: ssa.SInst, reg_of: i32[]): string {
+  return if (ssa_in_x(reg_of, lo.result)) { ssa_reg(reg_of[lo.result]) } else { "%rax" };
+}
+
+function ssa_mul_hi_dst(hi: ssa.SInst, reg_of: i32[]): string {
+  return if (hi.result >= 0 && ssa_in_x(reg_of, hi.result)) { ssa_reg(reg_of[hi.result]) } else { "%rdx" };
+}
+
+function ssa_mulx_form(lo_dst: string, hi_dst: string): boolean {
+  return lo_dst != hi_dst && lo_dst != "%r11" && hi_dst != "%r11";
+}
+
+function ssa_homed_in_rdx(reg_of: i32[], v: i32): boolean {
+  return v >= 0 && ssa_in_x(reg_of, v) && ssa_reg(reg_of[v]) == "%rdx";
+}
+
+// The value that `%rdx` holds after the instruction at `ii`, or -1. It is
+// the factor of the last `mulxq` of the block, when no instruction since
+// then can write `%rdx`.
+function ssa_rdx_factor(blk: ssa.SBlock, ii: i32, reg_of: i32[]): i32 {
+  let j = ii;
+  while (j >= 1) {
+    if (ssa.wide_product_at(blk, j - 1)) {
+      let hi = blk.insts[j];
+      let lo_dst = ssa_mul_lo_dst(blk.insts[j - 1], reg_of);
+      let hi_dst = ssa_mul_hi_dst(hi, reg_of);
+      if (!ssa_mulx_form(lo_dst, hi_dst) || lo_dst == "%rdx" || hi_dst == "%rdx") {
+        return -1;
+      }
+      return hi.args[0];
+    }
+    if (!ssa_keeps_rdx(blk.insts[j], reg_of)) {
+      return -1;
+    }
+    j -= 1;
+  }
+  return -1;
+}
+
+// Integer ALU work, a constant, a copy or a carry writes only its own home
+// and the scratch registers, and none of those is `%rdx`.
+function ssa_keeps_rdx(ins: ssa.SInst, reg_of: i32[]): boolean {
+  let k = ins.kind_tag;
+  if (k == ssa.LINE) {
+    return true;
+  }
+  let int_alu = k == ssa.BINARY && (ssa_direct_bin(ins.ir_kind) || asmcore.ssa_shift_tag(ins.ir_kind)) && !ssa.float_arith(ins.ir_kind) && !ssa.float_cmp(ins.ir_kind);
+  if (!int_alu && k != ssa.CONST_INT && k != ssa.CONST_I64 && k != ssa.COPY && k != ssa.CARRY) {
+    return false;
+  }
+  if (ssa_homed_in_rdx(reg_of, ins.result)) {
+    return false;
+  }
+  for a in ins.args {
+    if (ssa_homed_in_rdx(reg_of, a)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // One `mulxq` writes each half into its home register. `%rax` and `%rdx`
 // are free at the product, so they hold a half that has no register.
 // The `mulq` form stays for halves that share a register or use `%r11`.
-function ssa_mul_wide(lo: ssa.SInst, hi: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let lo_dst = if (ssa_in_x(reg_of, lo.result)) { ssa_reg(reg_of[lo.result]) } else { "%rax" };
-  let hi_dst = if (hi.result >= 0 && ssa_in_x(reg_of, hi.result)) { ssa_reg(reg_of[hi.result]) } else { "%rdx" };
-  if (lo_dst != hi_dst && lo_dst != "%r11" && hi_dst != "%r11") {
-    s = ssa_load(reg_of, hi.args[0], "%rdx", s);
+function ssa_mul_wide(lo: ssa.SInst, hi: ssa.SInst, reg_of: i32[], rdx_holds: boolean, s: asmcore.EmitState): asmcore.EmitState {
+  let lo_dst = ssa_mul_lo_dst(lo, reg_of);
+  let hi_dst = ssa_mul_hi_dst(hi, reg_of);
+  if (ssa_mulx_form(lo_dst, hi_dst)) {
+    if (!rdx_holds) {
+      s = ssa_load(reg_of, hi.args[0], "%rdx", s);
+    }
     s = s.write("    mulxq " + ssa_operand(reg_of, hi.args[1], s) + ", " + lo_dst + ", " + hi_dst + "\n");
     if (lo_dst == "%rax") {
       s = ssa_store(reg_of, lo.result, "%rax", s);

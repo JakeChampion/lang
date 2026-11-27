@@ -325,6 +325,34 @@ struct W3 { a: u64, b: u64, c: u64 }
     let x: u64 = l0 * 3u64 ^ h0 * 5u64 ^ l1 * 7u64 ^ h1 * 11u64 ^ l2 * 13u64 ^ h2 * 17u64 ^ l3 * 19u64 ^ h3 * 23u64;
     return x ^ l4 * 29u64 ^ h4 * 31u64 ^ l5 * 37u64 ^ h5 * 41u64 ^ l6 * 43u64 ^ h6 * 47u64 ^ l7 * 53u64 ^ h7 * 59u64 ^ a0 ^ a1 ^ a2 ^ a3 ^ b0 ^ b1;
 }
+@noinline function mul_row(a: u64, b0: u64, b1: u64, b2: u64, b3: u64): u64 {
+    let l0: u64 = a * b0;
+    let h0: u64 = __mulhi_u64(a, b0);
+    let l1: u64 = a * b1;
+    let h1: u64 = __mulhi_u64(a, b1);
+    let s1: u64 = l1 + h0;
+    let c1: u64 = (l1 & h0 | (l1 | h0) & (s1 ^ ALL)) >> 63u64;
+    let t1: u64 = h1 + c1;
+    let l2: u64 = a * b2;
+    let h2: u64 = __mulhi_u64(a, b2);
+    let s2: u64 = l2 + t1;
+    let c2: u64 = (l2 & t1 | (l2 | t1) & (s2 ^ ALL)) >> 63u64;
+    let t2: u64 = h2 + c2;
+    let l3: u64 = a * b3;
+    let h3: u64 = __mulhi_u64(a, b3);
+    let s3: u64 = l3 + t2;
+    let c3: u64 = (l3 & t2 | (l3 | t2) & (s3 ^ ALL)) >> 63u64;
+    let r: u64 = h3 + c3;
+    return l0 ^ s1 * 3u64 ^ s2 * 5u64 ^ s3 * 7u64 ^ r * 11u64;
+}
+@noinline function mul_row_div(a: u64, b0: u64, b1: u64, d: u64): u64 {
+    let l0: u64 = a * b0;
+    let h0: u64 = __mulhi_u64(a, b0);
+    let q: u64 = b1 / (d | 1u64);
+    let l1: u64 = a * q;
+    let h1: u64 = __mulhi_u64(a, q);
+    return l0 ^ h0 * 3u64 ^ l1 * 5u64 ^ h1 * 7u64;
+}
 @noinline function high_only(x: u64, y: u64): u64 {
     return __mulhi_u64(x, y) ^ y;
 }
@@ -361,6 +389,7 @@ function main(): i32 {
                 acc = acc ^ sub4(x, y, h, y - x, y, h, x + 1u64, ALL - y) ^ add4_spilled(x, h, x ^ y, y - x, y, ALL - h, x + 1u64, ALL - y);
                 acc = acc * 41u64 + mul_rows(x, y, h, x ^ y, y - h, ALL - x);
                 acc = acc * 47u64 + wide_spilled(x, h, x ^ y, y - x, ALL - h, y + 1u64);
+                acc = acc * 53u64 + mul_row(x, y, h, x ^ y, ALL - h) + 3u64 * mul_row_div(x, y, h, x ^ h);
                 acc = acc * 43u64 + sub_mask(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
             }
         }
@@ -546,6 +575,34 @@ func TestSelfHostSSAProductHalvesGoToTheirHomes(t *testing.T) {
 	spilled := functionListing(string(asm), "__fn_wide_spilled")
 	if !regexp.MustCompile(`(?m)^\s+mulxq [^\n]+, %rax, [^\n]+\n\s+movq %rax, -\d+\(%rbp\)$`).MatchString(spilled) {
 		t.Errorf("wide_spilled writes no spilled low half through %%rax:\n%s", spilled)
+	}
+}
+
+// A row of products with the same first factor loads that factor into %rdx
+// one time, because mulxq only reads %rdx.
+func TestSelfHostSSAMultiplyRowLoadsItsFactorOnce(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_mul_row")
+	if fn == "" {
+		t.Fatal("no __fn_mul_row in the listing")
+	}
+	mulx := len(regexp.MustCompile(`(?m)^\s+mulxq `).FindAllString(fn, -1))
+	writes := len(regexp.MustCompile(`(?m)^\s+\w+ [^\n]*, %rdx$`).FindAllString(fn, -1))
+	if mulx != 4 || writes != 1 {
+		t.Errorf("mul_row has %d mulxq and %d writes to %%rdx, want 4 and 1:\n%s", mulx, writes, fn)
 	}
 }
 
