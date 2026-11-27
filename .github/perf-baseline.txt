@@ -139,7 +139,7 @@ aarch64/closure_call.ir	46002179
 aarch64/deflate_decode.ir	25490431
 aarch64/deflate_decode.text	15365
 aarch64/deflate_encode.ir	39748600
-aarch64/deflate_encode.text	7906
+aarch64/deflate_encode.text	8015
 aarch64/enum_match.text	1273
 aarch64/enum_match.ir	24075112
 aarch64/http_hello.text	17267
@@ -343,7 +343,7 @@ x86_64/draw_rgba.ir	136593834
 x86_64/draw_rgba.dr	17862158
 x86_64/jpeg_decode.text	15188
 x86_64/jpeg_decode.ir	369118297
-x86_64/jpeg_decode.dr	84059839
+x86_64/jpeg_decode.dr	82891867
 aarch64/draw_fill.text	1925
 aarch64/draw_fill.ir	69581347
 aarch64/draw_fill.dr	4032432
@@ -353,7 +353,7 @@ aarch64/draw_mask.dr	4742671
 aarch64/draw_rgba.text	2539
 aarch64/draw_rgba.ir	117654147
 aarch64/draw_rgba.dr	6867397
-aarch64/jpeg_decode.text	15424
+aarch64/jpeg_decode.text	15596
 aarch64/jpeg_decode.ir	363818423
 aarch64/jpeg_decode.dr	46855480
 aarch64/draw_image.text	2091
@@ -361,10 +361,10 @@ aarch64/draw_image.ir	30938308
 aarch64/draw_image.dr	5015048
 aarch64/draw_scaled.text	1870
 aarch64/draw_scaled.ir	268354557
-aarch64/draw_scaled.dr	32709620
+aarch64/draw_scaled.dr	32000074
 x86_64/draw_image.text	1875
 x86_64/draw_image.ir	16696286
 x86_64/draw_image.dr	2363229
 x86_64/draw_scaled.text	1720
-x86_64/draw_scaled.ir	299896822
+x86_64/draw_scaled.ir	289489337
 x86_64/draw_scaled.dr	76058534
