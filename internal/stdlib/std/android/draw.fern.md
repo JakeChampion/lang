@@ -568,15 +568,13 @@ pub function (f: Frame) image(x: i32, y: i32, w: i32, h: i32, img: Image): void 
   if (x1 <= x0 || y1 <= y0 || img.pixels.len() < img.width * img.height * 4) {
     return;
   }
-  let px = img.pixels;
+  // An image and a frame hold the bytes of a pixel in the same order, so each
+  // row is a copy.
+  let n = (x1 - x0) * 4;
   for row in y0..y1 {
     let from = ((sy + row - dy) * img.width + sx + x0 - dx) * 4;
     unsafe {
-      let to = f.bits + ((row * f.stride + x0) * 4) as usize;
-      for i in 0..x1 - x0 {
-        let k = from + i * 4;
-        __store_i32(to + (i * 4) as usize, rgba(px[k] as i32, px[k + 1] as i32, px[k + 2] as i32, px[k + 3] as i32));
-      }
+      __memcpy(f.bits + ((row * f.stride + x0) * 4) as usize, __bytes_data(img.pixels[from:from + n]), n);
     }
   }
 }
