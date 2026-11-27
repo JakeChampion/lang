@@ -38410,11 +38410,66 @@ function qualified_variant_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Sc
   return ast.ExprStructLit { ...sl, type_name: member, enum_owner: du.name, field_names: names };
 }
 
+// A parsed local has a declaration ID within its source module. Generated
+// locals keep their original coordinates. A range also needs its loop line.
+// Each form keeps the binding name through copies and specialization.
+const LIT_NO_SITE: i32 = 0;
+
+const LIT_PARSED_LOCAL: i32 = 1;
+
+const LIT_GENERATED_LOCAL: i32 = 2;
+
+const LIT_RANGE_SITE: i32 = 3;
+
+struct LitBindingSite { name: string, kind: i32, position: i64, range_line: i32 }
+
+struct LitBindingIndex { sites: LitBindingSite[], heads: i32[], next: i32[] }
+
+function lit_no_binding(): LitBindingSite {
+  return LitBindingSite { name: "", kind: LIT_NO_SITE, position: 0i64, range_line: 0 };
+}
+
+function lit_site_bucket(site: LitBindingSite, count: i32): i32 {
+  let hash = (site.position >> 32) * 31i64 + (site.position as i32) as i64 + site.range_line as i64;
+  return (hash & 2147483647i64) as i32 % count;
+}
+
+function lit_binding_index(sites: LitBindingSite[]): LitBindingIndex {
+  let heads = util.minus_ones(sites.len());
+  let next = util.minus_ones(sites.len());
+  let i = sites.len();
+  while (i > 0) {
+    i -= 1;
+    if (sites[i].kind == LIT_NO_SITE) {
+      continue;
+    }
+    let bucket = lit_site_bucket(sites[i], heads.len());
+    next = next.with(i, heads[bucket]);
+    heads = heads.with(bucket, i);
+  }
+  return LitBindingIndex { sites: sites, heads: heads, next: next };
+}
+
+function (ix: LitBindingIndex) find(site: LitBindingSite): i32 {
+  if (ix.sites.len() == 0) {
+    return -1;
+  }
+  let i = ix.heads[lit_site_bucket(site, ix.heads.len())];
+  while (i >= 0) {
+    let hit = ix.sites[i];
+    if (hit.position == site.position && hit.kind == site.kind && hit.range_line == site.range_line && hit.name == site.name) {
+      return i;
+    }
+    i = ix.next[i];
+  }
+  return -1;
+}
+
 struct LitArgSite { line: i32, col: i32, arg: i32 }
 
-struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: LitArgSite[], ctags: string[], fkeys: string[], ftags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: LitArgSite[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: LitArgSite[], ptypes: typeinfo.Type[], okeys: string[], otypes: typeinfo.Type[], ofills: typeinfo.Type[] }
+struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: LitBindingSite[], cargs: LitArgSite[], ctags: string[], fkeys: string[], ftags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: LitBindingSite[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: LitBindingSite[], wtags: string[], eargs: LitArgSite[], eids: i32[], tkeys: LitBindingSite[], ttypes: typeinfo.Type[], pargs: LitArgSite[], ptypes: typeinfo.Type[], okeys: LitBindingSite[], otypes: typeinfo.Type[], ofills: typeinfo.Type[] }
 
-struct LitRewrite { keys: util.NameIndex, tags: string[], cargs: LitArgSite[], ctags: string[], fkeys: string[], ftags: string[], pargs: LitArgSite[], ptypes: typeinfo.Type[] }
+struct LitRewrite { keys: LitBindingIndex, tags: string[], cargs: LitArgSite[], ctags: string[], fkeys: string[], ftags: string[], pargs: LitArgSite[], ptypes: typeinfo.Type[] }
 
 const PENDING_LOCAL: i32 = 0;
 
@@ -38986,7 +39041,7 @@ function lit_find(st: LitInfer, k: i32): i32 {
   return r;
 }
 
-function lit_new(st: LitInfer, key: string): LitInfer {
+function lit_new(st: LitInfer, key: LitBindingSite): LitInfer {
   return LitInfer { ...st, parent: st.parent.append(st.parent.len()), width: st.width.append(t_unknown("open")), keys: st.keys.append(key) };
 }
 
@@ -39032,7 +39087,7 @@ function lit_local_beside_float(st: LitInfer, r: i32, f: i32): boolean {
     return false;
   }
   for i in 0..st.parent.len() {
-    if (st.keys[i].len() > 0 && lit_find(st, i) == r) {
+    if (st.keys[i].kind != LIT_NO_SITE && lit_find(st, i) == r) {
       return true;
     }
   }
@@ -39931,7 +39986,7 @@ function lit_composite_local(e: ast.Expr, s: Scope, st: LitInfer): (typeinfo.Typ
   let (seed, ids) = lit_tree(e, s, []);
   if (seed || float_literal_tree(e)) {
     let k = st.parent.len();
-    st = lit_new(st, "");
+    st = lit_new(st, lit_no_binding());
     if (float_literal_tree(e)) {
       st = LitInfer { ...st, width: st.width.with(k, typeinfo.TypeFloat { width: 64, polymorphic: true }) };
     }
@@ -40249,12 +40304,15 @@ function lit_return_ids(stmts: ast.Stmt[], s: Scope, ids: i32[]): i32[] {
   return ids;
 }
 
-function lit_var_key(v: ast.StmtVar): string {
-  return "v" + util.i32_to_string(v.line) + ":" + util.i32_to_string(v.col) + ":" + v.name;
+function lit_var_site(v: ast.StmtVar): LitBindingSite {
+  if (v.decl_id > 0) {
+    return LitBindingSite { name: v.name, kind: LIT_PARSED_LOCAL, position: source_position(util.pos_file_index(v.line), v.decl_id), range_line: 0 };
+  }
+  return LitBindingSite { name: v.name, kind: LIT_GENERATED_LOCAL, position: source_position(v.line, v.col), range_line: 0 };
 }
 
-function lit_for_key(fr: ast.StmtFor, lo: ast.Expr): string {
-  return "f" + util.i32_to_string(fr.line) + ":" + util.i32_to_string(ast.expr_line(lo)) + ":" + util.i32_to_string(ast.expr_col(lo)) + ":" + fr.var_name;
+function lit_range_site(fr: ast.StmtFor, lo: ast.Expr): LitBindingSite {
+  return LitBindingSite { name: fr.var_name, kind: LIT_RANGE_SITE, position: source_position(ast.expr_line(lo), ast.expr_col(lo)), range_line: fr.line };
 }
 
 function lit_range_bounds(iter: ast.Expr): ast.Expr[] {
@@ -40278,7 +40336,7 @@ function lit_range(fr: ast.StmtFor, s: Scope, st: LitInfer): LitInfer {
   let body = for_body_scope(fr, s);
   if (ls) {
     let k = out.parent.len();
-    out = lit_new(out, lit_for_key(fr, bounds[0]));
+    out = lit_new(out, lit_range_site(fr, bounds[0]));
     let ids: i32[] = [k];
     for a in lids {
       ids = ids.append(a);
@@ -40335,7 +40393,7 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
           let wtag = widened_array_tag(ea, s);
           if (wtag.len() > 0) {
             let wst = lit_expr(v.init, s, st);
-            return (bind_stmt(stmt, s), LitInfer { ...wst, wkeys: wst.wkeys.append(lit_var_key(v)), wtags: wst.wtags.append(wtag) });
+            return (bind_stmt(stmt, s), LitInfer { ...wst, wkeys: wst.wkeys.append(lit_var_site(v)), wtags: wst.wtags.append(wtag) });
           }
         }
         if let ast.ExprStructLit(sl) = v.init {
@@ -40351,7 +40409,7 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
         if (lit_composite(v.init) || float_literal_tree(v.init)) {
           let (ct, cs, found) = lit_composite_local(v.init, s, st);
           if (found) {
-            return (s.bind(v.name, ct), LitInfer { ...cs, tkeys: cs.tkeys.append(lit_var_key(v)), ttypes: cs.ttypes.append(ct) });
+            return (s.bind(v.name, ct), LitInfer { ...cs, tkeys: cs.tkeys.append(lit_var_site(v)), ttypes: cs.ttypes.append(ct) });
           }
         }
         let open_type = check_expr(v.init, s);
@@ -40362,7 +40420,7 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
         if (open_call || holds_open_enum(open_type, s)) {
           let ost = lit_expr(v.init, s, st);
           let k = ost.okeys.len();
-          return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_key(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
+          return (s.bind(v.name, lit_open_marker(k)), LitInfer { ...ost, okeys: ost.okeys.append(lit_var_site(v)), otypes: ost.otypes.append(open_type), ofills: ost.ofills.append(t_unknown("open")) });
         }
         let inferred = lit_expr(v.init, s, st);
         if (ast.var_binds_itself(v)) {
@@ -40371,7 +40429,7 @@ function lit_stmt(stmt: ast.Stmt, s: Scope, st: LitInfer): (Scope, LitInfer) {
         return (s.bind_inferred(v, inferred_local_type(open_type)), inferred);
       }
       let k = sst.parent.len();
-      return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(sst, lit_var_key(v)), ids.append(k)));
+      return (s.bind(v.name, lit_marker(k)), lit_link(lit_new(sst, lit_var_site(v)), ids.append(k)));
     },
     ast.StmtAssign(a) => {
       let tk = lit_id(s.lookup(a.target));
@@ -40470,7 +40528,7 @@ function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type
       }
       if (slot >= 0 && slot < args.len() && seed) {
         let k = out.parent.len();
-        out = lit_link(lit_new(out, ""), ids.append(k));
+        out = lit_link(lit_new(out, lit_no_binding()), ids.append(k));
         if let typeinfo.TypeI32(known) = u.args[slot] {
           if (!known.polymorphic) {
             out = lit_fix(out, [k], known);
@@ -40550,7 +40608,7 @@ function lit_struct_local(v: ast.StmtVar, sl: ast.ExprStructLit, s: Scope, st: L
     }
     if (lits && !typed) {
       let k = out.parent.len();
-      out = lit_new(out, "");
+      out = lit_new(out, lit_no_binding());
       if (wide) {
         out = lit_fix(out, [k], typeinfo.t_i64());
       }
@@ -40574,11 +40632,11 @@ function lit_struct_local(v: ast.StmtVar, sl: ast.ExprStructLit, s: Scope, st: L
     sargs = sargs.append(spelled[j]);
     sids = sids.append(ids[j]);
   }
-  return (sl.type_name, LitInfer { ...out, skeys: out.skeys.append(lit_var_key(v)), snames: out.snames.append(sl.type_name), sfirst: out.sfirst.append(out.sids.len()), sargs: sargs, sids: sids });
+  return (sl.type_name, LitInfer { ...out, skeys: out.skeys.append(lit_var_site(v)), snames: out.snames.append(sl.type_name), sfirst: out.sfirst.append(out.sids.len()), sargs: sargs, sids: sids });
 }
 
-function lit_struct_tags(st: LitInfer): (string[], string[]) {
-  let keys: string[] = [];
+function lit_struct_tags(st: LitInfer): (LitBindingSite[], string[]) {
+  let keys: LitBindingSite[] = [];
   let tags: string[] = [];
   for j in 0..st.skeys.len() {
     let end = st.sids.len();
@@ -40614,7 +40672,7 @@ function lit_struct_tags(st: LitInfer): (string[], string[]) {
 
 // open_rewrites adds the type of each settled open enum local to the keys and
 // tags of the rewrites.
-function open_rewrites(st: LitInfer, own keys: string[], own tags: string[]): (string[], string[]) {
+function open_rewrites(st: LitInfer, own keys: LitBindingSite[], own tags: string[]): (LitBindingSite[], string[]) {
   for oi in 0..st.okeys.len() {
     if (!is_unknown(st.ofills[oi])) {
       keys = keys.append(st.okeys[oi]);
@@ -40625,15 +40683,15 @@ function open_rewrites(st: LitInfer, own keys: string[], own tags: string[]): (s
 }
 
 function lit_rewrites(st: LitInfer): LitRewrite {
-  let keys: string[] = [];
+  let keys: LitBindingSite[] = [];
   let tags: string[] = [];
   // firsts[i] is the first local of st.keys that has keys[i], and slot is its inverse.
   let firsts: i32[] = [];
   let slot = util.minus_ones(st.keys.len());
-  let ix = util.name_index(st.keys);
+  let ix = lit_binding_index(st.keys);
   let k = 0;
   while (k < st.keys.len()) {
-    if (st.keys[k].len() == 0) {
+    if (st.keys[k].kind == LIT_NO_SITE) {
       k += 1;
       continue;
     }
@@ -40653,7 +40711,7 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     }
     k += 1;
   }
-  let ok: string[] = [];
+  let ok: LitBindingSite[] = [];
   let ot: string[] = [];
   for i in 0..keys.len() {
     if (tags[i].len() > 0 && (tags[i] != "i32" || !is_unknown(st.width[lit_find(st, firsts[i])]))) {
@@ -40692,7 +40750,7 @@ function lit_rewrites(st: LitInfer): LitRewrite {
   for pt in st.ptypes {
     ptypes = ptypes.append(lit_typed_type(pt, st, false));
   }
-  return LitRewrite { keys: util.name_index(ok), tags: ot, cargs: ck, ctags: ct, fkeys: fk, ftags: ft, pargs: st.pargs, ptypes: ptypes };
+  return LitRewrite { keys: lit_binding_index(ok), tags: ot, cargs: ck, ctags: ct, fkeys: fk, ftags: ft, pargs: st.pargs, ptypes: ptypes };
 }
 
 function agreed_tags[K](keys: K[], tags: string[], lookup: (K[], K) => i32): (K[], string[]) {
@@ -40728,7 +40786,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if (v.type_name.len() > 0) {
         return (st, rw, false);
       }
-      let at = rw.keys.find(lit_var_key(v));
+      let at = rw.keys.find(lit_var_site(v));
       if (at < 0) {
         return (st, rw, false);
       }
@@ -40740,7 +40798,7 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
         return (st, rw, false);
       }
       let bounds = lit_range_bounds(fr.iter);
-      let at2 = rw.keys.find(lit_for_key(fr, bounds[0]));
+      let at2 = rw.keys.find(lit_range_site(fr, bounds[0]));
       if (at2 < 0 || !lit_suffix_spelled(rw.tags[at2])) {
         return (st, rw, false);
       }
@@ -41053,9 +41111,9 @@ function lit_resolve_pending(st: LitInfer): LitInfer {
 }
 
 function settle_lit_body(stmts: ast.Stmt[], s: Scope): ast.Stmt[] {
-  let st = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [typeinfo.t_i64()], keys: [""], cargs: [], ctags: [], fkeys: [], ftags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [], pargs: [], ptypes: [], okeys: [], otypes: [], ofills: [] }));
+  let st = lit_resolve_pending(lit_stmts(stmts, s, LitInfer { parent: [LIT_WIDE], width: [typeinfo.t_i64()], keys: [lit_no_binding()], cargs: [], ctags: [], fkeys: [], ftags: [], pend: [], pend_id: [], pend_scope: [], skeys: [], snames: [], sfirst: [], sargs: [], sids: [], wkeys: [], wtags: [], eargs: [], eids: [], tkeys: [], ttypes: [], pargs: [], ptypes: [], okeys: [], otypes: [], ofills: [] }));
   let rw = lit_rewrites(st);
-  if (rw.keys.names.len() == 0 && rw.fkeys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
+  if (rw.keys.sites.len() == 0 && rw.fkeys.len() == 0 && rw.cargs.len() == 0 && rw.pargs.len() == 0) {
     return stmts;
   }
   let (out, ra) = astwalk.map_stmts_where(stmts, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);

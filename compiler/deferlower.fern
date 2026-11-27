@@ -241,7 +241,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
       ast.StmtVar(v) => {
         let vve = dl_edges_expr(v.init, actions, flags, start, armed, label, own_level);
         armed = vve.armed;
-        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header });
+        out = out.append(ast.StmtVar { decl_id: v.decl_id, name: v.name, type_name: v.type_name, init: vve.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header });
       },
       ast.StmtExpr(x) => {
         let xve = dl_edges_expr(x.value, actions, flags, start, armed, label, own_level);
@@ -405,7 +405,7 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
     },
     ast.StmtVar(v) => {
       let ir = dl_collect_expr(v.init, actions, flags);
-      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }];
+      let one: ast.Stmt[] = [ast.StmtVar { decl_id: v.decl_id, name: v.name, type_name: v.type_name, init: ir.expr, line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }];
       return DeferAcc { stmts: one, actions: ir.actions, flags: ir.flags };
     },
     ast.StmtReturn(r) => {
@@ -641,7 +641,7 @@ function dl_expand_return_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[], 
       return dl_expand_return(r, actions, flags, armed);
     },
     ast.StmtVar(v) => {
-      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, actions, flags, armed), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }];
+      let one: ast.Stmt[] = [ast.StmtVar { decl_id: v.decl_id, name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, actions, flags, armed), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types, destr: v.destr, header: v.header }];
       return one;
     },
     ast.StmtExpr(x) => {
@@ -835,7 +835,7 @@ function dl_defret_decl(ret: string, fn_ret: string, fn_param_types: string[]): 
   if (!dl_zeroable(ret)) {
     return parser.s_var("__defret", "", parser.e_number("0", "", false));
   }
-  return ast.StmtVar { name: "__defret", type_name: ret, init: dl_zero_of(ret), line: 0, col: 0, fn_ret: fn_ret, fn_param_types: fn_param_types, destr: ast.no_destr(), header: false };
+  return ast.StmtVar { decl_id: 0, name: "__defret", type_name: ret, init: dl_zero_of(ret), line: 0, col: 0, fn_ret: fn_ret, fn_param_types: fn_param_types, destr: ast.no_destr(), header: false };
 }
 
 function dl_hoistable(want: string[], src: ast.Stmt[], params: string[]): string[] {
