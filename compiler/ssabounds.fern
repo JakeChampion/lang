@@ -998,7 +998,7 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   }
   if (binary(d, "-") && is_const(g, d.args[1])) {
     let c = const_value(g, d.args[1]);
-    if (c >= 1 && is_length_of(g, d.args[0], base)) {
+    if (c >= 1 && (is_length_of(g, d.args[0], base) || phi_at_most_length(g, d.args[0], base, assume, steps - 1))) {
       return true;
     }
     let at = g.home[x];
@@ -1084,8 +1084,9 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
       return true;
     }
   }
-  if (binary(d, "-") && is_const(g, d.args[1]) && is_length(g, d.args[0])) {
-    if (at_least(g, at, d.args[0], const_value(g, d.args[1]))) {
+  if (binary(d, "-") && is_const(g, d.args[1])) {
+    let c = const_value(g, d.args[1]);
+    if (is_length(g, d.args[0]) && at_least(g, at, d.args[0], c) || c >= 0 && at_least(g, b, d.args[0], c)) {
       return true;
     }
   }
@@ -1189,6 +1190,33 @@ function phi_at_least(g: Graph, y: i32, n: i32, assume: i32[], steps: i32): bool
       base = ssa.copy_root(g.defs, step.args[1]);
     }
     if (base != y || !below_a_length(g, g.home[a], y)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The phi y is at most the length of `base`: each operand is that length, a
+// value below it, or y minus a constant where y is not negative, which
+// cannot wrap. A counter that starts at the length and steps down while it
+// is above 0 is such a phi.
+function phi_at_most_length(g: Graph, y: i32, base: i32, assume: i32[], steps: i32): boolean {
+  y = ssa.copy_root(g.defs, y);
+  let d = g.defs[y];
+  if (steps <= 0 || d.kind_tag != ssa.PHI || !g.i32s[y] || d.args.len() == 0 || assumed(assume, y)) {
+    return false;
+  }
+  let inner = assume.append(y);
+  for k in 0..d.args.len() {
+    let a = ssa.copy_root(g.defs, d.args[k]);
+    if (is_length_of(g, a, base)) {
+      continue;
+    }
+    let step = g.defs[a];
+    if (binary(step, "-") && ssa.copy_root(g.defs, step.args[0]) == y && is_const(g, step.args[1]) && const_value(g, step.args[1]) >= 0 && nonneg(g, g.home[a], y, inner, steps - 1)) {
+      continue;
+    }
+    if (!below(g, edge_block(g, y, k, d.args[k]), d.args[k], base, inner, steps - 1)) {
       return false;
     }
   }

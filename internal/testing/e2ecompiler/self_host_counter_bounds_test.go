@@ -9,12 +9,23 @@ import (
 
 // A counter that starts at 1 and steps up by 1 below a length is at least 1,
 // so `a[i - 1]` needs no sign test. The loop guard bounds `i + 1` and `i - 1`
-// below the length, so neither read keeps a check. A counter that starts at 0
-// or steps down keeps the test, and its read aborts.
+// below the length, so neither read keeps a check. A counter that starts at
+// the length and steps down while it is above 0 is at most the length, and
+// the guard makes `i - 1` not negative. A counter that starts at 0, or steps
+// down while it is not negative, keeps the test, and its read aborts.
 const counterFloorFuncs = `@noinline function smooth(a: i32[]): i32 {
   let s = 0;
   for i in 1..a.len() - 1 {
     s += a[i - 1] + a[i + 1];
+  }
+  return s;
+}
+@noinline function tail_sum(a: i32[]): i32 {
+  let s = 0;
+  let i = a.len();
+  while (i > 0) {
+    s += a[i - 1];
+    i -= 1;
   }
   return s;
 }
@@ -41,10 +52,10 @@ const counterFloorFuncs = `@noinline function smooth(a: i32[]): i32 {
 }
 `
 
-func TestSelfHostCounterFloorProvesTheSign(t *testing.T) {
+func TestSelfHostCounterBoundsProveTheRead(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "floor.fern")
-	program := counterFloorFuncs + "function main(): i32 { if (smooth(seq(10)) != 144 || smooth(seq(2)) != 0) { return 1; } return 0; }\n"
+	program := counterFloorFuncs + "function main(): i32 { if (smooth(seq(10)) != 144 || smooth(seq(2)) != 0 || tail_sum(seq(10)) != 90 || tail_sum(seq(0)) != 0) { return 1; } return 0; }\n"
 	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -67,12 +78,14 @@ func TestSelfHostCounterFloorProvesTheSign(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			body := asmFunction(string(asm), "__fn_smooth:")
-			if body == "" {
-				t.Fatalf("no __fn_smooth in the listing")
-			}
-			if strings.Contains(body, "oob_abort") {
-				t.Errorf("smooth keeps a check of a[i - 1] or a[i + 1]:\n%s", body)
+			for _, name := range []string{"smooth", "tail_sum"} {
+				body := asmFunction(string(asm), "__fn_"+name+":")
+				if body == "" {
+					t.Fatalf("no __fn_%s in the listing", name)
+				}
+				if strings.Contains(body, "oob_abort") {
+					t.Errorf("%s keeps a check of its reads:\n%s", name, body)
+				}
 			}
 		})
 	}
