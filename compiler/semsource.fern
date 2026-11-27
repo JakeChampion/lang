@@ -4400,9 +4400,10 @@ function produce(e: ast.Expr, s: State, expected: typeinfo.Type): Value {
   }
 }
 
-function declare_tuple(st: ast.Stmt, v: ast.StmtVar, s: State): State {
-  let ty = checked(v.init, s);
-  let after = checker.bind_stmt(st, s.scope);
+function declare_tuple(v: ast.StmtVar, s: State): State {
+  let bound = checker.expr_type(v.init, s.scope);
+  let ty = settled_in(bound, s);
+  let after = checker.bind_destructure_names(s.scope, v, bound);
   let whole = expr(v.init, s, ty);
   s = whole.s;
   if (!s.ok) {
@@ -4492,9 +4493,9 @@ function mismatch(name: string, declared: typeinfo.Type, value: typeinfo.Type): 
   return "binding " + name + " declared " + typeinfo.spelling(declared) + " holds a semantic value of " + typeinfo.spelling(value);
 }
 
-function declare(st: ast.Stmt, v: ast.StmtVar, s: State): State {
+function declare(v: ast.StmtVar, s: State): State {
   if (ast.destructures(v)) {
-    return declare_tuple(st, v, s);
+    return declare_tuple(v, s);
   }
   let bound = checker.local_bind_type(v, s.scope);
   let ty = settled(resolved(bound, s.template, s.binding, s.scope));
@@ -5666,7 +5667,7 @@ function stmt(st: ast.Stmt, s: State): State {
   }
   match (st) {
     ast.StmtVar(v) => {
-      return declare(st, v, s);
+      return declare(v, s);
     },
     ast.StmtExpr(e) => {
       return discard(e.value, s);

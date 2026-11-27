@@ -2610,7 +2610,8 @@ function (s: Scope) defines(name: string): boolean {
   return s.binding_index(name) >= 0;
 }
 
-function bind_destructure_names(s: Scope, v: ast.StmtVar, whole: typeinfo.Type): Scope {
+// Bind the pattern from the raw initializer type in its declaration scope.
+pub function bind_destructure_names(s: Scope, v: ast.StmtVar, whole: typeinfo.Type): Scope {
   let out = s;
   if (v.destr.at.len() > 0) {
     out = out.bind(v.destr.at, whole);
