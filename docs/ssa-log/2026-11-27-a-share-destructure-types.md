@@ -15,6 +15,7 @@ Callgrind counted instructions with verification enabled.
 
 | Fixed source | Main instructions | Branch instructions | Instructions saved |
 | --- | ---: | ---: | ---: |
+| `compiler/checker.fern` (full compile) | 94,852,435,607 | 94,831,737,564 | 20,698,043 |
 | `compiler/checker.fern` (check only) | 15,057,150,205 | 15,036,071,205 | 21,079,000 |
 | `destructure_tuple_and_struct_forms/main.fern` | 20,074,347 | 19,972,482 | 101,865 |
 
@@ -24,6 +25,11 @@ Both compilers produced the same bytes and execution results for all 72 comparis
 For the WASI case with exit code 136, a wrapper checked the full return value.
 All 12 error fixtures produced identical JSON diagnostics.
 
+Each stage-2 compiler reproduced itself.
+The full fixed checker compile used 74,301,801 heap allocations on main and 74,294,367 on the branch.
+Both compilers freed every allocation.
+The two reports from `scripts/selfhost-emit-hashes` matched on all 6,258 rows.
+The compilers emitted 4,458 identical binaries and refused the same 1,800 inputs.
 
 The six fixed checker targets produced identical binaries.
 The HTTP component and both freestanding assembly outputs also matched.
