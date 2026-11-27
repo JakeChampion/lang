@@ -53,12 +53,12 @@ function inspect(source: string, mode: string): string {
     let result: ast.Stmt[] = body;
     if (mode == "elide") { result = constfold.elide_asserts(checked).funcs[0].body; }
     if (mode == "box") {
-        let sites: string[] = [];
+        let sites: Option[ast.StmtVar][] = [];
         let types: string[] = [];
         for st in body {
             if let ast.StmtVar(v) = st {
                 if (v.name == "n") {
-                    sites = sites.append(capturebox.site_key(v.name, v.line, v.col));
+                    sites = sites.append(Some(v));
                     types = types.append(v.type_name);
                 }
             }
