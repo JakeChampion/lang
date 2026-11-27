@@ -118,6 +118,12 @@ not unique, the kernel copies it first.
 A fill of zero, or a fill of bytes, uses `memset`. On native targets, a fill
 of 2-byte elements writes 8 bytes at a time.
 
+A fill of zero over a new array does nothing, and the pass removes the loop.
+`__alloc_u8`, `__alloc_i32` and `__alloc_i64` make each element zero. The
+rule applies when the loop starts at element 0 and its count is the value
+that the allocation takes. With that count the loop cannot leave the array,
+so no abort is lost.
+
 A move copies in parts that are not longer than the distance between the
 two ranges. Thus each part reads only elements that hold their final values.
 Below 32 bytes of distance, a move copies one element at a time, because

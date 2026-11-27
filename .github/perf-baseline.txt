@@ -341,9 +341,9 @@ x86_64/draw_mask.dr	10286104
 x86_64/draw_rgba.text	2350
 x86_64/draw_rgba.ir	136593834
 x86_64/draw_rgba.dr	17862158
-x86_64/jpeg_decode.text	15188
-x86_64/jpeg_decode.ir	369118297
-x86_64/jpeg_decode.dr	82891867
+x86_64/jpeg_decode.text	16376
+x86_64/jpeg_decode.ir	312926350
+x86_64/jpeg_decode.dr	65491707
 aarch64/draw_fill.text	1925
 aarch64/draw_fill.ir	69581347
 aarch64/draw_fill.dr	4032432
@@ -365,6 +365,6 @@ aarch64/draw_scaled.dr	32000074
 x86_64/draw_image.text	1875
 x86_64/draw_image.ir	16696286
 x86_64/draw_image.dr	2363229
-x86_64/draw_scaled.text	2156
-x86_64/draw_scaled.ir	289489337
-x86_64/draw_scaled.dr	71907360
+x86_64/draw_scaled.text	2451
+x86_64/draw_scaled.ir	283269809
+x86_64/draw_scaled.dr	67752064
