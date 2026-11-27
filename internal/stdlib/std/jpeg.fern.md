@@ -993,11 +993,36 @@ function pixels(d: Decoder, coef: [i32]): Image {
   let p2 = planes[2];
   let x1 = columns(c1, d);
   let x2 = columns(c2, d);
+  let rv = __f64x2_splat(1.402);
+  let gu = __f64x2_splat(0.344136);
+  let gv = __f64x2_splat(0.714136);
+  let bu = __f64x2_splat(1.772);
+  let half = __f64x2_splat(0.5);
+  let mid = __f64x2_splat(128.0);
+  let low = __f64x2_splat(0.0);
+  let high = __f64x2_splat(255.0);
+  // 2^52: a whole number from 0 to 255 plus it has that number in its low byte.
+  let point = __f64x2_splat(4503599627370496.0);
   for y in 0..d.height {
     let row0 = y * c0.v / d.vmax * c0.bw * 8;
     let row1 = y * c1.v / d.vmax * c1.bw * 8;
     let row2 = y * c2.v / d.vmax * c2.bw * 8;
-    for x in 0..d.width {
+    // Two pixels in one step, each lane with the operations of one pixel.
+    for i in 0..d.width / 2 {
+      let x = 2 * i;
+      let yy = __f64x2_of(p0[row0 + x0[x]] as f64, p0[row0 + x0[x + 1]] as f64);
+      let cb = __f64x2_of(p1[row1 + x1[x]] as f64, p1[row1 + x1[x + 1]] as f64) - mid;
+      let cr = __f64x2_of(p2[row2 + x2[x]] as f64, p2[row2 + x2[x + 1]] as f64) - mid;
+      let r = __f64x2_max(__f64x2_min(__f64x2_floor(yy + rv * cr + half), high), low) + point;
+      let g = __f64x2_max(__f64x2_min(__f64x2_floor(yy - gu * cb - gv * cr + half), high), low) + point;
+      let b = __f64x2_max(__f64x2_min(__f64x2_floor(yy + bu * cb + half), high), low) + point;
+      let at = 4 * (y * d.width + x);
+      out = out.with(at, (__f64x2_lane_bits(r, 0) & 255u64) as u8).with(at + 1, (__f64x2_lane_bits(g, 0) & 255u64) as u8);
+      out = out.with(at + 2, (__f64x2_lane_bits(b, 0) & 255u64) as u8).with(at + 3, 255u8);
+      out = out.with(at + 4, (__f64x2_lane_bits(r, 1) & 255u64) as u8).with(at + 5, (__f64x2_lane_bits(g, 1) & 255u64) as u8);
+      out = out.with(at + 6, (__f64x2_lane_bits(b, 1) & 255u64) as u8).with(at + 7, 255u8);
+    }
+    for x in d.width / 2 * 2..d.width {
       let yy = p0[row0 + x0[x]] as f64;
       let cb = p1[row1 + x1[x]] as f64 - 128.0;
       let cr = p2[row2 + x2[x]] as f64 - 128.0;

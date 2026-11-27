@@ -108,6 +108,17 @@ The stage counts are from a copy of the module where each stage is a function th
 
 The color conversion is now 159 instructions for each pixel, in place of 400.
 
+### The color conversion on lanes (2026-11-27)
+
+The color conversion does two pixels in one step, as lanes of `f64x2`, with the operations of one pixel in each lane.
+After the floor and the limits of 0 and 255, a lane gets 2^52 added.
+A whole number from 0 to 255 is then the low byte of the bits of the lane.
+So the step reads each byte with no conversion to an integer.
+Each pixel is the same as before, on x86-64, arm64 and wasm, for the same 30 images.
+
+The color conversion runs 90,029,303 instructions in place of 166,566,311: 85.9 for each pixel in place of 158.8.
+The whole program runs 369,118,297 instructions in place of 447,785,889.
+
 ## Lane operations out of loops (#17362)
 
 The compiler merges two lane operations that are the same.
