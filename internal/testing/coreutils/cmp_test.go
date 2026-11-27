@@ -46,6 +46,8 @@ func cmpCases(t *testing.T) []invocation {
 	big3 := writeFile(t, dir, "big3", string(base[:200000]))
 	same := writeFile(t, dir, "same", string(base))
 
+	dense := writeFile(t, dir, "dense", strings.Repeat("Z", 7000))
+
 	return []invocation{
 		{name: "equal files", args: []string{a, spaced}},
 		{name: "a file with itself", args: []string{a, a}},
@@ -167,6 +169,9 @@ func cmpCases(t *testing.T) []invocation {
 		{name: "full stdout", args: []string{a, b}, stdout: stdoutFull},
 		{name: "verbose EOF before final output error", args: []string{"-l", b, longer}, stdout: stdoutFull},
 		{name: "verbose second operand EOF before final output error", args: []string{"-lb", longer, b}, stdout: stdoutFull},
+		{name: "verbose differences across output blocks", args: []string{"-lb", dense, big1}},
+		{name: "verbose write failure after crossing the output buffer", args: []string{"-ln", "1000", dense, big1}, stdout: stdoutFull},
+		{name: "verbose write failure before unequal EOF", args: []string{"-l", dense, big3}, stdout: stdoutFull},
 		{name: "full stdout under verbose", args: []string{"-l", big1, big2}, stdout: stdoutFull},
 	}
 }
