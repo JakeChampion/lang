@@ -173,6 +173,28 @@ struct W3 { a: u64, b: u64, c: u64 }
     let k3: u64 = ((s3 ^ ALL) & 0xffffffff00000001u64 | ((s3 ^ ALL) | 0xffffffff00000001u64) & d3) >> 63u64;
     return d0 * 3u64 + d1 * 5u64 + d2 * 7u64 + d3 * 11u64 + k3 * 13u64;
 }
+struct Limbs { l0: u64, l1: u64, l2: u64, l3: u64 }
+@noinline function add_mod_p(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, b2: u64, b3: u64): Limbs {
+    let s0: u64 = a0 + b0;
+    let c0: u64 = (a0 & b0 | (a0 | b0) & (s0 ^ ALL)) >> 63u64;
+    let s1: u64 = a1 + b1 + c0;
+    let c1: u64 = (a1 & b1 | (a1 | b1) & (s1 ^ ALL)) >> 63u64;
+    let s2: u64 = a2 + b2 + c1;
+    let c2: u64 = (a2 & b2 | (a2 | b2) & (s2 ^ ALL)) >> 63u64;
+    let s3: u64 = a3 + b3 + c2;
+    let c3: u64 = (a3 & b3 | (a3 | b3) & (s3 ^ ALL)) >> 63u64;
+    let d0: u64 = s0 - 0xffffffffffffffffu64;
+    let k0: u64 = ((s0 ^ ALL) & 0xffffffffffffffffu64 | ((s0 ^ ALL) | 0xffffffffffffffffu64) & d0) >> 63u64;
+    let d1: u64 = s1 - 0x00000000ffffffffu64 - k0;
+    let k1: u64 = ((s1 ^ ALL) & 0x00000000ffffffffu64 | ((s1 ^ ALL) | 0x00000000ffffffffu64) & d1) >> 63u64;
+    let d2: u64 = s2 - 0x0000000000000000u64 - k1;
+    let k2: u64 = ((s2 ^ ALL) & 0x0000000000000000u64 | ((s2 ^ ALL) | 0x0000000000000000u64) & d2) >> 63u64;
+    let d3: u64 = s3 - 0xffffffff00000001u64 - k2;
+    let k3: u64 = ((s3 ^ ALL) & 0xffffffff00000001u64 | ((s3 ^ ALL) | 0xffffffff00000001u64) & d3) >> 63u64;
+    let top: u64 = c3 - k3;
+    let keep: u64 = 0u64 - (top & 1u64);
+    return Limbs { l0: d0 ^ (d0 ^ s0) & keep, l1: d1 ^ (d1 ^ s1) & keep, l2: d2 ^ (d2 ^ s2) & keep, l3: d3 ^ (d3 ^ s3) & keep };
+}
 @noinline function sub_mask(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64, b2: u64, b3: u64): u64 {
     let d0: u64 = a0 - b0;
     let k0: u64 = ((a0 ^ ALL) & b0 | (a0 ^ ALL | b0) & d0) >> 63u64;
@@ -391,6 +413,8 @@ function main(): i32 {
                 acc = acc * 47u64 + wide_spilled(x, h, x ^ y, y - x, ALL - h, y + 1u64);
                 acc = acc * 53u64 + mul_row(x, y, h, x ^ y, ALL - h) + 3u64 * mul_row_div(x, y, h, x ^ h);
                 acc = acc * 43u64 + sub_mask(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
+                let lm = add_mod_p(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
+                acc = acc * 47u64 + lm.l0 + 3u64 * lm.l1 + 5u64 * lm.l2 + 7u64 * lm.l3;
             }
         }
     }
@@ -781,5 +805,31 @@ func TestSelfHostSSABorrowMaskIsOneSbb(t *testing.T) {
 	armFn := functionListing(string(armAsm), "__fn_sub_mask")
 	if !regexp.MustCompile(`(?m)^\s+sbc x\d+, xzr, xzr$`).MatchString(armFn) {
 		t.Errorf("arm64: sub_mask makes its mask without one sbc from xzr:\n%s", armFn)
+	}
+}
+
+// A carry that lives across a borrow chain takes a free register. Each carry
+// writes only %r11 and its own home, so it does not keep a value off %rcx or %rdx.
+func TestSelfHostSSACarryAcrossBorrowChainStaysInRegister(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_add_mod_p")
+	if fn == "" {
+		t.Fatal("no __fn_add_mod_p in the listing")
+	}
+	if spill := regexp.MustCompile(`(?m)^\s+movq %r\w+, -\d+\(%rbp\)$`); spill.MatchString(fn) {
+		t.Errorf("add_mod_p stores a value to a frame slot:\n%s", fn)
 	}
 }

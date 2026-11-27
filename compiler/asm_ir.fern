@@ -7317,6 +7317,10 @@ function ssa_nospill_mask(ins: ssa.SInst, imm: ssa.Imms): i32 {
   if (k == ssa.PARAM || k == ssa.PHI) {
     return 7;
   }
+  // Each form of a carry writes only %r11 and its own home (ssa_carry).
+  if (k == ssa.CARRY) {
+    return 4;
+  }
   if (k == ssa.BINARY) {
     return ssa_binary_nospill_mask(ins, imm);
   }
