@@ -777,3 +777,26 @@ grpc/unimplemented_service	1
 h3spec/passed	86
 h3spec/failed	0
 h3spec/pending	0
+
+# lane: net-soak
+soak/static.requests	67093229
+soak/static.failed	0
+soak/static.rss_warm_kb	680
+soak/static.rss_end_kb	680
+soak/static.rss_growth_kb	0
+soak/static.allocs	433046
+soak/static.live_bytes	0
+soak/echo.requests	54408251
+soak/echo.failed	0
+soak/echo.rss_warm_kb	696
+soak/echo.rss_end_kb	696
+soak/echo.rss_growth_kb	0
+soak/echo.allocs	2443144640
+soak/echo.live_bytes	0
+soak/recent.requests	40646172
+soak/recent.failed	0
+soak/recent.rss_warm_kb	676
+soak/recent.rss_end_kb	676
+soak/recent.rss_growth_kb	0
+soak/recent.allocs	606195306
+soak/recent.live_bytes	0
