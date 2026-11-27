@@ -13,13 +13,9 @@ name: Test coreutils
 # packages: a package with a workflow of its own comes off the units lane's
 # derived list, and the list stays derived.
 #
-# TWO SHARDS per host. The sum is about 14 minutes of test time, so each
-# shard runs about 7 minutes of tests after its setup, inside the 10 to 13
-# minutes of the suite's longest jobs. Four shards ran about 3.5 minutes of
-# tests each after the same setup, and the pool queued jobs for 20 minutes
-# or more, so the slots cost more than the minutes they saved
-# (docs/ci-log/2026-10-25-pr-ci-queue.md). The weighted partition
-# (.github/coreutils-test-weights.txt) balances the two to within seconds.
+# Three weighted shards per host. With two, both multicall tests landed
+# on shard 1, which hit the 20-minute package timeout on both hosts
+# (#17492). The three highest-weight tests now land on separate shards.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -51,7 +47,7 @@ jobs:
       fail-fast: false
       matrix:
         host: [x86_64, aarch64]
-        shard: [0, 1]
+        shard: [0, 1, 2]
         # The Preflight tier calls this lane with `hosts: x86_64`; the suite
         # calls it with both hosts and this excludes nothing. The runner is
         # derived from the host below: an `include` that adds it would become
@@ -62,7 +58,7 @@ jobs:
     runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     env:
       GNU_COREUTILS_VERSION: "9.12"
-      NSHARD: "2"
+      NSHARD: "3"
     steps:
       - uses: actions/checkout@v7
       - name: Cache day stamp
@@ -203,8 +199,7 @@ jobs:
               sed "s|^$GIANT/||"
           )
           # An empty half means the list or the partition is wrong, not that
-          # this shard has no work: with 2 shards over 252 tests and 106
-          # utilities, neither can legitimately come back empty.
+          # this shard has no work: both lists have many entries per shard.
           if [ ${#TOPS[@]} -eq 0 ] || [ ${#UTILS[@]} -eq 0 ]; then
             echo "::error::shard ${{ matrix.shard }}/$NSHARD got ${#TOPS[@]} tests and ${#UTILS[@]} utilities; the list or the filter is wrong" >&2
             exit 1
@@ -215,8 +210,7 @@ jobs:
           # test's default is ten minutes and a binary it kills reports the
           # cases in flight as failures with no output and an unknown elapsed,
           # so the lane names tests that did not fail and never names the wall
-          # it hit. A shard measures ~3.5 minutes; 20m is well over five times
-          # that.
+          # it hit.
           # `-run` IS A REGEXP, and a utility is not an identifier: the
           # catalogue contains `[`, whose bare name opens an unterminated
           # character class and makes the whole alternation an invalid RE2.
