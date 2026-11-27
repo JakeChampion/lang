@@ -2610,27 +2610,25 @@ function (s: Scope) defines(name: string): boolean {
   return s.binding_index(name) >= 0;
 }
 
-function bind_destructure_names(s: Scope, v: ast.StmtVar): Scope {
-  if (!ast.destructures(v)) {
-    return s;
-  }
-  let whole = check_expr(v.init, s);
+function bind_destructure_names(s: Scope, v: ast.StmtVar, whole: typeinfo.Type): Scope {
   let out = s;
   if (v.destr.at.len() > 0) {
     out = out.bind(v.destr.at, whole);
   }
   if (ast.record_destr(v.destr)) {
-    return bind_struct_destr_fields(out, v, s);
+    return bind_struct_destr_fields(out, v, whole, s);
   }
   return bind_tuple_destr(out, v.destr, whole);
 }
 
-function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, s: Scope): Scope {
+function bind_struct_destr_fields(out: Scope, v: ast.StmtVar, whole: typeinfo.Type, s: Scope): Scope {
   let fields = v.destr.fields;
+  let en = qual_enum_name(v.init, s);
   for i in 0..v.destr.binds.len() {
     let ft = t_unknown("binding");
     if (i < fields.len()) {
-      ft = check_expr(ast.ExprFieldAccess { obj: v.init, field: fields[i], line: v.line, col: v.col, ty: "", const_read: false, display: false }, s);
+      let field = fields[i];
+      ft = if (en.len() > 0 && qual_variant_exists(en, field, s)) { t_union(en) } else { field_access_result_type(field, whole, s) };
     }
     out = out.bind(v.destr.binds[i].name, ft);
   }
@@ -7069,21 +7067,21 @@ function check_field_access_expr(fa: ast.ExprFieldAccess, s: Scope): typeinfo.Ty
   if (vqu.len() > 0) {
     return t_union(vqu);
   }
-  return field_access_result_type(fa, check_expr(fa.obj, s), s);
+  return field_access_result_type(fa.field, check_expr(fa.obj, s), s);
 }
 
-function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s: Scope): typeinfo.Type {
-  if (fa.field == "fd" && semtypes.is_fd_handle(ot)) {
+function field_access_result_type(field: string, ot: typeinfo.Type, s: Scope): typeinfo.Type {
+  if (field == "fd" && semtypes.is_fd_handle(ot)) {
     return typeinfo.t_i32();
   }
   match (ot) {
     typeinfo.TypeStruct(sn) => {
-      return struct_field_type(sn, fa.field, s);
+      return struct_field_type(sn, field, s);
     },
     typeinfo.TypeTuple(tt) => {
-      let idx = digit_string_to_i32(fa.field);
+      let idx = digit_string_to_i32(field);
       if (idx < 0 || idx >= tt.elements.len()) {
-        return t_unknown("tuple index `" + fa.field + "` out of range");
+        return t_unknown("tuple index `" + field + "` out of range");
       }
       return tt.elements[idx];
     },
@@ -7144,7 +7142,7 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
       let init_scope = rec_local_scope(v, s);
       let t = check_expr(v.init, init_scope);
       if (ast.destructures(v)) {
-        return CheckResult { scope: bind_destructure_names(s, v), ty: t };
+        return CheckResult { scope: bind_destructure_names(s, v, t), ty: t };
       }
       if (v.type_name.len() > 0) {
         let declared = var_declared_type(v, s);
@@ -7336,7 +7334,7 @@ pub function bind_stmt(st: ast.Stmt, s: Scope): Scope {
     },
     ast.StmtVar(v) => {
       if (ast.destructures(v)) {
-        return bind_destructure_names(s, v);
+        return bind_destructure_names(s, v, check_expr(v.init, s));
       }
       return bind_var(v, s, var_bind_type(v, s));
     },
@@ -15591,7 +15589,7 @@ function field_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typei
             } else if (fldi < 0) {
               out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"" + s.private_method_note(sn.name, mfa.field), mfa.line, mfa.col), mfa, fsig));
             } else {
-              let fldt = field_access_result_type(mfa, sn, s);
+              let fldt = field_access_result_type(mfa.field, sn, s);
               let fld_is_fn = false;
               match (fldt) {
                 typeinfo.TypeFunc(_) => {
@@ -36040,7 +36038,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
       let oa = annotate_typed(fa.obj, s);
       let receiver = typed_type(oa, fa.obj, s);
       let vqu = qual_variant_union(fa, s);
-      let ft = if (vqu.len() > 0) { t_union(vqu) } else { field_access_result_type(fa, receiver, s) };
+      let ft = if (vqu.len() > 0) { t_union(vqu) } else { field_access_result_type(fa.field, receiver, s) };
       let member = fa.field;
       if (member == "iter" && s.has_method("__iterator", "Map")) {
         if let typeinfo.TypeMap(_) = receiver {
