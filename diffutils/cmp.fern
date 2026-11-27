@@ -236,10 +236,8 @@ function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
 // One input: its name, its reader, its buffered bytes and the read position.
 struct Input { name: string, r: Reader, buf: u8[], pos: i32, eof: boolean }
 
-function trouble(cfg: Cfg, msg: string): void {
-  if (!cfg.quiet) {
-    gnu.error(msg);
-  }
+function trouble(msg: string): void {
+  gnu.error(msg);
   exit(EXIT_TROUBLE);
 }
 
@@ -253,13 +251,16 @@ function open_input(cfg: Cfg, name: string): Input {
       return Input { name: name, r: r, buf: empty, pos: 0, eof: false };
     },
     Err(e) => {
-      trouble(cfg, name + ": " + gnu.io_error_text(e));
+      if (cfg.quiet) {
+        exit(EXIT_TROUBLE);
+      }
+      trouble(name + ": " + gnu.io_error_text(e));
       return Input { name: name, r: stdin(), buf: empty, pos: 0, eof: true };
     }
   }
 }
 
-function fill(cfg: Cfg, inp: Input, left: u64): Input {
+function fill(inp: Input, left: u64): Input {
   if (inp.eof || inp.pos < inp.buf.len()) {
     return inp;
   }
@@ -269,14 +270,14 @@ function fill(cfg: Cfg, inp: Input, left: u64): Input {
       return Input { ...inp, buf: chunk, pos: 0, eof: chunk.len() == 0 };
     },
     Err(e) => {
-      trouble(cfg, inp.name + ": " + gnu.io_error_text(e));
+      trouble(inp.name + ": " + gnu.io_error_text(e));
       return inp;
     }
   }
 }
 
 // skip_input drops the first `n` bytes: a seek on a regular file, else reads.
-function skip_input(cfg: Cfg, inp: Input, n: u64, st: Option[FileStat]): Input {
+function skip_input(inp: Input, n: u64, st: Option[FileStat]): Input {
   if (n == 0 as u64) {
     return inp;
   }
@@ -293,7 +294,7 @@ function skip_input(cfg: Cfg, inp: Input, n: u64, st: Option[FileStat]): Input {
   let left = n;
   let i = inp;
   while (left > 0 as u64) {
-    i = fill(cfg, i, left);
+    i = fill(i, left);
     if (i.eof) {
       return i;
     }
@@ -336,13 +337,13 @@ function offset_width(cfg: Cfg, stats: Option[FileStat][]): i32 {
 
 struct Run { inputs: Input[], at: u64, lines: u64, last: u8, differ: boolean, out: usize }
 
-function run_output_flush(cfg: Cfg, run: Run, force: boolean): Run {
+function run_output_flush(run: Run, force: boolean): Run {
   if (!force && buf_len(run.out) < CHUNK) {
     return run;
   }
   let text = buf_take_bytes(run.out);
   if let Err(e) = stdout().write_bytes(text) {
-    trouble(Cfg { ...cfg, quiet: false }, "standard output: " + gnu.io_error_text(e));
+    trouble("standard output: " + gnu.io_error_text(e));
   }
   return run;
 }
@@ -405,7 +406,7 @@ function report(cfg: Cfg, run: Run, a: u8, b: u8, at: u64, line: u64): void {
     text = names + " differ: byte " + f"{at}" + ", line " + f"{line}" + " is " + octal3(a) + " " + visible(a) + " " + octal3(b) + " " + visible(b) + "\n";
   }
   buf_push(run.out, text);
-  run_output_flush(cfg, run, true);
+  run_output_flush(run, true);
   exit(EXIT_DIFFER);
 }
 
@@ -417,7 +418,7 @@ function verbose_line(cfg: Cfg, run: Run, width: i32, a: u8, b: u8, at: u64): Ru
     line = line + " " + octal3(b) + "\n";
   }
   buf_push(run.out, line);
-  return run_output_flush(cfg, run, false);
+  return run_output_flush(run, false);
 }
 
 // The number of newlines in buf[lo..hi].
@@ -469,7 +470,7 @@ function at_eof(cfg: Cfg, run: Run): i32 {
   let a = run.inputs[0];
   let b = run.inputs[1];
   let status = if (run.differ) { EXIT_DIFFER } else { 0 };
-  run_output_flush(cfg, run, true);
+  run_output_flush(run, true);
   buf_free(run.out);
   if (a.eof && b.eof) {
     return status;
@@ -491,10 +492,11 @@ function at_eof(cfg: Cfg, run: Run): i32 {
 
 function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
   let run = Run { inputs: inputs, at: 0 as u64, lines: 0 as u64, last: 0 as u8, differ: false, out: buf_new(CHUNK) };
-  while (run.at < cfg.limit) {
+  // Even a zero-byte read can report an input error.
+  while (true) {
     let left = cfg.limit - run.at;
-    let a = fill(cfg, run.inputs[0], left);
-    let b = fill(cfg, run.inputs[1], left);
+    let a = fill(run.inputs[0], left);
+    let b = fill(run.inputs[1], left);
     run = Run { ...run, inputs: [a, b] };
     if (a.eof || b.eof) {
       return at_eof(cfg, run);
@@ -504,8 +506,11 @@ function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
       n = b.buf.len() - b.pos;
     }
     run = compare_span(cfg, run, width, n);
+    if (run.at >= cfg.limit) {
+      break;
+    }
   }
-  run_output_flush(cfg, run, true);
+  run_output_flush(run, true);
   buf_free(run.out);
   return if (run.differ) { EXIT_DIFFER } else { 0 };
 }
@@ -554,7 +559,7 @@ function main(): i32 {
     return 0;
   }
   let width = if (cfg.verbose) { offset_width(cfg, stats) } else { 1 };
-  inputs = [skip_input(cfg, inputs[0], cfg.skip[0], stats[0]), skip_input(cfg, inputs[1], cfg.skip[1], stats[1])];
+  inputs = [skip_input(inputs[0], cfg.skip[0], stats[0]), skip_input(inputs[1], cfg.skip[1], stats[1])];
   if (same && regular && names[0] != names[1] && same_offset(inputs[0].r, inputs[1].r)) {
     return 0;
   }
