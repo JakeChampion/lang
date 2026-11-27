@@ -4725,7 +4725,7 @@ function emit_wasm_lane(o: ir.Op, cx: WasmOpCtx): string {
     return emit_wasm_lane_round(o.width, sh, vtmp);
   }
   if (util.has_str(["vget", "vset"], k)) {
-    return emit_wasm_lane_group(o.width, cx.base, k == "vset", o.unsigned, o.unsigned && o.i32_imm == 1);
+    return emit_wasm_lane_group(o.width, cx.base, k == "vset", o.unsigned, o.i32_imm == 1);
   }
   return "    " + wasm_lane_verb(k, sh) + "\n";
 }
@@ -4754,7 +4754,9 @@ function emit_wasm_lane_group(width: i32, base: i32, set: boolean, packed: boole
     }
     return out + "    v128.load\n";
   }
-  out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
+  if (!unchecked) {
+    out = out + "    local.get " + arr + "\n    i32.load\n" + at + "    i32.const " + util.i32_to_string(128 / width - 1) + "\n    i32.add\n    i32.le_u\n    if\n      call $__fern_abort_arr\n      unreachable\n    end\n";
+  }
   out = out + "    local.get " + arr + "\n" + at + "    i32.const " + util.i32_to_string(width / 8) + "\n    i32.mul\n    i32.add\n    i32.const 8\n    i32.add\n    local.set " + util.i32_to_string(base + 4) + "\n";
   if (set) {
     return out + at + v + "    v128.store\n";

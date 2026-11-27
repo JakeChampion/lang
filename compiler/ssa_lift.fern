@@ -270,6 +270,8 @@ function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: s
   }
   if ((k == "vget" || k == "vset") && op.unsigned) {
     payload = if (op.i32_imm == 1) { ":unchecked:bytes" } else { ":bytes" };
+  } else if ((k == "vget" || k == "vset") && op.i32_imm == 1) {
+    payload = ":unchecked";
   }
   let kind = 10;
   if (ir.lane_writes(op.kind_tag)) {
