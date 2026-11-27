@@ -1,6 +1,7 @@
 import "./ssa";
 import "./ssasem";
 import "./sourcepos";
+import "./typeinfo";
 import "./util";
 
 // A counted loop that runs straight through, with a constant start, bound and
@@ -992,4 +993,306 @@ function forwarded(f: ssasem.Func, d: ssa.DefSites, v: i32): i32 {
     return at;
   }
   return at;
+}
+
+// A loop `while (i < k && x + i < n)`, with x and n from before the loop,
+// makes all k passes when x + i < n for the last i. A test of that in 64
+// bits before the loop selects a copy without the second test, which
+// unrolls. The loop stays for the other case. This runs after inlining, so
+// that the copy does not keep a small function from its callers.
+pub function unroll_bounded(f: ssasem.Func): Unrolled {
+  if (!has_loop_head(f.graph)) {
+    return Unrolled { f: f, loops: 0 };
+  }
+  let cur = f;
+  let done: i32[] = [];
+  for bi in 0..f.graph.blocks.len() {
+    let head = cur.graph.blocks.len();
+    if let Some(v) = versioned_at(cur, bi) {
+      cur = unrolled_at(v, head);
+      done = done.append(bi);
+    }
+  }
+  return Unrolled { f: cur, loops: done.len() };
+}
+
+// The header test goes to the test block or to `exit`, and the test block
+// goes to the body or to `exit`. `span` holds the positions of the header,
+// the test block and the body. `pre` is the block before the loop, and `iv`
+// is the header phi in the second test `x + iv < n`, or `<=` when `inclusive`.
+struct Bounded { span: i32[], pre: i32, exit: i32, iv: i32, x: i32, n: i32, inclusive: boolean }
+
+function bounded_at(f: ssasem.Func, d: ssa.DefSites, hi: i32): Option[Bounded] {
+  let g = f.graph;
+  let h = g.blocks[hi];
+  if (h.preds.len() != 2 || h.id == g.entry || h.term.kind_tag != ssa.TERM_BRIF || h.insts.len() == 0 || h.insts[0].kind_tag != ssa.PHI) {
+    return None;
+  }
+  let ti = block_at(g, h.term.t);
+  if (ti < 0 || !straight_after(g.blocks[ti], h.id, h.id)) {
+    return None;
+  }
+  let t = g.blocks[ti];
+  let xi = block_at(g, h.term.f);
+  if (t.term.kind_tag != ssa.TERM_BRIF || t.term.f != h.term.f || xi < 0 || !exit_of(g.blocks[xi], h.id, t.id)) {
+    return None;
+  }
+  let bodies = body_run(f, d, t.id, h.id, t.term.t);
+  if (bodies.len() == 0) {
+    return None;
+  }
+  let latch = util.index_of_i32(h.preds, g.blocks[bodies[bodies.len() - 1]].id);
+  if (latch < 0) {
+    return None;
+  }
+  let pi = block_at(g, h.preds[1 - latch]);
+  if (pi < 0 || g.blocks[pi].term.kind_tag != ssa.TERM_BR) {
+    return None;
+  }
+  let span = util.append_all([hi, ti], bodies);
+  let Some(cmp) = def_inst(g, d, t.term.cond) else {
+    return None;
+  };
+  if (cmp.kind_tag != ssa.BINARY || cmp.args.len() != 2 || cmp.str != "<" && cmp.str != "<=" || !before_loop(f, d, span, cmp.args[1])) {
+    return None;
+  }
+  let Some(sum) = def_inst(g, d, cmp.args[0]) else {
+    return None;
+  };
+  if (sum.kind_tag != ssa.BINARY || sum.str != "+" || sum.args.len() != 2 || d.block[sum.result] != ti || !ssasem.is_i32(f.values[sum.result])) {
+    return None;
+  }
+  for k in 0..2 {
+    let iv = sum.args[k];
+    if (d.block[iv] == hi && header_phi(f, d, Counted { ...no_loop(), head: hi }, iv) && before_loop(f, d, span, sum.args[1 - k])) {
+      return Some(Bounded { span: span, pre: pi, exit: xi, iv: iv, x: sum.args[1 - k], n: cmp.args[1], inclusive: cmp.str == "<=" });
+    }
+  }
+  return None;
+}
+
+// The block that both tests of a loop exit to, with no phi.
+function exit_of(x: ssa.SBlock, head_id: i32, test_id: i32): boolean {
+  return x.preds.len() == 2 && util.has_i32(x.preds, head_id) && util.has_i32(x.preds, test_id) && (x.insts.len() == 0 || x.insts[0].kind_tag != ssa.PHI);
+}
+
+function before_loop(f: ssasem.Func, d: ssa.DefSites, span: i32[], v: i32): boolean {
+  return v >= 0 && v < f.graph.nvals && !util.has_i32(span, d.block[v]) && ssasem.is_i32(f.values[v]);
+}
+
+// The copy of the blocks of a loop: `map` gives the new value of each value
+// of the loop, and `ids` the new id of each block, in the order of `loop`.
+struct Cloned { blocks: ssa.SBlock[], map: i32[], ids: i32[], values: ssasem.Func, nvals: i32 }
+
+function versioned_at(f: ssasem.Func, hi: i32): Option[ssasem.Func] {
+  let d = ssa.def_sites_of(f.graph);
+  let Some(b) = bounded_at(f, d, hi) else {
+    return None;
+  };
+  let g = f.graph;
+  let cl = cloned_loop(f, b.span);
+  let next = cl.nvals;
+  let first_phi = next + 5;
+  let wide = typeinfo.t_i64();
+  let guard = [
+    ssa.SInst { ir_kind: 0, kind_tag: ssasem.cast(), result: next, args: [b.x], imm: 0, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssasem.cast(), result: next + 1, args: [b.n], imm: 0, str: "" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: next + 2, args: [], imm: 0, str: "0" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: next + 3, args: [next, next + 2], imm: 0, str: "+" },
+    ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: next + 4, args: [next + 3, next + 1], imm: 0, str: if (b.inclusive) { "<=" } else { "<" } },
+  ];
+  let types = cl.values.values.append(wide).append(wide).append(wide).append(wide).append(typeinfo.t_bool());
+  let h = g.blocks[hi];
+  let head_copy = cl.ids[0];
+  let escaping = escaping_values(g, h, b.span);
+  let joins = util.minus_ones(g.nvals);
+  let x = g.blocks[b.exit];
+  let x_preds = x.preds.append(head_copy);
+  let phis: ssa.SInst[] = [];
+  for k in 0..escaping.len() {
+    let r = escaping[k];
+    let args: i32[] = [];
+    for p in x_preds {
+      args = args.append(if (p == head_copy) { cl.map[r] } else { r });
+    }
+    phis = phis.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: first_phi + k, args: args, imm: 0, str: "" });
+    joins = joins.with(r, first_phi + k);
+    types = types.append(f.values[r]);
+  }
+  let blocks: ssa.SBlock[] = [];
+  for bi in 0..g.blocks.len() {
+    let blk = g.blocks[bi];
+    if (util.has_i32(b.span, bi)) {
+      blocks = blocks.append(blk);
+      continue;
+    }
+    blk = renamed_uses(blk, joins);
+    if (bi == b.pre) {
+      blk = ssa.SBlock { ...blk, insts: util.append_all(blk.insts, guard), term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: guard[4].result, target: 0, t: head_copy, f: h.id, value: 0 } };
+    } else if (bi == b.exit) {
+      blk = ssa.SBlock { ...blk, preds: x_preds, insts: util.append_all(phis, blk.insts) };
+    }
+    blocks = blocks.append(blk);
+  }
+  blocks = util.append_all(blocks, cl.blocks);
+  let source = cl.values.source_positions;
+  if (escaping.len() > 0) {
+    source = sourcepos.merge(source, source, joins);
+  }
+  let graph = ssa.SFunc { ...g, nvals: first_phi + escaping.len(), blocks: blocks };
+  let out = ssasem.Func { ...cl.values, values: types, source_positions: source, graph: ssa.SFunc { ...graph, blocks: ssa.refreshed_preds(graph) } };
+  let c = counted_at(out, ssa.def_sites_of(out.graph), g.blocks.len());
+  if (c.trips < 1 || c.iv != cl.map[b.iv] || c.start < 0 || c.step < 1) {
+    return None;
+  }
+  let last = c.start as i64 + (c.trips - 1) as i64 * (c.step as i64);
+  return Some(with_constant(out, b.pre, next + 2, util.i64_to_string(last)));
+}
+
+// The values of the header that a block after the loop reads. Only the
+// header's values reach those blocks, since both exits leave from the header
+// or from the test that follows it.
+function escaping_values(g: ssa.SFunc, h: ssa.SBlock, span: i32[]): i32[] {
+  let inner = __alloc_bool(g.nvals);
+  for ins in h.insts {
+    inner = marked(inner, ins.result);
+  }
+  let out: i32[] = [];
+  for bi in 0..g.blocks.len() {
+    if (util.has_i32(span, bi)) {
+      continue;
+    }
+    let blk = g.blocks[bi];
+    let reads: i32[] = [];
+    for ins in blk.insts {
+      reads = util.append_all(reads, ins.args);
+    }
+    if (blk.term.kind_tag == ssa.TERM_BRIF) {
+      reads = reads.append(blk.term.cond);
+    } else if (blk.term.kind_tag == ssa.TERM_RET) {
+      reads = reads.append(blk.term.value);
+    }
+    for v in reads {
+      if (is_marked(inner, v) && !util.has_i32(out, v)) {
+        out = out.append(v);
+      }
+    }
+  }
+  return out;
+}
+
+function renamed_uses(b: ssa.SBlock, map: i32[]): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    let args: i32[] = [];
+    for a in ins.args {
+      args = args.append(renamed(map, a));
+    }
+    insts = insts.append(ssa.SInst { ...ins, args: args });
+  }
+  return ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, cond: renamed(map, b.term.cond), value: renamed(map, b.term.value) } };
+}
+
+// The blocks of the loop with new ids and new values. The copy of the test
+// block jumps to the body, and the instructions that only the second test
+// read go.
+function cloned_loop(f: ssasem.Func, span: i32[]): Cloned {
+  let g = f.graph;
+  let results: i32[] = [];
+  for bi in span {
+    for ins in g.blocks[bi].insts {
+      if (ins.result >= 0) {
+        results = results.append(ins.result);
+      }
+    }
+  }
+  let map = util.minus_ones(g.nvals);
+  let types = f.values;
+  for k in 0..results.len() {
+    map = map.with(results[k], g.nvals + k);
+    types = types.append(f.values[results[k]]);
+  }
+  let next = g.nvals + results.len();
+  let top = 0;
+  for blk in g.blocks {
+    if (blk.id > top) {
+      top = blk.id;
+    }
+  }
+  let olds: i32[] = [];
+  let ids: i32[] = [];
+  for k in 0..span.len() {
+    olds = olds.append(g.blocks[span[k]].id);
+    ids = ids.append(top + 1 + k);
+  }
+  let blocks: ssa.SBlock[] = [];
+  for k in 0..span.len() {
+    let src = renamed_uses(g.blocks[span[k]], map);
+    let insts: ssa.SInst[] = [];
+    for ins in src.insts {
+      insts = insts.append(ssa.SInst { ...ins, result: renamed(map, ins.result) });
+    }
+    let preds: i32[] = [];
+    for p in src.preds {
+      preds = preds.append(moved_id(olds, ids, p));
+    }
+    let term = ssa.STerm { ...src.term, target: moved_id(olds, ids, src.term.target), t: moved_id(olds, ids, src.term.t), f: moved_id(olds, ids, src.term.f) };
+    if (k == 1) {
+      term = ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: term.t, t: 0, f: 0, value: 0 };
+    }
+    blocks = blocks.append(ssa.SBlock { id: ids[k], insts: insts, term: term, preds: preds });
+  }
+  blocks = blocks.with(1, without_unread(blocks, 1));
+  let source = sourcepos.merge(f.source_positions, f.source_positions, map);
+  return Cloned { blocks: blocks, map: map, ids: ids, values: ssasem.Func { ...f, values: types, source_positions: source }, nvals: next };
+}
+
+function moved_id(olds: i32[], ids: i32[], id: i32): i32 {
+  let at = util.index_of_i32(olds, id);
+  if (at < 0) {
+    return id;
+  }
+  return ids[at];
+}
+
+// Block `k` of `blocks` without the instructions whose results no block reads.
+function without_unread(blocks: ssa.SBlock[], k: i32): ssa.SBlock {
+  let b = blocks[k];
+  let changed = true;
+  while (changed) {
+    changed = false;
+    let kept: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.kind_tag != ssa.PHI && !read_in(blocks.with(k, b), ins.result)) {
+        changed = true;
+      } else {
+        kept = kept.append(ins);
+      }
+    }
+    b = ssa.SBlock { ...b, insts: kept };
+  }
+  return b;
+}
+
+function read_in(blocks: ssa.SBlock[], v: i32): boolean {
+  for b in blocks {
+    for ins in b.insts {
+      if (util.has_i32(ins.args, v)) {
+        return true;
+      }
+    }
+    if (b.term.kind_tag == ssa.TERM_BRIF && b.term.cond == v || b.term.kind_tag == ssa.TERM_RET && b.term.value == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function with_constant(f: ssasem.Func, bi: i32, v: i32, text: string): ssasem.Func {
+  let blk = f.graph.blocks[bi];
+  let insts: ssa.SInst[] = [];
+  for ins in blk.insts {
+    insts = insts.append(if (ins.result == v) { ssa.SInst { ...ins, str: text } } else { ins });
+  }
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: f.graph.blocks.with(bi, ssa.SBlock { ...blk, insts: insts }) } };
 }
