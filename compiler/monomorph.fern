@@ -1095,10 +1095,6 @@ pub function register_array_method_generics(mod: parser.Module): parser.Module {
       out = out.append(parser.FuncDecl { ...fd, name: parser.concrete_array_method_name(fd.receiver_type, fd.name), receiver_name: "", receiver_type: "", params: params });
     } else if (is_generic_array_method(fd)) {
       let (tps, bounds) = array_fold_type_params(fd, parser.array_method_element(fd.receiver_type));
-      let prefix = "__arrm_";
-      if (parser.spelling_is_view(fd.receiver_type)) {
-        prefix = "__viewm_";
-      }
       let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, send: false, has_default: false, default_value: parser.e_unknown(""), fn_ret: "", fn_param_types: [], line: 0, col: 0 }];
       for j in 0..fd.params.len() {
         nparams = nparams.append(fd.params[j]);
@@ -1106,7 +1102,7 @@ pub function register_array_method_generics(mod: parser.Module): parser.Module {
       out = out.append(parser.FuncDecl {
         bound_modules: bound_modules_for(fd, tps), is_unsafe: fd.is_unsafe,
         stdlib: fd.stdlib, no_inline: false, always_inline: false,
-        name: prefix + fd.name,
+        name: parser.generic_array_method_name(fd.receiver_type, fd.name),
         receiver_name: "", receiver_type: "", receiver_own: false,
         type_params: tps,
         params: nparams,

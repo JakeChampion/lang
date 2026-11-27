@@ -19598,7 +19598,7 @@ function impl_declared_before(mod: parser.Module, ii: i32): boolean {
   return false;
 }
 
-function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): boolean {
+function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, array_symbols: util.NameIndex, di: i32): boolean {
   let f2 = funcs[di];
   let earlier = redeclares_preregistered(f2);
   let ej = names.chain(decl_key(f2));
@@ -19612,9 +19612,9 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     }
     ej = names.next[ej];
   }
-  // A free function named like a builtin, an intrinsic or the symbol of a
-  // preregistered method redeclares it.
-  if (f2.receiver_type.len() == 0 && !is_scalar_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name) || is_preregistered_symbol(f2.name))) {
+  // A free function named like a builtin, an intrinsic, or the symbol of a
+  // preregistered method or a declared array method redeclares it.
+  if (f2.receiver_type.len() == 0 && !is_scalar_display_builtin(f2.name) && (builtinsigs.builtin_row(f2.name).len() > 0 || is_registered_intrinsic(f2.name) || is_preregistered_symbol(f2.name) || array_symbols.has(f2.name))) {
     earlier = true;
   }
   return earlier;
@@ -19921,14 +19921,20 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
   }
   let decl_names: string[] = [];
+  let array_symbols: string[] = [];
   for fd in mod.funcs {
     decl_names = decl_names.append(decl_key(fd));
+    let symbol = parser.array_method_symbol(fd);
+    if (symbol.len() > 0) {
+      array_symbols = array_symbols.append(symbol);
+    }
   }
   out = util.append_diags(out, method_ambiguity_diags(mod));
   let decl_index = util.name_index(decl_names);
+  let array_symbol_index = util.name_index(array_symbols);
   for di in 0..mod.funcs.len() {
     let f2 = mod.funcs[di];
-    if (redeclares(mod.funcs, decl_index, di)) {
+    if (redeclares(mod.funcs, decl_index, array_symbol_index, di)) {
       if (f2.is_const) {
         out = out.append(dg_at("E006", "const \"" + f2.name + "\" redeclared", f2.line, f2.col));
       } else if (f2.receiver_type.len() == 0) {
