@@ -347,13 +347,21 @@ function offset_width(limit: u64, first: Option[u64], second: Option[u64]): i32 
 
 struct Run { inputs: Input[], at: u64, lines: u64, last: u8, differ: boolean, out: usize }
 
+function shared_stdin(inputs: Input[]): boolean {
+  return inputs[0].name == "-" && inputs[1].name == "-";
+}
+
 function run_output_flush(run: Run, force: boolean): Run {
-  if (!force && buf_len(run.out) < CHUNK) {
+  let n = buf_len(run.out);
+  if (n == 0 || !force && n < CHUNK) {
     return run;
   }
   let text = buf_take_bytes(run.out);
   if let Err(e) = stdout().write_bytes(text) {
-    trouble("standard output: " + gnu.io_error_text(e));
+    // GNU checks the input closes before reporting a buffered output error.
+    if (!shared_stdin(run.inputs)) {
+      trouble("standard output: " + gnu.io_error_text(e));
+    }
   }
   return run;
 }
@@ -407,17 +415,12 @@ function pad_right(s: string, width: i32): string {
 
 // report gives the first difference, at byte `at` of line `line`.
 function report(cfg: Cfg, run: Run, a: u8, b: u8, at: u64, line: u64): void {
-  if (cfg.quiet) {
-    exit(EXIT_DIFFER);
-  }
   let names = run.inputs[0].name + " " + run.inputs[1].name;
   let text = names + " differ: char " + f"{at}" + ", line " + f"{line}" + "\n";
   if (cfg.print_bytes) {
     text = names + " differ: byte " + f"{at}" + ", line " + f"{line}" + " is " + octal3(a) + " " + visible(a) + " " + octal3(b) + " " + visible(b) + "\n";
   }
   buf_push(run.out, text);
-  run_output_flush(run, true);
-  exit(EXIT_DIFFER);
 }
 
 function verbose_line(cfg: Cfg, run: Run, width: i32, a: u8, b: u8, at: u64): Run {
@@ -456,17 +459,18 @@ function compare_span(cfg: Cfg, run: Run, width: i32, n: i32): Run {
     if (k >= n - done) {
       break;
     }
-    if (cfg.null_output) {
-      exit(EXIT_DIFFER);
-    }
     let off = done + k;
     let ca = a.buf[a.pos + off];
     let cb = b.buf[b.pos + off];
+    run = Run { ...run, differ: true };
     if (!cfg.verbose) {
-      let lines = run.lines + newlines(a.buf, a.pos, a.pos + off);
-      report(cfg, run, ca, cb, run.at + off as u64 + 1 as u64, lines + 1 as u64);
+      if (!cfg.quiet && !cfg.null_output) {
+        let lines = run.lines + newlines(a.buf, a.pos, a.pos + off);
+        report(cfg, run, ca, cb, run.at + off as u64 + 1 as u64, lines + 1 as u64);
+      }
+      return run;
     }
-    run = verbose_line(cfg, Run { ...run, differ: true }, width, ca, cb, run.at + off as u64 + 1 as u64);
+    run = verbose_line(cfg, run, width, ca, cb, run.at + off as u64 + 1 as u64);
     done = off + 1;
   }
   let lines = run.lines;
@@ -519,7 +523,7 @@ function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
       n = b.buf.len() - b.pos;
     }
     run = compare_span(cfg, run, width, n);
-    if (run.at >= cfg.limit) {
+    if (run.at >= cfg.limit || run.differ && !cfg.verbose) {
       break;
     }
   }
@@ -603,5 +607,11 @@ function main(): i32 {
   if (pos1.is_none() && cfg.skip[1] > 0u64) {
     inputs = inputs.with(1, skip_bytes(inputs[1], cfg.skip[1]));
   }
-  return compare(cfg, inputs, width);
+  let status = compare(cfg, inputs, width);
+  if (shared_stdin(inputs)) {
+    // GNU closes each compared operand. Both names refer to fd 0, so its
+    // second close reports EBADF. Keep the observable diagnostic here.
+    trouble("-: Bad file descriptor");
+  }
+  return status;
 }

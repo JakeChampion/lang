@@ -127,6 +127,13 @@ func cmpCases(t *testing.T) []invocation {
 		{name: "big prefix", args: []string{big3, big1}},
 		{name: "big skip past a difference", args: []string{"-i", "70000", big1, big2}},
 
+		{name: "shared stdin mismatch", args: []string{"-n", "2", "-", "-", "0", "1"}, stdinPath: a},
+		{name: "shared stdin verbose mismatch", args: []string{"-l", "-n", "2", "-", "-", "0", "1"}, stdinPath: a},
+		{name: "shared stdin quiet bounded comparison", args: []string{"-s", "-n", "2", "-", "-", "0", "1"}, stdinPath: a},
+		{name: "shared stdin zero limit", args: []string{"-n", "0", "-", "-", "0", "1"}, stdinPath: a},
+		{name: "shared stdin EOF", args: []string{"-", "-", "0", "1"}, stdinPath: a},
+		{name: "shared stdin equal bytes", args: []string{"-n", "1", "-", "-", "0", "2"}, stdinPath: a},
+		{name: "shared stdin full stdout", args: []string{"-n", "2", "-", "-", "0", "1"}, stdinPath: a, stdout: stdoutFull},
 		{name: "second file from stdin", args: []string{a}, stdin: "hello\nwurld\n"},
 		{name: "dash is stdin", args: []string{"-", b}, stdin: "hello\nworld\n"},
 		{name: "dash second", args: []string{a, "-"}, stdin: "hello\n"},
