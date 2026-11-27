@@ -2642,14 +2642,10 @@ function opaque_access_diags(sig: StructSig, s: Scope, what: string, line: i32, 
   return [dg_at("E021", "cannot " + what + " opaque type " + util.demangle(sig.name) + " outside the module that defines it", line, col)];
 }
 
-function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
+function struct_destr_diags(v: ast.StmtVar, whole: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (!ast.record_destr(v.destr)) {
-    return out;
-  }
   let fields = v.destr.fields;
-  let it = check_expr(v.init, s);
-  match (it) {
+  match (whole) {
     typeinfo.TypeStruct(st) => {
       let named = v.destr.record;
       if (named.len() > 0 && named != st.name) {
@@ -2675,7 +2671,7 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
     typeinfo.TypeUnbound(_) => {},
     typeinfo.TypePending(_) => {},
     _ => {
-      out = out.append(dg_at("E024", "struct destructure needs a struct expression, got " + type_label(it), v.line, v.col));
+      out = out.append(dg_at("E024", "struct destructure needs a struct expression, got " + type_label(whole), v.line, v.col));
     }
   }
   return out;
@@ -18782,15 +18778,6 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
   return stmts_assign_diags_mode(stmts, s, unions, false);
 }
 
-function var_pattern_diags(v: ast.StmtVar, s: Scope, tuple_pattern: boolean): util.Diag[] {
-  let out = struct_destr_diags(v, s);
-  let count = v.destr.binds.len();
-  if (!tuple_pattern && count > 1 && !ast.record_destr(v.destr)) {
-    out = util.append_diags(out, tuple_destr_diags(check_expr(v.init, s), count, v.line, v.col));
-  }
-  return out;
-}
-
 // E072: a void expression where a value is needed. The unit value and a
 // binding that holds it are values.
 function value_diags(e: ast.Expr, s: Scope): util.Diag[] {
@@ -18803,18 +18790,37 @@ function value_diags(e: ast.Expr, s: Scope): util.Diag[] {
   return [dg_at("E072", "a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value", expr_line(e), expr_col(e))];
 }
 
-// An unannotated map local that settle_literal_locals could not give a type.
-function open_map_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
-  if (v.type_name.len() > 0 || !bare_map(check_expr(v.init, s))) {
-    return [];
+// Check the initializer in the scope before the declaration. Its type serves
+// both the pattern diagnostics and the names in the following statements.
+function assign_var_binding(v: ast.StmtVar, s: Scope, tuple_pattern: boolean, own out: util.Diag[]): (Scope, util.Diag[]) {
+  let record = ast.record_destr(v.destr);
+  let pattern = ast.destructures(v);
+  let inferred = v.type_name.len() == 0;
+  if (inferred || record || pattern) {
+    let whole = check_expr(v.init, s);
+    if (inferred && bare_map(whole)) {
+      out = out.append(dg_at("E020", "map \"" + v.name + "\" needs a type annotation: no use gives the types of its keys and values", v.line, v.col));
+    }
+    if (record) {
+      out = util.append_diags(out, struct_destr_diags(v, whole, s));
+    } else if (!tuple_pattern && v.destr.binds.len() > 1) {
+      out = util.append_diags(out, tuple_destr_diags(whole, v.destr.binds.len(), v.line, v.col));
+    }
+    if (pattern) {
+      return (bind_destructure_names(s, v, whole), out);
+    }
+    if (inferred && !ast.var_binds_itself(v)) {
+      return (s.bind_inferred(v, inferred_local_type(whole)), out);
+    }
   }
-  return [dg_at("E020", "map \"" + v.name + "\" needs a type annotation: no use gives the types of its keys and values", v.line, v.col)];
+  return (bind_var(v, s, var_bind_type(v, s)), out);
 }
 
 function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], tuple_pattern: boolean): util.Diag[] {
   let out: util.Diag[] = [];
   let cur = s;
   for st in stmts {
+    let next = cur;
     match (st) {
       ast.StmtVar(v) => {
         if (v.type_name.len() > 0 && !vb_placeholder_decl(v)) {
@@ -18837,8 +18843,9 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
         if (v.type_name.len() == 0 && int_literal_tree(v.init)) {
           out = util.append_diags(out, int_range_diags(v.init, "i64", false));
         }
-        out = util.append_diags(out, open_map_diags(v, cur));
-        out = util.append_diags(out, var_pattern_diags(v, cur, tuple_pattern));
+        let (bound, diags) = assign_var_binding(v, cur, tuple_pattern, out);
+        next = bound;
+        out = diags;
       },
       ast.StmtAssign(a) => {
         out = util.append_diags(out, assign_diags(a, cur, unions));
@@ -18870,11 +18877,12 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];
         out = util.append_diags(out, stmts_assign_diags(one, cur, unions));
+        next = bind_stmt(d.action, cur);
       },
       _ => {}
     }
     out = util.append_diags(out, assign_stmt_own_lambdas(st, cur, unions));
-    cur = bind_stmt(st, cur);
+    cur = next;
   }
   return out;
 }
