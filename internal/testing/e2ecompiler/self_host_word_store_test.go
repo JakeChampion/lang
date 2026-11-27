@@ -61,6 +61,34 @@ function two(own d: u8[], at: i32, a: u32, b: u32): u8[] {
     .with(at + 4, b as u8).with(at + 5, (b >> 8) as u8).with(at + 6, (b >> 16) as u8).with(at + 7, (b >> 24) as u8);
 }
 
+@noinline
+function le64_loop(own d: u8[], at: i32, v: u64): u8[] {
+  let i = 0;
+  while (i < 8) {
+    d = d.with(at + i, (v >> (i * 8) as u64 & 255 as u64) as u8);
+    i += 1;
+  }
+  return d;
+}
+
+@noinline
+function be64_loop(own d: u8[], at: i32, v: u64): u8[] {
+  let i = 0;
+  while (i < 8) {
+    d = d.with(at + i, (v >> ((7 - i) * 8) as u64 & 255 as u64) as u8);
+    i += 1;
+  }
+  return d;
+}
+
+@noinline
+function le32_loop(own d: u8[], at: i32, v: u32): u8[] {
+  for i in 0..4 {
+    d = d.with(at + i, (v >> (i * 8) as u32) as u8);
+  }
+  return d;
+}
+
 function sum(d: u8[]): i32 {
   let s = 0;
   for b in d {
@@ -94,7 +122,18 @@ function main(): i32 {
   }
   if (t[0] != 0u8) { return 10; }
   if (le32(__alloc_u8(4), 0, 9u32)[0] != 9u8) { return 11; }
+  let ll = le64_loop(__alloc_u8(10), 1, 0x0807060504030201u64);
+  let bl = be64_loop(__alloc_u8(10), 1, 0x0102030405060708u64);
+  let wl = le32_loop(__alloc_u8(6), 1, 0x04030201u32);
+  for i in 0..8 {
+    if (ll[1 + i] != (i + 1) as u8 || bl[1 + i] != (i + 1) as u8) { return 12; }
+  }
+  if (ll[0] != 0u8 || ll[9] != 0u8 || bl[0] != 0u8 || bl[9] != 0u8) { return 13; }
+  if (wl[1] != 1u8 || wl[4] != 4u8 || wl[0] != 0u8 || wl[5] != 0u8) { return 14; }
   if (args().len() > 1) {
+    if (args()[1] == "loop") {
+      return sum(le64_loop(__alloc_u8(12), args().len() + 3, 7u64));
+    }
     return sum(le32_copy(base, 17, 7u32));
   }
   return 0;
@@ -124,7 +163,7 @@ var wordStores = map[string][3]*regexp.Regexp{
 var byteSwap = map[string]string{"x86-64-linux": "bswap", "arm64-linux": "rev ", "wasm32-wasi": "bswap"}
 
 // A chain of byte writes that fills the bytes of one integer is one word
-// store, on each target (#17409).
+// store, on each target, also when it comes from an unrolled loop (#17409).
 func TestSelfHostWordStore(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "wordstore.fern")
@@ -134,6 +173,7 @@ func TestSelfHostWordStore(t *testing.T) {
 	words := map[string][2]int{
 		"le32": {1, 0}, "le32_copy": {1, 0}, "be32": {1, 0}, "low32": {1, 0}, "two": {2, 0},
 		"le64": {0, 1}, "be64": {0, 1},
+		"le64_loop": {0, 1}, "be64_loop": {0, 1}, "le32_loop": {1, 0},
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
@@ -171,6 +211,9 @@ func TestSelfHostWordStore(t *testing.T) {
 			}
 			if stderr, code := cli.exitOfFileArgs(t, src, target, nil, []string{"past-the-end"}); code != 134 {
 				t.Errorf("%s: a write past the end exits %d, want the bounds abort 134\n%s", target, code, stderr)
+			}
+			if stderr, code := cli.exitOfFileArgs(t, src, target, nil, []string{"loop"}); code != 134 {
+				t.Errorf("%s: an unrolled write past the end exits %d, want the bounds abort 134\n%s", target, code, stderr)
 			}
 		})
 	}

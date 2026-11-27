@@ -132,7 +132,7 @@ function counted_at(f: ssasem.Func, d: ssa.DefSites, hi: i32): Counted {
   }
   let t = test_block(g, c);
   let trips = trip_count(f, d, t, c, t.term.t == g.blocks[c.bodies[0]].id);
-  if (trips < 0 || (trips + 1) * insts_in(g, c.heads) + trips * insts_in(g, c.bodies) > max_unrolled_insts() || escapes(f, c)) {
+  if (trips < 0 || (trips + 1) * kept_insts(f, d, c, c.heads) + trips * kept_insts(f, d, c, c.bodies) > max_unrolled_insts() || escapes(f, c)) {
     return no_loop();
   }
   if (!reads_counter(g, d, c)) {
@@ -166,12 +166,41 @@ function test_block(g: ssa.SFunc, c: Counted): ssa.SBlock {
   return g.blocks[c.heads[c.heads.len() - 1]];
 }
 
-function insts_in(g: ssa.SFunc, bis: i32[]): i32 {
+// The instructions of the blocks `bis` that each copy keeps. A constant, a
+// phi, and a cast or an operation on constants and the induction variable
+// fold away.
+function kept_insts(f: ssasem.Func, d: ssa.DefSites, c: Counted, bis: i32[]): i32 {
+  let fixed = marked(__alloc_bool(f.graph.nvals), c.iv);
   let n = 0;
   for bi in bis {
-    n += g.blocks[bi].insts.len();
+    for ins in f.graph.blocks[bi].insts {
+      if (ins.kind_tag == ssa.PHI) {
+        continue;
+      }
+      if (folds_away(f, d, fixed, ins)) {
+        fixed = marked(fixed, ins.result);
+      } else {
+        n += 1;
+      }
+    }
   }
   return n;
+}
+
+function folds_away(f: ssasem.Func, d: ssa.DefSites, fixed: boolean[], ins: ssa.SInst): boolean {
+  let k = ins.kind_tag;
+  if (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64) {
+    return true;
+  }
+  if (k != ssa.BINARY && k != ssa.UNARY && k != ssa.COPY && k != ssasem.cast() || ins.result < 0) {
+    return false;
+  }
+  for a in ins.args {
+    if (!is_marked(fixed, a) && constant_of(f, d, a).is_none()) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // A header with two predecessors that runs straight to a test, which branches

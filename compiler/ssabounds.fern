@@ -1676,14 +1676,11 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
       }
     }
     if (members.len() >= 2) {
-      let m = 1;
       if (high > low) {
         out = Probes { ...out, at: out.at.append(reads[i]), x: out.x.append(x), lo: out.lo.append(low), span: out.span.append(high - low) };
-        m = 0;
       }
-      while (m < members.len()) {
+      for m in if (high > low) { 0 } else { 1 }..members.len() {
         out = Probes { ...out, unchecked: out.unchecked.with(members[m], true), any: true };
-        m += 1;
       }
     }
     i += 1;
@@ -2211,7 +2208,7 @@ function byte_of_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): Option[WordByt
   let s = defs[t];
   if (s.kind_tag == ssa.BINARY && s.str == ">>" && s.args.len() == 2) {
     let c = constant_through_cast(defs, s.args[1]);
-    if (c <= 0i64 || c % 8i64 != 0i64 || c >= 64i64) {
+    if (c < 0i64 || c % 8i64 != 0i64 || c >= 64i64) {
       return None;
     }
     shift = c as i32;
