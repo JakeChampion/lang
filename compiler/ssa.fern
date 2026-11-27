@@ -2435,7 +2435,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     oi += 1;
   }
   if (nfs > 0) {
-    reg_of = lanes_off_saved(f, reg_of, nregs + nsaved + nf);
+    reg_of = lanes_off_saved(f, reg_of, nregs + nsaved + nf, crossing_all, cum_all, lo, hi);
   }
   reg_of = spilled_phi_cycles(f, reg_of);
   let shape = SlotShape { at: at, blk_start: blk_start, def_blk: def_blk, def_pos: def_pos, def_a: def_a, def_b: def_b };
@@ -2492,10 +2492,12 @@ function memory_phis(phis: i32[], reg_of: i32[]): boolean {
   return true;
 }
 
-function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32): i32[] {
+// A call keeps only the low half of a saved float register, so a lane value
+// that lives across a call cannot stay in one.
+function lanes_off_saved(f: SFunc, reg_of: i32[], saved_from: i32, crossing_all: boolean[], cum_all: i32[], lo: i32[], hi: i32[]): i32[] {
   let lanes = lane_values(f);
   for v in 0..lanes.len() {
-    if (lanes[v] && reg_of[v] >= saved_from) {
+    if (lanes[v] && reg_of[v] >= saved_from && spans_hard([], crossing_all, false, cum_all, lo[v], hi[v], v)) {
       reg_of = reg_of.with(v, -1);
     }
   }

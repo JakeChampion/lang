@@ -793,8 +793,9 @@ A phi that joins a lane value and a copy of one are lane values too
 (`inline_leaves`).
 
 A lane value lives in the float class, `%xmm3`-`%xmm15` or `v16`-`v31`, and
-never leaves it. It takes none of `v8`-`v15`: AAPCS64 saves only their low
-64 bits across a call, so `lanes_off_saved` spills it instead. `float_values`
+never leaves it. AAPCS64 saves only the low 64 bits of `v8`-`v15` across a
+call, so `lanes_off_saved` spills a lane value that a call crosses. A lane
+value that no call crosses can stay in one of them. `float_values`
 adds the lane values after it prunes the class, because no instruction
 outside the class reads one.
 
