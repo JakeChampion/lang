@@ -17,10 +17,10 @@ pub struct DeviceStatus { volume: i32, battery: i32, free_bytes: i64, syncing: O
 pub function parse_device_status(value: json.JsonValue): DeviceStatus {
   let data = json.get_object(value, "status").unwrap_or(value);
   return DeviceStatus {
-    volume: json.get_i32(data, "userVolumePercentage").unwrap_or(-1),
-    battery: json.get_i32(data, "batteryLevelPercentage").unwrap_or(-1),
-    free_bytes: json.get_i64(data, "freeDiskSpaceBytes").unwrap_or(-1i64),
-    syncing: json.get_bool(data, "isBackgroundDownloadActive"),
+    volume: json.get[i32](data, "userVolumePercentage").unwrap_or(-1),
+    battery: json.get[i32](data, "batteryLevelPercentage").unwrap_or(-1),
+    free_bytes: json.get[i64](data, "freeDiskSpaceBytes").unwrap_or(-1i64),
+    syncing: json.get[boolean](data, "isBackgroundDownloadActive"),
   };
 }
 
@@ -111,16 +111,16 @@ function send(req: fetch.Request): Result[json.JsonValue, Failure] {
 
 pub function token_reply(status: i32, value: json.JsonValue): Result[Tokens, Failure] {
   if (status != 200) {
-    if ((status == 400 || status == 401 || status == 403) && json.get_string(value, "error").unwrap_or("") == "invalid_grant") {
+    if ((status == 400 || status == 401 || status == 403) && json.get[string](value, "error").unwrap_or("") == "invalid_grant") {
       return Err(Failure { ...failure("Your Yoto sign-in expired. Connect again."), expired: true });
     }
     return Err(failure("Yoto could not complete sign-in (HTTP " + status.to_string() + "). Try again."));
   }
-  let access = json.get_string(value, "access_token").unwrap_or("");
+  let access = json.get[string](value, "access_token").unwrap_or("");
   if (access.len() == 0) {
     return Err(failure("Yoto did not return a session token."));
   }
-  return Ok(Tokens { access: access, refresh: json.get_string(value, "refresh_token").unwrap_or("") });
+  return Ok(Tokens { access: access, refresh: json.get[string](value, "refresh_token").unwrap_or("") });
 }
 
 function token_request(fields: (string, string)[]): Result[Tokens, Failure] {
@@ -157,10 +157,10 @@ pub function parse_players(value: json.JsonValue): Result[Player[], Failure] {
   };
   let out: Player[] = [];
   for item in items {
-    let id = json.get_string(item, "deviceId").unwrap_or("");
+    let id = json.get[string](item, "deviceId").unwrap_or("");
     if (id.len() > 0) {
-      let name = json.get_string(item, "name").unwrap_or("Yoto player");
-      let online = json.get_bool(item, "online").unwrap_or(false);
+      let name = json.get[string](item, "name").unwrap_or("Yoto player");
+      let online = json.get[boolean](item, "online").unwrap_or(false);
       out = out.append(Player { id: id, name: name, online: online });
     }
   }
@@ -168,7 +168,7 @@ pub function parse_players(value: json.JsonValue): Result[Player[], Failure] {
 }
 
 function field(value: json.JsonValue, key: string): string {
-  return json.get_string(value, key).unwrap_or("");
+  return json.get[string](value, key).unwrap_or("");
 }
 
 function object(value: json.JsonValue, key: string): json.JsonValue {
@@ -188,10 +188,10 @@ pub function parse_config(value: json.JsonValue, player: Player): Result[PlayerC
   let Some(config) = json.get_object(device, "config") else {
     return Err(failure("Yoto did not return settings for this player."));
   };
-  if (json.get_string(device, "deviceId").unwrap_or(player.id) != player.id) {
+  if (json.get[string](device, "deviceId").unwrap_or(player.id) != player.id) {
     return Err(failure("Yoto returned settings for a different player."));
   }
-  return Ok(PlayerConfig { name: json.get_string(device, "name").unwrap_or(player.name), values: config, timezone: field(device, "geoTimezone"), version: field(device, "releaseChannelVersion") });
+  return Ok(PlayerConfig { name: json.get[string](device, "name").unwrap_or(player.name), values: config, timezone: field(device, "geoTimezone"), version: field(device, "releaseChannelVersion") });
 }
 
 pub function player_config(token: string, player: Player): Result[PlayerConfig, Failure] {
@@ -222,8 +222,8 @@ pub function merge_config(config: PlayerConfig, edits: (string, json.JsonValue)[
 pub function save_config(token: string, player: Player, original: PlayerConfig, edits: (string, json.JsonValue)[]): Result[PlayerConfig, Failure] {
   let current = player_config(token, player)?;
   for edit in edits {
-    if (edit.0 == "alarms" && json.encode(json.get(current.values, "alarms").unwrap_or(json.JNull))
-      != json.encode(json.get(original.values, "alarms").unwrap_or(json.JNull))) {
+    if (edit.0 == "alarms" && json.encode(json.get[json.JsonValue](current.values, "alarms").unwrap_or(json.JNull))
+      != json.encode(json.get[json.JsonValue](original.values, "alarms").unwrap_or(json.JNull))) {
       return Err(failure("Alarms changed on another device. Reload the player settings."));
     }
   }
@@ -311,10 +311,10 @@ function tracks(chapters: json.JsonValue[]): Track[] {
     let chapter_art = artwork(c, "");
     let fallback = default_track_art(c);
     if (items.len() == 0 && name.len() > 0) {
-      out = out.append(Track { title: name, chapter: "", chapter_key: chapter_key, track_key: "", search: name.to_lower(), art: chapter_art, chapter_art: chapter_art, seconds: json.get_f64(c, "duration").unwrap_or(0.0).max(0.0).round() as i64 });
+      out = out.append(Track { title: name, chapter: "", chapter_key: chapter_key, track_key: "", search: name.to_lower(), art: chapter_art, chapter_art: chapter_art, seconds: json.get[f64](c, "duration").unwrap_or(0.0).max(0.0).round() as i64 });
     }
     for t in items {
-      let title = json.get_string(t, "title").unwrap_or(name);
+      let title = json.get[string](t, "title").unwrap_or(name);
       let meta = object(t, "metadata");
       let search = [
         title, name, field(t, "description"), field(t, "artist"), field(t, "author"),
@@ -322,7 +322,7 @@ function tracks(chapters: json.JsonValue[]): Track[] {
       ].join(" ").to_lower();
       let key = field(t, "key");
       let start = if (items.len() > 1 && key.len() == 0) { "" } else { chapter_key };
-      out = out.append(Track { title: title, chapter: name, chapter_key: start, track_key: key, search: search, art: artwork(t, fallback), chapter_art: chapter_art, seconds: json.get_f64(t, "duration").unwrap_or(0.0).max(0.0).round() as i64 });
+      out = out.append(Track { title: title, chapter: name, chapter_key: start, track_key: key, search: search, art: artwork(t, fallback), chapter_art: chapter_art, seconds: json.get[f64](t, "duration").unwrap_or(0.0).max(0.0).round() as i64 });
     }
   }
   return out;
@@ -337,7 +337,7 @@ function sleep_sound(value: json.JsonValue, meta: json.JsonValue, category: stri
 function club_card(value: json.JsonValue, entry: json.JsonValue): boolean {
   return entries(value, "clubAvailability").len() > 0
     || field(value, "availability") == "premium"
-    || json.get_bool(object(entry, "ownership"), "isAccessibleUsingSubscription").unwrap_or(false);
+    || json.get[boolean](object(entry, "ownership"), "isAccessibleUsingSubscription").unwrap_or(false);
 }
 
 function preview_address(meta: json.JsonValue): string {
@@ -349,8 +349,8 @@ function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card 
   let meta = object(value, "metadata");
   let content = object(value, "content");
   let chapters = json.get_array(content, "chapters");
-  let id = json.get_string(value, "cardId").unwrap_or(field(entry, "cardId"));
-  let title = json.get_string(value, "title").unwrap_or("Untitled card");
+  let id = json.get[string](value, "cardId").unwrap_or(field(entry, "cardId"));
+  let title = json.get[string](value, "title").unwrap_or("Untitled card");
   let creator = field(meta, "author");
   let category = field(meta, "category").to_lower();
   let search = [title, creator, category, field(meta, "description"), field(meta, "readBy"), field(meta, "seriestitle")].join(" ").to_lower();
@@ -360,7 +360,7 @@ function card(value: json.JsonValue, entry: json.JsonValue, myo: boolean): Card 
   return Card {
     id: id, title: title, creator: creator, cover: cover(value, meta, content, ["imageL", "imageM", "imageS"]), thumb: cover(value, meta, content, ["imageM", "imageS"]), preview: preview_address(meta), kind: kind(category, field(meta, "feedUrl"), myo), myo: myo,
     club: club_card(value, entry), sleep_sounds: sleep_sound(value, meta, category), last_played: played,
-    seconds: json.get_f64(media, "duration").unwrap_or(0.0).max(0.0).round() as i64, bytes: json.get_i64(media, "fileSize").unwrap_or(0i64),
+    seconds: json.get[f64](media, "duration").unwrap_or(0.0).max(0.0).round() as i64, bytes: json.get[i64](media, "fileSize").unwrap_or(0i64),
     sort_title: (if (sort.len() > 0) { sort } else { title }).to_lower(), search: search, tracks: tracks(chapters.unwrap_or([])), indexed: chapters.is_some(),
   };
 }
@@ -388,16 +388,16 @@ pub function restore_card(value: json.JsonValue): Option[Card] {
   if (id.len() == 0) {
     return None;
   }
-  let myo = json.get_bool(value, "myo").unwrap_or(false);
+  let myo = json.get[boolean](value, "myo").unwrap_or(false);
   let items = entries(value, "tracks").map((t: json.JsonValue): Track => Track {
     title: field(t, "title"), chapter: field(t, "chapter"), chapter_key: field(t, "c"), track_key: field(t, "k"),
-    search: field(t, "search"), art: field(t, "art"), chapter_art: field(t, "chapterArt"), seconds: json.get_i64(t, "seconds").unwrap_or(0i64),
+    search: field(t, "search"), art: field(t, "art"), chapter_art: field(t, "chapterArt"), seconds: json.get[i64](t, "seconds").unwrap_or(0i64),
   });
   return Some(Card {
     id: id, title: field(value, "title"), creator: field(value, "creator"), cover: field(value, "cover"), thumb: field(value, "thumb"), preview: "", kind: kind(field(value, "category"), "", myo), myo: myo,
-    club: json.get_bool(value, "club").unwrap_or(false), sleep_sounds: json.get_bool(value, "sleep").unwrap_or(false),
-    last_played: json.get_i64(value, "played").unwrap_or(0i64), seconds: json.get_i64(value, "seconds").unwrap_or(0i64), bytes: json.get_i64(value, "bytes").unwrap_or(0i64),
-    sort_title: field(value, "sort"), search: field(value, "search"), tracks: items, indexed: json.get_bool(value, "indexed").unwrap_or(true),
+    club: json.get[boolean](value, "club").unwrap_or(false), sleep_sounds: json.get[boolean](value, "sleep").unwrap_or(false),
+    last_played: json.get[i64](value, "played").unwrap_or(0i64), seconds: json.get[i64](value, "seconds").unwrap_or(0i64), bytes: json.get[i64](value, "bytes").unwrap_or(0i64),
+    sort_title: field(value, "sort"), search: field(value, "search"), tracks: items, indexed: json.get[boolean](value, "indexed").unwrap_or(true),
   });
 }
 
@@ -408,7 +408,7 @@ pub function parse_cards(value: json.JsonValue, mine: boolean): Result[Card[], F
   let out: Card[] = [];
   for entry in items {
     let value = json.get_object(entry, "card").unwrap_or(entry);
-    if (json.get_bool(value, "deleted").unwrap_or(false) || !json.get_bool(entry, "inFamilyLibrary").unwrap_or(true)) {
+    if (json.get[boolean](value, "deleted").unwrap_or(false) || !json.get[boolean](entry, "inFamilyLibrary").unwrap_or(true)) {
       continue;
     }
     let myo = mine || field(entry, "reason") == "myo-content-add" || field(entry, "shareType") == "myo";
@@ -549,7 +549,7 @@ pub function parse_streams(value: json.JsonValue, chapter_key: string, track_key
       if (found) {
         let address = field(track, "trackUrl");
         let link = if (address.starts_with("https://")) { address } else { "" };
-        out = out.append(Stream { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), url: link, chapter: key, key: field(track, "key"), art: artwork(track, fallback) });
+        out = out.append(Stream { title: json.get[string](track, "title").unwrap_or(field(chapter, "title")), url: link, chapter: key, key: field(track, "key"), art: artwork(track, fallback) });
       }
     }
   }
@@ -595,19 +595,19 @@ pub function parse_download(reply: json.JsonValue, summary: Card): Result[Downlo
     return Err(failure("Yoto did not return downloadable card details."));
   };
   let (origin, section) = download_selection(summary.id);
-  if (json.get_string(value, "cardId").unwrap_or(origin) != origin) {
+  if (json.get[string](value, "cardId").unwrap_or(origin) != origin) {
     return Err(failure("Yoto returned audio for a different card."));
   }
   let access = object(reply, "ownership");
-  if (!json.get_bool(access, "canAccess").unwrap_or(true) || json.get_bool(access, "previewAccessOnly").unwrap_or(false)
-    || json.get_bool(access, "isAccessibleUsingSubscription").unwrap_or(false)) {
+  if (!json.get[boolean](access, "canAccess").unwrap_or(true) || json.get[boolean](access, "previewAccessOnly").unwrap_or(false)
+    || json.get[boolean](access, "isAccessibleUsingSubscription").unwrap_or(false)) {
     return Err(failure("Yoto did not give offline access to the full card."));
   }
   let content = object(value, "content");
   let config = object(content, "config");
   let meta = object(value, "metadata");
-  if (json.get_bool(config, "onlineOnly").unwrap_or(false)
-    || json.get_bool(content, "restricted").unwrap_or(false) || json.get_bool(object(meta, "media"), "hasStreams").unwrap_or(false)) {
+  if (json.get[boolean](config, "onlineOnly").unwrap_or(false)
+    || json.get[boolean](content, "restricted").unwrap_or(false) || json.get[boolean](object(meta, "media"), "hasStreams").unwrap_or(false)) {
     return Err(failure("This title is unavailable for offline download."));
   }
   let out: DownloadTrack[] = [];
@@ -621,7 +621,7 @@ pub function parse_download(reply: json.JsonValue, summary: Card): Result[Downlo
       if (field(track, "type") != "audio" || !address.starts_with("https://")) {
         return Err(failure("Yoto did not provide downloadable audio for every track."));
       }
-      out = out.append(DownloadTrack { title: json.get_string(track, "title").unwrap_or(field(chapter, "title")), chapter: field(chapter, "key"), key: field(track, "key"), url: address, art: artwork(track, fallback) });
+      out = out.append(DownloadTrack { title: json.get[string](track, "title").unwrap_or(field(chapter, "title")), chapter: field(chapter, "key"), key: field(track, "key"), url: address, art: artwork(track, fallback) });
     }
   }
   if (out.len() == 0) {
@@ -718,7 +718,7 @@ pub function send_command(token: string, player: string, c: Command): Result[voi
   let path = "/device-v2/" + url.encode(player) + "/command/" + command_name(c);
   let req = request(token, "POST", path).with_header("Content-Type", "application/json").with_text(command_body(c));
   let response = send(req)?;
-  if (json.get_string(response, "status").unwrap_or("") != "ok") {
+  if (json.get[string](response, "status").unwrap_or("") != "ok") {
     return Err(failure("Yoto did not accept the playback request."));
   }
   return Ok(());
@@ -820,7 +820,7 @@ function playlist_chapter(token: string, part: Chapter, index: i32): Result[json
     ("key", json.JString("01")), ("title", title), ("trackUrl", json.JString("yoto:#" + hash)), ("type", json.JString("audio")),
   ];
   for name in ["duration", "fileSize", "channels", "format"] {
-    if let Some(value) = json.get(media, name) {
+    if let Some(value) = json.get[json.JsonValue](media, name) {
       track = track.append((name, value));
     }
   }

@@ -188,7 +188,7 @@ function original(config: api.PlayerConfig, key: string): Option[json.JsonValue]
   if (key == "name") {
     return Some(json.JString(config.name));
   }
-  return json.get(config.values, key);
+  return json.get[json.JsonValue](config.values, key);
 }
 
 function clock_time(s: string): boolean {

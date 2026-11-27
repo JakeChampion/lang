@@ -37,21 +37,21 @@ pub function event(bytes: u8[]): Option[Playback] {
   let Ok(value) = json.parse(utf8.from_bytes_lossy(bytes)) else {
     return None;
   };
-  let state = json.get_string(value, "playbackStatus").unwrap_or("");
+  let state = json.get[string](value, "playbackStatus").unwrap_or("");
   if (state.len() == 0) {
     return None;
   }
   return Some(Playback {
     state: state,
-    card: json.get_string(value, "cardId").unwrap_or(""),
-    chapter: json.get_string(value, "chapterTitle").unwrap_or(""),
-    track: json.get_string(value, "trackTitle").unwrap_or(""),
-    chapter_key: json.get_string(value, "chapterKey").unwrap_or(""),
-    track_key: json.get_string(value, "trackKey").unwrap_or(""),
-    position: json.get_i32(value, "position").unwrap_or(-1),
-    duration: json.get_i32(value, "trackLength").unwrap_or(0),
-    volume: json.get_i32(value, "volume").unwrap_or(-1),
-    sleep: json.get_i32(value, "sleepTimerSeconds").unwrap_or(-1),
+    card: json.get[string](value, "cardId").unwrap_or(""),
+    chapter: json.get[string](value, "chapterTitle").unwrap_or(""),
+    track: json.get[string](value, "trackTitle").unwrap_or(""),
+    chapter_key: json.get[string](value, "chapterKey").unwrap_or(""),
+    track_key: json.get[string](value, "trackKey").unwrap_or(""),
+    position: json.get[i32](value, "position").unwrap_or(-1),
+    duration: json.get[i32](value, "trackLength").unwrap_or(0),
+    volume: json.get[i32](value, "volume").unwrap_or(-1),
+    sleep: json.get[i32](value, "sleepTimerSeconds").unwrap_or(-1),
   });
 }
 
@@ -252,12 +252,12 @@ pub function parse_status(bytes: u8[]): Option[api.DeviceStatus] {
   let Some(data) = json.get_object(value, "status") else {
     return None;
   };
-  let disk = json.get_i64(data, "freeDisk").unwrap_or(-1i64);
+  let disk = json.get[i64](data, "freeDisk").unwrap_or(-1i64);
   let free = if (disk >= 0i64 && disk < 1000000000i64) { disk * 1024i64 } else { -1i64 };
   return Some(api.DeviceStatus {
-    volume: json.get_i32(data, "userVolume").unwrap_or(json.get_i32(data, "volume").unwrap_or(-1)),
-    battery: json.get_i32(data, "batteryLevel").unwrap_or(-1), free_bytes: free,
-    syncing: json.get_bool(data, "isBackgroundDownloadActive"),
+    volume: json.get[i32](data, "userVolume").unwrap_or(json.get[i32](data, "volume").unwrap_or(-1)),
+    battery: json.get[i32](data, "batteryLevel").unwrap_or(-1), free_bytes: free,
+    syncing: json.get[boolean](data, "isBackgroundDownloadActive"),
   });
 }
 

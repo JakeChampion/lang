@@ -110,14 +110,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<38 function __json_t_elements(d: Document, n: i32): JsonValue[]>>
 
-<<39 pub function get(obj: JsonValue, key: string): Option[JsonValue]>>
-
-
-<<41 pub function get_i64(obj: JsonValue, key: string): Option[i64]>>
+<<39 pub function get[T: FromJson](obj: JsonValue, key: string): Option[T]>>
 
 <<42 function __json_number_i64(s: string): Option[i64]>>
 
-<<43 pub function get_f64(obj: JsonValue, key: string): Option[f64]>>
+<<43 pub function get_array(obj: JsonValue, key: string): Option[JsonValue[]]>>
 
 <<44 function __json_ptr_unescape(tok: string): string>>
 
@@ -1830,21 +1827,15 @@ function __json_t_members(d: Document, n: i32): JsonObject {
 }
 ```
 
-### `39 pub function get(obj: JsonValue, key: string): Option[JsonValue]`
+### `39 pub function get[T: FromJson](obj: JsonValue, key: string): Option[T]`
 
 ```fern
-<<39 pub function get(obj: JsonValue, key: string): Option[JsonValue]>>=
-pub function get(obj: JsonValue, key: string): Option[JsonValue] {
+<<39 pub function get[T: FromJson](obj: JsonValue, key: string): Option[T]>>=
+// The member of obj that key names, or None when obj is not an object.
+function __json_member(obj: JsonValue, key: string): Option[JsonValue] {
   match (obj) {
     JObject(m) => {
-      match (m.get(key)) {
-        Some(v) => {
-          return Some(v);
-        },
-        None => {
-          return None;
-        }
-      }
+      return m.get(key);
     },
     _ => {
       return None;
@@ -1853,36 +1844,12 @@ pub function get(obj: JsonValue, key: string): Option[JsonValue] {
   return None;
 }
 
-pub function get_string(obj: JsonValue, key: string): Option[string] {
-  match (get(obj, key)) {
+// The member of obj that key names, decoded as T. A member that is
+// missing or that T cannot decode gives None.
+pub function get[T: FromJson](obj: JsonValue, key: string): Option[T] {
+  match (__json_member(obj, key)) {
     Some(v) => {
-      match (v) {
-        JString(s) => {
-          return Some(s);
-        },
-        _ => {
-          return None;
-        }
-      }
-    },
-    None => {
-      return None;
-    }
-  }
-  return None;
-}
-
-pub function get_i32(obj: JsonValue, key: string): Option[i32] {
-  match (get(obj, key)) {
-    Some(v) => {
-      match (v) {
-        JNumber(s) => {
-          return i32.parse_i32(s).ok();
-        },
-        _ => {
-          return None;
-        }
-      }
+      return T.from_json_value(v).ok();
     },
     None => {
       return None;
@@ -1892,30 +1859,6 @@ pub function get_i32(obj: JsonValue, key: string): Option[i32] {
 }
 ```
 
-
-### `41 pub function get_i64(obj: JsonValue, key: string): Option[i64]`
-
-```fern
-<<41 pub function get_i64(obj: JsonValue, key: string): Option[i64]>>=
-pub function get_i64(obj: JsonValue, key: string): Option[i64] {
-  match (get(obj, key)) {
-    Some(v) => {
-      match (v) {
-        JNumber(s) => {
-          return i64.parse_i64(s).ok();
-        },
-        _ => {
-          return None;
-        }
-      }
-    },
-    None => {
-      return None;
-    }
-  }
-  return None;
-}
-```
 
 ### `42 function __json_number_i64(s: string): Option[i64]`
 
@@ -1955,50 +1898,12 @@ function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
 }
 ```
 
-### `43 pub function get_f64(obj: JsonValue, key: string): Option[f64]`
+### `43 pub function get_array(obj: JsonValue, key: string): Option[JsonValue[]]`
 
 ```fern
-<<43 pub function get_f64(obj: JsonValue, key: string): Option[f64]>>=
-pub function get_f64(obj: JsonValue, key: string): Option[f64] {
-  match (get(obj, key)) {
-    Some(v) => {
-      match (v) {
-        JNumber(s) => {
-          return f64.parse_f64(s).ok();
-        },
-        _ => {
-          return None;
-        }
-      }
-    },
-    None => {
-      return None;
-    }
-  }
-  return None;
-}
-
-pub function get_bool(obj: JsonValue, key: string): Option[boolean] {
-  match (get(obj, key)) {
-    Some(v) => {
-      match (v) {
-        JBool(b) => {
-          return Some(b);
-        },
-        _ => {
-          return None;
-        }
-      }
-    },
-    None => {
-      return None;
-    }
-  }
-  return None;
-}
-
+<<43 pub function get_array(obj: JsonValue, key: string): Option[JsonValue[]]>>=
 pub function get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
-  match (get(obj, key)) {
+  match (__json_member(obj, key)) {
     Some(v) => {
       match (v) {
         JArray(arr) => {
@@ -2017,7 +1922,7 @@ pub function get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
 }
 
 pub function get_object(obj: JsonValue, key: string): Option[JsonValue] {
-  match (get(obj, key)) {
+  match (__json_member(obj, key)) {
     Some(v) => {
       match (v) {
         JObject(_) => {
@@ -2459,6 +2364,12 @@ impl FromJson for boolean {
       }
     }
     return Err(error(""));
+  }
+}
+
+impl FromJson for JsonValue {
+  function from_json_value(v: JsonValue): Result[JsonValue, JsonError] {
+    return Ok(v);
   }
 }
 

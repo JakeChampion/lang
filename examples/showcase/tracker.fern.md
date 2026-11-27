@@ -239,27 +239,27 @@ function peer_of(state: State, hash: string, id: string): Option[Peer] {
 }
 
 function announce(state: State, conn: string, msg: json.JsonValue): string {
-  let hash_text = json.get(msg, "info_hash").unwrap_or(json.JNull);
-  let hash = binary_id(json.get_string(msg, "info_hash"));
-  let id = binary_id(json.get_string(msg, "peer_id"));
+  let hash_text = json.get[json.JsonValue](msg, "info_hash").unwrap_or(json.JNull);
+  let hash = binary_id(json.get[string](msg, "info_hash"));
+  let id = binary_id(json.get[string](msg, "peer_id"));
   if (hash.len() == 0 || id.len() == 0) {
     return failure(hash_text, "info_hash and peer_id must each be 20 bytes");
   }
   let Some(swarm) = find_swarm(state, hash) else {
     return failure(hash_text, "this tracker serves only torrents that the Fern showcase registered in the last hour");
   };
-  let peer_text = json.get(msg, "peer_id").unwrap_or(json.JNull);
-  if (json.get_string(msg, "event").unwrap_or("") == "stopped") {
+  let peer_text = json.get[json.JsonValue](msg, "peer_id").unwrap_or(json.JNull);
+  if (json.get[string](msg, "event").unwrap_or("") == "stopped") {
     leave(state, conn);
     return "";
   }
   if (!join(state, conn, id, swarm)) {
     return failure(hash_text, "this swarm already has 12 peers");
   }
-  if let Some(answer) = json.get(msg, "answer") {
-    let target = binary_id(json.get_string(msg, "to_peer_id"));
+  if let Some(answer) = json.get[json.JsonValue](msg, "answer") {
+    let target = binary_id(json.get[string](msg, "to_peer_id"));
     if let Some(to) = peer_of(state, hash, target) {
-      deliver(state, to.conn, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("answer", answer), ("offer_id", json.get(msg, "offer_id").unwrap_or(json.JNull))]));
+      deliver(state, to.conn, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("answer", answer), ("offer_id", json.get[json.JsonValue](msg, "offer_id").unwrap_or(json.JNull))]));
     }
     return "";
   }
@@ -268,7 +268,7 @@ function announce(state: State, conn: string, msg: json.JsonValue): string {
   let k = 0;
   for other in current.peers {
     if (other != conn && k < offers.len() && k < 10) {
-      deliver(state, other, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("offer", json.get(offers[k], "offer").unwrap_or(json.JNull)), ("offer_id", json.get(offers[k], "offer_id").unwrap_or(json.JNull))]));
+      deliver(state, other, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("offer", json.get[json.JsonValue](offers[k], "offer").unwrap_or(json.JNull)), ("offer_id", json.get[json.JsonValue](offers[k], "offer_id").unwrap_or(json.JNull))]));
       k += 1;
     }
   }
@@ -276,8 +276,8 @@ function announce(state: State, conn: string, msg: json.JsonValue): string {
 }
 
 function scrape(state: State, msg: json.JsonValue): string {
-  let hash_text = json.get(msg, "info_hash").unwrap_or(json.JNull);
-  let peers = if let Some(swarm) = find_swarm(state, binary_id(json.get_string(msg, "info_hash"))) { swarm.peers.len() } else { 0 };
+  let hash_text = json.get[json.JsonValue](msg, "info_hash").unwrap_or(json.JNull);
+  let peers = if let Some(swarm) = find_swarm(state, binary_id(json.get[string](msg, "info_hash"))) { swarm.peers.len() } else { 0 };
   return reply([("action", json.JString("scrape")), ("info_hash", hash_text), ("complete", json.JNumber(peers.to_string())), ("incomplete", json.JNumber("0"))]);
 }
 ```
@@ -301,7 +301,7 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
             connection.close(1008, "send JSON");
             return;
           };
-          let action = json.get_string(msg, "action").unwrap_or("");
+          let action = json.get[string](msg, "action").unwrap_or("");
           let answer = match (action) { "announce" => announce(state, conn, msg), "scrape" => scrape(state, msg), _ => "" };
           if (answer.len() > 0) {
             let sent = connection.send_text(answer);

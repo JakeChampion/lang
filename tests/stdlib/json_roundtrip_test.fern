@@ -6,10 +6,55 @@ function doc(): string {
   return "{\"name\":\"fern\",\"age\":3,\"active\":true,\"tags\":[\"a\",\"b\"],\"meta\":null}";
 }
 
+function test_get_raw_value(): test.TestOutcome {
+  let Ok(obj) = json.parse(doc()) else {
+    return test.fail("parse failed");
+  };
+  match (json.get[json.JsonValue](obj, "meta")) {
+    Some(v) => {
+      return test.assert_true(json.is_null(v));
+    },
+    None => {
+      return test.fail("expected Some(meta)");
+    }
+  }
+}
+
+// The binding's annotation gives T, so the call names no type.
+function test_get_inferred(): test.TestOutcome {
+  let Ok(obj) = json.parse(doc()) else {
+    return test.fail("parse failed");
+  };
+  let age: Option[i64] = json.get(obj, "age");
+  let name: Option[i64] = json.get(obj, "name");
+  if (name.is_some()) {
+    return test.fail("a string member decoded as i64");
+  }
+  match (age) {
+    Some(v) => {
+      return test.assert_eq(v, 3 as i64);
+    },
+    None => {
+      return test.fail("expected Some(age)");
+    }
+  }
+}
+
+function test_decode_raw_value(): test.TestOutcome {
+  match (json.decode[json.JsonValue]("[1,2]")) {
+    Ok(v) => {
+      return test.assert_eq(json.encode(v), "[1,2]");
+    },
+    Err(_) => {
+      return test.fail("decode failed");
+    }
+  }
+}
+
 function test_get_string(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.get_string(obj, "name")) {
+      match (json.get[string](obj, "name")) {
         Some(v) => {
           return test.assert_eq(v, "fern");
         },
@@ -27,7 +72,7 @@ function test_get_string(): test.TestOutcome {
 function test_get_i32(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.get_i32(obj, "age")) {
+      match (json.get[i32](obj, "age")) {
         Some(v) => {
           return test.assert_eq(v, 3);
         },
@@ -45,7 +90,7 @@ function test_get_i32(): test.TestOutcome {
 function test_get_bool(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.get_bool(obj, "active")) {
+      match (json.get[boolean](obj, "active")) {
         Some(v) => {
           return test.assert_true(v);
         },
@@ -63,7 +108,7 @@ function test_get_bool(): test.TestOutcome {
 function test_get_missing(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.get_string(obj, "nope")) {
+      match (json.get[string](obj, "nope")) {
         Some(v) => {
           return test.fail("expected None for missing key");
         },
@@ -79,10 +124,10 @@ function test_get_missing(): test.TestOutcome {
 }
 
 function test_get_wrong_type(): test.TestOutcome {
-  // "name" is a string → json.get_i32 must return None, not coerce.
+  // "name" is a string → json.get[i32] must return None, not coerce.
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.get_i32(obj, "name")) {
+      match (json.get[i32](obj, "name")) {
         Some(v) => {
           return test.fail("expected None for non-number");
         },
@@ -100,7 +145,7 @@ function test_get_wrong_type(): test.TestOutcome {
 function test_is_null(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.get(obj, "meta")) {
+      match (json.get[json.JsonValue](obj, "meta")) {
         Some(v) => {
           return test.assert_true(json.is_null(v));
         },
@@ -334,7 +379,7 @@ function test_depth_limit(): test.TestOutcome {
 function test_get_f64(): test.TestOutcome {
   match (json.parse("{\"x\":3.5}")) {
     Ok(v) => {
-      match (json.get_f64(v, "x")) {
+      match (json.get[f64](v, "x")) {
         Some(f) => {
           let d = f - 3.5;
           if (d < 0.0) {
@@ -356,7 +401,7 @@ function test_get_f64(): test.TestOutcome {
 function test_get_f64_exp(): test.TestOutcome {
   match (json.parse("{\"x\":1.5e3}")) {
     Ok(v) => {
-      match (json.get_f64(v, "x")) {
+      match (json.get[f64](v, "x")) {
         Some(f) => {
           let d = f - 1500.0;
           if (d < 0.0) {
@@ -378,7 +423,7 @@ function test_get_f64_exp(): test.TestOutcome {
 function test_get_i32_overflow(): test.TestOutcome {
   match (json.parse("{\"x\":2147483648}")) {
     Ok(v) => {
-      match (json.get_i32(v, "x")) {
+      match (json.get[i32](v, "x")) {
         Some(x) => {
           return test.fail("expected None on i32 overflow");
         },
@@ -396,7 +441,7 @@ function test_get_i32_overflow(): test.TestOutcome {
 function test_get_i64_overflow(): test.TestOutcome {
   match (json.parse("{\"x\":99999999999999999999}")) {
     Ok(v) => {
-      match (json.get_i64(v, "x")) {
+      match (json.get[i64](v, "x")) {
         Some(x) => {
           return test.fail("expected None on i64 overflow");
         },
@@ -414,7 +459,7 @@ function test_get_i64_overflow(): test.TestOutcome {
 function __i64_get(lit: string): string {
   match (json.parse("{\"x\":" + lit + "}")) {
     Ok(v) => {
-      match (json.get_i64(v, "x")) {
+      match (json.get[i64](v, "x")) {
         Some(n) => {
           return n.to_string();
         },
@@ -542,10 +587,13 @@ function main(): i32 {
   r = r.it("escape control bytes", test_escape_control_bytes);
   r = r.it("escape passthrough", test_escape_passthrough);
   r = r.it("escape matches encoder", test_escape_matches_encoder);
-  r = r.it("get_string", test_get_string);
-  r = r.it("get_i32", test_get_i32);
-  r = r.it("get_bool", test_get_bool);
+  r = r.it("get[string]", test_get_string);
+  r = r.it("get[i32]", test_get_i32);
+  r = r.it("get[boolean]", test_get_bool);
   r = r.it("get missing", test_get_missing);
+  r = r.it("get[JsonValue]", test_get_raw_value);
+  r = r.it("get infers T", test_get_inferred);
+  r = r.it("decode[JsonValue]", test_decode_raw_value);
   r = r.it("get wrong type", test_get_wrong_type);
   r = r.it("is_null", test_is_null);
   r = r.it("get_array", test_get_array);
@@ -560,10 +608,10 @@ function main(): i32 {
   r = r.it("parse unescaped control", test_parse_unescaped_control);
   r = r.it("depth ok", test_depth_ok);
   r = r.it("depth limit", test_depth_limit);
-  r = r.it("get_f64", test_get_f64);
-  r = r.it("get_f64 exp", test_get_f64_exp);
-  r = r.it("get_i32 overflow", test_get_i32_overflow);
-  r = r.it("get_i64 overflow", test_get_i64_overflow);
+  r = r.it("get[f64]", test_get_f64);
+  r = r.it("get[f64] exp", test_get_f64_exp);
+  r = r.it("get[i32] overflow", test_get_i32_overflow);
+  r = r.it("get[i64] overflow", test_get_i64_overflow);
   r = r.it("i64 bounds", test_i64_bounds);
   r = r.it("pretty scalars/empties", test_pretty_scalars_and_empties);
   r = r.it("pretty structure", test_pretty_structure);
