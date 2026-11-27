@@ -3763,15 +3763,15 @@ function box_mutated_scalar_captures(fd: parser.FuncDecl, gfns: string[], struct
   if (boxed.len() == 0) {
     return fd;
   }
-  let bsites: string[] = [];
-  for si in 0..boxed.len() {
-    bsites = bsites.append(first_var_site(fd.body, boxed[si]));
-  }
+  let bsites = capture_sites(fd.body, boxed);
   let bound: string[] = [];
   let body = capturebox.box_rewrite_stmts(fd.body, boxed, btypes, bsites, bound);
   let pcells: ast.Stmt[] = [];
   for pi in 0..boxed.len() {
-    if (bsites[pi].len() == 0 && is_param_name(fd.params, boxed[pi])) {
+    if let Some(_) = bsites[pi] {
+      continue;
+    }
+    if (is_param_name(fd.params, boxed[pi])) {
       let pref: ast.Expr = ast.ExprIdent { name: boxed[pi], line: fd.line, col: fd.col, ty: "", builtin: false };
       pcells = pcells.append(capturebox.cell_decl(boxed[pi], btypes[pi], pref, fd.line, fd.col));
     }
@@ -3791,30 +3791,39 @@ function is_param_name(params: ast.ParamDecl[], name: string): boolean {
   return false;
 }
 
-struct CaptureSite { name: string, key: string }
+struct CaptureSites { names: string[], decls: Option[ast.StmtVar][], missing: i32 }
 
-function first_var_site(stmts: ast.Stmt[], name: string): string {
-  let site = CaptureSite { name: name, key: "" };
-  for st in stmts {
-    site = astwalk.fold_stmt_nodes(st, site, declared, keep_decl_site, irtables.capture_frame_descend);
+// The first declaration in this capture frame for each boxed name.
+function capture_sites(stmts: ast.Stmt[], names: string[]): Option[ast.StmtVar][] {
+  let decls: Option[ast.StmtVar][] = [];
+  for name in names {
+    decls = decls.append(None);
   }
-  return site.key;
+  let sites = CaptureSites { names: names, decls: decls, missing: names.len() };
+  for st in stmts {
+    if (sites.missing == 0) {
+      break;
+    }
+    sites = astwalk.fold_stmt_nodes(st, sites, declared, keep_decl_site, irtables.capture_frame_descend);
+  }
+  return sites.decls;
 }
 
-function declared(st: ast.Stmt, own site: CaptureSite): CaptureSite {
-  if (site.key.len() > 0) {
-    return site;
-  }
+function declared(st: ast.Stmt, own sites: CaptureSites): CaptureSites {
   if let ast.StmtVar(v) = st {
-    if (v.name == site.name) {
-      return CaptureSite { ...site, key: capturebox.site_key(v.name, v.line, v.col) };
+    let i = util.index_of_str(sites.names, v.name);
+    if (i >= 0) {
+      if let Some(_) = sites.decls[i] {
+        return sites;
+      }
+      return CaptureSites { ...sites, decls: sites.decls.with(i, Some(v)), missing: sites.missing - 1 };
     }
   }
-  return site;
+  return sites;
 }
 
-function keep_decl_site(e: ast.Expr, own site: CaptureSite): CaptureSite {
-  return site;
+function keep_decl_site(e: ast.Expr, own sites: CaptureSites): CaptureSites {
+  return sites;
 }
 
 struct BoxScan { names: string[], types: string[] }

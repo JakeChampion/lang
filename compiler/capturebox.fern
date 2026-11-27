@@ -21,11 +21,14 @@ function cell_type(elem: typeinfo.Type): typeinfo.Type {
   return typeinfo.TypeStruct { name: "Cell", args: [elem] };
 }
 
-pub function site_key(name: string, line: i32, col: i32): string {
-  return name + "@" + util.i32_to_string(line) + ":" + util.i32_to_string(col);
+function same_decl(v: ast.StmtVar, site: Option[ast.StmtVar]): boolean {
+  if let Some(decl) = site {
+    return v.name == decl.name && v.line == decl.line && v.col == decl.col;
+  }
+  return false;
 }
 
-pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Expr {
+pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bsites: Option[ast.StmtVar][], bound: string[]): ast.Expr {
   match (e) {
     ast.ExprIdent(id) => {
       if (util.index_of_str(boxed, id.name) >= 0 && util.index_of_str(bound, id.name) < 0) {
@@ -140,11 +143,11 @@ pub function box_rewrite_expr(e: ast.Expr, boxed: string[], btypes: string[], bs
   }
 }
 
-function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt {
+function box_rewrite_stmt(st: ast.Stmt, boxed: string[], btypes: string[], bsites: Option[ast.StmtVar][], bound: string[]): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       let bxi = util.index_of_str(boxed, v.name);
-      if (bxi >= 0 && site_key(v.name, v.line, v.col) != bsites[bxi]) {
+      if (bxi >= 0 && !same_decl(v, bsites[bxi])) {
         bxi = -1;
       }
       if (bxi >= 0 && util.index_of_str(bound, v.name) >= 0) {
@@ -224,7 +227,7 @@ function scalar_pattern_cells(pattern: ast.Pattern, boxed: string[]): string[] {
   return cells;
 }
 
-pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: string[], bound: string[]): ast.Stmt[] {
+pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: string[], bsites: Option[ast.StmtVar][], bound: string[]): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let bnd = bound;
   for stmt in stmts {
@@ -234,13 +237,13 @@ pub function box_rewrite_stmts(stmts: ast.Stmt[], boxed: string[], btypes: strin
   return out;
 }
 
-function shadow_after(stmt: ast.Stmt, boxed: string[], bsites: string[], bound: string[]): string[] {
+function shadow_after(stmt: ast.Stmt, boxed: string[], bsites: Option[ast.StmtVar][], bound: string[]): string[] {
   let out = bound;
   if let ast.StmtVar(v) = stmt {
     let names = ast.append_var_names([], v);
     for name in names {
       let i = util.index_of_str(boxed, name);
-      if (i >= 0 && !util.has_str(out, name) && site_key(v.name, v.line, v.col) != bsites[i]) {
+      if (i >= 0 && !util.has_str(out, name) && !same_decl(v, bsites[i])) {
         out = out.append(name);
       }
     }
