@@ -249,6 +249,48 @@ func TestCmpInputPosition(t *testing.T) {
 	}
 }
 
+// A following command inherits the file position where cmp stopped reading.
+func TestCmpReadAhead(t *testing.T) {
+	dir := t.TempDir()
+	data := strings.Repeat("a", 256*1024)
+	input := writeFile(t, dir, "input", data)
+	for _, tc := range []struct {
+		name, other string
+	}{
+		{"first byte differs", "b" + data[1:]},
+		{"later byte differs", data[:70000] + "b" + data[70001:]},
+		{"shorter prefix", data[:70000]},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			other := writeFile(t, dir, "other", tc.other)
+			position := func(bin string) int64 {
+				t.Helper()
+				in, err := os.Open(input)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer in.Close()
+				argv := crossArgv(bin, "-", other)
+				cmd := exec.Command(argv[0], argv[1:]...)
+				cmd.Stdin = in
+				out, err := cmd.CombinedOutput()
+				if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 1 {
+					t.Fatalf("cmp: %v, %s", err, out)
+				}
+				pos, err := in.Seek(0, io.SeekCurrent)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return pos
+			}
+			want := position(referenceBin(t, "cmp"))
+			if got := position(fernBin(t, "cmp")); got != want {
+				t.Errorf("stdin offset %d, GNU cmp left %d", got, want)
+			}
+		})
+	}
+}
+
 // GNU cmp accepts two references to stdin at the same offset without reading it.
 func TestCmpIdenticalClosedStdin(t *testing.T) {
 	argv := crossArgv(fernBin(t, "cmp"), "-i", "1", "-", "-")

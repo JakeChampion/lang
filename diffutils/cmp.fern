@@ -1,3 +1,4 @@
+import "std/i64";
 import "std/option";
 import "std/string";
 import "../coreutils/lib/filetype";
@@ -262,12 +263,62 @@ function open_input(cfg: Cfg, name: string): Input {
   }
 }
 
-function fill(inp: Input, left: u64): Input {
+function preferred_block(st: Option[FileStat]): i64 {
+  if let Some(s) = st {
+    if (s.blksize >= 0 && s.blksize <= 2147483647) {
+      return s.blksize;
+    }
+  }
+  return 8192;
+}
+
+// GNU cmp reads a common multiple of the two preferred I/O sizes at a time.
+// The read-ahead is visible when the caller uses stdin again after cmp.
+function input_block_size(stats: Option[FileStat][]): i32 {
+  let a = preferred_block(stats[0]);
+  let b = preferred_block(stats[1]);
+  if (a == 0) {
+    return if (b == 0) { 8192 } else { b as i32 };
+  }
+  if (b == 0 || a == b) {
+    return a as i32;
+  }
+  let size = a / a.gcd(b) * b;
+  return if (size <= 2147483647) { size as i32 } else { a as i32 };
+}
+
+function read_block(r: Reader, n: i32): Result[u8[], IoError] {
+  let first = r.read_chunk_bytes(n)?;
+  if (first.len() == 0 || first.len() == n) {
+    return Ok(first);
+  }
+  let h = buf_new(n);
+  buf_push_bytes_range(h, first, 0, first.len());
+  while (buf_len(h) < n) {
+    match (r.read_chunk_bytes(n - buf_len(h))) {
+      Ok(chunk) => {
+        if (chunk.len() == 0) {
+          break;
+        }
+        buf_push_bytes_range(h, chunk, 0, chunk.len());
+      },
+      Err(e) => {
+        buf_free(h);
+        return Err(e);
+      }
+    }
+  }
+  let bytes = buf_take_bytes(h);
+  buf_free(h);
+  return Ok(bytes);
+}
+
+function fill(inp: Input, left: u64, block_size: i32): Input {
   if (inp.eof || inp.pos < inp.buf.len()) {
     return inp;
   }
-  let n = if (left < CHUNK as u64) { left as i32 } else { CHUNK };
-  match (inp.r.read_chunk_bytes(n)) {
+  let n = if (left < block_size as u64) { left as i32 } else { block_size };
+  match (read_block(inp.r, n)) {
     Ok(chunk) => {
       return Input { ...inp, buf: chunk, pos: 0, eof: chunk.len() == 0 };
     },
@@ -291,11 +342,11 @@ function position(inp: Input, skip: u64, needed: boolean): Option[i64] {
 }
 
 // A non-seekable input consumes its skip by reading.
-function skip_bytes(inp: Input, n: u64): Input {
+function skip_bytes(inp: Input, n: u64, block_size: i32): Input {
   let left = n;
   let i = inp;
   while (left > 0 as u64) {
-    i = fill(i, left);
+    i = fill(i, left, block_size);
     if (i.eof) {
       return i;
     }
@@ -505,14 +556,14 @@ function at_eof(cfg: Cfg, run: Run): i32 {
   return EXIT_DIFFER;
 }
 
-function compare(cfg: Cfg, inputs: Input[], width: i32): i32 {
+function compare(cfg: Cfg, inputs: Input[], width: i32, block_size: i32): i32 {
   let run = Run { inputs: inputs, at: 0 as u64, lines: 0 as u64, last: 0 as u8, differ: false, out: buf_new(CHUNK) };
   let status = 0;
   // Even a zero-byte read can report an input error.
   while (true) {
     let left = cfg.limit - run.at;
-    let a = fill(run.inputs[0], left);
-    let b = fill(run.inputs[1], left);
+    let a = fill(run.inputs[0], left, block_size);
+    let b = fill(run.inputs[1], left, block_size);
     run = Run { ...run, inputs: [a, b] };
     if (a.eof || b.eof) {
       status = at_eof(cfg, run);
@@ -602,13 +653,14 @@ function main(): i32 {
       }
     }
   }
+  let block_size = input_block_size(stats);
   if (pos0.is_none() && cfg.skip[0] > 0u64) {
-    inputs = inputs.with(0, skip_bytes(inputs[0], cfg.skip[0]));
+    inputs = inputs.with(0, skip_bytes(inputs[0], cfg.skip[0], block_size));
   }
   if (pos1.is_none() && cfg.skip[1] > 0u64) {
-    inputs = inputs.with(1, skip_bytes(inputs[1], cfg.skip[1]));
+    inputs = inputs.with(1, skip_bytes(inputs[1], cfg.skip[1], block_size));
   }
-  let status = compare(cfg, inputs, width);
+  let status = compare(cfg, inputs, width, block_size);
   if (shared_stdin(inputs)) {
     // GNU closes each compared operand. Both names refer to fd 0, so its
     // second close reports EBADF. Keep the observable diagnostic here.
