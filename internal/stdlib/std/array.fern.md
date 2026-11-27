@@ -1282,7 +1282,6 @@ pub function (xs: (T: cmp.Eq)[]) ends_with(suffix: T[]): boolean {
   }
   return true;
 }
-
 ```
 
 ### `13 pub function (xs: (T: cmp.Ord)[]) is_sorted(): boolean`
@@ -1397,5 +1396,4 @@ pub function (xs: (T: cmp.Ord + ops.Sub)[]) spread(): Option[T] {
 pub function (xs: (T: cmp.Eq)[]) distinct(): T[] {
   return cmp.distinct(xs);
 }
-
 ```
