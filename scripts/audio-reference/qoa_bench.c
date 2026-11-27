@@ -2,6 +2,7 @@
 #include "qoa.h"
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 static uint64_t now_ns(void) {
@@ -40,6 +41,37 @@ static long long pass(const unsigned char *input, unsigned int size, unsigned in
     return frames;
 }
 
+/* Decodes every frame of the file in each round and records the time of each frame decode. */
+static int time_frames(const unsigned char *input, unsigned int size, unsigned int first, qoa_desc desc, short *output, int *observed, int rounds, uint64_t *times, long count) {
+    long index = 0;
+    for (int round = 0; round < rounds; round++) {
+        unsigned int at = first;
+        while (at < size) {
+            unsigned int length = 0;
+            uint64_t started = now_ns();
+            unsigned int used = qoa_decode_frame(input + at, size - at, &desc, output, &length);
+            uint64_t elapsed = now_ns() - started;
+            if (!used) return -1;
+            if (index < count) times[index] = elapsed;
+            index++;
+            *observed ^= output[0];
+            at += used;
+        }
+    }
+    return index == count ? 0 : -1;
+}
+
+static int compare(const void *a, const void *b) {
+    uint64_t x = *(const uint64_t *)a, y = *(const uint64_t *)b;
+    return (x > y) - (x < y);
+}
+
+/* Returns the nearest-rank value at per_mille thousandths of the sorted times. */
+static uint64_t rank(const uint64_t *sorted, long count, long per_mille) {
+    long at = (count * per_mille + 999) / 1000 - 1;
+    return sorted[at < 0 ? 0 : at];
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) return 1;
     int rounds = atoi(argv[2]);
@@ -69,13 +101,22 @@ int main(int argc, char **argv) {
     }
     uint64_t elapsed = now_ns() - started;
     if (frames != (long long)desc.samples * rounds) return 5;
+    long count = (long)((desc.samples + QOA_FRAME_LEN - 1) / QOA_FRAME_LEN) * rounds;
+    uint64_t *times = malloc(sizeof(uint64_t) * count);
+    if (!times || time_frames(input, size, first, desc, output, &observed, rounds, times, count)) return 4;
+    qsort(times, count, sizeof(uint64_t), compare);
     uint32_t checksum = 2166136261u;
     if (pass(input, size, first, desc, output, &checksum, &observed) != desc.samples) return 4;
     printf("samples=%lld\n", frames * desc.channels);
     printf("checksum=%u\n", checksum);
     printf("wall_ns=%llu\n", (unsigned long long)elapsed);
+    printf("frame_p50_ns=%llu\n", (unsigned long long)rank(times, count, 500));
+    printf("frame_p90_ns=%llu\n", (unsigned long long)rank(times, count, 900));
+    printf("frame_p99_ns=%llu\n", (unsigned long long)rank(times, count, 990));
+    printf("frame_max_ns=%llu\n", (unsigned long long)rank(times, count, 1000));
     printf("peak_rss_kb=%ld\n", peak_rss_kb());
     printf("observed=%d\n", observed);
+    free(times);
     free(output);
     free(input);
     return 0;

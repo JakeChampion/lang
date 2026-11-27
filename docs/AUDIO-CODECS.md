@@ -1112,7 +1112,10 @@ These tests establish the measured conformance scope. They do not establish comp
 `scripts/bench-audio` compares QOA frame decode with the pinned C reference.
 Both decoders write each frame into one reusable buffer. The timed region excludes the process start and the file read.
 The script measures silence, impulse, speech, music, and noise inputs, and records time, allocations per frame, and peak RSS.
+It also records the percentiles of the time for each frame decode, in a second pass after the throughput region.
+
 The [2026-11-26 report](benchmarks/qoa-decode-2026-11-26/README.md) measures 2.12 to 2.40 times the C time on x86-64.
+The [2026-11-27 report](benchmarks/qoa-frame-latency-2026-11-27/README.md) measures 1.8 to 2.8 times the C time for one frame at the 99th percentile.
 
 The MP3 benchmark uses a one-second, 48 kHz stereo track and normalized float output.
 Each process decodes the complete track 100 times. Five trials alternate implementation order.
