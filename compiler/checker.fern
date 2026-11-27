@@ -39814,10 +39814,11 @@ function lit_float_constructor(c: ast.ExprCall, want: typeinfo.Type, s: Scope, s
 function lit_typed_scope(s: Scope, st: LitInfer): Scope {
   let types = s.types;
   let lits = s.lit_locals;
-  let i = 0;
-  while (i < types.len()) {
+  for i in 0..types.len() {
     let original = types[i];
-    types = types.with(i, lit_typed_type(original, st, true));
+    if (lit_free(original)) {
+      continue;
+    }
     let k = lit_id(original);
     if (k >= 0) {
       let w = st.width[lit_find(st, k)];
@@ -39826,8 +39827,9 @@ function lit_typed_scope(s: Scope, st: LitInfer): Scope {
         lits = lits.added(s.names[i]);
       }
       types = types.with(i, w);
+    } else {
+      types = types.with(i, lit_typed_type(original, st, true));
     }
-    i += 1;
   }
   return Scope { ...s, types: types, lit_locals: lits };
 }
