@@ -7170,7 +7170,7 @@ function env_serving(env: EnvContract, t: typeinfo.Type): Option[EnvCandidate] {
 
 struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], table: Schemas, requests: Request[] }
 
-// Each index in types identifies a function type during environment discovery.
+// Each index identifies a type within one function or dynamic-trait table.
 // Spelling selects a bucket. Structural equality resolves its collisions.
 struct TypeSet { types: typeinfo.Type[], by_spelling: util.NameIndex }
 
@@ -7192,16 +7192,15 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo, env
   let requests: Request[] = [];
   let table = schemas(named, s, memo);
   let no_names: string[] = [];
-  // The rows of a function type do not change between the rounds, so each
-  // function type gives its candidates one time.
-  let served = TypeSet { types: [], by_spelling: util.name_index(no_names) };
+  // The contracts, scope and implementations are fixed for this discovery.
+  let empty = TypeSet { types: [], by_spelling: util.name_index(no_names) };
+  let reached = Reach { fns: empty, dyns: empty };
   while (table.ok) {
-    let first = served.types.len();
-    let r = table_reach(table, named, served);
-    served = r.fns;
-    let dreach = r.dyns;
+    let first_fn = reached.fns.types.len();
+    let first_dyn = reached.dyns.types.len();
+    reached = table_reach(table, named, reached);
     let grown = false;
-    for candidate in env_rows(served.types, first, envs) {
+    for candidate in env_rows(reached.fns.types, first_fn, envs) {
       let row = candidate.row;
       if (!semtypes.is_env(row.env_ty) || rows.has(row.fn_ty, row.env_ty)) {
         continue;
@@ -7213,7 +7212,8 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo, env
       named = named.append(row.env_ty);
       grown = true;
     }
-    for t in dreach {
+    for id in first_dyn..reached.dyns.types.len() {
+      let t = reached.dyns.types[id];
       for c in dyn_concretes(t, s) {
         if (drows.has(t, c)) {
           continue;
@@ -7231,10 +7231,9 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo, env
   return Closed { rows: rows.rows, dyns: drows.rows, table: table, requests: requests };
 }
 
-struct Reach { fns: TypeSet, dyns: typeinfo.Type[] }
+struct Reach { fns: TypeSet, dyns: TypeSet }
 
-function table_reach(table: Schemas, named: typeinfo.Type[], own served: TypeSet): Reach {
-  let r = Reach { fns: served, dyns: [] };
+function table_reach(table: Schemas, named: typeinfo.Type[], own r: Reach): Reach {
   for t in named {
     r = reach_in(t, r, true);
   }
@@ -7262,7 +7261,7 @@ function reach_in(t: typeinfo.Type, own r: Reach, fns: boolean): Reach {
     return Reach { ...r, fns: r.fns.intern(t) };
   }
   if (typeinfo.is_dyn(t)) {
-    return Reach { ...r, dyns: r.dyns.append(t) };
+    return Reach { ...r, dyns: r.dyns.intern(t) };
   }
   if let typeinfo.TypeArray(a) = t {
     return reach_in(a.elem, r, fns);
