@@ -344,20 +344,88 @@ function read_label(c0: Comp): (Comp, string) {
   return (savchar(c), label);
 }
 
+// glibc accepts the historical five-byte and six-byte encodings.
+function script_char_width(lead: i32): i32 {
+  if (lead < 0xc2) {
+    return 1;
+  }
+  if (lead < 0xe0) {
+    return 2;
+  }
+  if (lead < 0xf0) {
+    return 3;
+  }
+  if (lead <= 0xf4) {
+    return 4;
+  }
+  if (target_os() != "linux" || lead > 0xfd) {
+    return 1;
+  }
+  return if (lead < 0xf8) { 4 } else if (lead < 0xfc) { 5 } else { 6 };
+}
+
+// A prefix can still be incomplete when the script ends. glibc checks for
+// overlong encodings and surrogates when the final byte arrives.
+function script_second_byte_ok(lead: i32, second: i32): boolean {
+  return match (lead) {
+    0xe0 => second >= 0xa0,
+    0xed => second < 0xa0,
+    0xf0 => second >= 0x90,
+    0xf4 => target_os() == "linux" || second < 0x90,
+    0xf8 => second >= 0x88,
+    0xfc => second >= 0x84,
+    _ => true,
+  };
+}
+
+// Return the end of the bytes that the reader must copy literally. A lead
+// byte that interrupts a pending character resets the decoder.
+function script_char_end(src: u8[], at: i32, width: i32): i32 {
+  let hi = at + 1;
+  while (hi < src.len() && hi - at < width) {
+    let b = src[hi] as i32;
+    if (b < 0x80 || b >= 0xc0) {
+      return if (script_char_width(b) > 1) { hi + 1 } else { hi };
+    }
+    if ((target_os() != "linux" || hi - at == width - 1) && !script_second_byte_ok(src[at] as i32, src[at + 1] as i32)) {
+      break;
+    }
+    hi += 1;
+  }
+  return hi;
+}
+
+// GNU sed tests the first delimiter byte by itself. In a UTF-8 locale,
+// NUL and an incomplete character cannot delimit a command. glibc also
+// accepts the lead bytes of five-byte and six-byte encodings.
+function check_delimiter(c: Comp, slash: i32): void {
+  if (c.o.utf8 && (slash == 0 || script_char_width(slash) > 1)) {
+    bad_prog(c, "delimiter character is not a single-byte character");
+  }
+}
+
 // match_slash reads up to the closing delimiter. A regex turns \n into a
 // newline. An escaped delimiter loses its backslash, but \& keeps it in a
 // replacement whose delimiter is &. In a regex, a bracket expression is
 // copied as it is: the delimiter does not end it, and a backslash in it is
 // a literal character.
 function match_slash(c0: Comp, slash: i32, regex: boolean): (Comp, u8[], boolean) {
+  check_delimiter(c0, slash);
   let c = c0;
   let h = buf_new(32);
   let found = false;
+  let continuation_delim = c.o.utf8 && slash >= 0x80 && slash < 0xc0;
   while (true) {
     c = inchar(c);
     let ch = c.ch;
     if (ch == EOF || ch == 10) {
       break;
+    }
+    if (continuation_delim && ch >= 0xc2) {
+      let end = script_char_end(c.src, c.pos - 1, script_char_width(ch));
+      buf_push_bytes_range(h, c.src, c.pos - 1, end);
+      c = Comp { ...c, pos: end };
+      continue;
     }
     if (ch == slash) {
       found = true;
