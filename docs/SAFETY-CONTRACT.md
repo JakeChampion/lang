@@ -157,7 +157,7 @@ The implementation must include these negative cases:
 - A safe function calls an unsafe function through an alias or function value.
 - An import or public re-export conceals an unsafe operation.
 - A safe wrapper returns a view whose foreign owner no longer exists.
-- A size calculation wraps before a raw allocation or copy.
+- A size calculation wraps before a raw allocation or copy. Done: `alloc_size_wrapped_product_stops` (`SC-03`).
 - A resource handle escapes after close or ownership transfer.
 - A thread shares non-atomic reference-counted state without a permitted transfer.
 

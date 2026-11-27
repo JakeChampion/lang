@@ -1,0 +1,13 @@
+// spec: SC-03
+// A byte count past the largest i32 stops the program before the
+// allocation. As an i32 this product wraps to 4, a count that a wrapped
+// calculation accepts.
+
+import "core/int";
+import "std/string";
+
+function main(): i32 {
+    print("ab".repeat(3));
+    print("abcd".repeat(1073741825).len().to_string());
+    return 0;
+}

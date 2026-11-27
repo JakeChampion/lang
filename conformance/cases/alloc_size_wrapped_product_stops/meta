@@ -1,0 +1,5 @@
+waiver: harness-limit
+reason: the program stops through the allocation-size abort, with status
+  134. The wasmtime command line reports each exit status above 125 as 1,
+  so the wasm legs cannot observe 134. The interpreter and the native
+  legs pin the status.
