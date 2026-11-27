@@ -7540,10 +7540,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
   f = ssasem.tail_recursion(ssasem.rebuilt_variants(ssasem.boxed_enum_dyns(f)), self_call_name(fd, name));
   if (s.range_proofs) {
-    let swaps = [ssabytes.swap_name(4), ssabytes.swap_name(8)];
-    f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(2), ssabytes.word_name(4), ssabytes.word_name(8)], swaps);
-    f = ssabounds.word_stores(f, word_store_contracts(), swaps);
-    f = ssabounds.nonneg_quotients(f);
+    f = range_rewrites(f);
   }
   f = ssaquotient.shared_quotients(f);
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: util.append_all(s.requests, closed.requests), bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
@@ -8546,6 +8543,15 @@ function c_call_contracts(): ssasem.Contract[] {
     }
   }
   return out;
+}
+
+// The rewrites that a proof of an index range permits: one check for a group
+// of accesses, and one word for the bytes of a word.
+function range_rewrites(f: ssasem.Func): ssasem.Func {
+  let swaps = [ssabytes.swap_name(4), ssabytes.swap_name(8)];
+  f = ssabounds.word_loads(ssabounds.grouped_accesses(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(2), ssabytes.word_name(4), ssabytes.word_name(8)], swaps);
+  f = ssabounds.word_stores(f, word_store_contracts(), swaps);
+  return ssabounds.nonneg_quotients(f);
 }
 
 function word_load_contracts(): ssasem.Contract[] {
@@ -9669,7 +9675,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {
-    let sp = specialize_calls(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts, false), names), names, mod.funcs, opts.array_report, opts.passes), names, table, mod, opts.passes);
+    let sp = specialize_calls(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts, false), names, opts.passes.range_proofs), names, mod.funcs, opts.array_report, opts.passes), names, table, mod, opts.passes);
     names = sp.names;
     table = sp.table;
     let inlined = inline_leaves(sp.all, names, mod, opts, sp.roots);
@@ -10364,7 +10370,9 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
   return result;
 }
 
-function unroll_loops(all: Produced[], names: string[]): Produced[] {
+// An unrolled loop is straight-line code, so its accesses get the range
+// rewrites that the loop did not.
+function unroll_loops(all: Produced[], names: string[], range_proofs: boolean): Produced[] {
   let sw = optbisect.switches();
   let out: Produced[] = [];
   for i in 0..all.len() {
@@ -10372,7 +10380,7 @@ function unroll_loops(all: Produced[], names: string[]): Produced[] {
     if (p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "unroll", names[i])) {
       let u = semunroll.unroll(p.func);
       if (u.loops > 0) {
-        p = Produced { ...p, func: u.f, analysis: None };
+        p = Produced { ...p, func: if (range_proofs) { range_rewrites(u.f) } else { u.f }, analysis: None };
       }
     }
     out = out.append(p);
