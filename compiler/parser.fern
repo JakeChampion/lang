@@ -12198,6 +12198,31 @@ pub function concrete_array_method_name(receiver: string, method: string): strin
   return util.mangled(prefix + sanitize_key(elem), method);
 }
 
+pub function generic_array_method_name(receiver: string, method: string): string {
+  if (spelling_is_view(receiver)) {
+    return "__viewm_" + method;
+  }
+  return "__arrm_" + method;
+}
+
+// The name of the free function that an array or slice method folds into, or "" for any other declaration.
+pub function array_method_symbol(fd: FuncDecl): string {
+  if (fd.receiver_name.len() == 0) {
+    return "";
+  }
+  let elem = array_method_element(fd.receiver_type);
+  if (elem.len() == 0) {
+    return "";
+  }
+  if (type_str_vars(elem, []).len() == 0) {
+    return concrete_array_method_name(fd.receiver_type, fd.name);
+  }
+  if (looks_type_var(elem)) {
+    return generic_array_method_name(fd.receiver_type, fd.name);
+  }
+  return "";
+}
+
 pub function is_concrete_array_fold(fd: FuncDecl): boolean {
   return fd.receiver_name.len() == 0
     && (fd.name.starts_with("__carrm_") || fd.name.starts_with("__cviewm_"));
