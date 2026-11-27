@@ -47,11 +47,7 @@ func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 	if code == 0 {
 		t.Fatal("no executable PT_LOAD segment in the image")
 	}
-	if code > arm64ImageSpan {
-		t.Logf("code segment %d bytes — %d past the ±128 MB b/bl span, so this build is veneered", code, code-arm64ImageSpan)
-	} else {
-		t.Logf("code segment %d bytes — %d below the ±128 MB b/bl span", code, arm64ImageSpan-code)
-	}
+	t.Logf("code segment %d bytes; the b/bl span is %d bytes, and the assembler refuses a branch past it", code, arm64ImageSpan)
 
 	t.Run("executes", func(t *testing.T) {
 		gcc, qemu := arm64Tooling(t)
