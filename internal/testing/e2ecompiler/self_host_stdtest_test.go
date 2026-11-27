@@ -779,6 +779,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"array_binary_search", langSrcAbs(t, "tests/stdlib/array_binary_search_test.fern"), ""},
 		{"array_min_max_index", langSrcAbs(t, "tests/stdlib/array_min_max_index_test.fern"), ""},
 		{"array_all_equal", langSrcAbs(t, "tests/stdlib/array_all_equal_test.fern"), ""},
+		{"array_method_surface", langSrcAbs(t, "tests/stdlib/array_method_surface_test.fern"), ""},
 		{"array_none", langSrcAbs(t, "tests/stdlib/array_none_test.fern"), ""},
 		{"array_rotate", langSrcAbs(t, "tests/stdlib/array_rotate_test.fern"), ""},
 		{"array_count_sum_by", langSrcAbs(t, "tests/stdlib/array_count_sum_by_test.fern"), ""},

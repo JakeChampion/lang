@@ -199,7 +199,7 @@ pub function inflate_from(input: [u8], from: i32, max_out: i32): Result[Inflated
 pub function inflate_after(history: [u8], input: [u8], max_out: i32): Result[Inflated, InflateError] {
   match (__inflated(input, 0, __bytes_owned(history), max_out)) {
     Ok(got) => {
-      return Ok(Inflated { ...got, out: array.drop(got.out, history.len()) });
+      return Ok(Inflated { ...got, out: got.out.drop(history.len()) });
     },
     Err(e) => {
       return Err(e);
@@ -1985,7 +1985,7 @@ function __cl_order(): i32[] {
 function __header(lit: i32[], dist: i32[]): __Header {
   let hlit = __sent(lit, 257);
   let hdist = __sent(dist, 1);
-  let lens = array.slice(lit, 0, hlit).concat(array.slice(dist, 0, hdist));
+  let lens = lit.slice(0, hlit).concat(dist.slice(0, hdist));
   let rle = __rle(lens);
   let freq = __filled(19, 0);
   for r in rle {

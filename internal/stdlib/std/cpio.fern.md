@@ -262,7 +262,7 @@ function parent(path: string): string {
 
 // A copy of the bytes of `e`.
 pub function (a: Archive) read(e: Entry): u8[] {
-  return array.slice(a.bytes, e.start, e.start + e.size);
+  return a.bytes.slice(e.start, e.start + e.size);
 }
 
 // A copy of the bytes of the regular file at `path`, or None when the archive

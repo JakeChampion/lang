@@ -880,7 +880,7 @@ function (p: Process) gather(iov: usize, count: usize): Option[u8[]] {
     i += 1 as usize;
   }
   if (out.len() as usize > WRITE_LIMIT) {
-    return Some(array.slice(out, 0, WRITE_LIMIT as i32));
+    return Some(out.slice(0, WRITE_LIMIT as i32));
   }
   return Some(out);
 }
@@ -1638,7 +1638,7 @@ function (p: Process) readlinkat(dirfd: u64, va: usize, buf: usize, len: usize):
       }
       let target = p.link_target(f);
       if (target.len() as usize > len) {
-        target = array.slice(target, 0, len as i32);
+        target = target.slice(0, len as i32);
       }
       return p.answer(p.copy_out(buf, target), target.len() as i64);
     },
@@ -1682,7 +1682,7 @@ function (p: Process) statx(dirfd: u64, va: usize, flags: u64, buf: usize): Opti
 function statx_bytes(e: cpio.Entry): u8[] {
   let out = u32_bytes(STATX_BASIC_STATS).concat(u32_bytes(PAGE as u32)).concat(zeros(8));
   out = out.concat(u32_bytes(e.links)).concat(u32_bytes(e.uid)).concat(u32_bytes(e.gid));
-  out = out.concat(array.slice(u32_bytes(e.mode), 0, 2)).concat(zeros(2));
+  out = out.concat(u32_bytes(e.mode).slice(0, 2)).concat(zeros(2));
   out = out.concat(u64_bytes(e.inode as u64)).concat(u64_bytes(e.size as u64)).concat(u64_bytes(((e.size + 511) / 512) as u64));
   out = out.concat(zeros(8));
   for i in 0..4 {
@@ -1777,7 +1777,7 @@ pub function resolve(base: string, path: string): string {
   for part in full.split("/") {
     if (part == "..") {
       if (parts.len() > 0) {
-        parts = array.slice(parts, 0, parts.len() - 1);
+        parts = parts.slice(0, parts.len() - 1);
       }
     } else if (part != "" && part != ".") {
       parts = parts.append(part);
@@ -1854,7 +1854,7 @@ function archive_file(path: string, e: cpio.Entry): OpenFile {
 
 function parent_of(path: string): string {
   let parts = path.split("/");
-  return array.slice(parts, 0, parts.len() - 1).join("/");
+  return parts.slice(0, parts.len() - 1).join("/");
 }
 
 // The open file of descriptor fd.
@@ -2124,7 +2124,7 @@ function x86_stat(e: cpio.Entry): u8[] {
 }
 
 function u32_bytes(v: u32): u8[] {
-  return array.slice(u64_bytes(v as u64), 0, 4);
+  return u64_bytes(v as u64).slice(0, 4);
 }
 
 // The writable files and directories of a process, in memory.
@@ -2217,13 +2217,13 @@ function (p: Process) bytes_of(f: OpenFile, offset: usize, n: usize): u8[] {
       return [];
     };
     let at = f.entry.start + offset as i32;
-    return array.slice(a.bytes, at, at + n as i32);
+    return a.bytes.slice(at, at + n as i32);
   }
   let Some(i) = p.node_index(f.path) else {
     return [];
   };
   let all = join_chunks(p.nodes[i].chunks);
-  return array.slice(all, offset as i32, (offset + n) as i32);
+  return all.slice(offset as i32, (offset + n) as i32);
 }
 
 // Gives the node at path the chunks and the size.

@@ -720,7 +720,7 @@ function __proxy_v1(buf: u8[], from: i32): ProxyHeader {
   if (end + 1 >= buf.len()) {
     return HeaderShort;
   }
-  let fields = utf8.from_bytes_lossy(array.slice(buf, from, end)).split(" ");
+  let fields = utf8.from_bytes_lossy(buf.slice(from, end)).split(" ");
   return __v1_fields(fields, end + 2 - from);
 }
 
@@ -816,7 +816,7 @@ function __v2_source(buf: u8[], from: i32, family: i32, len: i32): ProxyHeader {
   let port = buf[at + 2 * width] as i32 << 8 | buf[at + 2 * width + 1] as i32;
   let ip = net.ipv4(buf[at] as i32, buf[at + 1] as i32, buf[at + 2] as i32, buf[at + 3] as i32);
   if (width == 16) {
-    match (net.ipv6(array.slice(buf, at, at + 16))) {
+    match (net.ipv6(buf.slice(at, at + 16))) {
       Some(v6) => {
         ip = v6;
       },

@@ -147,7 +147,7 @@ function with_id(ids: i32[], names: string[], id: i32, name: string): (i32[], st
 
 function framework_attrs(e: Element, ids: i32[], names: string[]): (i32[], string[]) {
   for a in e.attrs {
-    if (a.id != 0 && array.binary_search(ids, a.id).is_none()) {
+    if (a.id != 0 && ids.binary_search(a.id).is_none()) {
       let (more_ids, more_names) = with_id(ids, names, a.id, a.name);
       ids = more_ids;
       names = more_names;
@@ -201,7 +201,7 @@ function node(out: u8[], kind: i32, size: i32, line: i32): u8[] {
 
 function attr_name(p: Pool, a: Attr): i32 {
   if (a.id != 0) {
-    return array.binary_search(p.ids, a.id).unwrap_or(-1);
+    return p.ids.binary_search(a.id).unwrap_or(-1);
   }
   return index(p, a.name);
 }
