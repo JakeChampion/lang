@@ -86,6 +86,8 @@ func sdiffCases(t *testing.T) []invocation {
 		c("diff program echo", "--diff-program=echo", "a", "b"),
 		c("diff program not executable", "--diff-program=/etc/passwd", "a", "b"),
 		c("one operand", "a"),
+		c("one operand before width", "a", "-w", "30"),
+		c("one operand before double dash", "a", "--"),
 		c("three operands", "a", "b", "c"),
 		c("no operands"),
 		c("unknown option", "-x", "a", "b"),

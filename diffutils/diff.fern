@@ -381,6 +381,12 @@ function usage_error(msg: string): void {
   gnu.try_help_in("diffutils", EXIT_TROUBLE);
 }
 
+// GNU getopt moves operands after options before diffutils names argv[argc - 1].
+pub function missing_operand(argv: string[], ops: string[]): void {
+  let last = if (ops.len() > 0) { ops[ops.len() - 1] } else { argv[argv.len() - 1] };
+  usage_error("missing operand after '" + last + "'");
+}
+
 function is_space(c: i32): boolean {
   return c == 32 || c >= 9 && c <= 13;
 }
@@ -3621,7 +3627,7 @@ function run_with(argv: string[], capture: boolean): (i32, u8[]) {
   }
   if (cfg.from_file.len() == 0 && cfg.to_file.len() == 0) {
     if (ops.len() < 2) {
-      usage_error("missing operand after '" + argv[argv.len() - 1] + "'");
+      missing_operand(argv, ops);
     }
     if (ops.len() > 2) {
       usage_error("extra operand '" + ops[2] + "'");
