@@ -146,6 +146,11 @@ func cmpCases(t *testing.T) []invocation {
 		{name: "ambiguous long option", args: []string{"--ver", a, b}},
 		{name: "missing option value", args: []string{a, b, "-n"}},
 		{name: "operands after --", args: []string{"--", a, b}},
+		{name: "null stdout equal prefix", args: []string{short, a}, stdout: stdoutNull},
+		{name: "null stdout partial line", args: []string{partial, a}, stdout: stdoutNull},
+		{name: "null stdout verbose difference before EOF", args: []string{"-l", b, longer}, stdout: stdoutNull},
+		{name: "null stdout empty input", args: []string{empty, a}, stdout: stdoutNull},
+		{name: "null stdout quiet EOF", args: []string{"-s", short, a}, stdout: stdoutNull},
 		{name: "full stdout", args: []string{a, b}, stdout: stdoutFull},
 		{name: "full stdout under verbose", args: []string{"-l", big1, big2}, stdout: stdoutFull},
 	}
