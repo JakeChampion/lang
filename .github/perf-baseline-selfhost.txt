@@ -200,6 +200,6 @@ selfhost/wasm32-wasi/jpeg_decode.emit	27573
 selfhost/x86-64-linux/draw_image.emit	1875
 selfhost/arm64-linux/draw_image.emit	2091
 selfhost/wasm32-wasi/draw_image.emit	1836
-selfhost/x86-64-linux/draw_scaled.emit	1720
-selfhost/arm64-linux/draw_scaled.emit	1870
-selfhost/wasm32-wasi/draw_scaled.emit	2001
+selfhost/x86-64-linux/draw_scaled.emit	2156
+selfhost/arm64-linux/draw_scaled.emit	2352
+selfhost/wasm32-wasi/draw_scaled.emit	2642
