@@ -56,26 +56,25 @@ function usage_error(msg: string): void {
   gnu.try_help_in("diffutils", EXIT_TROUBLE);
 }
 
-// A number with an optional suffix, as xstrtoumax reads it with the suffixes
-// "kKMGTPEZY0": base 0, then k or K for 1024 (1000 when "B" follows, 1024
-// when "iB" follows), M, G, and so on. It gives the value and the index after
-// it. A negative index means the text is not a number.
+// Read a number in base zero and an optional size suffix. A suffix alone
+// means one unit. Return the value and the index after it, or -1 on error.
 function parse_size(s: string, from: i32): (u64, i32) {
   let i = from;
   while (i < s.len() && gnu.is_blank(s[i] as i32)) {
     i += 1;
   }
-  if (i < s.len() && s[i] == b'+') {
+  let negative = i < s.len() && s[i] == b'-';
+  if (negative || i < s.len() && s[i] == b'+') {
     i += 1;
   }
   let digits = parse_digits(s, i);
   let value = digits.0;
   let end = digits.1;
-  if (end < 0) {
+  if (end < 0 || negative && value != 0) {
     return (0 as u64, -1);
   }
   if (end == i) {
-    if (end >= s.len() || suffix_power(s[end]) < 0) {
+    if (i != from || end >= s.len() || suffix_power(s[end]) < 0) {
       return (0 as u64, -1);
     }
     value = 1 as u64;
@@ -86,16 +85,24 @@ function parse_size(s: string, from: i32): (u64, i32) {
   return (value, end);
 }
 
-// The digits at `i`, with a 0x prefix for hexadecimal and a leading 0 for
-// octal. The index is -1 on overflow.
+// The Linux oracle accepts a 0b prefix in base zero. Both hosts accept hexadecimal
+// after 0x and octal after a leading zero.
 function parse_digits(s: string, i: i32): (u64, i32) {
   let base = 10 as u64;
   let j = i;
-  if (j + 1 < s.len() && s[j] == b'0' && (s[j + 1] == b'x' || s[j + 1] == b'X') && j + 2 < s.len() && digit_value(s[j + 2], 16 as u64) >= 0) {
-    base = 16 as u64;
-    j += 2;
-  } else if (j < s.len() && s[j] == b'0') {
+  if (j < s.len() && s[j] == b'0') {
     base = 8 as u64;
+    if (j + 2 < s.len()) {
+      let radix: u64 = match (s[j + 1]) {
+        b'x' | b'X' => 16,
+        b'b' | b'B' => if (target_os() == "linux") { 2 } else { 0 },
+        _ => 0,
+      };
+      if (digit_value(s[j + 2], radix) >= 0) {
+        base = radix;
+        j += 2;
+      }
+    }
   }
   let value = 0 as u64;
   while (j < s.len() && digit_value(s[j], base) >= 0) {
@@ -187,10 +194,10 @@ function ignore_option(cfg: Cfg, v: string): Cfg {
 
 function bytes_option(cfg: Cfg, v: string): Cfg {
   let r = parse_size(v, 0);
-  if (r.1 != v.len()) {
+  if (r.1 != v.len() || r.0 > OFF_MAX) {
     usage_error("invalid --bytes value '" + v + "'");
   }
-  return Cfg { ...cfg, limit: r.0 };
+  return if (r.0 < cfg.limit) { Cfg { ...cfg, limit: r.0 } } else { cfg };
 }
 
 function parse(argv: string[]): (Cfg, string[]) {
