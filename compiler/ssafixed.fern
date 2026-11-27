@@ -1,5 +1,5 @@
-// `before` holds a register only for values whose interval reaches a marked
-// position at either end. `clobbers` holds one only for values live strictly
+// `before` holds a register for each value whose interval contains a marked
+// position, the two ends included. `clobbers` holds one only for values live strictly
 // across a marked position, so the position's own operands and result may use it.
 // `deny` has the bit of each register that no value can take.
 pub struct Table { first: i32, before: i32[][], clobber_first: i32, clobbers: i32[][], deny: i64 }
