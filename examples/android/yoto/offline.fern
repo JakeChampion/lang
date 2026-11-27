@@ -62,16 +62,16 @@ function safe_name(name: string): boolean {
 }
 
 function decode_track(value: json.JsonValue): Option[Track] {
-  let name = json.get_string(value, "name").unwrap_or("");
-  let id = json.get_i64(value, "download").unwrap_or(-1i64);
+  let name = json.get[string](value, "name").unwrap_or("");
+  let id = json.get[i64](value, "download").unwrap_or(-1i64);
   if (id < 0i64 || !safe_name(name)) {
     return None;
   }
-  return Some(Track { id: id, name: name, title: json.get_string(value, "title").unwrap_or("Track"), chapter: json.get_string(value, "chapter").unwrap_or(""), key: json.get_string(value, "key").unwrap_or(""), art: json.get_string(value, "art").unwrap_or("") });
+  return Some(Track { id: id, name: name, title: json.get[string](value, "title").unwrap_or("Track"), chapter: json.get[string](value, "chapter").unwrap_or(""), key: json.get[string](value, "key").unwrap_or(""), art: json.get[string](value, "art").unwrap_or("") });
 }
 
 function decode_entry(value: json.JsonValue): Option[Entry] {
-  let id = json.get_string(value, "id").unwrap_or("");
+  let id = json.get[string](value, "id").unwrap_or("");
   let tracks: Track[] = [];
   for item in json.get_array(value, "tracks").unwrap_or([]) {
     let Some(track) = decode_track(item) else {
@@ -82,7 +82,7 @@ function decode_entry(value: json.JsonValue): Option[Entry] {
   if (id.len() == 0 || tracks.len() == 0) {
     return None;
   }
-  return Some(Entry { id: id, title: json.get_string(value, "title").unwrap_or("Untitled card"), creator: json.get_string(value, "creator").unwrap_or(""), tracks: tracks, ready: json.get_bool(value, "ready").unwrap_or(false), failed_at: json.get_i32(value, "failed").unwrap_or(-1), resume_from: json.get_i32(value, "resumeFrom").unwrap_or(-1), card: api.restore_card(json.get(value, "card").unwrap_or(json.JNull)) });
+  return Some(Entry { id: id, title: json.get[string](value, "title").unwrap_or("Untitled card"), creator: json.get[string](value, "creator").unwrap_or(""), tracks: tracks, ready: json.get[boolean](value, "ready").unwrap_or(false), failed_at: json.get[i32](value, "failed").unwrap_or(-1), resume_from: json.get[i32](value, "resumeFrom").unwrap_or(-1), card: api.restore_card(json.get[json.JsonValue](value, "card").unwrap_or(json.JNull)) });
 }
 
 function encode_track(track: Track): json.JsonValue {

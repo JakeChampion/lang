@@ -12,22 +12,22 @@ var jsonCoreIRCases = []struct {
 	name string
 	main string
 }{
-	// parse object + typed i32 extractor. get_i32("a") = 7.
-	{"get-i32", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"a\\\": 7}\")) { Ok(v) => { match (json.get_i32(v, \"a\")) { Some(n) => { return n; }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
+	// parse object + typed i32 extractor. get[i32]("a") = 7.
+	{"get-i32", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"a\\\": 7}\")) { Ok(v) => { match (json.get[i32](v, \"a\")) { Some(n) => { return n; }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
 	// parse object + string extractor, length of value. len(\"hello\") = 5.
-	{"get-string", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"k\\\": \\\"hello\\\"}\")) { Ok(v) => { match (json.get_string(v, \"k\")) { Some(s) => { return s.len(); }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
+	{"get-string", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"k\\\": \\\"hello\\\"}\")) { Ok(v) => { match (json.get[string](v, \"k\")) { Some(s) => { return s.len(); }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
 	// parse object + bool extractor. true => 9.
-	{"get-bool", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"b\\\": true}\")) { Ok(v) => { match (json.get_bool(v, \"b\")) { Some(x) => { if (x) { return 9; } return 8; }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
+	{"get-bool", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"b\\\": true}\")) { Ok(v) => { match (json.get[boolean](v, \"b\")) { Some(x) => { if (x) { return 9; } return 8; }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
 	// parse object holding an array + array extractor. len([1,2,3]) = 3.
 	{"array", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"xs\\\": [1,2,3]}\")) { Ok(v) => { match (json.get_array(v, \"xs\")) { Some(a) => { return a.len(); }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
 	// nested object: parse, descend, extract. inner.n = 42.
-	{"nested", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"o\\\": {\\\"n\\\": 42}}\")) { Ok(v) => { match (json.get_object(v, \"o\")) { Some(o) => { match (json.get_i32(o, \"n\")) { Some(n) => { return n; }, None => { return 3; }, } }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
+	{"nested", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"o\\\": {\\\"n\\\": 42}}\")) { Ok(v) => { match (json.get_object(v, \"o\")) { Some(o) => { match (json.get[i32](o, \"n\")) { Some(n) => { return n; }, None => { return 3; }, } }, None => { return 1; }, } }, Err(_) => { return 2; }, } }\n"},
 	// null literal + json.is_null predicate. is_null => 5.
 	{"is-null", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"null\")) { Ok(v) => { if (json.is_null(v)) { return 5; } return 4; }, Err(_) => { return 2; }, } }\n"},
-	// f64 extractor: json.get_f64 routes through std/string's
+	// f64 extractor: json.get[f64] routes through std/string's
 	// parse_float receiver method — the cross-module method-reference
 	// shape of #5420 — and must still reach `module: IR`. 2.5e1 = 25.
-	{"get-f64", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"x\\\": 2.5e1}\")) { Ok(v) => { match (json.get_f64(v, \"x\")) { Some(x) => { if (x > 24.999 && x < 25.001) { return 25; } return 1; }, None => { return 2; }, } }, Err(_) => { return 3; }, } }\n"},
+	{"get-f64", "import \"std/json\";\nfunction main(): i32 { match (json.parse(\"{\\\"x\\\": 2.5e1}\")) { Ok(v) => { match (json.get[f64](v, \"x\")) { Some(x) => { if (x > 24.999 && x < 25.001) { return 25; } return 1; }, None => { return 2; }, } }, Err(_) => { return 3; }, } }\n"},
 }
 
 func TestSelfHostJsonCoreIRX86_64(t *testing.T) {

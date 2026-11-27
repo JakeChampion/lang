@@ -7,7 +7,7 @@ function main(): i32 {
   // nested arrays + objects + \uXXXX escape round-trip
   match (json.parse("{\"nums\":[-1,2.5,3e2],\"k\":\"a\\u0041b\",\"o\":{\"d\":[true,null,false]}}")) {
     Ok(v) => {
-      match (json.get_string(v, "k")) {
+      match (json.get[string](v, "k")) {
         Some(s) => {
           if (s != "aAb") {
             bad = bad + 1;

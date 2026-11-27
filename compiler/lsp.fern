@@ -103,7 +103,7 @@ pub function parse_message(body: string): Option[Message] {
         return None;
       }
       let id = "";
-      match (json.get(v, "id")) {
+      match (json.get[json.JsonValue](v, "id")) {
         Some(iv) => {
           id = json.encode(iv);
         },
@@ -118,7 +118,7 @@ pub function parse_message(body: string): Option[Message] {
 }
 
 pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
-  match (json.get(v, key)) {
+  match (json.get[json.JsonValue](v, key)) {
     Some(m) => {
       return m;
     },
@@ -129,7 +129,7 @@ pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
 }
 
 pub function get_string(v: json.JsonValue, key: string): string {
-  match (json.get_string(v, key)) {
+  match (json.get[string](v, key)) {
     Some(s) => {
       return s;
     },
@@ -148,9 +148,9 @@ pub function position(params: json.JsonValue): (i32, i32) {
 }
 
 function position_in(p: json.JsonValue): (i32, i32) {
-  match (json.get_i32(p, "line")) {
+  match (json.get[i32](p, "line")) {
     Some(line) => {
-      match (json.get_i32(p, "character")) {
+      match (json.get[i32](p, "character")) {
         Some(ch) => {
           return (line, ch);
         },
@@ -178,7 +178,7 @@ pub function changed_text(params: json.JsonValue): Option[string] {
       if (cs.len() == 0) {
         return None;
       }
-      return json.get_string(cs[cs.len() - 1], "text");
+      return json.get[string](cs[cs.len() - 1], "text");
     },
     None => {
       return None;
@@ -403,7 +403,7 @@ pub function text_edit(range: string, text: string): string {
 }
 
 pub function include_declaration(params: json.JsonValue): boolean {
-  match (json.get_bool(get_value(params, "context"), "includeDeclaration")) {
+  match (json.get[boolean](get_value(params, "context"), "includeDeclaration")) {
     Some(b) => {
       return b;
     },

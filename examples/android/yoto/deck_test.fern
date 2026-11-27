@@ -125,7 +125,7 @@ function test_exact_track(): test.TestOutcome {
   let command = api.PlayTrack("book", "01", "03");
   let payload = json.parse(api.command_body(command)).unwrap_or(json.JNull);
   return test.assert_eq_array(
-    [api.command_name(command), json.get_string(payload, "uri").unwrap_or(""), json.get_string(payload, "chapterKey").unwrap_or(""), json.get_string(payload, "trackKey").unwrap_or("")],
+    [api.command_name(command), json.get[string](payload, "uri").unwrap_or(""), json.get[string](payload, "chapterKey").unwrap_or(""), json.get[string](payload, "trackKey").unwrap_or("")],
     ["card/start", "https://yoto.io/book", "01", "03"],
   );
 }
@@ -452,10 +452,10 @@ function test_player_settings(): test.TestOutcome {
     return test.fail("brightness and headphone limit changes must validate");
   };
   let updated = api.merge_config(config, changes).values;
-  if (json.get_string(updated, "dayDisplayBrightness").unwrap_or("") != "35"
-    || json.get_string(updated, "unknown").unwrap_or("") != "keep"
+  if (json.get[string](updated, "dayDisplayBrightness").unwrap_or("") != "35"
+    || json.get[string](updated, "unknown").unwrap_or("") != "keep"
     || json.get_array(updated, "alarms").unwrap_or([]).len() != 1
-    || json.get_bool(updated, "headphonesVolumeLimited").unwrap_or(true)) {
+    || json.get[boolean](updated, "headphonesVolumeLimited").unwrap_or(true)) {
     return test.fail("saving changes must retain unrelated settings and the stored JSON types");
   }
   if (settings.changes(config, edited.insert("nightAmbientColour", "blue")).is_ok()) {
