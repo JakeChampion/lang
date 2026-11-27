@@ -136,6 +136,20 @@ Each pixel is the same as before, on x86-64, arm64 and wasm, for the same 30 ima
 The color conversion runs 90,029,303 instructions in place of 166,566,311: 85.9 for each pixel in place of 158.8.
 The whole program runs 369,118,297 instructions in place of 447,785,889.
 
+### The transform without checks (2026-11-27)
+
+The transform reads `tmp` at `v * 8 + c`.
+Loop versioning now takes an index that is a counter times a constant, and a lane access that reads two elements.
+So the copy of the loop reads `tmp` with no check.
+The transform also makes its samples on lanes, as the color conversion does.
+Each pixel is the same as before, on x86-64, arm64 and wasm, for 60 encoded images.
+
+| Change | Whole program |
+| --- | --: |
+| Before | 369,118,297 |
+| Loop versioning | 328,851,594 |
+| Samples on lanes | 312,926,350 |
+
 ## Lane operations out of loops (#17362)
 
 The compiler merges two lane operations that are the same.

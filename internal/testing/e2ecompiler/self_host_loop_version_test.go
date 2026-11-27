@@ -12,7 +12,8 @@ import (
 // array runs a copy with no checks when one test before the loop shows that
 // every index is in range (#15975). The loop can count up or down by a
 // constant, test a second counter in its body, and leave from more than one
-// block (#15650).
+// block (#15650). An index can be the counter times a constant, and a lane
+// access covers each element that it reads or writes.
 const versionedLoops = `import "std/array";
 struct J { a: i32, b: i32 }
 @noinline function slide(own a: i32[], n: i32): i32[] {
@@ -81,6 +82,35 @@ struct J { a: i32, b: i32 }
   while (i <= top) { s += a[i - k]; i += 2; }
   return s;
 }
+@noinline function scaled(a: i32[], n: i32): i32 {
+  let s = 0;
+  for i in 0..n { s += a[i * 2 + 1]; }
+  return s;
+}
+@noinline function fseq(n: i32): f64[] {
+  let a = __alloc_f64(n);
+  for i in 0..n { a = a.with(i, i as f64); }
+  return a;
+}
+@noinline function lanes(a: f64[], n: i32): i32 {
+  let s = 0.0;
+  for i in 0..n { s += __f64x2_lane(__f64x2_load(a, i * 2 + 1), 1); }
+  return s as i32;
+}
+@noinline function fill(own a: f64[], n: i32): f64[] {
+  for i in 0..n { a = __f64x2_with(a, i * 2, __f64x2_splat(i as f64)); }
+  return a;
+}
+@noinline function bseq(n: i32): u8[] {
+  let b: u8[] = [];
+  for i in 0..n { b = b.append(i as u8); }
+  return b;
+}
+@noinline function bytes(b: u8[], off: i32, n: i32): i32 {
+  let s = 0;
+  for i in 0..n { s += __u8x16_lane(__u8x16_load(b, i * 16 + off), 15) as i32; }
+  return s;
+}
 enum Op { Set(Slot), Skip(i32) }
 struct Slot { name: string, at: i32 }
 @noinline function named(ops: Op[], from: i32, name: string): i32 {
@@ -112,6 +142,11 @@ const versionedMain = `function main(): i32 {
   if (wraps(a, 3, 9, 3) != 36) { return 9; }
   let ops: Op[] = [Op.Skip(1), Op.Set(Slot { name: "a", at: 7 }), Op.Set(Slot { name: "b", at: 9 })];
   if (named(ops, 0, "b") != 9 || named(ops, 2, "a") != -1 || named(ops, h[0], "a") != 7) { return 10; }
+  if (scaled(a, 5) != 75 || scaled(a, 0) != 0) { return 11; }
+  if (lanes(fseq(8), 3) != 12) { return 12; }
+  let f = fill(fseq(8), 4);
+  if (f[0] != 0.0 || f[3] != 1.0 || f[5] != 2.0 || f[7] != 3.0) { return 13; }
+  if (bytes(bseq(32), 0, 2) != 46 || bytes(bseq(40), 8, 2) != 62) { return 14; }
   return 0;
 }`
 
@@ -132,6 +167,10 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 		"x86-64-linux": regexp.MustCompile(`movslq 8\(%r\w+,%r\w+,4\)`),
 		"arm64-linux":  regexp.MustCompile(`ldrsw x\d+, \[x\d+, #8\]`),
 	}
+	laneLoads := map[string]*regexp.Regexp{
+		"x86-64-linux": regexp.MustCompile(`movupd 8\(%r\w+,%r\w+(,8)?\), %xmm`),
+		"arm64-linux":  regexp.MustCompile(`ldr q\d+, \[x17, #8\]`),
+	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -148,8 +187,13 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 				"diagonals": "diagonals(seq(8), 5, -4, 4, 1000).len()",
 				// The indices 0 to 7 fit, but the counter steps past the top of
 				// the i32 range, so it wraps and the next index is 10.
-				"wraps": "wraps(seq(10), 2147483640, 2147483647, 2147483640)",
-				"named": "named([Op.Skip(1)], -1, \"a\")",
+				"wraps":  "wraps(seq(10), 2147483640, 2147483647, 2147483640)",
+				"named":  "named([Op.Skip(1)], -1, \"a\")",
+				"scaled": "scaled(seq(10), 6)",
+				// Index 7 is in range, and the second lane of its load is not.
+				"lanes": "lanes(fseq(8), 4)",
+				"fill":  "fill(fseq(7), 4).len()",
+				"bytes": "bytes(bseq(32), 1, 2)",
 			}
 			for name, call := range past {
 				out := versionedLoops + "function main(): i32 { return " + call + "; }"
@@ -175,10 +219,18 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 			for _, c := range []struct {
 				name          string
 				reads, checks int
-			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}} {
+			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}, {"scaled", 2, 1}} {
 				body := asmFunction(string(asm), "__fn_"+c.name+":")
 				if got, checks := len(load.FindAllString(body, -1)), strings.Count(body, "oob_abort"); got != c.reads || checks != c.checks {
 					t.Errorf("%s has %d element reads and %d checks, want %d and %d: two versions of the loop\n%s", c.name, got, checks, c.reads, c.checks, body)
+				}
+			}
+			// Each lane read has two checks, and only the version with the
+			// checks has them.
+			for _, name := range []string{"lanes", "bytes"} {
+				body := asmFunction(string(asm), "__fn_"+name+":")
+				if got, checks := len(laneLoads[target].FindAllString(body, -1)), strings.Count(body, "oob_abort"); got != 2 || checks != 2 {
+					t.Errorf("%s has %d lane reads and %d checks, want 2 and 2: two versions of the loop\n%s", name, got, checks, body)
 				}
 			}
 			// The block after the loop projects the element that the loop

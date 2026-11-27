@@ -91,12 +91,14 @@ the test holds at each access, and a step cannot move the counter out of the
 i32 range unseen. A loop can have more than one counter, and it can leave
 from any block.
 
-A checked access is a candidate when its index is a counter plus constants
-and values from before the loop. The length of its array also must not change
-in the loop. An access in the header is not a candidate, because the header runs
-before the test. Before the loop, one test computes in 64 bits the lowest
-index of each candidate and the room between its highest index and the
-length. When a step can move a counter out of the i32 range, the test also
+A checked access is a candidate when its index is a counter, or a counter
+times a constant, plus constants and values from before the loop. The length
+of its array also must not change in the loop. An access in the header is not
+a candidate, because the header runs before the test. A lane access reads or
+writes more than one element: 2 for `f64x2`, 4 for `f32x4`, and 16 for an
+integer lane type or a `_bytes` access. Before the loop, one test computes in
+64 bits the lowest index of each candidate and the room between the length
+and the highest element that the candidate reads or writes. When a step can move a counter out of the i32 range, the test also
 computes the room that the range leaves.
 
 When the OR of these values is not negative, the copy of the loop runs, and

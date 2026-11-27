@@ -9659,10 +9659,12 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
     s = s.write("    movupd " + address + ", " + d + "\n");
     return ssa_fput(reg_of, ins.result, d, s);
   }
-  s = s.need("heap");
-  s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
-  s = s.write("    leaq " + util.i32_to_string(128 / ins.imm - 1) + "(" + b + "), %rdx\n");
-  s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, "%rdx", a), "jae", "__fern_oob_abort");
+  if (!ins.str.ends_with(":unchecked")) {
+    s = s.need("heap");
+    s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
+    s = s.write("    leaq " + util.i32_to_string(128 / ins.imm - 1) + "(" + b + "), %rdx\n");
+    s = ssa_trap_jump(ssa_alu_rm0(s, 7, 64, true, "%rdx", a), "jae", "__fern_oob_abort");
+  }
   let lo = "8(" + a + "," + b + "," + util.i32_to_string(ins.imm / 8) + ")";
   if (set) {
     s = ssa_fread(reg_of, ins.args[2], "%xmm1", s);

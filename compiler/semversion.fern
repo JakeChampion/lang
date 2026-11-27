@@ -39,13 +39,16 @@ struct Shape { ok: boolean, head: i32, entry: i32, latch: i32, exits: i32[], cou
 struct Counter { phi: i32, init: i32, step: i32, bound: i32, inclusive: boolean, inside: i32, outside: i32[] }
 
 // An access the test covers: the array whose length the test reads, and its
-// index, the counter plus `delta` plus each of `terms`, or minus each term
-// where `minus` holds.
-struct Site { result: i32, array: i32, counter: i32, delta: i32, terms: i32[], minus: boolean[] }
+// index, `scale` times the counter plus `delta` plus each of `terms`, or minus
+// each term where `minus` holds. The access reads `span` elements from its
+// index.
+struct Site { result: i32, array: i32, counter: i32, scale: i32, span: i32, delta: i32, terms: i32[], minus: boolean[] }
 
-// A constant offset or step above this keeps the checks, so no sum of them
-// overflows an i32.
+// A constant offset, step or scale above these keeps the checks, so no sum
+// of them overflows an i32.
 const MAX_CONST: i32 = 1048576;
+
+const MAX_SCALE: i32 = 65536;
 
 // Only the blocks of `f` are headers: the loop with the checks keeps them,
 // and the copy has none to remove. A loop that another loop holds is
@@ -370,7 +373,7 @@ function covered(f: ssasem.Func, ix: Index, s: Shape): Site[] {
         let site = index_site(f, ix, s, ins.args[1]);
         let array = fixed_length(f, ix, s, ins.args[0]);
         if (site.counter >= 0 && util.index_of_i32(s.counters[site.counter].outside, id) < 0 && array >= 0) {
-          out = out.append(Site { ...site, result: ins.result, array: array });
+          out = out.append(Site { ...site, result: ins.result, array: array, span: span_of(f, ins) });
         }
       }
     }
@@ -382,13 +385,26 @@ function checked_access(ins: ssa.SInst): boolean {
   if (ins.imm != 0) {
     return false;
   }
-  return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.str == "" || ins.kind_tag == ssasem.with() && ins.args.len() == 3;
+  return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && (ins.str == "" || ins.str == "lane_bytes") || ins.kind_tag == ssasem.with() && ins.args.len() == 3;
+}
+
+// The elements that the access reads or writes: 16 bytes for a lane value
+// of bytes, the lanes of a lane value of floats, and otherwise one.
+function span_of(f: ssasem.Func, ins: ssa.SInst): i32 {
+  if (ins.str == "lane_bytes") {
+    return 16;
+  }
+  let v = if (ins.kind_tag == ssasem.with()) { ins.args[2] } else { ins.result };
+  if let typeinfo.TypeLanes(l) = f.values[v] {
+    return 128 / l.width;
+  }
+  return 1;
 }
 
 // The index `v` as a counter plus a sum of constants and values from before
 // the loop, or a site with a counter of -1.
 function index_site(f: ssasem.Func, ix: Index, s: Shape, v: i32): Site {
-  let none = Site { result: -1, array: -1, counter: -1, delta: 0, terms: [], minus: [] };
+  let none = Site { result: -1, array: -1, counter: -1, scale: 1, span: 1, delta: 0, terms: [], minus: [] };
   let out = sum_of(f, ix, s, v, false, none, 0);
   if (out.delta > MAX_CONST || out.delta < -MAX_CONST) {
     return none;
@@ -397,7 +413,7 @@ function index_site(f: ssasem.Func, ix: Index, s: Shape, v: i32): Site {
 }
 
 // `acc` plus the i32 value `v`, or minus it when `negative`. The counter
-// may appear only once, and only with a plus.
+// may appear only once, only with a plus, and alone or times a constant.
 function sum_of(f: ssasem.Func, ix: Index, s: Shape, v: i32, negative: boolean, acc: Site, depth: i32): Site {
   let d = ix.defs;
   let none = Site { ...acc, counter: -2 };
@@ -420,11 +436,32 @@ function sum_of(f: ssasem.Func, ix: Index, s: Shape, v: i32, negative: boolean, 
     return Site { ...acc, terms: acc.terms.append(x), minus: acc.minus.append(negative) };
   }
   let a = d[x];
+  if (a.kind_tag == ssa.BINARY && a.args.len() == 2 && (a.str == "*" || a.str == "<<")) {
+    let (k, n) = scaled(d, s, a);
+    return if (k < 0 || negative || acc.counter >= 0) { none } else { Site { ...acc, counter: k, scale: n } };
+  }
   if (a.kind_tag != ssa.BINARY || a.args.len() != 2 || a.str != "+" && a.str != "-") {
     return none;
   }
   let left = sum_of(f, ix, s, a.args[0], negative, acc, depth + 1);
   return sum_of(f, ix, s, a.args[1], negative != (a.str == "-"), left, depth + 1);
+}
+
+// The counter that `a` multiplies by a constant, and the constant, or a
+// counter of -1. For a product the counter can be either operand. A shift
+// has the counter on its left.
+function scaled(d: ssa.SInst[], s: Shape, a: ssa.SInst): (i32, i32) {
+  let at = if (a.str == "*" && counter_at(s, ssa.copy_root(d, a.args[0])) < 0) { 1 } else { 0 };
+  let k = counter_at(s, ssa.copy_root(d, a.args[at]));
+  let c = ssa.copy_root(d, a.args[1 - at]);
+  if (k < 0 || !int_const(d, c)) {
+    return (-1, 0);
+  }
+  let m = d[c].imm;
+  if (a.str == "<<") {
+    return if (m >= 0 && m <= 16) { (k, 1 << m) } else { (-1, 0) };
+  }
+  return if (m >= 1 && m <= MAX_SCALE) { (k, m) } else { (-1, 0) };
 }
 
 function counter_at(s: Shape, v: i32): i32 {
@@ -514,7 +551,7 @@ function wide(own b: Built, v: i32, d: ssa.SInst[]): Built {
 
 // The test that selects the loop with the checks: the OR of `first` and
 // `len - end` of the accesses is negative, where `first` is the lowest index
-// and `end` is one past the highest. When a step can take a counter past
+// and `end` is one past the highest element that an access reads. When a step can take a counter past
 // the i32 range, the OR also takes the room that the range leaves. The sums
 // are in 64 bits, so none of them overflows.
 function guard(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Built {
@@ -541,11 +578,13 @@ function guard(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Built {
     let n = last(b);
     b = add(b, ssasem.cast(), [n], 0, "", typeinfo.t_i64());
     let len = last(b);
-    let (b1, low) = shifted(b, lows[k], r.low + site.delta);
+    let (b0, lowest) = times(b, lows[k], site.scale);
+    let (b1, low) = shifted(b0, lowest, site.scale * r.low + site.delta);
     let (b2, first) = terms_into(b1, low, site, d, false);
-    b = add(b2, ssa.BINARY, [len, ends[k]], 0, "-", typeinfo.t_i64());
+    let (b5, top) = times(b2, ends[k], site.scale);
+    b = add(b5, ssa.BINARY, [len, top], 0, "-", typeinfo.t_i64());
     let spare = last(b);
-    let (b3, high) = shifted(b, spare, -(r.end + site.delta));
+    let (b3, high) = shifted(b, spare, -(site.scale * r.end + site.delta + site.span - site.scale));
     let (b4, room) = terms_into(b3, high, site, d, true);
     b = add(b4, ssa.BINARY, [first, room], 0, "|", typeinfo.t_i64());
     parts = parts.append(last(b));
@@ -587,6 +626,18 @@ function terms_into(own b: Built, v: i32, site: Site, d: ssa.SInst[], negate: bo
     sum = last(b);
   }
   return (b, sum);
+}
+
+// `v * n` in 64 bits, and `v` itself when `n` is 1.
+function times(own b: Built, v: i32, n: i32): (Built, i32) {
+  if (n == 1) {
+    return (b, v);
+  }
+  b = add(b, ssa.CONST_INT, [], 0, util.i32_to_string(n), typeinfo.t_i64());
+  let k = last(b);
+  b = add(b, ssa.BINARY, [v, k], 0, "*", typeinfo.t_i64());
+  let product = last(b);
+  return (b, product);
 }
 
 // `v + delta` in 64 bits, and `v` itself when `delta` is 0.
@@ -683,8 +734,10 @@ function versioned(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Option[s
     exits = exits.append(e);
   }
   let fast: i32[] = [];
+  let marks: i32[] = [];
   for site in sites {
     fast = fast.append(vmap[site.result]);
+    marks = marks.append(if (site.span > 1) { ssasem.lane_span_proven() } else { 1 });
   }
   let copies: ssa.SBlock[] = [ssa.SBlock { id: fast_in, insts: [], term: ssa.t_br(bmap[s.head]), preds: [gid] }];
   for id in s.blocks {
@@ -692,8 +745,9 @@ function versioned(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Option[s
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
       let c = cloned(ins, vmap);
-      if (util.index_of_i32(fast, c.result) >= 0) {
-        c = ssa.SInst { ...c, imm: 1 };
+      let site = util.index_of_i32(fast, c.result);
+      if (site >= 0) {
+        c = ssa.SInst { ...c, imm: marks[site] };
       }
       insts = insts.append(c);
     }

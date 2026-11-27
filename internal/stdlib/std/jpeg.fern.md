@@ -915,16 +915,17 @@ function idct(coef: [i32], base: i32, q: [i32], t: [f64], tu: f64[], own tmp: f6
       s3 += __f64x2_load(tmp, v * 8 + 6) * c;
     }
     let row = at + y * w;
-    out = out.with(row, sample(__f64x2_lane(s0, 0))).with(row + 1, sample(__f64x2_lane(s0, 1)));
-    out = out.with(row + 2, sample(__f64x2_lane(s1, 0))).with(row + 3, sample(__f64x2_lane(s1, 1)));
-    out = out.with(row + 4, sample(__f64x2_lane(s2, 0))).with(row + 5, sample(__f64x2_lane(s2, 1)));
-    out = out.with(row + 6, sample(__f64x2_lane(s3, 0))).with(row + 7, sample(__f64x2_lane(s3, 1)));
+    out = samples(samples(samples(samples(out, row, s0), row + 2, s1), row + 4, s2), row + 6, s3);
   }
   return (tmp, out);
 }
 
-function sample(sum: f64): u8 {
-  return clamp255(sum.floor() as i32);
+// The floor of each lane of `s`, from 0 to 255, at `row` and `row + 1`.
+// After the limits, a lane plus 2^52 has the sample in its low byte.
+@inline
+function samples(own out: u8[], row: i32, s: f64x2): u8[] {
+  let b = __f64x2_max(__f64x2_min(__f64x2_floor(s), __f64x2_splat(255.0)), __f64x2_splat(0.0)) + __f64x2_splat(4503599627370496.0);
+  return out.with(row, (__f64x2_lane_bits(b, 0) & 255u64) as u8).with(row + 1, (__f64x2_lane_bits(b, 1) & 255u64) as u8);
 }
 
 // The samples of component `c`, at its own size in blocks times 8.

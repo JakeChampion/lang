@@ -3044,13 +3044,15 @@ function ssa_vgroup(ins: ssa.SInst, reg_of: i32[], set: boolean, s: asmcore.Emit
     s = s.write("    ldr " + ssa_vq(d) + ", [x17, #8]\n");
     return ssa_fput(reg_of, ins.result, d, s);
   }
-  s = s.need("heap");
-  s = ssa_ldst0(s, true, "x6", a);
-  s = ssa_cmp_rr(s, b, "x6");
-  s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
-  s = s.write("    add x16, " + b + ", #" + util.i32_to_string(128 / ins.imm - 1) + "\n");
-  s = ssa_cmp_rr(s, "x16", "x6");
-  s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+  if (!ins.str.ends_with(":unchecked")) {
+    s = s.need("heap");
+    s = ssa_ldst0(s, true, "x6", a);
+    s = ssa_cmp_rr(s, b, "x6");
+    s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+    s = s.write("    add x16, " + b + ", #" + util.i32_to_string(128 / ins.imm - 1) + "\n");
+    s = ssa_cmp_rr(s, "x16", "x6");
+    s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
+  }
   s = s.write("    add x17, " + a + ", " + b + ", lsl #" + util.i32_to_string(if (ins.imm == 64) { 3 } else { 2 }) + "\n");
   if (set) {
     s = ssa_fread(reg_of, ins.args[2], "d1", s);
