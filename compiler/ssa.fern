@@ -6862,8 +6862,10 @@ pub function form(f: SFunc): Formed {
     trimmed = pruned.repl;
   }
   let dominated = merge_duplicates(g, true);
-  let hoisted = hoisted_invariants(sink_loads(combine_byte_stores(zero_extended_indices(unsigned_group_checks(drop_inert_counts(dominated.f))))));
-  return Formed { f: hoisted.f, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed), dominated.repl), hoisted.repl) };
+  // An unsigned group check reads only the low half of its first index.
+  let grouped = drop_low_wraps(zero_extended_indices(unsigned_group_checks(drop_inert_counts(dominated.f))));
+  let hoisted = hoisted_invariants(sink_loads(combine_byte_stores(grouped.f)));
+  return Formed { f: hoisted.f, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed), dominated.repl), grouped.repl), hoisted.repl) };
 }
 
 // A byte or a half of a loaded word is a narrow load. A variant keeps its
@@ -7549,15 +7551,39 @@ function group_index(defs: SInst[], uses: i32[], ins: SInst): GroupIndex {
       top = def_of(defs, top.args[0]);
       sole = sole && uses[top.result] == 1;
     }
-    if (top.kind_tag != BINARY || top.ir_kind != ir.K_ADD || top.args.len() != 2 || top.args[0] != lo) {
+    if (top.kind_tag == BINARY && top.ir_kind == ir.K_ADD && top.args.len() == 2 && top.args[0] == lo) {
+      let span = def_of(defs, top.args[1]);
+      if (span.kind_tag == CONST_INT && span.imm >= 0 && span.imm <= 65536) {
+        return GroupIndex { lo: lo, span: span.imm, chain: if (sole) { chain + 1 } else { chain } };
+      }
       continue;
     }
-    let span = def_of(defs, top.args[1]);
-    if (span.kind_tag == CONST_INT && span.imm >= 0 && span.imm <= 65536) {
-      return GroupIndex { lo: lo, span: span.imm, chain: if (sole) { chain + 1 } else { chain } };
+    // A fold can give lo + span back as the value that lo was computed from.
+    let span = span_below(defs, lo, top.result);
+    if (span >= 0) {
+      return GroupIndex { lo: lo, span: span, chain: chain };
     }
   }
   return none;
+}
+
+// The span s when lo is base - s or base + -s, through a sign extension, or -1.
+function span_below(defs: SInst[], lo: i32, base: i32): i32 {
+  let l = def_of(defs, unextended(defs, lo));
+  if (l.kind_tag != BINARY || l.args.len() != 2 || unextended(defs, l.args[0]) != unextended(defs, base)) {
+    return -1;
+  }
+  let c = def_of(defs, l.args[1]);
+  if (c.kind_tag != CONST_INT) {
+    return -1;
+  }
+  let s = if (l.ir_kind == ir.K_SUB) { c.imm } else if (l.ir_kind == ir.K_ADD) { 0 - c.imm } else { -1 };
+  return if (s >= 0 && s <= 65536) { s } else { -1 };
+}
+
+function unextended(defs: SInst[], v: i32): i32 {
+  let d = def_of(defs, v);
+  return if (signed_extension(d)) { d.args[0] } else { v };
 }
 
 function has_check_only(f: SFunc): boolean {

@@ -16,6 +16,8 @@ import "./semtypes";
 import "./stdlib_methods";
 import "./consteval";
 import "./sysreg";
+import "core/cmp";
+import "std/array";
 import "std/option";
 import "std/string";
 
@@ -22567,12 +22569,12 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
 }
 
 // Each coordinate keeps all 32 bits, including for generated source positions.
-function lu_selection_pos(line: i32, col: i32): i64 {
+function source_position(line: i32, col: i32): i64 {
   return line as i64 << 32 | col as i64 & 4294967295i64;
 }
 
 function lu_has_selection(positions: i64[], line: i32, col: i32): boolean {
-  let wanted = lu_selection_pos(line, col);
+  let wanted = source_position(line, col);
   for pos in positions {
     if (pos == wanted) {
       return true;
@@ -22587,7 +22589,7 @@ function lu_value_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, value_sels: f.value_sels.append(lu_selection_pos(id.line, id.col)) };
+    return LuFacts { ...f, value_sels: f.value_sels.append(source_position(id.line, id.col)) };
   }
   return f;
 }
@@ -22600,7 +22602,7 @@ function lu_scalar_selection(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   }
   let enclosing = ow_enclosing_field(fa);
   if let ast.ExprIdent(id) = enclosing.obj {
-    return LuFacts { ...f, scalar_sels: f.scalar_sels.append(lu_selection_pos(id.line, id.col)) };
+    return LuFacts { ...f, scalar_sels: f.scalar_sels.append(source_position(id.line, id.col)) };
   }
   return f;
 }
@@ -22612,7 +22614,7 @@ function lu_path_copy(fa: ast.ExprFieldAccess, own f: LuFacts): LuFacts {
   if (!lu_scalar_type(fa.ty)) {
     return f;
   }
-  return LuFacts { ...f, path_copies: f.path_copies.append(lu_selection_pos(id.line, id.col)) };
+  return LuFacts { ...f, path_copies: f.path_copies.append(source_position(id.line, id.col)) };
 }
 
 // The root q of a read `q.f.g`.
@@ -23997,7 +23999,7 @@ function lu_path_read_at(n: ast.Expr, own r: LuPathReads): LuPathReads {
     return r;
   }
   let later = id.line > r.line || id.line == r.line && id.col > r.col;
-  return LuPathReads { ...r, places: r.places.append(lu_selection_pos(id.line, id.col)), line: if (later) { id.line } else { r.line }, col: if (later) { id.col } else { r.col } };
+  return LuPathReads { ...r, places: r.places.append(source_position(id.line, id.col)), line: if (later) { id.line } else { r.line }, col: if (later) { id.col } else { r.col } };
 }
 
 // One read of `h.field`, and each mention of h selects a field or is the
@@ -25386,28 +25388,24 @@ function declares_exit(mod: parser.Module): boolean {
 }
 
 // The calls of a function that reach the builtin exit, by their position.
-pub struct ExitCalls { keys: util.NameIndex }
-
-function call_key(c: ast.ExprCall): string {
-  return util.i32_to_string(c.line) + ":" + util.i32_to_string(c.col);
-}
+pub struct ExitCalls { positions: i64[] }
 
 // mod holds fd. The resolved body of fd tells which calls name a local.
 pub function builtin_exit_calls(mod: parser.Module, fd: parser.FuncDecl): ExitCalls {
   let noret = util.name_index(builtin_no_return(declares_exit(mod)));
-  function exit_call(e: ast.Expr, own acc: string[]): string[] {
+  function exit_call(e: ast.Expr, own acc: i64[]): i64[] {
     if let ast.ExprCall(c) = e {
       if (lu_call_never_returns(e, noret, false)) {
-        return acc.append(call_key(c));
+        return acc.append(source_position(c.line, c.col));
       }
     }
     return acc;
   }
-  let keys: string[] = [];
+  let positions: i64[] = [];
   for st in lexical.resolve_func(fd).func.body {
-    keys = astwalk.fold_stmt(st, keys, exit_call);
+    positions = astwalk.fold_stmt(st, positions, exit_call);
   }
-  return ExitCalls { keys: util.name_index(keys) };
+  return ExitCalls { positions: cmp.sort_in_place(positions) };
 }
 
 // A call of fd that reaches the builtin exit. A desugar's call names the
@@ -25415,7 +25413,7 @@ pub function builtin_exit_calls(mod: parser.Module, fd: parser.FuncDecl): ExitCa
 pub function (x: ExitCalls) has(e: ast.Expr): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(id) = c.callee {
-      return id.name == "exit" && (id.builtin || x.keys.has(call_key(c)));
+      return id.name == "exit" && (id.builtin || x.positions.binary_search(source_position(c.line, c.col)).is_some());
     }
   }
   return false;
