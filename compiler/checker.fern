@@ -40893,7 +40893,7 @@ function lit_has_call_arg(sites: LitArgSite[], c: ast.ExprCall, first: i32): boo
 }
 
 function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
-  return (c.args.len() > 0 && lit_has_call_arg(rw.cargs, c, 0)) || lit_has_call_arg(rw.pargs, c, LIT_STEP_RECV);
+  return c.args.len() > 0 && lit_has_call_arg(rw.cargs, c, 0) || lit_has_call_arg(rw.pargs, c, LIT_STEP_RECV);
 }
 
 function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
