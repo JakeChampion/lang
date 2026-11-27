@@ -891,9 +891,12 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
   if (l.kind != COPY) {
     contract = kernel_contract(f, l);
   }
+  let zeroed = l.kind == FILL && refills_zeros(ix, l, receiver, zero, sp.count);
   let copied = values.len();
-  values = values.append(f.values[l.array.result]);
-  let call = copy_call(l, copied, args, contract.name);
+  if (!zeroed) {
+    values = values.append(f.values[l.array.result]);
+  }
+  let written = if (zeroed) { [] } else { [copy_call(l, copied, args, contract.name)] };
   let blocks: ssa.SBlock[] = [];
   for old in f.graph.blocks {
     let b = old;
@@ -903,21 +906,50 @@ function replace(f: ssasem.Func, ix: Index, l: Loop, contracts: ssasem.Contract[
     if (b.id == l.head) {
       b = replaced_header(b, l, zero);
     } else if (b.id == l.body) {
-      b = ssa.SBlock { ...b, insts: util.append_all(util.append_all(lifted_defs(ix, l), distance), [call]), term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: l.exit } };
+      b = ssa.SBlock { ...b, insts: util.append_all(util.append_all(lifted_defs(ix, l), distance), written), term: ssa.STerm { ...b.term, kind_tag: ssa.TERM_BR, target: l.exit } };
     } else {
       b = outside(b, l, fresh);
       if (b.id == l.exit) {
-        let phis = [
-          ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: l.array.result, args: [receiver, copied], imm: 0, str: "" },
-          ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: fresh, args: [zero, l.count], imm: 0, str: "" },
-        ];
+        let joined = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: l.array.result, args: [receiver, copied], imm: 0, str: "" };
+        let counted = ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: fresh, args: [zero, l.count], imm: 0, str: "" };
+        let phis = if (zeroed) { [counted] } else { [joined, counted] };
         b = ssa.SBlock { ...b, preds: [l.head, l.body], insts: util.append_all(phis, b.insts) };
       }
     }
     blocks = blocks.append(b);
   }
+  if (zeroed) {
+    return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: renamed(blocks, l.array.result, receiver) } };
+  }
   let calls = called(f.calls, l, contract);
   return ssasem.Func { ...f, source_positions: replaced_source(f.source_positions, l, copied), calls: calls, values: values, graph: ssa.SFunc { ...f.graph, nvals: values.len(), blocks: blocks } };
+}
+
+// Each read of `from` in `blocks` reads `to`.
+function renamed(blocks: ssa.SBlock[], from: i32, to: i32): ssa.SBlock[] {
+  let out: ssa.SBlock[] = [];
+  for b in blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      insts = insts.append(ssa.SInst { ...ins, args: ins.args.map((v: i32): i32 => if (v == from) { to } else { v }) });
+    }
+    let cond = if (b.term.cond == from) { to } else { b.term.cond };
+    let value = if (b.term.value == from) { to } else { b.term.value };
+    out = out.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, cond: cond, value: value } });
+  }
+  return out;
+}
+
+// The allocations that make each element zero.
+const ZEROED_ALLOCS: string[] = ["__alloc_u8", "__alloc_i32", "__alloc_i64"];
+
+// A fill of zeros over each element of a new array whose allocation made
+// each element zero. The allocation and the fill take the same count, so the
+// fill cannot abort.
+function refills_zeros(ix: Index, l: Loop, receiver: i32, start: i32, count: i32): boolean {
+  let made = ix.defs[receiver];
+  return made.kind_tag == ssasem.call() && util.has_str(ZEROED_ALLOCS, made.str) && made.args.len() == 1 && made.args[0] == count
+    && l.at < 0 && literal(ix, start, 0) && literal(ix, l.value, 0);
 }
 
 // A byte helper call, or a range concat with the same operands.
