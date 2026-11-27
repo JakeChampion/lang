@@ -8108,9 +8108,18 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 			return nil, err
 		}
 	}
+	// A view has no address in the oracle's raw arena. Keep the source
+	// value live through the copy just as we do for other call arguments.
+	var srcView ast.Expr
+	if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "__memcpy" && callee == nil && len(c.Args) == 3 {
+		srcView = i.bytesDataArgument(c.Args[1], env)
+	}
 	args := make([]Value, len(c.Args))
 	held := 0
 	for k, a := range c.Args {
+		if k == 1 && srcView != nil {
+			a = srcView
+		}
 		v, err := i.evalExpr(a, env)
 		if err != nil {
 			disownAll(args[:held])
@@ -8124,6 +8133,9 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 	}
 	disownAll(args[:held])
 	i.callAt = c.P
+	if srcView != nil {
+		return builtinRawMemcpyFromView(i, args)
+	}
 	if c.DynTrait != "" {
 		fa, ok := c.Callee.(*ast.FieldAccess)
 		if !ok {

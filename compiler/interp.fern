@@ -6160,6 +6160,15 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
       }
     }
   }
+  if (name == "__memcpy" && !is_method && !is_closure && c.args.len() == 3) {
+    if let ast.ExprCall(src) = c.args[1] {
+      if let ast.ExprIdent(id) = src.callee {
+        if (id.name == "__bytes_data" && src.args.len() == 1 && is_err(env.lookup(id.name)) && !user_func_exists(id.name, env.funcs) && !user_func_exists(name, env.funcs)) {
+          return eval_memcpy_from_view(c, src.args[0], env);
+        }
+      }
+    }
+  }
   let targs = bound_type_args(c.type_args, env);
   let target = -1;
   if (!is_method || has_call_arg(c.args)) {
@@ -9207,6 +9216,42 @@ function raw_mmio(name: string, w: i64[]): Value {
       __store_i32(p, w[1] as i32);
     } else {
       __store_i64(p, w[1]);
+    }
+  }
+  return v_void();
+}
+
+// A byte view can have boxed elements in the interpreter. Copy the bytes
+// of that value while the enclosing call holds it.
+function eval_memcpy_from_view(c: ast.ExprCall, src: ast.Expr, env: Env): Value {
+  let to = eval_expr(c.args[0], env);
+  if (is_err(to)) {
+    return to;
+  }
+  let source = eval_expr(src, env);
+  if (is_err(source)) {
+    return source;
+  }
+  let count = eval_expr(c.args[2], env);
+  if (is_err(count)) {
+    return count;
+  }
+  env.heap.call_at.set((c.line, c.col));
+  if (!is_int_like(to) || !is_int_like(count)) {
+    return v_err("__memcpy: destination and length must be integers");
+  }
+  let VArr(view) = source else {
+    return v_err("__memcpy: expected a byte view");
+  };
+  let n = vint_as_i64(count);
+  if (n < 0i64 || n > arr_len(view) as i64) {
+    return v_err("__memcpy: length exceeds source view bounds");
+  }
+  let p = vint_as_i64(to) as usize;
+  for i in 0..n as i32 {
+    let b = vint_as_i64(arr_at(view, i)) as i32;
+    unsafe {
+      __store_u8(p + i as usize, b);
     }
   }
   return v_void();
