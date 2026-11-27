@@ -110,3 +110,63 @@ func TestSelfHostReuseCarryKeepsBlockDonor(t *testing.T) {
 		})
 	}
 }
+
+// The cursor dies on the edge out of the test of input[c.at]. That edge enters
+// a block that only branches on, and the block after it builds the next cursor.
+const reuseCarryPastBranchProgram = `struct Cursor { at: i32, bit: i32, bad: boolean }
+@noinline
+function skip(input: [u8], own c: Cursor): Cursor {
+  while (!c.bad) {
+    if (input[c.at] != 0) {
+      return c;
+    }
+    c = Cursor { at: c.at + 1, bit: 0, bad: false };
+  }
+  return c;
+}
+function main(): i32 {
+  let input: u8[] = [];
+  for i in 0..400 {
+    input = input.append(if (i % 4 == 3) { 1u8 } else { 0u8 });
+  }
+  let c = Cursor { at: 0, bit: 0, bad: false };
+  let before = __heap_alloc_count();
+  for _ in 0..100 {
+    c = skip(input, c);
+    c = Cursor { ...c, at: c.at + 1 };
+  }
+  let steps = __heap_alloc_count() - before;
+  print(c.at.to_string() + " " + steps.to_string());
+  return 0;
+}
+`
+
+// A box that dies on an edge is carried to a construction past a block that
+// only branches on. Each of the 300 loop steps then reuses the box of the
+// cursor it replaces.
+func TestSelfHostReuseCarryPastBranch(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(reuseCarryPastBranchProgram), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const want = "400 1\n"
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			var cmd *exec.Cmd
+			switch target {
+			case "x86-64-linux":
+				cmd = runX86_64Bin(cli.runner, cli.x86Binary(t, src))
+			case "arm64-linux":
+				_, qemu := arm64Tooling(t)
+				cmd = runArm64Bin(qemu, cli.arm64Binary(t, src))
+			default:
+				cmd = exec.Command(e2eharness.Wasmtime(t), "run", cli.emit(t, src, target))
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil || string(out) != want {
+				t.Fatalf("%s: %v: got %q, want %q (cursor position, allocations over 300 loop steps)", target, err, out, want)
+			}
+		})
+	}
+}
