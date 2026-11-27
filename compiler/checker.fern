@@ -29691,8 +29691,11 @@ function ow_handle_kinds(tn: string, dx: OwnDecls, open: string[], seen: string[
   if (name == "Option" || name == "Result" || name == "Cell" || name == "Map" || util.has_str(seen, name)) {
     return kinds;
   }
-  if (dx.consuming.has(name) || semtypes.is_fd_handle_name(name)) {
+  if (semtypes.is_fd_handle_name(name)) {
     return ow_add_kind(kinds, name);
+  }
+  if (dx.consuming.has(name)) {
+    kinds = ow_add_kind(kinds, name);
   }
   return ow_merge_kinds(kinds, ow_decl_handle_kinds(name, dx, open, seen.append(name)));
 }

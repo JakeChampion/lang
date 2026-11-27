@@ -110,8 +110,8 @@ pub function start[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Font
 
 function started[S, M](own state: S, own p: ui.Program[S, M], fonts: text.Fonts, dir: string, w: i32, h: i32, d: f64): Sim[S, M] {
   let dev = device(dir, w, h, d, false, 1.0, false, 0i64);
-  let first = ui.restored(state, p, dev);
-  let s = Sim { p: p, shell: ui.shell(first, fonts, dev), dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, rtl: false, now: 0i64 };
+  let shell = ui.shell(ui.restored(state, p, dev), fonts, dev);
+  let s = Sim { p: p, shell: shell, dir: dir, w: w, h: h, d: d, dark: false, font: 1.0, rtl: false, now: 0i64 };
   return event(event(s, android.Start), android.WindowCreated(android.Window { ptr: 1 as usize }));
 }
 
