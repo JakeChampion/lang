@@ -157,6 +157,30 @@ function read_port(): i32 {
 function main(): i32 {
   return 0;
 }
+
+function bytes_data_reads(): i32 {
+  let a: u8[] = [1, 2, 3, 4];
+  let n: i32 = 0;
+  unsafe {
+    let p: usize = __alloc(2);
+    __memcpy(p, __bytes_data(a[1:3]), 2);
+    n = __load_u8(p) * 10 + __load_u8(p + 1 as usize);
+    __free(p, 2);
+  }
+  return n;
+}
+
+function bytes_data_writes(): i32 {
+  let a: u8[] = [1, 2, 3, 4];
+  unsafe {
+    let p: usize = __alloc(2);
+    __store_u8(p, 7);
+    __store_u8(p + 1 as usize, 8);
+    __memcpy(__bytes_data(a[1:3]), p, 2);
+    __free(p, 2);
+  }
+  return a[0] as i32 * 1000 + a[1] as i32 * 100 + a[2] as i32 * 10 + a[3] as i32;
+}
 `
 
 func rawMemInterp(t *testing.T) *Interp {
@@ -190,6 +214,8 @@ func TestRawMemoryReadsBackWhatItStores(t *testing.T) {
 			{"pointer_round_trips", 0},
 			{"reuse_is_zeroed", 0},
 			{"copy_moves_bytes", 70000},
+			{"bytes_data_reads", 23},
+			{"bytes_data_writes", 1784},
 		} {
 			v, err := i.CallByName(c.fn, nil)
 			if err != nil {

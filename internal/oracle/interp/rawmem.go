@@ -1,9 +1,12 @@
 package interp
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"sort"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
 // rawMemory is the byte arena behind __alloc. A value's own memory has no
@@ -325,4 +328,71 @@ func registerRawMemory(i *Interp) {
 		}
 		return Number(ptrBytes), nil
 	}}
+}
+
+// A bytesPin is the raw block that holds the bytes of a __bytes_data argument
+// for the call that takes it. The checker (E095) keeps the address to that call.
+type bytesPin struct {
+	src  Value
+	addr int64
+	n    int64
+}
+
+// pinArg evaluates a, and gives a __bytes_data argument the address of a copy
+// of its bytes in raw memory.
+func (i *Interp) pinArg(a ast.Expr, env *env) (Value, *bytesPin, error) {
+	inner, ok := a.(*ast.Call)
+	if !ok || !i.isBytesData(inner, env) {
+		v, err := i.evalExpr(a, env)
+		return v, nil, err
+	}
+	if len(inner.Args) != 1 {
+		return nil, nil, fmt.Errorf("__bytes_data: expected 1 arg, got %d", len(inner.Args))
+	}
+	v, err := i.evalExpr(inner.Args[0], env)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := byteView("__bytes_data", v)
+	if err != nil {
+		return nil, nil, err
+	}
+	n := int64(len(b))
+	addr := i.raw.alloc(n)
+	copy(i.raw.bytes[addr-rawBase:], b)
+	arrOwn(v)
+	return Number(addr), &bytesPin{src: v, addr: addr, n: n}, nil
+}
+
+func (i *Interp) isBytesData(c *ast.Call, env *env) bool {
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok || id.Name != "__bytes_data" {
+		return false
+	}
+	_, local := env.get(id.Name)
+	_, fn := i.Funcs[id.Name]
+	return !local && !fn
+}
+
+// unpin writes the bytes of each pinned array back, as the compiled code
+// writes through the address, and frees the block.
+func (i *Interp) unpin(pins []*bytesPin) error {
+	for _, p := range pins {
+		arrDisown(p.src)
+		got := i.raw.bytes[p.addr-rawBase : p.addr-rawBase+p.n]
+		if a, ok := p.src.(Array); ok {
+			if view, ok := a.Bytes(); ok {
+				copy(view, got)
+			} else if was, _ := byteView("__bytes_data", a); !bytes.Equal(was, got) {
+				into := a.intoElems()
+				for k, c := range got {
+					into[k] = Number(c)
+				}
+			}
+		}
+		if err := i.raw.release("__bytes_data", p.addr, p.n); err != nil {
+			return err
+		}
+	}
+	return nil
 }

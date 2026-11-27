@@ -78,7 +78,8 @@ Copies of that array share the root boxes until the last native holder releases 
 The Go oracle runs `__alloc`, `__free`, the loads, the stores, `__memcpy` and `__memset` on a byte arena (`internal/oracle/interp/rawmem.go`).
 The arena checks each obligation above, and a broken obligation stops the run with an error.
 The arena holds only `__alloc` blocks, so it cannot read the layout of a value.
-Thus the oracle does not run `__alloc_reuse`, `__str_bytes`, `__bytes_data`, `__account_entry` or the box helpers.
+For `__bytes_data(b)`, the oracle copies the bytes of `b` into a block for the call that takes the address. After that call, it writes the bytes back into `b` and frees the block.
+The oracle does not run `__alloc_reuse`, `__str_bytes`, `__account_entry` or the box helpers.
 `fern -interp` sends these calls to the runtime of its own process, and it does no checks.
 
 ## Group B: release, count, layout, FFI, and runtime hooks

@@ -8110,11 +8110,15 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 	}
 	args := make([]Value, len(c.Args))
 	held := 0
+	var pins []*bytesPin
 	for k, a := range c.Args {
-		v, err := i.evalExpr(a, env)
+		v, pin, err := i.pinArg(a, env)
 		if err != nil {
 			disownAll(args[:held])
-			return nil, err
+			return nil, errors.Join(err, i.unpin(pins))
+		}
+		if pin != nil {
+			pins = append(pins, pin)
 		}
 		args[k] = v
 		if k+1 < len(c.Args) {
@@ -8123,6 +8127,14 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		}
 	}
 	disownAll(args[:held])
+	if pins != nil {
+		v, err := i.callWith(c, env, callee, receiver, args)
+		return v, errors.Join(err, i.unpin(pins))
+	}
+	return i.callWith(c, env, callee, receiver, args)
+}
+
+func (i *Interp) callWith(c *ast.Call, env *env, callee, receiver Value, args []Value) (Value, error) {
 	i.callAt = c.P
 	if c.DynTrait != "" {
 		fa, ok := c.Callee.(*ast.FieldAccess)
