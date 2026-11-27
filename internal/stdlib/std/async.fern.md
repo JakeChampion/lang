@@ -579,9 +579,15 @@ pub function race[T](own fs: Future[T][]): Future[(i32, T)] {
 }
 
 function __race[T](own fl: __Flat[T]): Future[(i32, T)] {
-  if let Some(won) = __first_ready(fl.tree, 0) {
-    let dropped = __cancel_flat(fl);
-    return Ready(won);
+  if (__sum(fl.tree).ready > 0) {
+    match (__cancel_but_first(fl)) {
+      Some(won) => {
+        return Ready(won);
+      },
+      None => {
+        return Future.Cancelled;
+      }
+    }
   }
   if (__sum(fl.tree).pending == 0) {
     return Future.Cancelled;
@@ -622,9 +628,7 @@ function __deadline_woken[T](until: time.Instant, own fl: __Flat[T], wake: Wake)
       passed = until.cmp(due) <= 0;
     }
     if (passed) {
-      let slots = __slots(fl.tree);
-      let dropped = __cancel_flat(fl);
-      return Ready(slots);
+      return Ready(__cancel_into_slots(fl));
     }
   }
   return __deadline(until, __step(fl, wake));
@@ -742,26 +746,69 @@ function __slots_into[T](t: __Tree[T], out: Option[T][]): Option[T][] {
   return out;
 }
 
-function __first_ready[T](t: __Tree[T], base: i32): Option[(i32, T)] {
+// Cancels each pending input of `fl`, and moves out the index and value of
+// the first ready input.
+function __cancel_but_first[T](own fl: __Flat[T]): Option[(i32, T)] {
+  return __cancel_but_first_from(fl.tree, 0, None);
+}
+
+// As `__cancel_but_first`, for the inputs of `t` from index `base`, unless
+// `won` already holds the first ready input.
+function __cancel_but_first_from[T](own t: __Tree[T], base: i32, own won: Option[(i32, T)]): Option[(i32, T)] {
   match (t) {
     Fork(s, l, r) => {
-      if (s.ready == 0) {
-        return None;
-      }
-      let left = __sum(l);
-      if (left.ready > 0) {
-        return __first_ready(l, base);
-      }
-      return __first_ready(r, base + left.count);
+      let count = __sum(l).count;
+      return __cancel_but_first_from(r, base + count, __cancel_but_first_from(l, base, won));
     },
     Leaf(span, f) => {
-      if let Ready(v) = f {
-        return Some((base, v));
+      match (f) {
+        Ready(v) => {
+          if (won.is_none()) {
+            return Some((base, v));
+          }
+        },
+        Pending(w, k) => {
+          match (k(Wake.Cancelled)) {
+            _ => {}
+          }
+        },
+        Cancelled => {}
       }
     },
     Hollow => {}
   }
-  return None;
+  return won;
+}
+
+// Cancels each pending input of `fl`, and moves out the slots that `__slots`
+// gives.
+function __cancel_into_slots[T](own fl: __Flat[T]): Option[T][] {
+  let none: Option[T][] = [];
+  return __cancel_slots_into(fl.tree, none);
+}
+
+function __cancel_slots_into[T](own t: __Tree[T], own out: Option[T][]): Option[T][] {
+  match (t) {
+    Fork(s, l, r) => {
+      return __cancel_slots_into(r, __cancel_slots_into(l, out));
+    },
+    Leaf(span, f) => {
+      match (f) {
+        Ready(v) => {
+          return out.append(Some(v));
+        },
+        Pending(w, k) => {
+          match (k(Wake.Cancelled)) {
+            _ => {}
+          }
+        },
+        Cancelled => {}
+      }
+      return out.append(None);
+    },
+    Hollow => {}
+  }
+  return out;
 }
 
 // A future resumed with Cancelled releases what it holds. What it answers is

@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**168 of 171** claims are pinned by a conformance case. The remaining
+**174 of 177** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -243,6 +243,12 @@ of them.
 | `RH-38` | `docs/security/HANDLE-AUDIT.md` | A local holder and a global callee with the same name keep separate identities in the ownership analysis | `field_holder_shadows_callee` |
 | `RH-39` | `docs/security/HANDLE-AUDIT.md` | A for-each binding of a borrowed array passes to an `own` parameter at its last use when its type cannot hold a handle, and the array keeps its elements | `own_for_element_of_borrowed_array` |
 | `RH-40` | `docs/security/HANDLE-AUDIT.md` | An empty None is fresh, so a match that consumes an owned source can retain its owned result as a field of an owned literal | `owned_match_results_rebuild_literal` |
+| `RH-41` | `docs/security/HANDLE-AUDIT.md` | A declared function lends each borrowed argument to its result, so a use of a record that holds the argument after its close is refused (`E050`) | `diag_e050_handle_kept_by_borrowing_call` |
+| `RH-42` | `docs/security/HANDLE-AUDIT.md` | A function that returns its borrowed handle lends the handle to its result, so a read of the result after the close is refused (`E050`) | `diag_e050_handle_returned_by_borrowing_call` |
+| `RH-43` | `docs/security/HANDLE-AUDIT.md` | A borrowed argument or receiver lends only to a result that can hold a handle of its kind | `handle_lent_only_to_a_result_of_its_kind` |
+| `RH-44` | `docs/security/HANDLE-AUDIT.md` | A field of an `own` parameter moves to an `own` parameter in a match tag when every arm leaves the statement | `owned_field_moves_in_match_tag` |
+| `RH-45` | `docs/security/HANDLE-AUDIT.md` | A handle that moves into the literal argument of a call belongs to the local that the call initializes, and a later borrow of that local is not a loan of the handle | `owner_moved_into_an_argument_lends_through_its_holder` |
+| `RH-46` | `docs/security/HANDLE-AUDIT.md` | A local that borrows a handle directly keeps the loan after the handle moves into another local (`E050`) | `diag_e050_direct_borrow_after_owner_moved_into_holder` |
 
 | `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through generic callbacks, function-valued fields, and nested fields of named locals. `checked_owned_nested_results` covers scalar copies before a field transfer | `checked_owned_results` |
 | `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |

@@ -1,0 +1,47 @@
+// spec: RH-43
+// A borrowed handle lends only to a result that can hold a handle of its
+// kind. Each function and method below takes a Source and returns a record
+// that holds a Sink and no Source, so the result stays valid after the close
+// of the Source.
+
+struct Source { id: i32, log: Cell[string] }
+
+function (own s: Source) close(): void {
+  s.log.set(s.log.get() + "source " + s.id.to_string() + " closed\n");
+}
+
+struct Sink { id: i32, log: Cell[string] }
+
+function (own k: Sink) close(): void {
+  k.log.set(k.log.get() + "sink " + k.id.to_string() + " closed\n");
+}
+
+struct Tally { sink: Sink, n: i32 }
+
+function drain(s: Source, sink: Sink): Tally {
+  return Tally { sink: sink, n: s.id * 10 };
+}
+
+function (s: Source) into(sink: Sink): Tally {
+  return Tally { sink: sink, n: s.id * 100 };
+}
+
+function run(log: Cell[string]): i32 {
+  let a = Source { id: 1, log: log };
+  let t = drain(a, Sink { id: 2, log: log });
+  a.close();
+  let b = Source { id: 3, log: log };
+  let u = b.into(Sink { id: 4, log: log });
+  b.close();
+  let n = t.n + u.n;
+  t.sink.close();
+  u.sink.close();
+  return n;
+}
+
+function main(): i32 {
+  let log = cell_new("");
+  let n = run(log);
+  print(log.get() + n.to_string());
+  return 0;
+}

@@ -1,0 +1,33 @@
+// spec: RH-46
+// A local that borrows a handle directly keeps that loan after the handle
+// moves into another local. A close through the first local after the move is
+// refused at compile time.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {}
+
+struct Leg { h: Handle, n: Cell[i32] }
+
+function step(leg: Leg): Leg {
+  return Leg { ...leg, n: leg.n };
+}
+
+function keep(h: Handle): Leg {
+  return Leg { h: h, n: cell_new(1) };
+}
+
+function open(fd: i32): Result[Handle, string] {
+  return Ok(Handle { fd: fd });
+}
+
+function main(): i32 {
+  let Ok(first) = open(3) else {
+    return 2;
+  };
+  let early = keep(first);
+  let leg = step(Leg { h: first, n: cell_new(0) });
+  leg.h.close();
+  early.h.close();
+  return 0;
+}

@@ -1,0 +1,31 @@
+// spec: RH-41
+// A function that takes a borrowed Writer and returns a record that holds it
+// lends the Writer to its result. A write through the record after the close
+// of the Writer is refused at compile time. Natively, that write reached the
+// next file that took the closed descriptor.
+
+struct Holder { w: Writer }
+
+function keep(w: Writer): Holder {
+  return Holder { w: w };
+}
+
+function write_late(path: string): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  let h = keep(w);
+  w.close()?;
+  h.w.write("late")?;
+  return Ok(());
+}
+
+function main(): i32 {
+  match (write_late("late.txt")) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}
