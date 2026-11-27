@@ -219,7 +219,7 @@ pub function (c: Conn) send_binary(b: u8[]): SendResult {
 }
 
 pub function (c: Conn) ping(payload: u8[]): SendResult {
-  return __send(c, 9, array.take(payload, 125));
+  return __send(c, 9, payload.take(125));
 }
 
 pub function (c: Conn) close(code: i32, reason: string): void {
@@ -413,7 +413,7 @@ function __frame_out(c: Conn, opcode: i32, payload: u8[]): u8[] {
     return __frame(opcode, payload);
   }
   let packed = deflate.deflate_flushed(payload, c.window);
-  let f = __frame(opcode, array.take(packed, packed.len() - 4));
+  let f = __frame(opcode, packed.take(packed.len() - 4));
   return f.with(0, (f[0] as i32 | 64) as u8);
 }
 
@@ -668,7 +668,7 @@ function __parse_close(payload: u8[]): (i32, string, i32) {
   if (!__close_code_ok(code)) {
     return (0, "", 1002);
   }
-  match (utf8.from_bytes(array.slice(payload, 2, payload.len()))) {
+  match (utf8.from_bytes(payload.slice(2, payload.len()))) {
     Ok(reason) => {
       return (code, reason, 0);
     },
@@ -695,7 +695,7 @@ function __close_payload(code: i32, reason: string): u8[] {
     return none;
   }
   let cut = utf8.floor_char_boundary(reason, 123);
-  return [(code >> 8) as u8, (code & 255) as u8].concat(array.take(reason.bytes(), cut));
+  return [(code >> 8) as u8, (code & 255) as u8].concat(reason.bytes().take(cut));
 }
 ```
 
@@ -738,7 +738,7 @@ function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Rea
         return __violated(c, r, code);
       }
     }
-    history = array.take_last(history.concat(data), 32768);
+    history = history.concat(data).take_last(32768);
     if (opcode == 1 && utf8.from_bytes(data).is_err()) {
       return __violated(c, r, 1007);
     }
@@ -897,7 +897,7 @@ function __read_frame(s: ByteStream, max: i32, compressing: boolean): (__Read, B
   if (rest.0.len() < 4 + len.0) {
     return (BytesEnded, s);
   }
-  return (FrameRead(__Frame { fin: fin, opcode: opcode, rsv1: (b0 & 64) != 0, payload: __masked(array.slice(rest.0, 4, rest.0.len()), array.take(rest.0, 4)) }), s);
+  return (FrameRead(__Frame { fin: fin, opcode: opcode, rsv1: (b0 & 64) != 0, payload: __masked(rest.0.slice(4, rest.0.len()), rest.0.take(4)) }), s);
 }
 
 function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {

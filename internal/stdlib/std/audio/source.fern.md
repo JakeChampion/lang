@@ -86,7 +86,7 @@ function compact(buffer: Buffer): u8[] {
 function extend(own buffer: Buffer, own chunk: u8[], count: i32): Buffer {
   if (buffer.available() == 0) {
     let ended = chunk.len() == 0;
-    let bytes = array.bounded(chunk, count);
+    let bytes = chunk.bounded(count);
     return Buffer { bytes: bytes, position: 0, eof: ended, limits: buffer.limits };
   }
   let bytes = if (buffer.position == 0) { buffer.bytes } else { compact(buffer) };

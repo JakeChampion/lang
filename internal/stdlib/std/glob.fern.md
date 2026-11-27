@@ -437,7 +437,7 @@ function __glob_class_at(p: GlobParse, pattern: string): Result[GlobParse, GlobE
     k += 2;
   }
   let index = p.classes.len() / 256;
-  let q = GlobParse { ...p, classes: array.concat(p.classes, table), at: next };
+  let q = GlobParse { ...p, classes: p.classes.concat(table), at: next };
   return Ok(__glob_push(q, GLOB_CLASS, index));
 }
 

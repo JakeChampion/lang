@@ -175,7 +175,7 @@ pub function (n: Net) read(id: i32, gen: i32, max: i32): (Net, Option[u8[]]) {
   if (have.len() <= max) {
     return (Net { ...n, rx: n.rx.with(id, []) }, Some(have));
   }
-  return (Net { ...n, rx: n.rx.with(id, array.slice(have, max, have.len())) }, Some(array.slice(have, 0, max)));
+  return (Net { ...n, rx: n.rx.with(id, have.slice(max, have.len())) }, Some(have.slice(0, max)));
 }
 
 pub function (n: Net) write(id: i32, gen: i32, data: u8[]): (Net, boolean) {

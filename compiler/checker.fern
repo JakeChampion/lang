@@ -19067,6 +19067,30 @@ function receiver_namespace(rt: string): string {
   return rt;
 }
 
+function list_type_elem(t: string): Option[string] {
+  if (t.ends_with("[]")) {
+    return Some(slice_unchecked(t, 0, t.len() - 2).to_owned());
+  }
+  if (t.len() >= 2 && t.starts_with("[") && t.ends_with("]")) {
+    return Some(slice_unchecked(t, 1, t.len() - 1).to_owned());
+  }
+  return None;
+}
+
+// A method dispatches on the element type of an array or slice receiver, so
+// that element cannot be an array or a slice itself.
+function nested_receiver_diags(fd: parser.FuncDecl): util.Diag[] {
+  let rt = fd.receiver_type;
+  let Some(elem) = list_type_elem(rt) else {
+    return [];
+  };
+  if (list_type_elem(elem).is_none()) {
+    return [];
+  }
+  let (kind, spelled) = if (rt.ends_with("[]")) { ("array", "T[]") } else { ("slice", "[T]") };
+  return [dg_at("E021", kind + "-receiver method cannot take a nested array/slice element (" + rt + "); make the receiver element-polymorphic (e.g. `(xs: " + spelled + ")`) or take the " + kind + " as a plain parameter", fd.line, fd.col)];
+}
+
 function receiver_type_ok(rt: string, mod: parser.Module): boolean {
   if (rt.len() == 0) {
     return true;
@@ -19907,6 +19931,8 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     if (f2.receiver_name.len() > 0 && !receiver_type_ok(f2.receiver_type, mod)) {
       out = out.append(dg_at("E021", "method receiver type must be a struct, enum, array, slice, tuple, or built-in type, got " + util.base_type_name(f2.receiver_type), f2.line, f2.col));
+    } else if (f2.receiver_name.len() > 0) {
+      out = util.append_diags(out, nested_receiver_diags(f2));
     }
   }
   out = util.append_diags(out, trait_redeclared_diags(mod));

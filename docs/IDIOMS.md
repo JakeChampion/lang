@@ -311,13 +311,14 @@ sh = Show { ...sh, lines: true };
 ### Use the standard library
 
 Use `std/array` (`map`, `filter`, `fold`, `any`, `find`, …) and `std/string`
-in place of a loop that does the same work. Use `|>` to chain the calls.
+in place of a loop that does the same work. Each operation of `std/array` is
+a method. Call it on the array.
 
 ```fern
-let doubled = xs |> array.map((v: i32) => v * 2);
+let doubled = xs.map((v: i32) => v * 2);
 ```
 
-`|>` also reaches a method. When a module has a method `f` and no other
+`|>` reaches the same methods. When a module has a method `f` and no other
 member `f`, the call `m.f(x, …)` is the method call `x.f(…)`. Thus
 `xs |> array.sum()` and `xs.sum()` are the same call.
 

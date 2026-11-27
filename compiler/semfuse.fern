@@ -101,7 +101,7 @@ function fn_verb(usable: boolean, name: string, trusted: util.NameIndex, iter_tr
 }
 
 function verb_of(name: string): string {
-  if (!name.starts_with("__arrm_") && !name.starts_with("array__")) {
+  if (!name.starts_with("__arrm_")) {
     return "";
   }
   let v = slice_unchecked(name, 7, suffix_at(name, 7)).to_owned();

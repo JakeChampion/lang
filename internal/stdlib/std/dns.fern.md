@@ -1619,7 +1619,7 @@ function sent_all(own sock: Socket, framed: u8[]): Result[Socket, DnsError] {
       if (sent == remaining.len()) {
         return Ok(sock);
       }
-      remaining = array.drop(remaining, sent);
+      remaining = remaining.drop(sent);
     }
   }
   return Ok(sock);

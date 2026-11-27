@@ -16,7 +16,7 @@ This differs from `string.chunks`, which returns one chunk for a nonempty string
 `rotate_left` and `rotate_right` accept every i32 count and reduce it modulo the array length.
 Negative counts reverse the direction. An empty array remains empty.
 
-`array.bounded(xs, max_bytes)` takes ownership of an array. It returns an empty array for an empty input. For nonempty input the native and WASI compilers can reuse a backing allocation that fits the byte budget plus eight padding bytes. A negative budget counts as zero. Oversized storage is replaced with a clone of the live elements. The clone uses the usual allocation size for its element type and length. Other aliases keep their values throughout.
+`xs.bounded(max_bytes)` takes ownership of an array. It returns an empty array for an empty input. For nonempty input the native and WASI compilers can reuse a backing allocation that fits the byte budget plus eight padding bytes. A negative budget counts as zero. Oversized storage is replaced with a clone of the live elements. The clone uses the usual allocation size for its element type and length. Other aliases keep their values throughout.
 
 ## Executable example
 
@@ -51,21 +51,21 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 pub function stddev_f64(arr: f64[]): Option[f64]>>
 
-<<7 pub function first[T](xs: T[]): Option[T]>>
+<<7 pub function (xs: T[]) first(): Option[T]>>
 
 <<8 pub function (xs: T[]) min_by_key[K: cmp.Ord](key: (T)>>
 
-<<9 pub function rposition[T](xs: T[], pred: (T)>>
+<<9 pub function (xs: T[]) rposition(pred: (T)>>
 
-<<10 pub function drop_last[T](xs: T[], n: i32): T[]>>
+<<10 pub function (xs: T[]) drop_last(n: i32): T[]>>
 
-<<11 pub function scan[T, A](xs: T[], init: A, f: (A, T)>>
+<<11 pub function (xs: T[]) scan[A](init: A, f: (A, T)>>
 
-<<12 pub function difference[T: cmp.Eq](a: T[], b: T[]): T[]>>
+<<12 pub function (a: (T: cmp.Eq)[]) difference(b: T[]): T[]>>
 
-<<13 pub function (xs: T[]) rotate_left(n: i32): T[]>>
+<<13 pub function (xs: (T: cmp.Ord)[]) is_sorted(): boolean>>
 
-<<14 pub function (xs: (T: cmp.Eq)[]) count(target: T): i32>>
+<<14 pub function (xs: (T: cmp.Eq)[]) distinct(): T[]>>
 ```
 
 ### `module introduction`
@@ -506,23 +506,24 @@ pub function inner_mul_add_f64(a: f64[], b: f64[], rows: i32, extent: i32, colum
   return __inner_mul_add_f64(a, b, rows, extent, columns, init);
 }
 
-pub function is_empty[T](xs: T[]): boolean {
+pub function (xs: T[]) is_empty(): boolean {
   return xs.len() == 0;
 }
 ```
 
-### `7 pub function first[T](xs: T[]): Option[T]`
+### `7 pub function (xs: T[]) first(): Option[T]`
 
 ```fern
-<<7 pub function first[T](xs: T[]): Option[T]>>=
-pub function first[T](xs: T[]): Option[T] {
+<<7 pub function (xs: T[]) first(): Option[T]>>=
+// The first element, or None when the array is empty.
+pub function (xs: T[]) first(): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
   return Some(xs[0]);
 }
 
-pub function last[T](xs: T[]): Option[T] {
+pub function (xs: T[]) last(): Option[T] {
   let n = xs.len();
   if (n == 0) {
     return None;
@@ -530,14 +531,14 @@ pub function last[T](xs: T[]): Option[T] {
   return Some(xs[n - 1]);
 }
 
-pub function get[T](xs: T[], i: i32): Option[T] {
+pub function (xs: T[]) get(i: i32): Option[T] {
   if (i < 0 || i >= xs.len()) {
     return None;
   }
   return Some(xs[i]);
 }
 
-pub function map[T, U](xs: T[], f: (T) => U): U[] {
+pub function (xs: T[]) map[U](f: (T) => U): U[] {
   let out: U[] = [];
   for x in xs {
     out = out.append(f(x));
@@ -545,7 +546,7 @@ pub function map[T, U](xs: T[], f: (T) => U): U[] {
   return out;
 }
 
-pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
+pub function (xs: T[]) filter(keep: (T) => boolean): T[] {
   let out: T[] = [];
   for x in xs {
     if (keep(x)) {
@@ -555,7 +556,7 @@ pub function filter[T](xs: T[], keep: (T) => boolean): T[] {
   return out;
 }
 
-pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
+pub function (xs: T[]) fold[A](init: A, f: (A, T) => A): A {
   let acc = init;
   for x in xs {
     acc = f(acc, x);
@@ -563,7 +564,7 @@ pub function fold[T, A](xs: T[], init: A, f: (A, T) => A): A {
   return acc;
 }
 
-pub function any[T](xs: T[], pred: (T) => boolean): boolean {
+pub function (xs: T[]) any(pred: (T) => boolean): boolean {
   for x in xs {
     if (pred(x)) {
       return true;
@@ -572,7 +573,7 @@ pub function any[T](xs: T[], pred: (T) => boolean): boolean {
   return false;
 }
 
-pub function all[T](xs: T[], pred: (T) => boolean): boolean {
+pub function (xs: T[]) all(pred: (T) => boolean): boolean {
   for x in xs {
     if (!pred(x)) {
       return false;
@@ -581,7 +582,7 @@ pub function all[T](xs: T[], pred: (T) => boolean): boolean {
   return true;
 }
 
-pub function none[T](xs: T[], pred: (T) => boolean): boolean {
+pub function (xs: T[]) none(pred: (T) => boolean): boolean {
   for x in xs {
     if (pred(x)) {
       return false;
@@ -590,7 +591,7 @@ pub function none[T](xs: T[], pred: (T) => boolean): boolean {
   return true;
 }
 
-pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
+pub function (xs: T[]) find(pred: (T) => boolean): Option[T] {
   for x in xs {
     if (pred(x)) {
       return Some(x);
@@ -599,7 +600,7 @@ pub function find[T](xs: T[], pred: (T) => boolean): Option[T] {
   return None;
 }
 
-pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
+pub function (xs: T[]) find_last(pred: (T) => boolean): Option[T] {
   let i = xs.len() - 1;
   while (i >= 0) {
     if (pred(xs[i])) {
@@ -610,7 +611,7 @@ pub function find_last[T](xs: T[], pred: (T) => boolean): Option[T] {
   return None;
 }
 
-pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
+pub function (xs: T[]) find_map[U](f: (T) => Option[U]): Option[U] {
   for x in xs {
     match (f(x)) {
       Some(v) => {
@@ -663,7 +664,7 @@ pub function (xs: T[]) min_by_key[K: cmp.Ord](key: (T) => K): Option[T] {
   return Some(best);
 }
 
-pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
+pub function (xs: (T: cmp.Ord)[]) max_index(): Option[i32] {
   if (xs.len() == 0) {
     return None;
   }
@@ -678,7 +679,7 @@ pub function max_index[T: cmp.Ord](xs: T[]): Option[i32] {
   return Some(best);
 }
 
-pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
+pub function (xs: (T: cmp.Ord)[]) min_index(): Option[i32] {
   if (xs.len() == 0) {
     return None;
   }
@@ -693,7 +694,7 @@ pub function min_index[T: cmp.Ord](xs: T[]): Option[i32] {
   return Some(best);
 }
 
-pub function running_max[T: cmp.Ord](xs: T[]): T[] {
+pub function (xs: (T: cmp.Ord)[]) running_max(): T[] {
   let out: T[] = [];
   if (xs.len() == 0) {
     return out;
@@ -710,7 +711,7 @@ pub function running_max[T: cmp.Ord](xs: T[]): T[] {
   return out;
 }
 
-pub function running_min[T: cmp.Ord](xs: T[]): T[] {
+pub function (xs: (T: cmp.Ord)[]) running_min(): T[] {
   let out: T[] = [];
   if (xs.len() == 0) {
     return out;
@@ -727,7 +728,7 @@ pub function running_min[T: cmp.Ord](xs: T[]): T[] {
   return out;
 }
 
-pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
+pub function (xs: T[]) max_by(cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -742,7 +743,7 @@ pub function max_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   return Some(best);
 }
 
-pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
+pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -757,7 +758,7 @@ pub function min_by[T](xs: T[], cmp: (T, T) => i32): Option[T] {
   return Some(best);
 }
 
-pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
+pub function (xs: T[]) position(pred: (T) => boolean): Option[i32] {
   let i = 0;
   while (i < xs.len()) {
     if (pred(xs[i])) {
@@ -768,7 +769,7 @@ pub function position[T](xs: T[], pred: (T) => boolean): Option[i32] {
   return None;
 }
 
-pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
+pub function (xs: T[]) find_indices(pred: (T) => boolean): i32[] {
   let out: i32[] = [];
   let i = 0;
   while (i < xs.len()) {
@@ -781,11 +782,11 @@ pub function find_indices[T](xs: T[], pred: (T) => boolean): i32[] {
 }
 ```
 
-### `9 pub function rposition[T](xs: T[], pred: (T)`
+### `9 pub function (xs: T[]) rposition(pred: (T)`
 
 ```fern
-<<9 pub function rposition[T](xs: T[], pred: (T)>>=
-pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
+<<9 pub function (xs: T[]) rposition(pred: (T)>>=
+pub function (xs: T[]) rposition(pred: (T) => boolean): Option[i32] {
   let i = xs.len() - 1;
   while (i >= 0) {
     if (pred(xs[i])) {
@@ -796,7 +797,7 @@ pub function rposition[T](xs: T[], pred: (T) => boolean): Option[i32] {
   return None;
 }
 
-pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
+pub function (xs: T[]) count_where(pred: (T) => boolean): i32 {
   let c = 0;
   let i = 0;
   while (i < xs.len()) {
@@ -808,7 +809,7 @@ pub function count_where[T](xs: T[], pred: (T) => boolean): i32 {
   return c;
 }
 
-pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
+pub function (xs: T[]) sum_by(key: (T) => i32): i32 {
   let total = 0;
   let i = 0;
   while (i < xs.len()) {
@@ -818,7 +819,7 @@ pub function sum_by[T](xs: T[], key: (T) => i32): i32 {
   return total;
 }
 
-pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
+pub function (xs: T[]) take_while(pred: (T) => boolean): T[] {
   let out: T[] = [];
   let i = 0;
   while (i < xs.len() && pred(xs[i])) {
@@ -828,7 +829,7 @@ pub function take_while[T](xs: T[], pred: (T) => boolean): T[] {
   return out;
 }
 
-pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
+pub function (xs: T[]) drop_while(pred: (T) => boolean): T[] {
   let i = 0;
   while (i < xs.len() && pred(xs[i])) {
     i += 1;
@@ -841,7 +842,7 @@ pub function drop_while[T](xs: T[], pred: (T) => boolean): T[] {
   return out;
 }
 
-pub function enumerate[T](xs: T[]): (i32, T)[] {
+pub function (xs: T[]) enumerate(): (i32, T)[] {
   let out: (i32, T)[] = [];
   let i = 0;
   for x in xs {
@@ -851,7 +852,7 @@ pub function enumerate[T](xs: T[]): (i32, T)[] {
   return out;
 }
 
-pub function reverse[T](xs: T[]): T[] {
+pub function (xs: T[]) reverse(): T[] {
   let out: T[] = [];
   let i = xs.len() - 1;
   while (i >= 0) {
@@ -861,7 +862,7 @@ pub function reverse[T](xs: T[]): T[] {
   return out;
 }
 
-pub function rotate_left[T](xs: T[], n: i32): T[] {
+pub function (xs: T[]) rotate_left(n: i32): T[] {
   let len = xs.len();
   let out: T[] = [];
   if (len == 0) {
@@ -876,33 +877,33 @@ pub function rotate_left[T](xs: T[], n: i32): T[] {
   return out;
 }
 
-pub function rotate_right[T](xs: T[], n: i32): T[] {
+pub function (xs: T[]) rotate_right(n: i32): T[] {
   let len = xs.len();
   if (len == 0) {
     return [];
   }
   let shift = n % len;
-  return rotate_left(xs, -shift);
+  return xs.rotate_left(-shift);
 }
 
 // `xs` with the element at `from` moved to the index `to`. The elements
 // between the two keep their order. An index outside `xs` gives `xs`.
-pub function moved[T](xs: T[], from: i32, to: i32): T[] {
+pub function (xs: T[]) moved(from: i32, to: i32): T[] {
   let n = xs.len();
   if (from < 0 || from >= n || to < 0 || to >= n) {
     return xs;
   }
-  let rest = slice(xs, 0, from).concat(slice(xs, from + 1, n));
-  return slice(rest, 0, to).append(xs[from]).concat(slice(rest, to, n - 1));
+  let rest = xs.slice(0, from).concat(xs.slice(from + 1, n));
+  return rest.slice(0, to).append(xs[from]).concat(rest.slice(to, n - 1));
 }
 
-pub function take[T](xs: T[], n: i32): T[] {
+pub function (xs: T[]) take(n: i32): T[] {
   return xs.truncate(n);
 }
 
 // A copy of `xs` in a new buffer. A later change to either array does not
 // change the other, so an append to `xs` after a clone can stay in place.
-pub function clone[T](xs: [T]): T[] {
+pub function (xs: T[]) clone(): T[] {
   let out: T[] = [];
   return out.concat(xs);
 }
@@ -916,7 +917,7 @@ function storage_bytes[T](xs: T[]): i32 {
 // eight bytes of padding. Keep the handoff out of line so the caller can
 // transfer its array without an extra allocation for the inlined branches.
 @noinline
-pub function bounded[T](own xs: T[], max_bytes: i32): T[] {
+pub function (own xs: T[]) bounded(max_bytes: i32): T[] {
   if (xs.len() == 0) {
     return [];
   }
@@ -924,10 +925,10 @@ pub function bounded[T](own xs: T[], max_bytes: i32): T[] {
   if (size >= 0 && size - 8 <= max_bytes.max(0)) {
     return xs;
   }
-  return clone(xs);
+  return xs.clone();
 }
 
-pub function drop[T](xs: T[], n: i32): T[] {
+pub function (xs: T[]) drop(n: i32): T[] {
   let out: T[] = [];
   let i = n;
   if (i < 0) {
@@ -941,11 +942,11 @@ pub function drop[T](xs: T[], n: i32): T[] {
 }
 
 // Takes the array and replacement, so each returned resource has one owner.
-pub function swap_at[T](own xs: T[], i: i32, own v: T): (T, T[]) {
+pub function (own xs: T[]) swap_at(i: i32, own v: T): (T, T[]) {
   return (xs[i], xs.with(i, v));
 }
 
-pub function take_last[T](xs: T[], n: i32): T[] {
+pub function (xs: T[]) take_last(n: i32): T[] {
   if (n <= 0) {
     return [];
   }
@@ -953,22 +954,22 @@ pub function take_last[T](xs: T[], n: i32): T[] {
   if (start < 0) {
     start = 0;
   }
-  return slice(xs, start, xs.len());
+  return xs.slice(start, xs.len());
 }
 ```
 
-### `10 pub function drop_last[T](xs: T[], n: i32): T[]`
+### `10 pub function (xs: T[]) drop_last(n: i32): T[]`
 
 ```fern
-<<10 pub function drop_last[T](xs: T[], n: i32): T[]>>=
-pub function drop_last[T](xs: T[], n: i32): T[] {
+<<10 pub function (xs: T[]) drop_last(n: i32): T[]>>=
+pub function (xs: T[]) drop_last(n: i32): T[] {
   if (n <= 0) {
     return xs.truncate(xs.len());
   }
   return xs.truncate(xs.len() - n);
 }
 
-pub function slice[T](xs: T[], start: i32, end: i32): T[] {
+pub function (xs: T[]) slice(start: i32, end: i32): T[] {
   let lo = start;
   let hi = end;
   if (lo < 0) {
@@ -987,7 +988,7 @@ pub function slice[T](xs: T[], start: i32, end: i32): T[] {
 }
 
 // Return no chunks when size is zero or negative, including for a nonempty array.
-pub function chunks[T](xs: T[], size: i32): T[][] {
+pub function (xs: T[]) chunks(size: i32): T[][] {
   let out: T[][] = [];
   if (size <= 0) {
     return out;
@@ -999,13 +1000,13 @@ pub function chunks[T](xs: T[], size: i32): T[][] {
     if (hi > n) {
       hi = n;
     }
-    out = out.append(slice(xs, i, hi));
+    out = out.append(xs.slice(i, hi));
     i += size;
   }
   return out;
 }
 
-pub function chunks_exact[T](xs: T[], size: i32): T[][] {
+pub function (xs: T[]) chunks_exact(size: i32): T[][] {
   let out: T[][] = [];
   if (size <= 0) {
     return out;
@@ -1013,13 +1014,13 @@ pub function chunks_exact[T](xs: T[], size: i32): T[][] {
   let n = xs.len();
   let i = 0;
   while (i + size <= n) {
-    out = out.append(slice(xs, i, i + size));
+    out = out.append(xs.slice(i, i + size));
     i += size;
   }
   return out;
 }
 
-pub function windows[T](xs: T[], size: i32): T[][] {
+pub function (xs: T[]) windows(size: i32): T[][] {
   let out: T[][] = [];
   if (size <= 0) {
     return out;
@@ -1027,38 +1028,38 @@ pub function windows[T](xs: T[], size: i32): T[][] {
   let n = xs.len();
   let i = 0;
   while (i + size <= n) {
-    out = out.append(slice(xs, i, i + size));
+    out = out.append(xs.slice(i, i + size));
     i += 1;
   }
   return out;
 }
 
-pub function concat[T](a: T[], b: [T]): T[] {
+pub function (xs: T[]) concat(other: [T]): T[] {
   let out: T[] = [];
-  for x in a {
+  for x in xs {
     out = out.append(x);
   }
-  for y in b {
+  for y in other {
     out = out.append(y);
   }
   return out;
 }
 
-pub function zip[T, U](a: T[], b: U[]): (T, U)[] {
+pub function (xs: T[]) zip[U](other: U[]): (T, U)[] {
   let out: (T, U)[] = [];
-  let n = a.len();
-  if (b.len() < n) {
-    n = b.len();
+  let n = xs.len();
+  if (other.len() < n) {
+    n = other.len();
   }
   let i = 0;
   while (i < n) {
-    out = out.append((a[i], b[i]));
+    out = out.append((xs[i], other[i]));
     i += 1;
   }
   return out;
 }
 
-pub function flat_map[T, U](xs: T[], f: (T) => U[]): U[] {
+pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] {
   let out: U[] = [];
   for x in xs {
     for y in f(x) {
@@ -1078,7 +1079,7 @@ pub function flatten[T](xss: T[][]): T[] {
   return out;
 }
 
-pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
+pub function (xs: T[]) partition(pred: (T) => boolean): (T[], T[]) {
   let kept: T[] = [];
   let rejected: T[] = [];
   for x in xs {
@@ -1092,11 +1093,11 @@ pub function partition[T](xs: T[], pred: (T) => boolean): (T[], T[]) {
 }
 ```
 
-### `11 pub function scan[T, A](xs: T[], init: A, f: (A, T)`
+### `11 pub function (xs: T[]) scan[A](init: A, f: (A, T)`
 
 ```fern
-<<11 pub function scan[T, A](xs: T[], init: A, f: (A, T)>>=
-pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
+<<11 pub function (xs: T[]) scan[A](init: A, f: (A, T)>>=
+pub function (xs: T[]) scan[A](init: A, f: (A, T) => A): A[] {
   let out: A[] = [];
   let acc: A = init;
   for x in xs {
@@ -1106,7 +1107,7 @@ pub function scan[T, A](xs: T[], init: A, f: (A, T) => A): A[] {
   return out;
 }
 
-pub function intersperse[T](xs: T[], sep: T): T[] {
+pub function (xs: T[]) intersperse(sep: T): T[] {
   let out: T[] = [];
   let i = 0;
   let n = xs.len();
@@ -1120,7 +1121,7 @@ pub function intersperse[T](xs: T[], sep: T): T[] {
   return out;
 }
 
-pub function step_by[T](xs: T[], n: i32): T[] {
+pub function (xs: T[]) step_by(n: i32): T[] {
   let out: T[] = [];
   if (n <= 0) {
     return out;
@@ -1133,7 +1134,7 @@ pub function step_by[T](xs: T[], n: i32): T[] {
   return out;
 }
 
-pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
+pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -1146,7 +1147,7 @@ pub function reduce[T](xs: T[], f: (T, T) => T): Option[T] {
   return Some(acc);
 }
 
-pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
+pub function (xs: (T: cmp.Ord)[]) binary_search(target: T): Option[i32] {
   let lo = 0;
   let hi = xs.len();
   while (lo < hi) {
@@ -1164,7 +1165,7 @@ pub function binary_search[T: cmp.Ord](xs: T[], target: T): Option[i32] {
   return None;
 }
 
-pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
+pub function (xs: (T: cmp.Eq)[]) all_equal(): boolean {
   let n = xs.len();
   if (n < 2) {
     return true;
@@ -1179,7 +1180,7 @@ pub function all_equal[T: cmp.Eq](xs: T[]): boolean {
   return true;
 }
 
-pub function dedup[T: cmp.Eq](xs: T[]): T[] {
+pub function (xs: (T: cmp.Eq)[]) dedup(): T[] {
   let out: T[] = [];
   let i = 0;
   while (i < xs.len()) {
@@ -1191,7 +1192,7 @@ pub function dedup[T: cmp.Eq](xs: T[]): T[] {
   return out;
 }
 
-pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
+pub function (xs: (T: cmp.Eq)[]) count(target: T): i32 {
   let c = 0;
   for x in xs {
     if (x.eq(target)) {
@@ -1201,7 +1202,7 @@ pub function count[T: cmp.Eq](xs: T[], target: T): i32 {
   return c;
 }
 
-pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
+pub function (a: (T: cmp.Eq)[]) union(b: T[]): T[] {
   let out: T[] = [];
   for x in a {
     if (!cmp.contains(out, x)) {
@@ -1216,7 +1217,7 @@ pub function union[T: cmp.Eq](a: T[], b: T[]): T[] {
   return out;
 }
 
-pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
+pub function (a: (T: cmp.Eq)[]) intersection(b: T[]): T[] {
   let out: T[] = [];
   for x in a {
     if (cmp.contains(b, x) && !cmp.contains(out, x)) {
@@ -1227,11 +1228,11 @@ pub function intersection[T: cmp.Eq](a: T[], b: T[]): T[] {
 }
 ```
 
-### `12 pub function difference[T: cmp.Eq](a: T[], b: T[]): T[]`
+### `12 pub function (a: (T: cmp.Eq)[]) difference(b: T[]): T[]`
 
 ```fern
-<<12 pub function difference[T: cmp.Eq](a: T[], b: T[]): T[]>>=
-pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
+<<12 pub function (a: (T: cmp.Eq)[]) difference(b: T[]): T[]>>=
+pub function (a: (T: cmp.Eq)[]) difference(b: T[]): T[] {
   let out: T[] = [];
   for x in a {
     if (!cmp.contains(b, x) && !cmp.contains(out, x)) {
@@ -1241,7 +1242,7 @@ pub function difference[T: cmp.Eq](a: T[], b: T[]): T[] {
   return out;
 }
 
-pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
+pub function (xs: (T: cmp.Eq)[]) index_of_last(target: T): Option[i32] {
   let i = xs.len() - 1;
   while (i >= 0) {
     if (xs[i].eq(target)) {
@@ -1252,7 +1253,7 @@ pub function index_of_last[T: cmp.Eq](xs: T[], target: T): Option[i32] {
   return None;
 }
 
-pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
+pub function (xs: (T: cmp.Eq)[]) starts_with(prefix: T[]): boolean {
   if (prefix.len() > xs.len()) {
     return false;
   }
@@ -1266,7 +1267,7 @@ pub function starts_with[T: cmp.Eq](xs: T[], prefix: T[]): boolean {
   return true;
 }
 
-pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
+pub function (xs: (T: cmp.Eq)[]) ends_with(suffix: T[]): boolean {
   let n = xs.len();
   let m = suffix.len();
   if (m > n) {
@@ -1281,151 +1282,14 @@ pub function ends_with[T: cmp.Eq](xs: T[], suffix: T[]): boolean {
   }
   return true;
 }
-
-pub function (xs: T[]) is_empty(): boolean {
-  return is_empty(xs);
-}
-
-// The first element, or None when the array is empty.
-pub function (xs: T[]) first(): Option[T] {
-  return first(xs);
-}
-
-pub function (xs: T[]) last(): Option[T] {
-  return last(xs);
-}
-
-pub function (xs: T[]) get(i: i32): Option[T] {
-  return get(xs, i);
-}
-
-pub function (xs: T[]) map[U](f: (T) => U): U[] {
-  return map(xs, f);
-}
-
-pub function (xs: T[]) filter(keep: (T) => boolean): T[] {
-  return filter(xs, keep);
-}
-
-pub function (xs: T[]) fold[A](init: A, f: (A, T) => A): A {
-  return fold(xs, init, f);
-}
-
-pub function (xs: T[]) any(pred: (T) => boolean): boolean {
-  return any(xs, pred);
-}
-
-pub function (xs: T[]) all(pred: (T) => boolean): boolean {
-  return all(xs, pred);
-}
-
-pub function (xs: T[]) none(pred: (T) => boolean): boolean {
-  return none(xs, pred);
-}
-
-pub function (xs: T[]) find(pred: (T) => boolean): Option[T] {
-  return find(xs, pred);
-}
-
-pub function (xs: T[]) find_last(pred: (T) => boolean): Option[T] {
-  return find_last(xs, pred);
-}
-
-pub function (xs: T[]) rposition(pred: (T) => boolean): Option[i32] {
-  return rposition(xs, pred);
-}
-
-pub function (xs: T[]) count_where(pred: (T) => boolean): i32 {
-  return count_where(xs, pred);
-}
-
-pub function (xs: T[]) sum_by(key: (T) => i32): i32 {
-  return sum_by(xs, key);
-}
-
-pub function (xs: T[]) enumerate(): (i32, T)[] {
-  return enumerate(xs);
-}
-
-pub function (xs: T[]) concat(other: [T]): T[] {
-  return concat(xs, other);
-}
-
-pub function (xs: T[]) zip[U](other: U[]): (T, U)[] {
-  return zip(xs, other);
-}
-
-pub function (xs: T[]) step_by(n: i32): T[] {
-  return step_by(xs, n);
-}
-
-pub function (xs: T[]) flat_map[U](f: (T) => U[]): U[] {
-  return flat_map(xs, f);
-}
-
-pub function (xs: T[]) intersperse(sep: T): T[] {
-  return intersperse(xs, sep);
-}
 ```
 
-### `13 pub function (xs: T[]) rotate_left(n: i32): T[]`
+### `13 pub function (xs: (T: cmp.Ord)[]) is_sorted(): boolean`
 
 ```fern
-<<13 pub function (xs: T[]) rotate_left(n: i32): T[]>>=
-pub function (xs: T[]) rotate_left(n: i32): T[] {
-  return rotate_left(xs, n);
-}
-
-pub function (xs: T[]) rotate_right(n: i32): T[] {
-  return rotate_right(xs, n);
-}
-
-pub function (xs: T[]) moved(from: i32, to: i32): T[] {
-  return moved(xs, from, to);
-}
-
-pub function (xs: T[]) reduce(f: (T, T) => T): Option[T] {
-  return reduce(xs, f);
-}
-
-pub function (xs: T[]) max_by(cmp: (T, T) => i32): Option[T] {
-  return max_by(xs, cmp);
-}
-
-pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] {
-  return min_by(xs, cmp);
-}
-
+<<13 pub function (xs: (T: cmp.Ord)[]) is_sorted(): boolean>>=
 pub function (xs: (T: cmp.Ord)[]) is_sorted(): boolean {
   return cmp.is_sorted(xs);
-}
-
-pub function (xs: (T: cmp.Ord)[]) binary_search(target: T): Option[i32] {
-  return binary_search(xs, target);
-}
-
-pub function (xs: (T: cmp.Ord)[]) max_index(): Option[i32] {
-  return max_index(xs);
-}
-
-pub function (xs: (T: cmp.Ord)[]) min_index(): Option[i32] {
-  return min_index(xs);
-}
-
-pub function (xs: (T: cmp.Eq)[]) dedup(): T[] {
-  return dedup(xs);
-}
-
-pub function (xs: (T: cmp.Eq)[]) all_equal(): boolean {
-  return all_equal(xs);
-}
-
-pub function (xs: (T: cmp.Eq)[]) starts_with(prefix: T[]): boolean {
-  return starts_with(xs, prefix);
-}
-
-pub function (xs: (T: cmp.Eq)[]) ends_with(suffix: T[]): boolean {
-  return ends_with(xs, suffix);
 }
 
 pub function (xs: (T: cmp.Eq)[]) index_of(target: T): Option[i32] {
@@ -1434,30 +1298,6 @@ pub function (xs: (T: cmp.Eq)[]) index_of(target: T): Option[i32] {
 
 pub function (xs: (T: cmp.Eq)[]) contains(target: T): boolean {
   return cmp.contains(xs, target);
-}
-
-pub function (xs: (T: cmp.Eq)[]) index_of_last(target: T): Option[i32] {
-  return index_of_last(xs, target);
-}
-
-pub function (xs: T[]) partition(pred: (T) => boolean): (T[], T[]) {
-  return partition(xs, pred);
-}
-
-pub function (xs: T[]) scan[A](init: A, f: (A, T) => A): A[] {
-  return scan(xs, init, f);
-}
-
-pub function (xs: T[]) chunks(size: i32): T[][] {
-  return chunks(xs, size);
-}
-
-pub function (xs: T[]) chunks_exact(size: i32): T[][] {
-  return chunks_exact(xs, size);
-}
-
-pub function (xs: T[]) windows(size: i32): T[][] {
-  return windows(xs, size);
 }
 
 pub function (xs: (T: ops.Add + ops.Zero)[]) sum(): T {
@@ -1549,39 +1389,11 @@ pub function (xs: (T: cmp.Ord + ops.Sub)[]) spread(): Option[T] {
 }
 ```
 
-### `14 pub function (xs: (T: cmp.Eq)[]) count(target: T): i32`
+### `14 pub function (xs: (T: cmp.Eq)[]) distinct(): T[]`
 
 ```fern
-<<14 pub function (xs: (T: cmp.Eq)[]) count(target: T): i32>>=
-pub function (xs: (T: cmp.Eq)[]) count(target: T): i32 {
-  return count(xs, target);
-}
-
-pub function (xs: T[]) reverse(): T[] {
-  return reverse(xs);
-}
-
-pub function (xs: T[]) take(n: i32): T[] {
-  return take(xs, n);
-}
-
-pub function (xs: T[]) clone(): T[] {
-  return clone(xs);
-}
-
-pub function (xs: T[]) drop(n: i32): T[] {
-  return drop(xs, n);
-}
-
-pub function (own xs: T[]) swap_at(i: i32, own v: T): (T, T[]) {
-  return swap_at(xs, i, v);
-}
-
+<<14 pub function (xs: (T: cmp.Eq)[]) distinct(): T[]>>=
 pub function (xs: (T: cmp.Eq)[]) distinct(): T[] {
   return cmp.distinct(xs);
-}
-
-pub function (xs: T[]) position(pred: (T) => boolean): Option[i32] {
-  return position(xs, pred);
 }
 ```

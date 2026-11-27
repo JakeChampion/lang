@@ -1,0 +1,100 @@
+import "std/test";
+import "std/array";
+import "std/option";
+
+// Each operation of std/array is a method. The module-qualified call and the
+// pipe reach the same method.
+
+function lt4(x: i32): boolean {
+  return x < 4;
+}
+
+function even(x: i32): boolean {
+  return x % 2 == 0;
+}
+
+function half(x: i32): Option[i32] {
+  if (x % 2 == 0) {
+    return Some(x / 2);
+  }
+  return None;
+}
+
+function same(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for i in 0..a.len() {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function test_take_drop_while(): test.TestOutcome {
+  let xs: i32[] = [1, 2, 5, 3];
+  if (!same(xs.take_while(lt4), [1, 2]) || !same(xs.drop_while(lt4), [5, 3])) {
+    return test.fail("take_while or drop_while");
+  }
+  return test.assert_true(same(array.take_while(xs, lt4), xs |> array.take_while(lt4)));
+}
+
+function test_take_drop_last(): test.TestOutcome {
+  let xs: i32[] = [1, 2, 3, 4];
+  if (!same(xs.take_last(2), [3, 4]) || !same(xs.drop_last(1), [1, 2, 3])) {
+    return test.fail("take_last or drop_last");
+  }
+  return test.assert_true(same(array.drop_last(xs, 1), xs |> array.drop_last(1)));
+}
+
+function test_slice(): test.TestOutcome {
+  let xs: i32[] = [1, 2, 3, 4];
+  if (!same(xs.slice(1, 3), [2, 3])) {
+    return test.fail("slice");
+  }
+  return test.assert_true(same(array.slice(xs, 1, 3), xs |> array.slice(1, 3)));
+}
+
+function test_find_map_indices(): test.TestOutcome {
+  let xs: i32[] = [3, 4, 6];
+  if (xs.find_map(half).unwrap_or(0) != 2 || !same(xs.find_indices(even), [1, 2])) {
+    return test.fail("find_map or find_indices");
+  }
+  return test.assert_eq(array.find_map(xs, half).unwrap_or(0), (xs |> array.find_map(half)).unwrap_or(0));
+}
+
+function test_running(): test.TestOutcome {
+  let xs: i32[] = [2, 1, 3];
+  if (!same(xs.running_max(), [2, 2, 3]) || !same(xs.running_min(), [2, 1, 1])) {
+    return test.fail("running_max or running_min");
+  }
+  return test.assert_true(same(array.running_max(xs), xs |> array.running_max()));
+}
+
+function test_sets(): test.TestOutcome {
+  let a: i32[] = [1, 2, 3];
+  let b: i32[] = [2, 3, 4];
+  if (!same(a.union(b), [1, 2, 3, 4]) || !same(a.intersection(b), [2, 3]) || !same(a.difference(b), [1])) {
+    return test.fail("union, intersection or difference");
+  }
+  return test.assert_true(same(array.union(a, b), a |> array.union(b)));
+}
+
+function test_bounded(): test.TestOutcome {
+  let xs: i32[] = [1, 2, 3];
+  let ys: i32[] = [1, 2, 3];
+  return test.assert_true(same(xs.bounded(4096), [1, 2, 3]) && same(array.bounded(ys, 0), [1, 2, 3]));
+}
+
+function main(): i32 {
+  let r = test.new("std/array method surface");
+  r = r.it("take_while and drop_while", test_take_drop_while);
+  r = r.it("take_last and drop_last", test_take_drop_last);
+  r = r.it("slice", test_slice);
+  r = r.it("find_map and find_indices", test_find_map_indices);
+  r = r.it("running_max and running_min", test_running);
+  r = r.it("union, intersection and difference", test_sets);
+  r = r.it("bounded", test_bounded);
+  return r.finish();
+}
