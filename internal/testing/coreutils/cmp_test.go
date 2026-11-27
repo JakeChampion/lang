@@ -81,6 +81,10 @@ func cmpCases(t *testing.T) []invocation {
 		{name: "silent", args: []string{"--silent", a, b}},
 		{name: "quiet hides an open error", args: []string{"-s", a, missing}},
 		{name: "verbose and quiet", args: []string{"-l", "-s", a, b}},
+		{name: "conflicting modes before help", args: []string{"-ls", "--help"}},
+		{name: "conflicting modes before version", args: []string{"--silent", "--verbose", "--version"}},
+		{name: "conflicting modes before invalid limit", args: []string{"-sl", "-n", "bad"}},
+		{name: "invalid limit before conflicting modes", args: []string{"-n", "bad", "-ls"}},
 
 		{name: "skip both", args: []string{"-i", "6", a, b}},
 		{name: "skip each", args: []string{"-i", "6:6", a, b}},

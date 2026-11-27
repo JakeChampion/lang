@@ -218,9 +218,9 @@ function parse(argv: string[]): (Cfg, string[]) {
       break;
     };
     cfg = apply(cfg, m);
-  }
-  if (cfg.verbose && cfg.quiet) {
-    usage_error("options -l and -s are incompatible");
+    if (cfg.verbose && cfg.quiet) {
+      usage_error("options -l and -s are incompatible");
+    }
   }
   return (cfg, g.operands());
 }
