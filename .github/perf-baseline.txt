@@ -210,7 +210,7 @@ x86_64/video_qtrle.text 5351
 x86_64/video_qtrle.ir 1351828808
 aarch64/video_qtrle.text 5870
 aarch64/video_qtrle.ir 1183393090
-x86_64/hex_encode.text	1946
+x86_64/hex_encode.text	1972
 x86_64/hex_encode.ir	53831741
 aarch64/hex_encode.text	2140
 x86_64/base64_encode.text	2229
