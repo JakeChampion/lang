@@ -34,7 +34,7 @@ function elb_recurse_stmt(st: ast.Stmt): ast.Stmt {
       return ast.StmtWhile { cond: w.cond, body: elide_len_bounded_body(w.body), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: fr.iter, body: elide_len_bounded_body(fr.body), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
@@ -348,7 +348,7 @@ function elb_mark_stmt(st: ast.Stmt, idx: string, arr: string): ast.Stmt {
       return ast.StmtWhile { cond: elb_mark_expr(w.cond, idx, arr), body: elb_mark_stmts(w.body, idx, arr), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: elb_mark_expr(fr.iter, idx, arr), body: elb_mark_stmts(fr.body, idx, arr), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];

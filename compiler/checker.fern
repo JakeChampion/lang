@@ -36755,7 +36755,7 @@ function annotate_stmt(st: ast.Stmt, s: Scope, after: Scope): ast.Stmt {
       if let Some(lowered) = iterator_lowering(fr, s) {
         return annotate_stmt(lowered, s, after);
       }
-      return ast.StmtFor { var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: annotate_expr(fr.iter, s), body: annotate_block(fr.body, for_body_scope(fr, s)), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: annotate_stmt(d.action, s, after), on_error: d.on_error, line: d.line };
@@ -38410,12 +38410,12 @@ function qualified_variant_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Sc
   return ast.ExprStructLit { ...sl, type_name: member, enum_owner: du.name, field_names: names };
 }
 
-// A parsed local has a declaration ID within its source module. Generated
-// locals keep their original coordinates. A range also needs its loop line.
+// A parsed binding has a declaration ID within its source module. Generated
+// bindings keep their coordinates. A generated range also needs its loop line.
 // Each form keeps the binding name through copies and specialization.
 const LIT_NO_SITE: i32 = 0;
 
-const LIT_PARSED_LOCAL: i32 = 1;
+const LIT_PARSED_BINDING: i32 = 1;
 
 const LIT_GENERATED_LOCAL: i32 = 2;
 
@@ -40304,14 +40304,22 @@ function lit_return_ids(stmts: ast.Stmt[], s: Scope, ids: i32[]): i32[] {
   return ids;
 }
 
+function lit_parsed_site(name: string, line: i32, id: i32): LitBindingSite {
+  return LitBindingSite { name: name, kind: LIT_PARSED_BINDING, position: source_position(util.pos_file_index(line), id), range_line: 0 };
+}
+
 function lit_var_site(v: ast.StmtVar): LitBindingSite {
   if (v.decl_id > 0) {
-    return LitBindingSite { name: v.name, kind: LIT_PARSED_LOCAL, position: source_position(util.pos_file_index(v.line), v.decl_id), range_line: 0 };
+    return lit_parsed_site(v.name, v.line, v.decl_id);
   }
   return LitBindingSite { name: v.name, kind: LIT_GENERATED_LOCAL, position: source_position(v.line, v.col), range_line: 0 };
 }
 
-function lit_range_site(fr: ast.StmtFor, lo: ast.Expr): LitBindingSite {
+function lit_range_site(fr: ast.StmtFor): LitBindingSite {
+  if (fr.decl_id > 0 && fr.line != 0) {
+    return lit_parsed_site(fr.var_name, fr.line, fr.decl_id);
+  }
+  let lo = lit_range_bounds(fr.iter)[0];
   return LitBindingSite { name: fr.var_name, kind: LIT_RANGE_SITE, position: source_position(ast.expr_line(lo), ast.expr_col(lo)), range_line: fr.line };
 }
 
@@ -40336,7 +40344,7 @@ function lit_range(fr: ast.StmtFor, s: Scope, st: LitInfer): LitInfer {
   let body = for_body_scope(fr, s);
   if (ls) {
     let k = out.parent.len();
-    out = lit_new(out, lit_range_site(fr, bounds[0]));
+    out = lit_new(out, lit_range_site(fr));
     let ids: i32[] = [k];
     for a in lids {
       ids = ids.append(a);
@@ -40797,14 +40805,13 @@ function lit_rewrite_stmt(st: ast.Stmt, rw: LitRewrite): (ast.Stmt, LitRewrite, 
       if (!for_iter_is_range(fr.iter)) {
         return (st, rw, false);
       }
-      let bounds = lit_range_bounds(fr.iter);
-      let at2 = rw.keys.find(lit_range_site(fr, bounds[0]));
+      let at2 = rw.keys.find(lit_range_site(fr));
       if (at2 < 0 || !lit_suffix_spelled(rw.tags[at2])) {
         return (st, rw, false);
       }
       let tag = rw.tags[at2];
       let nb: ast.Expr[] = [];
-      for bound in bounds {
+      for bound in lit_range_bounds(fr.iter) {
         if (int_literal_tree(bound)) {
           nb = nb.append(settle_int_tree(bound, tag));
         } else {

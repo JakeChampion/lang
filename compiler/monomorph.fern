@@ -924,7 +924,7 @@ function mono_stmt(st: ast.Stmt, env: parser.MEnv, funcs: parser.MFns, ins: pars
       let ety = for_elem_spelling(parser.mono_infer(fr.iter, env, funcs), fr);
       let benv = parser.menv_bind_destructure(env.ebind(fr.var_name, ety), fr.destr, ety);
       let fb = mono_stmts(fr.body, benv, funcs, it.rins, ret_ty);
-      return RStmtOne { rstmt: ast.StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, renv: env, rins2: fb.rins3 };
+      return RStmtOne { rstmt: ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, renv: env, rins2: fb.rins3 };
     },
     ast.StmtMatch(m) => {
       let sv = mono_expr(m.scrutinee, env, funcs, ins);
@@ -2758,7 +2758,7 @@ function ms_stmt(st: ast.Stmt, env: parser.MEnv, gstructs: parser.StructDecl[], 
       let it = ms_expr(fr.iter, env, gstructs, funcs, ins);
       let benv = env.ebind(fr.var_name, ms_elem_ty(parser.mono_infer(it.rexpr, env, funcs), gstructs, funcs));
       let fb = ms_stmts(fr.body, benv, gstructs, funcs, it.rins, ret_ty);
-      return RStmtOne { rstmt: ast.StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, renv: env, rins2: fb.rins3 };
+      return RStmtOne { rstmt: ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, renv: env, rins2: fb.rins3 };
     },
     ast.StmtMatch(m) => {
       let sv = ms_expr(m.scrutinee, env, gstructs, funcs, ins);
@@ -4098,7 +4098,7 @@ function me_stmt(st: ast.Stmt, env: parser.MEnv, ret_ty: string, enums: parser.E
       }
       let benv = env.ebind(fr.var_name, elty);
       let fb = me_stmts(fr.body, benv, ret_ty, enums, structs, funcs, it.rins);
-      return RStmtOne { rstmt: ast.StmtFor { var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, renv: env, rins2: fb.rins3 };
+      return RStmtOne { rstmt: ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: it.rexpr, body: fb.rstmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, renv: env, rins2: fb.rins3 };
     },
     ast.StmtMatch(m) => {
       let sv = me_expr(m.scrutinee, "", env, enums, structs, funcs, ins);

@@ -150,7 +150,7 @@ function dl_while(w: ast.StmtWhile, body: ast.Stmt[]): ast.Stmt {
 }
 
 function dl_for(fr: ast.StmtFor, body: ast.Stmt[]): ast.Stmt {
-  return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+  return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: fr.iter, body: body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
 }
 
 function dl_iter_cleanup(actions: ast.Stmt[], flags: i32[], start: i32, end: i32): ast.Stmt[] {
@@ -315,7 +315,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
       ast.StmtFor(fr) => {
         let fie = dl_edges_expr(fr.iter, actions, flags, start, armed, label, own_level);
         armed = fie.armed;
-        let fl = ast.StmtFor { var_name: fr.var_name, iter: fie.expr, body: fr.body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+        let fl = ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: fie.expr, body: fr.body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
         let fr2 = dl_expand_loop_edges(fr.body, actions, flags, start, armed, label, false);
         if (fr2.armed > armed) {
           armed = fr2.armed;
@@ -442,7 +442,7 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
       let itr = dl_collect_expr(fr.iter, actions, flags);
       let fstart = itr.actions.len();
       let br = dl_collect_stmts(fr.body, itr.actions, itr.flags);
-      let fl = ast.StmtFor { var_name: fr.var_name, iter: itr.expr, body: fr.body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      let fl = ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: itr.expr, body: fr.body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
       let one: ast.Stmt[] = [dl_for(fl, dl_loop_body(br.stmts, br.actions, br.flags, fstart, fr.label))];
       return DeferAcc { stmts: one, actions: br.actions, flags: br.flags };
     },
@@ -663,7 +663,7 @@ function dl_expand_return_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[], 
       return one;
     },
     ast.StmtFor(fr) => {
-      let fl = ast.StmtFor { var_name: fr.var_name, iter: dl_return_expr(fr.iter, actions, flags, armed), body: fr.body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      let fl = ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: dl_return_expr(fr.iter, actions, flags, armed), body: fr.body, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
       let one: ast.Stmt[] = [dl_for(fl, dl_expand_returns(fr.body, actions, flags, dl_armed_after_expr(fr.iter, armed)))];
       return one;
     },
