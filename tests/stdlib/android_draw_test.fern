@@ -272,6 +272,39 @@ function test_image_copies_the_middle(): test.TestOutcome {
   return test.assert_eq(f.pixel(0, 29).to_string(), draw.rgb(3, 1, 7).to_string());
 }
 
+// Each pixel of the box is the pixel of the image at its place, alpha
+// also, with the middle of the image in the box and a clip on the left. The
+// other pixels do not change.
+function test_image_every_pixel(): test.TestOutcome {
+  let px: u8[] = [];
+  for k in 0..23 * 17 {
+    let p = noise(1300 + k);
+    px = px.append((p & 255) as u8).append((p >> 8 & 255) as u8).append((p >> 16 & 255) as u8).append((p >> 24 & 255) as u8);
+  }
+  let img = draw.Image { width: 23, height: 17, pixels: px };
+  let f = frame(40, 30);
+  for y in 0..30 {
+    for x in 0..40 {
+      f.store(x, y, 1, 1, noise(1700 + y * 40 + x));
+    }
+  }
+  f.image(-4, 3, 20, 12, img);
+  let bad: string[] = [];
+  for y in 0..30 {
+    for x in 0..40 {
+      let want = noise(1700 + y * 40 + x);
+      if (y >= 3 && y < 15 && x < 16) {
+        want = img.pixel(x + 4 + 1, y - 3 + 2);
+      }
+      if (f.pixel(x, y) != want) {
+        bad = bad.append(x.to_string() + "," + y.to_string());
+      }
+    }
+  }
+  free_frame(f);
+  return test.assert_eq(bad.join(" "), "");
+}
+
 function test_clip_corners(): test.TestOutcome {
   let f = frame(30, 30);
   defer free_frame(f);
@@ -626,6 +659,7 @@ function main(): i32 {
   r = r.it("an unknown code point draws as a question mark", test_unknown_code_points_draw_as_question_marks);
   r = r.it("cover_size keeps the shape of an image", test_cover_size_keeps_the_shape);
   r = r.it("an image shows its middle in its box", test_image_copies_the_middle);
+  r = r.it("an image copies each pixel of its box", test_image_every_pixel);
   r = r.it("clip_corners rounds the corners of a box", test_clip_corners);
   r = r.it("cover blends a colour by the part of a pixel it covers", test_cover);
   r = r.it("scaled blends the four nearest pixels", test_scaled);

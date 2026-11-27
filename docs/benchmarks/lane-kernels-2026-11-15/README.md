@@ -88,6 +88,13 @@ The scalar counts are from the compiler of main at 2903c63b, and the lane counts
 For each pixel, the fill runs 7.0 instructions in place of 123.
 `blend` runs 13.7 in place of 125.6, and `mask` runs 13.0 in place of 56.0.
 
+### `image` (2026-11-27)
+
+An `Image` and a `Frame` hold the 4 bytes of a pixel in the same order.
+So `image` copies each row of its box with one `__memcpy`, in place of a pack and a store for each pixel.
+`bench/draw_image.fern` copies 512 by 256 pixels 64 times.
+`image` and the copies that it calls run 9,396,713 instructions in place of 260,073,897: 1.1 for each pixel in place of 31.0.
+
 ## The JPEG decoder (2026-11-26)
 
 The inverse transform of `std/jpeg` does two samples in one step, as lanes of `f64x2`.
