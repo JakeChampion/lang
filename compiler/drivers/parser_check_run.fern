@@ -1020,6 +1020,9 @@ function declaration_ids(st: ast.Stmt, own ids: i32[]): i32[] {
   if let ast.StmtVar(v) = st {
     return ids.append(v.decl_id);
   }
+  if let ast.StmtFor(fr) = st {
+    return ids.append(fr.decl_id);
+  }
   return ids;
 }
 
@@ -1029,7 +1032,7 @@ function keep_declaration_ids(e: ast.Expr, own ids: i32[]): i32[] {
 
 function check_local_declaration_ids(): test.TestOutcome {
   let source = "function f(): i32 { let a = 1; let b = { let a = 2; a };"
-    + " let s = f\"{({ let z = 3; z })}\"; let c = 4; return c; }"
+    + " let s = f\"{({ let z = 3; z })}\"; let c = 4; for i in 0..2 { for j in 1..=i { c += j; } } return c; }"
     + " function g(): i32 { let a = 5; return a; }";
   let mod = parser.parse_module(lexer.tokenize(source));
   let ids: i32[] = [];
@@ -1038,10 +1041,10 @@ function check_local_declaration_ids(): test.TestOutcome {
       ids = astwalk.fold_stmt_nodes(st, ids, declaration_ids, keep_declaration_ids, astwalk.descend_all);
     }
   }
-  if (ids.len() != 7) {
-    return test.fail("expected seven local declarations");
+  if (ids.len() != 9) {
+    return test.fail("expected nine local and loop declarations");
   }
-  for id in 1..8 {
+  for id in 1..10 {
     if (!util.has_i32(ids, id)) {
       return test.fail("expected a distinct ID for each declaration");
     }

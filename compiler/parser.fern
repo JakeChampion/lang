@@ -708,7 +708,7 @@ pub function s_while(cond: ast.Expr, body: ast.Stmt[]): ast.Stmt {
 }
 
 function s_for(var_name: string, iter: ast.Expr, body: ast.Stmt[]): ast.Stmt {
-  return ast.StmtFor { var_name: var_name, iter: iter, body: body, label: "", line: 0, col: 0, destr: ast.no_destr() };
+  return ast.StmtFor { decl_id: 0, var_name: var_name, iter: iter, body: body, label: "", line: 0, col: 0, destr: ast.no_destr() };
 }
 
 pub function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
@@ -720,7 +720,7 @@ pub function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
       return ast.StmtWhile { cond: w.cond, body: w.body, label: label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtIf(f) => {
       let n = f.then_body.len();
@@ -833,7 +833,7 @@ function rewrite_builder_stmt(s: ast.Stmt, b: string): ast.Stmt {
       return ast.StmtWhile { cond: w.cond, body: rewrite_builder_stmts(w.body, b), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: fr.iter, body: rewrite_builder_stmts(fr.body, b), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];
@@ -1265,7 +1265,7 @@ function resolve_labels_stmt(st: ast.Stmt, labels: string[]): ast.Stmt {
       return ast.StmtWhile { cond: rl_expr(w.cond, labels), body: resolve_labels_block(w.body, labels.append(w.label)), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: rl_expr(fr.iter, labels), body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: rl_expr(fr.iter, labels), body: resolve_labels_block(fr.body, labels.append(fr.label)), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtIf(f) => {
       return ast.StmtIf { ...f, cond: rl_expr(f.cond, labels), then_body: resolve_labels_block(f.then_body, labels), else_body: resolve_labels_block(f.else_body, labels) };
@@ -6149,7 +6149,8 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
     p = kvi_p.with_no_struct(kv_saved);
     let (kvb_body, kvb_p) = parse_block(p);
     p = kvb_p;
-    return (ast.StmtFor { var_name: "", iter: kvi_expr, body: kvb_body, label: "", line: 0, col: for_col, destr: kvdestr }, p);
+    p = Par { ...p, decl_count: p.decl_count + 1 };
+    return (ast.StmtFor { decl_id: p.decl_count, var_name: "", iter: kvi_expr, body: kvb_body, label: "", line: 0, col: for_col, destr: kvdestr }, p);
   }
   let fpre: ast.Stmt[] = [];
   let fvar = "";
@@ -6215,7 +6216,8 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   for fbi in 0..fb_body.len() {
     fpre = fpre.append(fb_body[fbi]);
   }
-  return (ast.StmtFor { var_name: fvar, iter: iter_expr, body: fpre, label: "", line: 0, col: for_col, destr: ast.no_destr() }, p);
+  p = Par { ...p, decl_count: p.decl_count + 1 };
+  return (ast.StmtFor { decl_id: p.decl_count, var_name: fvar, iter: iter_expr, body: fpre, label: "", line: 0, col: for_col, destr: ast.no_destr() }, p);
 }
 
 function for_refused(p: Par, f: ast.Fault): (ast.Stmt, Par) {
@@ -6239,7 +6241,7 @@ function with_stmt_line(st: ast.Stmt, line: i32): ast.Stmt {
       return ast.StmtWhile { cond: w.cond, body: w.body, label: w.label, line: line, is_loop: w.is_loop };
     },
     ast.StmtFor(fo) => {
-      return ast.StmtFor { var_name: fo.var_name, iter: fo.iter, body: fo.body, label: fo.label, line: line, col: fo.col, destr: fo.destr };
+      return ast.StmtFor { decl_id: fo.decl_id, var_name: fo.var_name, iter: fo.iter, body: fo.body, label: fo.label, line: line, col: fo.col, destr: fo.destr };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: d.action, on_error: d.on_error, line: line };
@@ -11823,7 +11825,7 @@ pub function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): a
         out = out.append(ast.StmtWhile { cond: subst_expr(w.cond, tparams, cts), body: subst_stmts(w.body, tparams, cts), label: w.label, line: w.line, is_loop: w.is_loop });
       },
       ast.StmtFor(fr) => {
-        out = out.append(ast.StmtFor { var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr });
+        out = out.append(ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: subst_expr(fr.iter, tparams, cts), body: subst_stmts(fr.body, tparams, cts), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr });
       },
       ast.StmtMatch(m) => {
         let arms: ast.MatchArm[] = [];
@@ -13579,7 +13581,7 @@ function rvf_stmt(st: ast.Stmt, structs: StructDecl[]): ast.Stmt {
       return ast.StmtAssign { ...a, value: rvf_expr(a.value, structs) };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: rvf_expr(fr.iter, structs), body: rvf_block(fr.body, structs), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtDefer(d) => {
       return ast.StmtDefer { action: rvf_stmt(d.action, structs), on_error: d.on_error, line: d.line };
@@ -17984,7 +17986,7 @@ function settle_stmt(st: ast.Stmt, ret_type: string, locals: SettleLocals, fns: 
       return ast.StmtWhile { cond: settle_expr(w.cond, locals, fns, structs), body: settle_block(w.body, ret_type, locals, fns, structs), label: w.label, line: w.line, is_loop: w.is_loop };
     },
     ast.StmtFor(fr) => {
-      return ast.StmtFor { var_name: fr.var_name, iter: settle_expr(fr.iter, locals, fns, structs), body: settle_block(fr.body, ret_type, locals, fns, structs), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: settle_expr(fr.iter, locals, fns, structs), body: settle_block(fr.body, ret_type, locals, fns, structs), label: fr.label, line: fr.line, col: fr.col, destr: fr.destr };
     },
     ast.StmtMatch(m) => {
       let arms: ast.MatchArm[] = [];

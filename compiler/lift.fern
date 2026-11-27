@@ -459,7 +459,7 @@ function desugar_lambda_returns(body: ast.Stmt[], counter: i32, sig: RetSig): De
       ast.StmtFor(fo) => {
         let fod = desugar_lambda_returns(fo.body, c, sig);
         c = fod.counter;
-        out = out.append(ast.StmtFor { var_name: fo.var_name, iter: fo.iter, body: fod.body, label: fo.label, line: 0, col: 0, destr: fo.destr });
+        out = out.append(ast.StmtFor { decl_id: fo.decl_id, var_name: fo.var_name, iter: fo.iter, body: fod.body, label: fo.label, line: 0, col: 0, destr: fo.destr });
       },
       ast.StmtMatch(m) => {
         let narms: ast.MatchArm[] = [];
@@ -538,7 +538,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
     ast.StmtFor(fo) => {
       let ie = lift_expr_walk(fo.iter, acc, gfns);
       let b = lift_stmts(fo.body, ie.acc, gfns);
-      let ns: ast.Stmt = ast.StmtFor { var_name: fo.var_name, iter: ie.expr, body: b.stmts, label: fo.label, line: fo.line, col: fo.col, destr: fo.destr };
+      let ns: ast.Stmt = ast.StmtFor { decl_id: fo.decl_id, var_name: fo.var_name, iter: ie.expr, body: b.stmts, label: fo.label, line: fo.line, col: fo.col, destr: fo.destr };
       return LiftStmts { stmts: [ns], acc: b.acc };
     },
     _ => {
@@ -941,7 +941,7 @@ function with_nested_bodies(st: ast.Stmt, changed: boolean[], bodies: ast.Stmt[]
       if (!changed[0]) {
         return st;
       }
-      return ast.StmtFor { var_name: fr.var_name, iter: fr.iter, body: bodies[0], label: fr.label, line: 0, col: 0, destr: fr.destr };
+      return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: fr.iter, body: bodies[0], label: fr.label, line: 0, col: 0, destr: fr.destr };
     },
     ast.StmtIf(f) => {
       let then_body = f.then_body;
@@ -3524,7 +3524,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
     ast.StmtFor(fr) => {
       let itr = wcap_expr(fr.iter, fd, gfns, structs, mfuncs, acc, atargets);
       let fb = box_wide_captures_stmts(fr.body, fd, gfns, structs, mfuncs, atargets);
-      return WCapStmt { stmt: ast.StmtFor { var_name: fr.var_name, iter: itr.expr, body: fb.stmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, caps: itr.caps, changed: itr.changed || fb.changed };
+      return WCapStmt { stmt: ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: itr.expr, body: fb.stmts, label: fr.label, line: fr.line, col: fr.col, destr: fr.destr }, caps: itr.caps, changed: itr.changed || fb.changed };
     },
     ast.StmtMatch(m) => {
       let sr = wcap_expr(m.scrutinee, fd, gfns, structs, mfuncs, acc, atargets);

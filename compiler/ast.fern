@@ -704,7 +704,7 @@ pub function destr_names(d: Destr): string[] {
 // A header binding comes from the header of the block that holds it: a
 // parameter pattern, a loop variable or a match-arm pattern. The block can
 // declare its names again.
-// The parser numbers ordinary let declarations from one within each module.
+// The parser numbers ordinary let declarations and for loops from one within each module.
 // Fresh pattern and generated bindings have ID zero. Copies keep the ID.
 pub struct StmtVar { decl_id: i32, name: string, type_name: string, init: Expr, line: i32, col: i32, fn_ret: string, fn_param_types: string[], destr: Destr, header: boolean }
 
@@ -809,7 +809,9 @@ pub struct MatchArm { pattern: Pattern, body: Stmt[], line: i32, col: i32, guard
 // arms_open is the line of the brace that opens the arms of a value match.
 pub struct StmtMatch { scrutinee: Expr, arms: MatchArm[], line: i32, col: i32, origin: string, sugar: MatchArm[], else_chained: boolean, arms_open: i32 }
 
-pub struct StmtFor { var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32, destr: Destr }
+// A parsed for loop shares the declaration counter with ordinary let declarations.
+// A generated loop has ID zero.
+pub struct StmtFor { decl_id: i32, var_name: string, iter: Expr, body: Stmt[], label: string, line: i32, col: i32, destr: Destr }
 
 pub struct StmtBreak { tag: i32, line: i32, col: i32, label: string }
 

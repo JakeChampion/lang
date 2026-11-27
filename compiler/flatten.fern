@@ -1088,6 +1088,7 @@ function rewrite_stmt(st: ast.Stmt, ctx: RewriteCtx): ast.Stmt {
     ast.StmtFor(f) => {
       let loop_locals = ctx.locals;
       return ast.StmtFor {
+        decl_id: f.decl_id,
         var_name: f.var_name,
         iter: rewrite_expr(f.iter, ctx),
         body: rewrite_block(f.body, RewriteCtx { ...ctx, locals: with_names(loop_locals, ast.append_for_names([], f)) }),
