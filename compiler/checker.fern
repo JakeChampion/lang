@@ -40691,16 +40691,14 @@ function open_rewrites(st: LitInfer, own keys: LitBindingSite[], own tags: strin
 }
 
 function lit_rewrites(st: LitInfer): LitRewrite {
-  let keys: LitBindingSite[] = [];
+  // The binding index returns the first group for a site. Its group slot also
+  // holds the agreed tag. A later copy of the site leaves its own slot empty.
   let tags: string[] = [];
-  // firsts[i] is the first local of st.keys that has keys[i], and slot is its inverse.
-  let firsts: i32[] = [];
-  let slot = util.minus_ones(st.keys.len());
   let ix = lit_binding_index(st.keys);
-  let k = 0;
-  while (k < st.keys.len()) {
-    if (st.keys[k].kind == LIT_NO_SITE) {
-      k += 1;
+  for k in 0..st.keys.len() {
+    let site = st.keys[k];
+    if (site.kind == LIT_NO_SITE) {
+      tags = tags.append("");
       continue;
     }
     let w = st.width[lit_find(st, k)];
@@ -40708,22 +40706,21 @@ function lit_rewrites(st: LitInfer): LitRewrite {
     if (!is_unknown(w)) {
       tag = typeinfo.spelling(w);
     }
-    let first = ix.find(st.keys[k]);
+    let first = ix.find(site);
     if (first == k) {
-      slot = slot.with(k, keys.len());
-      keys = keys.append(st.keys[k]);
       tags = tags.append(tag);
-      firsts = firsts.append(k);
-    } else if (tags[slot[first]] != tag) {
-      tags = tags.with(slot[first], "");
+    } else {
+      if (tags[first] != tag) {
+        tags = tags.with(first, "");
+      }
+      tags = tags.append("");
     }
-    k += 1;
   }
   let ok: LitBindingSite[] = [];
   let ot: string[] = [];
-  for i in 0..keys.len() {
-    if (tags[i].len() > 0 && (tags[i] != "i32" || !is_unknown(st.width[lit_find(st, firsts[i])]))) {
-      ok = ok.append(keys[i]);
+  for i in 0..tags.len() {
+    if (tags[i].len() > 0 && (tags[i] != "i32" || !is_unknown(st.width[lit_find(st, i)]))) {
+      ok = ok.append(st.keys[i]);
       ot = ot.append(tags[i]);
     }
   }
