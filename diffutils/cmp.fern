@@ -540,11 +540,15 @@ function same_file(s0: Option[FileStat], s1: Option[FileStat]): boolean {
 }
 
 function stdout_is_null(): boolean {
-  let Ok(out) = stdout().stat() else { return false; };
+  let Ok(out) = stdout().stat() else {
+    return false;
+  };
   if (!filetype.is_chr(out.mode)) {
     return false;
   }
-  let Ok(device) = stat("/dev/null") else { return false; };
+  let Ok(device) = stat("/dev/null") else {
+    return false;
+  };
   return same_file(Some(out), Some(device));
 }
 
