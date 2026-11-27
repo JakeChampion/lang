@@ -1089,6 +1089,9 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
       return true;
     }
   }
+  if (binary(d, "-") && is_const(g, d.args[1]) && const_value(g, d.args[1]) > 0 && phi_at_least(g, d.args[0], const_value(g, d.args[1]), assume, steps - 1)) {
+    return true;
+  }
   if (d.kind_tag == ssa.PHI && g.i32s[x]) {
     if (assumed(assume, x)) {
       return true;
@@ -1155,6 +1158,37 @@ function counts_up_from(g: Graph, x: i32, y: i32, assume: i32[], steps: i32): bo
         return false;
       }
     } else if (!(same(g, a, x) || nonneg(g, at, a, inner, steps - 1)) || !below_a_length(g, at, a)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The phi y is at least n: each operand is a constant of at least n, or y + 1
+// below a length, which cannot wrap. A counter of `for i in n..hi` is such a phi.
+function phi_at_least(g: Graph, y: i32, n: i32, assume: i32[], steps: i32): boolean {
+  y = ssa.copy_root(g.defs, y);
+  let d = g.defs[y];
+  if (steps <= 0 || d.kind_tag != ssa.PHI || !g.i32s[y] || d.args.len() == 0 || assumed(assume, y)) {
+    return false;
+  }
+  for k in 0..d.args.len() {
+    let a = ssa.copy_root(g.defs, d.args[k]);
+    let start = folded(g, a, steps);
+    if (start != NOT_FOLDED) {
+      if (start < n as i64) {
+        return false;
+      }
+      continue;
+    }
+    let step = g.defs[a];
+    let base = -1;
+    if (binary(step, "+") && is_const(g, step.args[1]) && const_value(g, step.args[1]) == 1) {
+      base = ssa.copy_root(g.defs, step.args[0]);
+    } else if (binary(step, "+") && is_const(g, step.args[0]) && const_value(g, step.args[0]) == 1) {
+      base = ssa.copy_root(g.defs, step.args[1]);
+    }
+    if (base != y || !below_a_length(g, g.home[a], y)) {
       return false;
     }
   }
