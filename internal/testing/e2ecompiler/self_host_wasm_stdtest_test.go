@@ -1,7 +1,7 @@
 package e2ecompiler
 
 import (
-	"errors"
+	"bytes"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -28,7 +28,16 @@ var wasmUnsupportedStdTests = map[string]string{
 // Go oracle's interpreter. The program gets the environment of the host and
 // one directory, so a temporary file or directory goes there. A test that the
 // program skips because the host lacks something counts as a pass.
-func TestSelfHostStdTestWasm(t *testing.T) {
+func TestSelfHostStdTestWasm(t *testing.T) { stdTestWasmAgainstInterp(t, false) }
+
+// The same check with each program built under -sanitize. -harden is refused
+// on wasm, so this is the wasm leg of the release-storage differential: a
+// released block holds the poison word, so a read of released storage gives
+// a wrong value or a use-after-free report. The run must also report no
+// sanitizer finding.
+func TestSelfHostStdTestWasmSanitize(t *testing.T) { stdTestWasmAgainstInterp(t, true) }
+
+func stdTestWasmAgainstInterp(t *testing.T, sanitize bool) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)
@@ -51,18 +60,23 @@ func TestSelfHostStdTestWasm(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				t.Parallel()
 				wantOut, wantExit := e2eharness.InterpVerdict(t, interpBin, tc.src)
-				comp := cli.wasmComponent(t, tc.src, "FERN_STRICT_IR=1")
+				env := []string{"FERN_STRICT_IR=1"}
+				if sanitize {
+					env = append(env, "FERN_SANITIZE=1")
+				}
+				comp := cli.wasmComponent(t, tc.src, env...)
 				run := exec.Command(wasmtime, "run", "-S", "inherit-env", "--dir", t.TempDir(), comp)
+				var stderr bytes.Buffer
+				run.Stderr = &stderr
 				gotOut, runErr := stdTestOutput(run)
 				if run.ProcessState == nil {
 					t.Fatalf("wasmtime did not start: %v", runErr)
 				}
 				if gotExit := run.ProcessState.ExitCode(); gotExit != wantExit {
-					var exitErr *exec.ExitError
-					if errors.As(runErr, &exitErr) {
-						t.Logf("wasmtime stderr:\n%s", exitErr.Stderr)
-					}
-					t.Errorf("exit code: wasm %d, interp %d", gotExit, wantExit)
+					t.Errorf("exit code: wasm %d, interp %d\nwasmtime stderr:\n%s", gotExit, wantExit, stderr.String())
+				}
+				if sanitize && strings.Contains(stderr.String(), "fern-sanitizer:") {
+					t.Errorf("sanitizer finding:\n%s", stderr.String())
 				}
 				gotStr, wantStr := tapSkipsAsPasses(string(gotOut)), tapSkipsAsPasses(string(wantOut))
 				if tc.stripPrefix != "" {
