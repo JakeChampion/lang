@@ -112,7 +112,7 @@ function mk(i: i32): Bag {
 function main(): i32 {
     let total: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < args().len() + 3) {
         let r = mk(i);
         let p = r.grid;
         total = total + p.len() + p[1].len() + p[0][0];

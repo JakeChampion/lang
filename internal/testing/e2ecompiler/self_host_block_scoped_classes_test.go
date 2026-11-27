@@ -61,7 +61,7 @@ func TestSelfHostBlockScopedClassesX86_64(t *testing.T) {
 			src: `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < args().len() + 3) {
         let g: i32[][] = [[i, i + 1], [i + 2]];
         acc = acc + g.len() + g[0][0];
         i = i + 1;
@@ -206,7 +206,7 @@ function main(): i32 {
 function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < args().len() + 3) {
         let ps: P[] = [P { xs: [i, i + 1], n: i }, P { xs: [i + 2], n: 1 }];
         acc = acc + ps.len();
         i = i + 1;

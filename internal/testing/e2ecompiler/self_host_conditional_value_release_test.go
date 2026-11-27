@@ -238,7 +238,7 @@ const condBareNameBlockSrc = `function sum(xs: i32[]): i32 { let t: i32 = 0; for
 function main(): i32 {
     let t: i32 = 0;
     let j: i32 = 0;
-    while (j < 3) {
+    while (j < args().len() + 2) {
         let a = [j, 7];
         t = t + sum({ a });
         t = t + ({ a }).len() + ({ a })[1];
@@ -377,7 +377,7 @@ function main(): i32 {
     let t: i32 = 0;
     let j: i32 = 0;
     let b: P = P { x: 0, y: 0 };
-    while (j < 10) {
+    while (j < args().len() + 9) {
         b = idg(mkp(j + 1));
         t = t + b.y;
         j = j + 1;

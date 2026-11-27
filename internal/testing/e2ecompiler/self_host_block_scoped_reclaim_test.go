@@ -49,7 +49,7 @@ func TestSelfHostBlockScopedReclaimX86_64(t *testing.T) {
 		balanced(t, "bs_tuple", `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < args().len() + 3) {
         let t: (i32, i32[]) = (i, [i + 1]);
         acc = acc + t.0 + t.1[0];
         i = i + 1;
