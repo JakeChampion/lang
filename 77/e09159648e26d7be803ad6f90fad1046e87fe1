@@ -710,3 +710,15 @@ wasm32/checker.unproved	71
 x86_64/checker.refuted	5347
 x86_64/checker.weakened	230
 x86_64/checker.missed	227
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	798.9
+tls/client/openssl.handshakes_per_s	143.9
+tls/client/go.bulk_mbytes_per_s	599.2
+tls/client/go.handshakes_per_s	141.8
+tls/client/rustls.handshakes_per_s	147.1
+tls/client/bssl.handshakes_per_s	148.1
+tls/server/go.bulk_mbytes_per_s	364.7
+tls/server/curl.bulk_mbytes_per_s	408.3
+tls/server/handshakes_per_s	794.0
+tls/server/resumed_handshakes_per_s	934.8
