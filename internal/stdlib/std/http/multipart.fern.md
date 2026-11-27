@@ -343,11 +343,11 @@ function __take(r: Reader, n: i32, limit: i32): Result[(u8[], boolean, Reader), 
   if (r.part_total + take > r.limits.part_bytes) {
     return Err(PartTooLarge(r.limits.part_bytes));
   }
-  let bytes = array.slice(r.carry, 0, take);
-  let rest = array.slice(r.carry, take, r.carry.len());
+  let bytes = r.carry.slice(0, take);
+  let rest = r.carry.slice(take, r.carry.len());
   let complete = take == limit && __find(rest, r.delim, 0) == 0;
   if (complete) {
-    rest = array.slice(rest, r.delim.len(), rest.len());
+    rest = rest.slice(r.delim.len(), rest.len());
     return Ok((bytes, true, Reader { ...r, carry: rest, part_total: r.part_total + take, in_part: false, after_delim: true }));
   }
   return Ok((bytes, false, Reader { ...r, carry: rest, part_total: r.part_total + take }));
@@ -422,14 +422,14 @@ function __to_delim(r: Reader): Result[Reader, MultipartError] {
   while (true) {
     let at = __find(cur.carry, cur.delim, 0);
     if (at >= 0) {
-      return Ok(Reader { ...cur, carry: array.slice(cur.carry, at + cur.delim.len(), cur.carry.len()), in_part: false, after_delim: true });
+      return Ok(Reader { ...cur, carry: cur.carry.slice(at + cur.delim.len(), cur.carry.len()), in_part: false, after_delim: true });
     }
     if (cur.eof) {
       return Err(MalformedMultipart("no boundary found"));
     }
     let keep = cur.delim.len() - 1;
     if (cur.carry.len() > keep) {
-      cur = Reader { ...cur, carry: array.slice(cur.carry, cur.carry.len() - keep, cur.carry.len()) };
+      cur = Reader { ...cur, carry: cur.carry.slice(cur.carry.len() - keep, cur.carry.len()) };
     }
     cur = __pull(cur)?;
   }
@@ -446,7 +446,7 @@ function __boundary_line_end(r: Reader): Result[Reader, MultipartError] {
     }
     let c = cur.carry[i];
     if (c == 13 as u8 && cur.carry[i + 1] == 10 as u8) {
-      return Ok(Reader { ...cur, carry: array.slice(cur.carry, i + 2, cur.carry.len()) });
+      return Ok(Reader { ...cur, carry: cur.carry.slice(i + 2, cur.carry.len()) });
     }
     if (c != 32 as u8 && c != 9 as u8) {
       return Err(MalformedMultipart("a boundary line does not end in CRLF"));
@@ -480,10 +480,10 @@ function __line(r: Reader, room: i32): Result[(string, Reader), MultipartError] 
       if (at > room) {
         return Err(PartHeadersTooLarge(cur.limits.header_bytes));
       }
-      let Ok(text) = utf8.from_bytes(array.slice(cur.carry, 0, at)) else {
+      let Ok(text) = utf8.from_bytes(cur.carry.slice(0, at)) else {
         return Err(MultipartBody(http.NotUtf8));
       };
-      return Ok((text, Reader { ...cur, carry: array.slice(cur.carry, at + 2, cur.carry.len()) }));
+      return Ok((text, Reader { ...cur, carry: cur.carry.slice(at + 2, cur.carry.len()) }));
     }
     if (cur.carry.len() > room + 1) {
       return Err(PartHeadersTooLarge(cur.limits.header_bytes));
@@ -542,7 +542,7 @@ function __param(value: string, name: string): string {
   let i = __param_end(bs, 0) + 1;
   while (i < bs.len()) {
     let end = __param_end(bs, i);
-    let p = unsafe { string_from_bytes_unchecked(array.slice(bs, i, end)) }.trim();
+    let p = unsafe { string_from_bytes_unchecked(bs.slice(i, end)) }.trim();
     if let Some(eq) = p.index_of("=") {
       if (eq > 0 && p.slice_snap(0, eq).trim().to_lower() == name) {
         return __unquote(p.slice_snap(eq + 1, p.len()).trim());

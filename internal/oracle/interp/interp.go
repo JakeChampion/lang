@@ -8108,17 +8108,22 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 			return nil, err
 		}
 	}
+	// A view has no address in the oracle's raw arena. Keep the source
+	// value live through the copy just as we do for other call arguments.
+	var srcView ast.Expr
+	if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "__memcpy" && callee == nil && len(c.Args) == 3 {
+		srcView = i.bytesDataArgument(c.Args[1], env)
+	}
 	args := make([]Value, len(c.Args))
 	held := 0
-	var pins []*bytesPin
 	for k, a := range c.Args {
-		v, pin, err := i.pinArg(a, env)
+		if k == 1 && srcView != nil {
+			a = srcView
+		}
+		v, err := i.evalExpr(a, env)
 		if err != nil {
 			disownAll(args[:held])
-			return nil, i.unpinAfter(err, pins)
-		}
-		if pin != nil {
-			pins = append(pins, pin)
+			return nil, err
 		}
 		args[k] = v
 		if k+1 < len(c.Args) {
@@ -8127,15 +8132,10 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		}
 	}
 	disownAll(args[:held])
-	if pins != nil {
-		v, err := i.callWith(c, env, callee, receiver, args)
-		return v, i.unpinAfter(err, pins)
-	}
-	return i.callWith(c, env, callee, receiver, args)
-}
-
-func (i *Interp) callWith(c *ast.Call, env *env, callee, receiver Value, args []Value) (Value, error) {
 	i.callAt = c.P
+	if srcView != nil {
+		return builtinRawMemcpyFromView(i, args)
+	}
 	if c.DynTrait != "" {
 		fa, ok := c.Callee.(*ast.FieldAccess)
 		if !ok {

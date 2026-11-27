@@ -3824,11 +3824,19 @@ function twin_into(defs: ssa.SInst[], own t: Twins, v: i32): Twins {
   t = twin_into(defs, t, d.args[0]);
   let p = t.same[d.args[0]];
   for k in t.kids[p] {
-    if (defs[k].kind_tag == d.kind_tag && defs[k].imm == d.imm && defs[k].str == d.str && (d.args.len() == 1 || defs[k].args[1] == d.args[1])) {
+    if (defs[k].kind_tag == d.kind_tag && twin_imm(defs[k]) == twin_imm(d) && defs[k].str == d.str && (d.args.len() == 1 || defs[k].args[1] == d.args[1])) {
       return Twins { ...t, same: t.same.with(v, k) };
     }
   }
   return Twins { same: t.same.with(v, v), kids: t.kids.with(p, t.kids[p].append(v)) };
+}
+
+// A checked read and a proven read of one element read the same value.
+function twin_imm(d: ssa.SInst): i32 {
+  if (d.kind_tag == array_get() && (d.imm == 1 || d.imm == below_proven())) {
+    return 0;
+  }
+  return d.imm;
 }
 
 function twin_arity(kind: i32): i32 {
@@ -6134,4 +6142,91 @@ function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
     ops = ops.append(row[at]);
   }
   return ssa.SInst { ir_kind: 0, kind_tag: ssa.PHI, result: result, args: ops, imm: 0, str: "" };
+}
+
+// The renames of `swap` in f: `swap[v]` is the value that replaces v, or -1.
+pub function renamed_values(own f: Func, swap: i32[]): Func {
+  return Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals), source_positions: renamed_source(f.source_positions, swap) };
+}
+
+pub function swapped(swap: i32[], v: i32): i32 {
+  let x = v;
+  let steps = 0;
+  while (x >= 0 && x < swap.len() && swap[x] >= 0 && steps < swap.len()) {
+    x = swap[x];
+    steps += 1;
+  }
+  return x;
+}
+
+pub function swapped_blocks(blocks: ssa.SBlock[], swap: i32[]): ssa.SBlock[] {
+  if (swap.len() == 0) {
+    return blocks;
+  }
+  let out: ssa.SBlock[] = [];
+  for b in blocks {
+    if (!block_swaps_any(swap, b)) {
+      out = out.append(b);
+      continue;
+    }
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      insts = insts.append(swapped_inst(swap, ins));
+    }
+    let t = b.term;
+    out = out.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(swap, t.cond), value: swapped(swap, t.value) } });
+  }
+  return out;
+}
+
+pub function swapped_inst(swap: i32[], ins: ssa.SInst): ssa.SInst {
+  let base = update_base(ins);
+  if (base >= 0) {
+    return ssa.SInst { ...ins, args: swapped_all(swap, ins.args), imm: swapped(swap, base) + 1 };
+  }
+  return ssa.SInst { ...ins, args: swapped_all(swap, ins.args) };
+}
+
+function swaps_any(swap: i32[], args: i32[]): boolean {
+  for a in args {
+    if (swaps_one(swap, a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function swaps_one(swap: i32[], v: i32): boolean {
+  return v >= 0 && v < swap.len() && swap[v] >= 0;
+}
+
+function block_swaps_any(swap: i32[], b: ssa.SBlock): boolean {
+  for ins in b.insts {
+    if (swaps_any(swap, ins.args) || swaps_one(swap, update_base(ins))) {
+      return true;
+    }
+  }
+  return swaps_one(swap, b.term.cond) || swaps_one(swap, b.term.value);
+}
+
+pub function swapped_all(swap: i32[], args: i32[]): i32[] {
+  if (!swaps_any(swap, args)) {
+    return args;
+  }
+  let out: i32[] = [];
+  for a in args {
+    out = out.append(swapped(swap, a));
+  }
+  return out;
+}
+
+pub function renamed_source(source: sourcepos.SourceInfo, swap: i32[]): sourcepos.SourceInfo {
+  if (source.entry.line == 0 || swap.len() == 0) {
+    return source;
+  }
+  let map: i32[] = [];
+  for i in 0..source.values.len() {
+    map = map.append(swapped(swap, i));
+  }
+  return sourcepos.renamed(source, map);
 }

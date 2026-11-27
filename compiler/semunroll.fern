@@ -852,6 +852,12 @@ function fold_block(f: ssasem.Func, d: ssa.DefSites, st: Fold, bi: i32): Fold {
       st = Fold { ...st, folded: st.folded + 1, changed: true };
       continue;
     }
+    if let Some(re) = reassociated(f, d, st, ins) {
+      insts = insts.with(ii, re);
+      touched = true;
+      st = Fold { ...st, folded: st.folded + 1, changed: true };
+      continue;
+    }
     let fo = fold(f, ins, st.known, st.konst);
     if (fo.known && !st.known[ins.result]) {
       st = Fold { ...st, known: st.known.with(ins.result, true), konst: st.konst.with(ins.result, fo.value), changed: true };
@@ -866,6 +872,49 @@ function fold_block(f: ssasem.Func, d: ssa.DefSites, st: Fold, bi: i32): Fold {
     return st;
   }
   return Fold { ...st, blocks: st.blocks.with(bi, ssa.SBlock { ...st.blocks[bi], insts: insts }) };
+}
+
+// (x + c1) - c2, and each other order of + and - on i32 constants, is x when
+// the constants cancel. It is x + c or x - c when the sum is one of the two
+// constants c. i32 arithmetic wraps, so the result does not change.
+function reassociated(f: ssasem.Func, d: ssa.DefSites, st: Fold, ins: ssa.SInst): Option[ssa.SInst] {
+  if (!offset_op(f, ins) || !is_marked(st.known, ins.args[1])) {
+    return None;
+  }
+  let Some(inner) = def_inst(f.graph, d, ins.args[0]) else {
+    return None;
+  };
+  if (!offset_op(f, inner) || !is_marked(st.known, inner.args[1])) {
+    return None;
+  }
+  let c1 = st.konst[inner.args[1]] as i64;
+  let c2 = st.konst[ins.args[1]] as i64;
+  let total = sign_of(inner.str) * c1 + sign_of(ins.str) * c2;
+  let x = inner.args[0];
+  if (total == 0i64) {
+    return Some(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [x], imm: 0, str: "" });
+  }
+  for c in [ins.args[1], inner.args[1]] {
+    let v = st.konst[c] as i64;
+    if (total == v) {
+      return Some(ssa.SInst { ...ins, args: [x, c], str: "+" });
+    }
+    if (total == 0i64 - v) {
+      return Some(ssa.SInst { ...ins, args: [x, c], str: "-" });
+    }
+  }
+  return None;
+}
+
+function offset_op(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && (ins.str == "+" || ins.str == "-") && ssasem.is_i32(f.values[ins.result]) && ssasem.is_i32(f.values[ins.args[0]]) && ssasem.is_i32(f.values[ins.args[1]]);
+}
+
+function sign_of(op: string): i64 {
+  if (op == "-") {
+    return -1i64;
+  }
+  return 1i64;
 }
 
 // The operand `b` that `__f64x2_lane(__f64x2_of(a, b), 1)` reads, or -1.

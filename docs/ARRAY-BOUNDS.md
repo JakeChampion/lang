@@ -77,6 +77,11 @@ makes into `a`, because `with` does not change the length. Only a write uses
 this proof. `semhoist` can move a read above a write, but it does not move a
 write, and a read that it moves runs earlier.
 
+The index of the earlier access can be another value that computes the same
+thing: the same i32 constant, or the same operator on operands that compute
+the same things. Thus a loop that reads `a[j + len]` and then writes
+`a.with(j + len, v)` checks the index one time.
+
 `compiler/semversion.fern` makes two versions of a loop with one entry and
 one latch. A counter of the loop is a header phi that the latch changes by a
 constant step, up or down. A test of the counter with `<`, `<=`, `>` or `>=`

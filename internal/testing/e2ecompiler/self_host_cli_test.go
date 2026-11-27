@@ -516,6 +516,21 @@ function main(): i32 {
 			"}\n", 42, "addq $1,", "addq $40,")
 	})
 
+	t.Run("fold-offsets-cancel", func(t *testing.T) {
+		foldCase(t, "foldcancel", "function f(x: i32): i32 { return x + 3329 - 3329; }\n"+
+			"function main(): i32 { return f(args().len() + 40); }\n", 41, "$3329")
+	})
+
+	t.Run("fold-offsets-to-a-constant", func(t *testing.T) {
+		foldCase(t, "foldoffset", "function f(x: i32): i32 { return x - 7919 + 15838; }\n"+
+			"function main(): i32 { return f(args().len() + 40) - 7900; }\n", 60, "$15838")
+	})
+
+	t.Run("fold-offsets-wrap", func(t *testing.T) {
+		foldCase(t, "foldwrap", "function f(x: i32): i32 { return x + 2147483647 - 2147483647; }\n"+
+			"function main(): i32 { return f(args().len() + 2147483646) - 2147483600; }\n", 47, "$2147483647")
+	})
+
 	assertCase := func(t *testing.T, name, src string, wantDefault, wantOpt int) {
 		t.Helper()
 		srcPath := filepath.Join(dir, name+".fern")

@@ -159,21 +159,73 @@ pub function sign_tested_reads_with(f: ssasem.Func, facts: ParamFacts): SignTest
 // length, so the root of a chain of `with` names the array. Only a
 // write uses these proofs: semhoist moves a read above a write, but it does
 // not move a write, and an access that it moves runs earlier.
-struct Seen { arr: i32[], block: i32[], pos: i32[], next: i32[], head: i32[] }
+struct Seen { arr: i32[], block: i32[], pos: i32[], next: i32[], head: i32[], keys: i32[] }
 
 function accesses(f: ssasem.Func, g: Graph): Seen {
-  let s = Seen { arr: [], block: [], pos: [], next: [], head: util.minus_ones(f.values.len()) };
+  let s = Seen { arr: [], block: [], pos: [], next: [], head: util.minus_ones(f.values.len()), keys: index_keys(g) };
   for b in 0..f.graph.blocks.len() {
     let insts = f.graph.blocks[b].insts;
     for k in 0..insts.len() {
       let ins = insts[k];
       if (element_access(ins)) {
-        let idx = ssa.copy_root(g.defs, ins.args[1]);
-        s = Seen { arr: s.arr.append(array_root(g, ins.args[0])), block: s.block.append(b), pos: s.pos.append(k), next: s.next.append(s.head[idx]), head: s.head.with(idx, s.arr.len()) };
+        let idx = s.keys[ins.args[1]];
+        s = Seen { ...s, arr: s.arr.append(array_root(g, ins.args[0])), block: s.block.append(b), pos: s.pos.append(k), next: s.next.append(s.head[idx]), head: s.head.with(idx, s.arr.len()) };
       }
     }
   }
   return s;
+}
+
+// keys[v] is the first value that computes what v computes: v itself, an
+// earlier i32 constant of the same value, or an earlier value with the same
+// operator on operands of the same keys. Thus `j + 1` that a loop computes
+// for a read and again for a write is one index.
+struct Keys { key: i32[], kids: i32[][], consts: util.NameIndex, first: i32[] }
+
+function index_keys(g: Graph): i32[] {
+  let n = g.defs.len();
+  let kids: i32[][] = [];
+  for v in 0..n {
+    kids = kids.append([]);
+  }
+  let k = Keys { key: util.minus_ones(n), kids: kids, consts: util.name_index([]), first: [] };
+  for v in 0..n {
+    k = key_into(g, k, v, 0);
+  }
+  return k.key;
+}
+
+function key_into(g: Graph, own k: Keys, v: i32, depth: i32): Keys {
+  if (k.key[v] >= 0) {
+    return k;
+  }
+  let r = ssa.copy_root(g.defs, v);
+  if (r != v && r >= 0 && r < k.key.len()) {
+    k = key_into(g, k, r, depth + 1);
+    return Keys { ...k, key: k.key.with(v, k.key[r]) };
+  }
+  let d = g.defs[v];
+  if (d.result == v && d.kind_tag == ssa.CONST_INT && d.str == "" && g.i32s[v]) {
+    let name = d.imm.to_string();
+    let at = k.consts.find(name);
+    if (at >= 0) {
+      return Keys { ...k, key: k.key.with(v, k.first[at]) };
+    }
+    return Keys { ...k, key: k.key.with(v, v), consts: k.consts.added(name), first: k.first.append(v) };
+  }
+  if (depth > 32 || d.result != v || d.kind_tag != ssa.BINARY || d.args.len() != 2 || d.args[0] < 0 || d.args[0] >= k.key.len() || d.args[1] < 0 || d.args[1] >= k.key.len()) {
+    return Keys { ...k, key: k.key.with(v, v) };
+  }
+  k = key_into(g, k, d.args[0], depth + 1);
+  k = key_into(g, k, d.args[1], depth + 1);
+  let a = k.key[d.args[0]];
+  let b = k.key[d.args[1]];
+  for c in k.kids[a] {
+    if (g.defs[c].str == d.str && g.defs[c].imm == d.imm && k.key[g.defs[c].args[1]] == b) {
+      return Keys { ...k, key: k.key.with(v, c) };
+    }
+  }
+  return Keys { ...k, key: k.key.with(v, v), kids: k.kids.with(a, k.kids[a].append(v)) };
 }
 
 function element_access(ins: ssa.SInst): boolean {
@@ -197,7 +249,7 @@ function array_root(g: Graph, v: i32): i32 {
 // position k of block b: earlier in b, or in a block that dominates b.
 function accessed_before(g: Graph, s: Seen, dom: ssadeps.Dom, b: i32, k: i32, ins: ssa.SInst): boolean {
   let arr = array_root(g, ins.args[0]);
-  let e = s.head[ssa.copy_root(g.defs, ins.args[1])];
+  let e = s.head[s.keys[ins.args[1]]];
   while (e >= 0) {
     if (s.arr[e] == arr && (s.block[e] == b && s.pos[e] < k || s.block[e] != b && ssadeps.dom_holds(dom, b, s.block[e]))) {
       return true;
@@ -1931,6 +1983,310 @@ function has_contract(calls: ssasem.Contract[], name: string): boolean {
     }
   }
   return false;
+}
+
+// Writes the 4 or 8 bytes of one integer into a byte array as one word
+// store. The writes are a chain of `with(a, x + k, byte k of v)` in one
+// block, low byte first or high byte first, each in range already. The
+// first write of the chain stays: it makes the array unique, or copies it.
+// The word store then writes all the bytes, and the first array of the
+// chain replaces the last.
+pub function word_stores(f: ssasem.Func, contracts: ssasem.Contract[], swaps: string[]): ssasem.Func {
+  if (!any_byte_run(f)) {
+    return f;
+  }
+  let defs = ssa.inst_defs(f.graph);
+  let uses = ssa.use_counts(f.graph);
+  let next = byte_write_links(f, defs, uses);
+  let values = f.values;
+  let blocks: ssa.SBlock[] = [];
+  let parts: i32[] = [];
+  let swap: i32[] = [];
+  for blk in f.graph.blocks {
+    let insts = blk.insts;
+    let gone = __alloc_bool(insts.len());
+    let fused: FusedStore[] = [];
+    for pos in 0..insts.len() {
+      if (!byte_write(f, insts[pos]) || linked_write(f, defs, uses, insts[pos].args[0])) {
+        continue;
+      }
+      let chain = write_chain(next, insts, pos);
+      let i = 0;
+      while (i < chain.len()) {
+        let n = 0;
+        let w = WordWrite { bytes: 0, src: -1, index: -1, big: false };
+        for bytes in [8, 4] {
+          if (n == 0 && i + bytes <= chain.len()) {
+            w = word_write(f, defs, insts, chain, i, bytes);
+            n = w.bytes;
+          }
+        }
+        for k in i + 1..i + n {
+          let ins = insts[chain[k]];
+          gone = gone.with(chain[k], true);
+          parts = store_parts(defs, [ins.args[1], ins.args[2]], [w.src, w.index], parts);
+        }
+        if (n > 0) {
+          fused = fused.append(FusedStore { at: chain[i + n - 1], first: insts[chain[i]].result, w: w });
+        }
+        i += if (n > 0) { n } else { 1 };
+      }
+    }
+    if (fused.len() == 0) {
+      blocks = blocks.append(blk);
+      continue;
+    }
+    let run_at = __alloc_i32(insts.len());
+    for k in 0..fused.len() {
+      run_at = run_at.with(fused[k].at, k + 1);
+    }
+    let out: ssa.SInst[] = [];
+    for pos in 0..insts.len() {
+      if (run_at[pos] > 0) {
+        let run = fused[run_at[pos] - 1];
+        let l = store_word(Load { insts: out, values: values }, run, swaps);
+        out = l.insts;
+        values = l.values;
+        while (swap.len() <= insts[pos].result) {
+          swap = swap.append(-1);
+        }
+        swap = swap.with(insts[pos].result, run.first);
+      } else if (!gone[pos]) {
+        out = out.append(insts[pos]);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...blk, insts: out });
+  }
+  if (swap.len() == 0) {
+    return f;
+  }
+  blocks = without_unused(ssasem.swapped_blocks(blocks, swap), parts, values.len());
+  let calls = f.calls;
+  for c in contracts {
+    if (!has_contract(calls, c.name)) {
+      calls = calls.append(c);
+    }
+  }
+  let g = ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() };
+  return ssasem.Func { ...f, values: values, calls: calls, graph: g, dbg_vals: ssasem.swapped_all(swap, f.dbg_vals), source_positions: ssasem.renamed_source(f.source_positions, swap) };
+}
+
+// The word that a run of byte writes stores: `src` low byte first, or
+// high byte first when `big`, at the index value `index`.
+struct WordWrite { bytes: i32, src: i32, index: i32, big: boolean }
+
+// A run that ends with the write at position `at`, and starts with the
+// write whose result is `first`.
+struct FusedStore { at: i32, first: i32, w: WordWrite }
+
+struct WordByteOf { src: i32, shift: i32 }
+
+// Whether a block has a byte write into the result of the byte write before it.
+function any_byte_run(f: ssasem.Func): boolean {
+  for blk in f.graph.blocks {
+    let last = -1;
+    for ins in blk.insts {
+      if (byte_write(f, ins)) {
+        if (ins.args[0] == last) {
+          return true;
+        }
+        last = ins.result;
+      }
+    }
+  }
+  return false;
+}
+
+// A write of a byte into an array of bytes that an earlier step proved or
+// checked to be in range.
+function byte_write(f: ssasem.Func, ins: ssa.SInst): boolean {
+  return scalar_write(f, ins) && ins.imm == 1 && ssasem.is_byte_array(f.values[ins.args[0]]) && ssasem.is_i32(f.values[ins.args[1]]);
+}
+
+// Whether `v` is the result of a byte write that only the next write reads.
+function linked_write(f: ssasem.Func, defs: ssa.SInst[], uses: i32[], v: i32): boolean {
+  return v >= 0 && v < defs.len() && uses[v] == 1 && byte_write(f, defs[v]);
+}
+
+// `next[v]` is one more than the position of the byte write that reads the
+// array `v`, for each `v` that a linked write gives, or 0.
+function byte_write_links(f: ssasem.Func, defs: ssa.SInst[], uses: i32[]): i32[] {
+  let next = __alloc_i32(f.graph.nvals);
+  for blk in f.graph.blocks {
+    for pos in 0..blk.insts.len() {
+      let ins = blk.insts[pos];
+      if (byte_write(f, ins) && linked_write(f, defs, uses, ins.args[0])) {
+        next = next.with(ins.args[0], pos + 1);
+      }
+    }
+  }
+  return next;
+}
+
+// The positions of the writes of a chain that starts at `pos`. A link
+// stays in the block, because the next write of a link comes after it.
+function write_chain(next: i32[], insts: ssa.SInst[], pos: i32): i32[] {
+  let chain = [pos];
+  let cur = pos;
+  while (chain.len() < 4096) {
+    let r = insts[cur].result;
+    let to = next[r] - 1;
+    if (to <= cur || to >= insts.len() || insts[to].args[0] != r) {
+      break;
+    }
+    chain = chain.append(to);
+    cur = to;
+  }
+  return chain;
+}
+
+// The word that the writes chain[i] to chain[i + n - 1] store, or a word of
+// 0 bytes when they do not store all the bytes of one word in order.
+function word_write(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], chain: i32[], i: i32, n: i32): WordWrite {
+  let none = WordWrite { bytes: 0, src: -1, index: -1, big: false };
+  let first = insts[chain[i]];
+  let Some(b0) = byte_of_word(f, defs, first.args[2]) else {
+    return none;
+  };
+  let w = word_width(f.values[b0.src]);
+  if (n > w) {
+    return none;
+  }
+  let x = offset_base(f, defs, first.args[1]);
+  let lo = offset_of(f, defs, first.args[1]);
+  let index = first.args[1];
+  for k in i..i + n {
+    let ins = insts[chain[k]];
+    let off = offset_of(f, defs, ins.args[1]);
+    if (offset_base(f, defs, ins.args[1]) != x) {
+      return none;
+    }
+    if (off < lo) {
+      lo = off;
+      index = ins.args[1];
+    }
+  }
+  let seen = __alloc_bool(n);
+  let le = true;
+  let be = true;
+  for k in i..i + n {
+    let ins = insts[chain[k]];
+    let Some(b) = byte_of_word(f, defs, ins.args[2]) else {
+      return none;
+    };
+    let at = offset_of(f, defs, ins.args[1]) - lo;
+    if (b.src != b0.src || at >= n || seen[at]) {
+      return none;
+    }
+    le = le && b.shift == at * 8;
+    be = be && b.shift == (n - 1 - at) * 8;
+    seen = seen.with(at, true);
+  }
+  if (!le && !be) {
+    return none;
+  }
+  return WordWrite { bytes: n, src: b0.src, index: index, big: !le };
+}
+
+// The value `v` as byte `shift / 8` of an integer of 4 or 8 bytes:
+// `(src >> shift & mask) as u8`, where the shift and the mask are optional
+// and the mask keeps the low byte.
+function byte_of_word(f: ssasem.Func, defs: ssa.SInst[], v: i32): Option[WordByteOf] {
+  let d = defs[v];
+  if (d.kind_tag != ssasem.cast() || d.args.len() != 1 || !ssasem.is_u8(f.values[v])) {
+    return None;
+  }
+  let t = d.args[0];
+  let m = defs[t];
+  if (m.kind_tag == ssa.BINARY && m.str == "&" && m.args.len() == 2) {
+    if (low_byte_mask(defs, m.args[1])) {
+      t = m.args[0];
+    } else if (low_byte_mask(defs, m.args[0])) {
+      t = m.args[1];
+    } else {
+      return None;
+    }
+  }
+  let shift = 0;
+  let s = defs[t];
+  if (s.kind_tag == ssa.BINARY && s.str == ">>" && s.args.len() == 2) {
+    let c = constant_through_cast(defs, s.args[1]);
+    if (c <= 0i64 || c % 8i64 != 0i64 || c >= 64i64) {
+      return None;
+    }
+    shift = c as i32;
+    t = s.args[0];
+  }
+  let w = word_width(f.values[t]);
+  if (w == 0 || shift >= w * 8) {
+    return None;
+  }
+  return Some(WordByteOf { src: t, shift: shift });
+}
+
+function low_byte_mask(defs: ssa.SInst[], v: i32): boolean {
+  let c = constant_through_cast(defs, v);
+  return c >= 0i64 && (c & 255i64) == 255i64;
+}
+
+// The integer constant `v`, through one cast, or -1.
+function constant_through_cast(defs: ssa.SInst[], v: i32): i64 {
+  let d = defs[v];
+  if (d.kind_tag == ssasem.cast() && d.args.len() == 1) {
+    d = defs[d.args[0]];
+  }
+  if ((d.kind_tag == ssa.CONST_INT || d.kind_tag == ssa.CONST_I64) && d.str.len() > 0) {
+    return util.lit_to_i64(d.str);
+  }
+  if (d.kind_tag == ssa.CONST_INT) {
+    return d.imm as i64;
+  }
+  return -1i64;
+}
+
+// The store of a fused run: the address of the element `index` of the
+// array `first`, the word in the order of memory, and the store.
+function store_word(own l: Load, s: FusedStore, swaps: string[]): Load {
+  let addr_t: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
+  let wide: typeinfo.Type = typeinfo.TypeI32 { width: if (s.w.bytes == 8) { 64 } else { 32 }, unsigned: false, is_char: false, polymorphic: false };
+  let insts = l.insts;
+  let values = l.values;
+  let v = values.len();
+  // The constant comes last, so that the store can take it as its offset.
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: v, args: [s.first], imm: 0, str: "__raw_arr_ptr" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.cast(), result: v + 1, args: [s.w.index], imm: 0, str: "" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: v + 2, args: [v, v + 1], imm: 0, str: "+" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.CONST_INT, result: v + 3, args: [], imm: 8, str: "" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.BINARY, result: v + 4, args: [v + 2, v + 3], imm: 0, str: "+" });
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.cast(), result: v + 5, args: [s.w.src], imm: 0, str: "" });
+  values = values.append(addr_t).append(addr_t).append(addr_t).append(addr_t).append(addr_t).append(wide);
+  let word = v + 5;
+  if (s.w.big) {
+    word = v + 6;
+    insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: word, args: [v + 5], imm: 0, str: swaps[if (s.w.bytes == 8) { 1 } else { 0 }] });
+    values = values.append(wide);
+  }
+  let store = if (s.w.bytes == 8) { "__store_i64" } else { "__store_i32" };
+  insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssasem.call(), result: values.len(), args: [v + 4, word], imm: 0, str: store });
+  values = values.append(typeinfo.t_void());
+  return Load { insts: insts, values: values };
+}
+
+// The values that only compute the index or the byte of a dropped write.
+// The values in `keep` stay.
+function store_parts(defs: ssa.SInst[], args: i32[], keep: i32[], acc: i32[]): i32[] {
+  for v in args {
+    if (v < 0 || v >= defs.len() || util.has_i32(keep, v) || util.has_i32(acc, v)) {
+      continue;
+    }
+    let d = defs[v];
+    let part: boolean = d.kind_tag == ssa.CONST_INT || d.kind_tag == ssa.CONST_I64 || d.kind_tag == ssasem.cast()
+      || d.kind_tag == ssa.BINARY && (d.str == ">>" || d.str == "&" || d.str == "+");
+    if (part) {
+      acc = store_parts(defs, d.args, keep, acc.append(v));
+    }
+  }
+  return acc;
 }
 
 struct Word { bytes: i32, arr: i32, x: i32, off: i32, big: boolean }

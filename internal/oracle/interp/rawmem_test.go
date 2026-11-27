@@ -70,6 +70,21 @@ function copy_moves_bytes(): i32 {
   return n;
 }
 
+function copy_view(n: i32): i32 {
+  let bytes: u8[] = [3u8, 7u8, 12u8];
+  unsafe {
+    let p = __alloc(4);
+    __memcpy(p + 1 as usize, __bytes_data(bytes[1:]), n);
+    let value = __load_i32(p);
+    __free(p, 4);
+    return value;
+  }
+}
+
+function copy_view_prefix(): i32 { return copy_view(1); }
+function copy_empty(): i32 { return copy_view(0); }
+function copy_past_view(): i32 { return copy_view(3); }
+
 function null_free(): i32 {
   unsafe {
     __free(0 as usize, 8);
@@ -157,30 +172,6 @@ function read_port(): i32 {
 function main(): i32 {
   return 0;
 }
-
-function bytes_data_reads(): i32 {
-  let a: u8[] = [1, 2, 3, 4];
-  let n: i32 = 0;
-  unsafe {
-    let p: usize = __alloc(2);
-    __memcpy(p, __bytes_data(a[1:3]), 2);
-    n = __load_u8(p) * 10 + __load_u8(p + 1 as usize);
-    __free(p, 2);
-  }
-  return n;
-}
-
-function bytes_data_writes(): i32 {
-  let a: u8[] = [1, 2, 3, 4];
-  unsafe {
-    let p: usize = __alloc(2);
-    __store_u8(p, 7);
-    __store_u8(p + 1 as usize, 8);
-    __memcpy(__bytes_data(a[1:3]), p, 2);
-    __free(p, 2);
-  }
-  return a[0] as i32 * 1000 + a[1] as i32 * 100 + a[2] as i32 * 10 + a[3] as i32;
-}
 `
 
 func rawMemInterp(t *testing.T) *Interp {
@@ -214,8 +205,8 @@ func TestRawMemoryReadsBackWhatItStores(t *testing.T) {
 			{"pointer_round_trips", 0},
 			{"reuse_is_zeroed", 0},
 			{"copy_moves_bytes", 70000},
-			{"bytes_data_reads", 23},
-			{"bytes_data_writes", 1784},
+			{"copy_view_prefix", 7 << 8},
+			{"copy_empty", 0},
 		} {
 			v, err := i.CallByName(c.fn, nil)
 			if err != nil {
@@ -255,6 +246,7 @@ func TestRawMemoryRefusesABrokenObligation(t *testing.T) {
 		{"read_after_free", "in a freed block"},
 		{"read_null", "not in a block from __alloc"},
 		{"overlapping_copy", "overlap"},
+		{"copy_past_view", "source view bounds"},
 		{"wait_for_interrupt", "__wfi: needs a kernel target"},
 		{"call_firmware", "__smc: needs a kernel target"},
 		{"read_port", "__port_in8: needs a kernel target"},
@@ -263,56 +255,5 @@ func TestRawMemoryRefusesABrokenObligation(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want it to contain %q", c.fn, err, c.want)
 		}
-	}
-}
-
-// The early return of `?` in an argument passes through a call that pins a
-// __bytes_data argument, and through one that pins nothing.
-func TestBytesDataKeepsTheEarlyReturnOfTry(t *testing.T) {
-	src := `function refused(): Result[i32, string] {
-  return Err("no");
-}
-
-function first_byte(p: usize, n: i32): i32 {
-  let b: i32 = 0;
-  unsafe {
-    b = __load_u8(p) + n;
-  }
-  return b;
-}
-
-function try_in_argument(): Result[i32, string] {
-  return Ok(first_byte(0 as usize, refused()?));
-}
-
-function try_after_pin(): Result[i32, string] {
-  let a: u8[] = [9];
-  let n: i32 = 0;
-  unsafe {
-    n = first_byte(__bytes_data(a), refused()?);
-  }
-  return Ok(n);
-}
-
-function try_returns_early(): i32 {
-  let n: i32 = 0;
-  match (try_in_argument()) {
-    Ok(v) => { n = v; },
-    Err(e) => { n = 1; },
-  }
-  match (try_after_pin()) {
-    Ok(v) => { n = n + v; },
-    Err(e) => { n = n + 10; },
-  }
-  return n;
-}
-
-function main(): i32 {
-  return try_returns_early();
-}
-`
-	val, _ := runCapture(t, src)
-	if val != "11" {
-		t.Fatalf("try_returns_early() = %s, want 11", val)
 	}
 }

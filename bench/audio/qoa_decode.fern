@@ -3,6 +3,7 @@ import "std/audio/pcm";
 import "std/bench";
 import "std/io";
 import "std/i32";
+import "core/cmp";
 
 function hash(samples: [i32], count: i32, value: u32): u32 {
   for i in 0..count {
@@ -29,6 +30,52 @@ function pass(own state: Pass, input: [u8], hashed: boolean): Result[Pass, pcm.A
     at += frame.bytes_read;
   }
   return Ok(Pass { output: output, frames: frames, observed: observed, checksum: checksum });
+}
+
+struct Timed { state: Pass, times: i64[] }
+
+// Decodes every frame of the file in each round and records the time of each frame decode.
+function time_frames(own state: Pass, input: [u8], rounds: i32, count: i32): Result[Timed, pcm.AudioError] {
+  let Pass { output, frames, observed, checksum } = state;
+  let limits = pcm.default_limits();
+  let times: i64[] = [];
+  for _ in 0..count {
+    times = times.append(0i64);
+  }
+  let index = 0;
+  for _ in 0..rounds {
+    let at = 8;
+    while (at < input.len()) {
+      let started = monotonic_ns();
+      let frame = qoa.decode_frame_into(input, at, output, limits)?;
+      let elapsed = monotonic_ns() - started;
+      output = frame.samples;
+      if (index < count) {
+        times = times.with(index, elapsed);
+      }
+      index += 1;
+      frames += frame.frames as i64;
+      observed ^= output[0];
+      at += frame.bytes_read;
+    }
+  }
+  return Ok(Timed { state: Pass { output: output, frames: frames, observed: observed, checksum: checksum }, times: times });
+}
+
+// Times each frame decode, then makes the checksum pass. The times come back sorted.
+function finish(own state: Pass, input: [u8], rounds: i32, count: i32): Result[Timed, pcm.AudioError] {
+  let timed = time_frames(state, input, rounds, count)?;
+  let last = pass(timed.state, input, true)?;
+  return Ok(Timed { state: last, times: cmp.sort(timed.times) });
+}
+
+// Returns the nearest-rank value at per_mille thousandths of the sorted times.
+function rank(sorted: i64[], per_mille: i32): i64 {
+  let at = (sorted.len() * per_mille + 999) / 1000 - 1;
+  if (at < 0) {
+    at = 0;
+  }
+  return sorted[at];
 }
 
 function peak_rss(): i32 {
@@ -92,14 +139,21 @@ function main(): i32 {
     return 5;
   }
   let samples = state.frames * (channels as i64);
-  let Ok(last) = pass(state, input, true) else {
+  let count = (header.frames as i32 + 5119) / 5120 * rounds;
+  let Ok(timed) = finish(state, input, rounds, count) else {
     return 4;
   };
+  let last = timed.state;
+  let times = timed.times;
   print("samples=" + samples.to_string());
   print("checksum=" + last.checksum.to_string());
   print("wall_ns=" + elapsed.to_string());
   print("allocs=" + allocated.to_string());
   print("fresh_bytes=" + bytes.to_string());
+  print("frame_p50_ns=" + rank(times, 500).to_string());
+  print("frame_p90_ns=" + rank(times, 900).to_string());
+  print("frame_p99_ns=" + rank(times, 990).to_string());
+  print("frame_max_ns=" + rank(times, 1000).to_string());
   print("peak_rss_kb=" + peak_rss().to_string());
   print("observed=" + last.observed.to_string());
   return 0;

@@ -159,7 +159,7 @@ function __lines(s: string): string[] {
   let i = 0;
   while (i < bs.len()) {
     if (bs[i] == 10 || bs[i] == 13) {
-      out = out.append(utf8.from_bytes_lossy(array.slice(bs, start, i)));
+      out = out.append(utf8.from_bytes_lossy(bs.slice(start, i)));
       if (bs[i] == 13 && i + 1 < bs.len() && bs[i + 1] == 10) {
         i += 1;
       }
@@ -167,7 +167,7 @@ function __lines(s: string): string[] {
     }
     i += 1;
   }
-  return out.append(utf8.from_bytes_lossy(array.slice(bs, start, bs.len())));
+  return out.append(utf8.from_bytes_lossy(bs.slice(start, bs.len())));
 }
 ```
 
@@ -200,7 +200,7 @@ pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
       break;
     }
     if (brk > 0) {
-      let lined = __line(d, utf8.from_bytes_lossy(array.slice(buf, start, i)));
+      let lined = __line(d, utf8.from_bytes_lossy(buf.slice(start, i)));
       d = lined.0;
       match (lined.1) {
         Some(e) => {
@@ -213,7 +213,7 @@ pub function (d: Decoder) feed(bytes: u8[]): (Decoder, Event[]) {
     }
     i += 1;
   }
-  return (Decoder { ...d, buf: array.slice(buf, start, buf.len()) }, out);
+  return (Decoder { ...d, buf: buf.slice(start, buf.len()) }, out);
 }
 ```
 
@@ -227,7 +227,7 @@ function __unmarked(d: Decoder, buf: u8[]): (Decoder, u8[]) {
   }
   d = Decoder { ...d, started: true };
   if (buf[0] == 239 && buf[1] == 187 && buf[2] == 191) {
-    return (d, array.slice(buf, 3, buf.len()));
+    return (d, buf.slice(3, buf.len()));
   }
   return (d, buf);
 }

@@ -134,6 +134,11 @@ func cmpCases(t *testing.T) []invocation {
 		{name: "missing first file", args: []string{missing, a}},
 		{name: "missing second file", args: []string{a, missing}},
 		{name: "directory", args: []string{a, d}},
+		{name: "quiet reports a read error", args: []string{"-s", a, d}},
+		{name: "quiet reports a read error while skipping", args: []string{"-s", "-i", "1", d, a}},
+		{name: "zero limit still checks first input", args: []string{"-n", "0", d, a}},
+		{name: "zero limit still checks second input", args: []string{"-n", "0", a, d}},
+		{name: "zero limit with the same directory", args: []string{"-n", "0", d, d}},
 		{name: "no operands", args: []string{}},
 		{name: "extra operand", args: []string{a, b, "1", "2", "3"}},
 		{name: "unknown option", args: []string{"-z", a, b}},
@@ -156,6 +161,7 @@ func TestCmpInputPosition(t *testing.T) {
 	dir := t.TempDir()
 	path := writeFile(t, dir, "input", data)
 	other := writeFile(t, dir, "copy", data)
+	prefix := writeFile(t, dir, "prefix", "12")
 	bin := fernBin(t, "cmp")
 	for _, tc := range []struct {
 		name   string
@@ -166,6 +172,9 @@ func TestCmpInputPosition(t *testing.T) {
 		rest   string
 	}{
 		{"bounded file", false, 0, []string{"-n", "3", "-", other}, 0, "3456789"},
+		{"quiet unequal remaining sizes", false, 1, []string{"-s", "-", other}, 1, "123456789"},
+		{"quiet unequal sizes after skip", false, 1, []string{"-s", "-i", "2", "-", other}, 1, "3456789"},
+		{"quiet limit excludes extra byte", false, 1, []string{"-s", "-n", "2", "-", prefix}, 0, "3456789"},
 		{"bounded pipe", true, 0, []string{"-n", "3", other, "-"}, 0, "3456789"},
 		{"skip and compare pipe", true, 0, []string{"-i", "2", "-n", "3", "-", other}, 0, "56789"},
 		{"skip only pipe", true, 0, []string{"-i", "2", "-n", "0", "-", other}, 0, "23456789"},
@@ -214,6 +223,27 @@ func TestCmpInputPosition(t *testing.T) {
 				t.Errorf("remaining stdin %q, want %q", rest, tc.rest)
 			}
 		})
+	}
+}
+
+func TestCmpVerbosePosition(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFile(t, dir, "input", strings.Repeat("a", 100))
+	in, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	if _, err := in.Seek(98, io.SeekStart); err != nil {
+		t.Fatal(err)
+	}
+	other := writeFile(t, dir, "other", "b"+strings.Repeat("a", 99))
+	argv := crossArgv(fernBin(t, "cmp"), "-l", "-", other, "1", "0")
+	cmd := exec.Command(argv[0], argv[1:]...)
+	cmd.Stdin = in
+	output, err := cmd.Output()
+	if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 1 || string(output) != "1 141 142\n" {
+		t.Fatalf("cmp -l: %q, %v", output, err)
 	}
 }
 

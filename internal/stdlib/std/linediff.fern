@@ -1683,7 +1683,7 @@ function regions(s1: Change[], s2: Change[], base: Lines, ours: Lines, theirs: L
 }
 
 function line_range(l: Lines, i: i32, count: i32): Lines {
-  return lines_of(array.slice(l.data, l.starts[i], l.starts[i + count]));
+  return lines_of(l.data.slice(l.starts[i], l.starts[i + count]));
 }
 
 // Divides each conflict into the changes between its two sides

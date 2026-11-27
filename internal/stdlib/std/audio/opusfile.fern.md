@@ -529,7 +529,7 @@ function refilled(own c: Chunk, read: (i64, i32) => Result[u8[], IoError], n: i3
 // The bytes that `c` did not take, and the next bytes of the file after
 // them: a page goes on past the bytes of `c`.
 function extended(own c: Chunk, read: (i64, i32) => Result[u8[], IoError], n: i32): Result[Chunk, source.ReadError] {
-  let rest = array.slice(c.bytes, c.at, c.bytes.len());
+  let rest = c.bytes.slice(c.at, c.bytes.len());
   let base = c.base + c.at;
   let more = read_more(read, base + rest.len(), n)?;
   return Ok(Chunk { bytes: rest.concat(more), base: base, at: 0 });

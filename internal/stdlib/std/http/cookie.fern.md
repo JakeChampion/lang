@@ -984,7 +984,7 @@ function __without_oldest(all: Cookie[], domain: string): Cookie[] {
   if (pick < 0) {
     return all;
   }
-  return array.slice(all, 0, pick).concat(array.slice(all, pick + 1, all.len()));
+  return all.slice(0, pick).concat(all.slice(pick + 1, all.len()));
 }
 
 function __reaches(c: Cookie, host: string, path: string, secure: boolean): boolean {
@@ -1002,7 +1002,7 @@ function __ordered(picked: Cookie[], c: Cookie): Cookie[] {
   while (k < picked.len() && (picked[k].path.len() > c.path.len() || picked[k].path.len() == c.path.len() && picked[k].created.cmp(c.created) <= 0)) {
     k += 1;
   }
-  return array.slice(picked, 0, k).append(c).concat(array.slice(picked, k, picked.len()));
+  return picked.slice(0, k).append(c).concat(picked.slice(k, picked.len()));
 }
 
 function __pairs(picked: Cookie[]): string {

@@ -112,7 +112,7 @@ def main():
         sources = [ROOT / "scripts/bench-audio", ROOT / "scripts/audio-reference/qoa_bench.c",
                    ROOT / "bench/audio/qoa_decode.fern", stdlib / "std/audio/qoa.fern.md"]
         result = {
-            "schema": 2,
+            "schema": 3,
             "target": target,
             "platform": platform.platform(),
             "cpu_model": next((line.split(":", 1)[1].strip() for line in Path("/proc/cpuinfo").read_text().splitlines()
@@ -129,6 +129,8 @@ def main():
             "fern_sha256": sha(fern),
             "source_sha256": {path.name if not path.is_relative_to(ROOT) else str(path.relative_to(ROOT)): sha(path) for path in sources},
             "measurement": "decode of every frame into reusable output, four warmup rounds; file read and decoder setup excluded; checksum pass after the timed region",
+            "frame_latency": "a second pass of the same rounds after the throughput region times each frame decode; "
+                             "each percentile is nearest-rank within a trial, then the median across trials; the maximum is across all trials",
             "output_storage": "Fern: interleaved signed 32-bit PCM. C: interleaved signed 16-bit PCM. The checksum hashes each sample as a sign-extended 32-bit value",
             "peak_rss": "Linux process peak resident set after decode, including code, input and output",
             "cases": {},
@@ -164,12 +166,17 @@ def main():
                 "fern_over_c": median["fern"] / median["c"],
                 "fern_allocs_per_frame": rows["fern"][0]["allocs"] / qoa_frames,
                 "fern_fresh_bytes_per_frame": rows["fern"][0]["fresh_bytes"] / qoa_frames,
+                "frame_latency_ns": {side: {**{key: statistics.median(row[f"frame_{key}_ns"] for row in side_rows)
+                                                for key in ("p50", "p90", "p99")},
+                                             "max": max(row["frame_max_ns"] for row in side_rows)}
+                                     for side, side_rows in rows.items()},
                 "peak_rss_kb": {side: max(row["peak_rss_kb"] for row in side_rows) for side, side_rows in rows.items()},
                 "trials": rows,
             }
             result["cases"][name] = case
             print(f"{name}: fern {case['median_ns_per_sample']['fern']:.3f} ns/sample, c {case['median_ns_per_sample']['c']:.3f}"
-                  f" ns/sample, ratio {case['fern_over_c']:.3f}, {case['fern_allocs_per_frame']:.2f} allocs/frame",
+                  f" ns/sample, ratio {case['fern_over_c']:.3f}, {case['fern_allocs_per_frame']:.2f} allocs/frame,"
+                  f" frame p99 fern {case['frame_latency_ns']['fern']['p99']:.0f} ns, c {case['frame_latency_ns']['c']['p99']:.0f} ns",
                   file=sys.stderr, flush=True)
         text = json.dumps(result, indent=2) + "\n"
         if args.output:

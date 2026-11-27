@@ -178,7 +178,7 @@ pub function inspect_with(size: i64, read: (i64, i32) => Result[u8[], IoError], 
       break;
     } else if (used == 0) {
       // The page goes on past this chunk: read the rest of it with the next one.
-      let rest = array.slice(chunk, used_in, chunk.len());
+      let rest = chunk.slice(used_in, chunk.len());
       base += used_in;
       let more = read_chunk(read, base + rest.len(), n)?;
       chunk = rest.concat(more);

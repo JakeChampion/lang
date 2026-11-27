@@ -2180,14 +2180,14 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
     while (k < f.graph.blocks[bi].insts.len() && !spliced && done < max_splices()) {
       let at = ready_callee(f, f.graph.blocks[bi].insts[k], ix, ready, closures);
       if (at >= 0 && ctors[at] && !shared[at] && !literal_args(f.graph.blocks[bi], k)) {
-        f = renamed(f, swap);
+        f = ssasem.renamed_values(f, swap);
         swap = [];
         if (!only_taken_apart(f.graph, f.graph.blocks[bi].insts[k].result)) {
           at = -1;
         }
       }
       if (at >= 0 && shared[at] && !small_branch_body(funcs[at])) {
-        f = renamed(f, swap);
+        f = ssasem.renamed_values(f, swap);
         swap = [];
         let r = f.graph.blocks[bi].insts[k].result;
         if (!shared_call_saves_box(f, funcs[at], r, small[at], ix, shared)) {
@@ -2211,7 +2211,7 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
           fsize = count_insts(f.graph);
           continue;
         }
-        f = splice(renamed(f, swap), bi, k, funcs[at]);
+        f = splice(ssasem.renamed_values(f, swap), bi, k, funcs[at]);
         swap = [];
         fsize = count_insts(f.graph);
         spliced = true;
@@ -2220,7 +2220,7 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
     }
     bi += 1;
   }
-  return Rewrite { f: renamed(f, swap), changed: done > 0 };
+  return Rewrite { f: ssasem.renamed_values(f, swap), changed: done > 0 };
 }
 
 function shared_call_saves_box(f: ssasem.Func, callee: ssasem.Func, r: i32, small: boolean, ix: util.NameIndex, shared: boolean[]): boolean {
@@ -2410,7 +2410,7 @@ function splice(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
   }
   blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
   let joined = with_tables(f, callee, vmap);
-  return with_values(ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, dbg_vals: swapped_all(swap, joined.dbg_vals), source_positions: renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) }, callee.values);
+  return with_values(ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: ssasem.swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, dbg_vals: ssasem.swapped_all(swap, joined.dbg_vals), source_positions: ssasem.renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) }, callee.values);
 }
 
 function straight(f: ssasem.Func): boolean {
@@ -2464,10 +2464,6 @@ function splice_in_place(own f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Fun
     return InPlace { f: out, from: -1, to: -1 };
   }
   return InPlace { f: out, from: call.result, to: ret_vals[0] };
-}
-
-function renamed(own f: ssasem.Func, swap: i32[]): ssasem.Func {
-  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals), source_positions: renamed_source(f.source_positions, swap) };
 }
 
 function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.Func {
@@ -2908,7 +2904,7 @@ function applied(f: ssasem.Func, e: Edits): ssasem.Func {
     let insts: ssa.SInst[] = [];
     for h in e.heads {
       if (h.block == bi) {
-        insts = insts.append(swapped_inst(e.swap, h.ins));
+        insts = insts.append(ssasem.swapped_inst(e.swap, h.ins));
       }
     }
     let entry: ssa.SInst[] = [];
@@ -2917,7 +2913,7 @@ function applied(f: ssasem.Func, e: Edits): ssasem.Func {
     }
     insts = util.append_all(insts, block_insts(b, entry, e.swap));
     let t = b.term;
-    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(e.swap, t.cond), value: swapped(e.swap, t.value) } });
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: ssasem.swapped(e.swap, t.cond), value: ssasem.swapped(e.swap, t.value) } });
   }
   let values = util.append_all(f.values, e.added);
   return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: values.len() }, values: values };
@@ -2932,25 +2928,15 @@ function block_insts(b: ssa.SBlock, entry: ssa.SInst[], swap: i32[]): ssa.SInst[
       placed = true;
     }
     if (ins.result >= 0 && ins.result < swap.len() && swap[ins.result] >= 0) {
-      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [swapped(swap, ins.result)], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { ir_kind: 0, kind_tag: ssa.COPY, result: ins.result, args: [ssasem.swapped(swap, ins.result)], imm: 0, str: "" });
     } else {
-      insts = insts.append(swapped_inst(swap, ins));
+      insts = insts.append(ssasem.swapped_inst(swap, ins));
     }
   }
   if (!placed) {
     insts = util.append_all(insts, entry);
   }
   return insts;
-}
-
-function swapped(swap: i32[], v: i32): i32 {
-  let x = v;
-  let steps = 0;
-  while (x >= 0 && x < swap.len() && swap[x] >= 0 && steps < swap.len()) {
-    x = swap[x];
-    steps += 1;
-  }
-  return x;
 }
 
 // with_values is f with the values of a spliced callee after its own.
@@ -2983,67 +2969,6 @@ function result_swap(call: ssa.SInst, rets: i32[], ret_vals: i32[], first: typei
     swap = swap.append(-1);
   }
   return swap.with(call.result, ret_vals[0]);
-}
-
-function swapped_blocks(blocks: ssa.SBlock[], swap: i32[]): ssa.SBlock[] {
-  if (swap.len() == 0) {
-    return blocks;
-  }
-  let out: ssa.SBlock[] = [];
-  for b in blocks {
-    if (!block_swaps_any(swap, b)) {
-      out = out.append(b);
-      continue;
-    }
-    let insts: ssa.SInst[] = [];
-    for ins in b.insts {
-      insts = insts.append(swapped_inst(swap, ins));
-    }
-    let t = b.term;
-    out = out.append(ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...t, cond: swapped(swap, t.cond), value: swapped(swap, t.value) } });
-  }
-  return out;
-}
-
-function swapped_inst(swap: i32[], ins: ssa.SInst): ssa.SInst {
-  let base = ssasem.update_base(ins);
-  if (base >= 0) {
-    return ssa.SInst { ...ins, args: swapped_all(swap, ins.args), imm: swapped(swap, base) + 1 };
-  }
-  return ssa.SInst { ...ins, args: swapped_all(swap, ins.args) };
-}
-
-function swaps_any(swap: i32[], args: i32[]): boolean {
-  for a in args {
-    if (swaps_one(swap, a)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function swaps_one(swap: i32[], v: i32): boolean {
-  return v >= 0 && v < swap.len() && swap[v] >= 0;
-}
-
-function block_swaps_any(swap: i32[], b: ssa.SBlock): boolean {
-  for ins in b.insts {
-    if (swaps_any(swap, ins.args) || swaps_one(swap, ssasem.update_base(ins))) {
-      return true;
-    }
-  }
-  return swaps_one(swap, b.term.cond) || swaps_one(swap, b.term.value);
-}
-
-function swapped_all(swap: i32[], args: i32[]): i32[] {
-  if (!swaps_any(swap, args)) {
-    return args;
-  }
-  let out: i32[] = [];
-  for a in args {
-    out = out.append(swapped(swap, a));
-  }
-  return out;
 }
 
 function built_type(f: ssasem.Func, built: typeinfo.Type[], t: typeinfo.Type): boolean {
@@ -3351,15 +3276,4 @@ function unread_build(f: ssasem.Func, built: typeinfo.Type[], reads: i32[], ins:
     return false;
   }
   return built_type(f, built, f.values[ins.result]) && !ssasem.has_finalizer(f, f.values[ins.result]);
-}
-
-function renamed_source(source: sourcepos.SourceInfo, swap: i32[]): sourcepos.SourceInfo {
-  if (source.entry.line == 0 || swap.len() == 0) {
-    return source;
-  }
-  let map: i32[] = [];
-  for i in 0..source.values.len() {
-    map = map.append(swapped(swap, i));
-  }
-  return sourcepos.renamed(source, map);
 }
