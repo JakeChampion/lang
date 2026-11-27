@@ -172,7 +172,7 @@ profile/x86-64-linux/map_string.diagnostic.ir	55480588	2
 profile/x86-64-linux/map_string.hardened.bytes	45568
 profile/x86-64-linux/map_string.hardened.emit	10117
 profile/x86-64-linux/map_string.hardened.ir	47642489	2
-profile/x86-64-linux/map_string.minimal.bytes	36368
+profile/x86-64-linux/map_string.minimal.bytes	36736
 profile/x86-64-linux/map_string.minimal.emit	9181
 profile/x86-64-linux/map_string.minimal.ir	49502934	2
 profile/x86-64-linux/map_string.safe.bytes	40672

@@ -297,7 +297,7 @@ x86_64/enum_match.dr	225002
 x86_64/gather_many.dr	9882344
 x86_64/hex_decode.dr	23173471
 x86_64/hex_encode.dr	6369332
-x86_64/http_hello.dr	5296038
+x86_64/http_hello.dr	5228038
 x86_64/int_loop.dr	2
 x86_64/map_int.dr	4609812
 x86_64/map_probe_chain.dr	40997017
@@ -314,13 +314,13 @@ x86_64/record_update.dr	1246
 x86_64/sort_inplace.dr	5742534
 x86_64/sort_ints.dr	3166242
 x86_64/sort_strings.dr	21758332
-x86_64/string_build.dr	9396923
+x86_64/string_build.dr	9576923
 x86_64/string_count_byte.dr	13913900
 x86_64/string_find_byte.dr	6269916
 x86_64/string_rfind_byte.dr	6277999
 x86_64/string_scan.dr	16463525
 x86_64/string_slice.dr	2580009
-x86_64/struct_drop.dr	54560074
+x86_64/struct_drop.dr	55280074
 x86_64/tokenize.dr	6270008
 x86_64/utf8_ingest_unchecked.dr	440173
 x86_64/utf8_ingest_validated.dr	662373
