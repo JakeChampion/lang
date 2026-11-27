@@ -6339,16 +6339,13 @@ function tryall_decl(st: ast.Stmt, own acc: boolean): boolean {
   return acc;
 }
 
-function view_types(scope: checker.Scope, impls: parser.ImplInfo[], contracts: ssasem.Contracts): string[] {
+function view_types(scope: checker.Scope, impls: parser.ImplInfo[], envs: EnvContract[]): string[] {
   let names: string[] = [];
   let fn_keys: string[] = [];
   let fn_captures: typeinfo.Type[][] = [];
-  for c in contracts.list {
-    if (c.params.len() == 0 || !semtypes.is_env(c.params[0])) {
-      continue;
-    }
-    fn_keys = fn_keys.append(func_view_key(ssasem.closure_type(c)));
-    fn_captures = fn_captures.append(semtypes.env_captures(c.params[0]));
+  for env in envs {
+    fn_keys = fn_keys.append(func_view_key(env.fn_ty));
+    fn_captures = fn_captures.append(semtypes.env_captures(env.contract.params[0]));
   }
   let changed = true;
   while (changed) {
@@ -7125,14 +7122,25 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
   return with_new_enum(out, semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option(), views: views, nests_func: variants_nest_func(variants) });
 }
 
+struct EnvContract { contract: ssasem.Contract, fn_ty: typeinfo.Type, vars: string[] }
+
+// These signatures belong to the source contracts used to lower this module.
+function env_contracts(contracts: ssasem.Contract[]): EnvContract[] {
+  let out: EnvContract[] = [];
+  for c in contracts {
+    out = out.append(EnvContract { contract: c, fn_ty: ssasem.closure_type(c), vars: ssasem.contract_variables(c) });
+  }
+  return out;
+}
+
 struct EnvCandidate { row: ssasem.EnvRow, request: Option[Request] }
 
-function env_rows(functions: typeinfo.Type[], first: i32, envs: ssasem.Contract[]): EnvCandidate[] {
+function env_rows(functions: typeinfo.Type[], first: i32, envs: EnvContract[]): EnvCandidate[] {
   let out: EnvCandidate[] = [];
   for id in first..functions.len() {
     let t = functions[id];
-    for c in envs {
-      if let Some(candidate) = env_serving(c, t) {
+    for env in envs {
+      if let Some(candidate) = env_serving(env, t) {
         out = out.append(candidate);
       }
     }
@@ -7140,15 +7148,16 @@ function env_rows(functions: typeinfo.Type[], first: i32, envs: ssasem.Contract[
   return out;
 }
 
-function env_serving(c: ssasem.Contract, t: typeinfo.Type): Option[EnvCandidate] {
-  if (semtypes.equal(ssasem.closure_type(c), t)) {
+function env_serving(env: EnvContract, t: typeinfo.Type): Option[EnvCandidate] {
+  let c = env.contract;
+  if (semtypes.equal(env.fn_ty, t)) {
     return Some(EnvCandidate { row: ssasem.EnvRow { fn_ty: t, env_ty: c.params[0] }, request: None });
   }
-  let vars = ssasem.contract_variables(c);
+  let vars = env.vars;
   if (vars.len() == 0) {
     return None;
   }
-  let b = ssasem.bind_type(ssasem.unbound(), ssasem.closure_type(c), t);
+  let b = ssasem.bind_type(ssasem.unbound(), env.fn_ty, t);
   if (!b.ok || !ssasem.binds_all(b, vars)) {
     return None;
   }
@@ -7177,7 +7186,7 @@ function (ts: TypeSet) intern(t: typeinfo.Type): TypeSet {
   return TypeSet { types: ts.types.append(t), by_spelling: ts.by_spelling.added(key) };
 }
 
-function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Closed {
+function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo, envs: EnvContract[]): Closed {
   let rows = ssasem.no_env_rows();
   let drows = ssasem.no_env_rows();
   let requests: Request[] = [];
@@ -7192,7 +7201,7 @@ function env_rows_closed(named: typeinfo.Type[], s: State, memo: SchemaMemo): Cl
     served = r.fns;
     let dreach = r.dyns;
     let grown = false;
-    for candidate in env_rows(served.types, first, s.contracts.envs) {
+    for candidate in env_rows(served.types, first, envs) {
       let row = candidate.row;
       if (!semtypes.is_env(row.env_ty) || rows.has(row.fn_ty, row.env_ty)) {
         continue;
@@ -7494,7 +7503,7 @@ function self_call_name(fd: parser.FuncDecl, name: string): string {
   return name;
 }
 
-function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo, finalizers: ssasem.Finalizer[]): Made {
+function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo, finalizers: ssasem.Finalizer[], envs: EnvContract[]): Made {
   if (!s.ok) {
     return Made { p: refuse(s.why), memo: memo };
   }
@@ -7521,7 +7530,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   for t in contract_types(s.calls) {
     roots = with_distinct_root(roots, t);
   }
-  let closed = env_rows_closed(roots.types, s, memo);
+  let closed = env_rows_closed(roots.types, s, memo, envs);
   let table = closed.table;
   if (!table.ok) {
     return Made { p: refuse(table.why), memo: table.memo };
@@ -7547,7 +7556,7 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
   return "inferred from the first returned value";
 }
 
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], finalizers: ssasem.Finalizer[], memo: SchemaMemo, layout: Layout): Made {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: Handers, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], finalizers: ssasem.Finalizer[], memo: SchemaMemo, layout: Layout, envs: EnvContract[]): Made {
   if (fd.import_iface.len() > 0) {
     return Made { p: external_entry(), memo: memo };
   }
@@ -7558,7 +7567,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
   let body = lenelide.elide_len_bounded_body(fd.body);
   s = learn_body(fd, body, s);
   s = stmts(body, prebind(parameters(fd, s)));
-  return complete(fd, s, name, memo, finalizers);
+  return complete(fd, s, name, memo, finalizers, envs);
 }
 
 function learn_body(fd: parser.FuncDecl, body: ast.Stmt[], s: State): State {
@@ -9609,11 +9618,12 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   let finalizers = finalized_types(mod);
   let scopes = checker.module_scopes(mod);
   let table = contracts(mod, scopes);
+  let envs = env_contracts(table.envs);
   let handed_back = handers(mod);
   let shadows = shadowed_builtins(mod);
   let views: string[] = [];
   if (scopes.len() > 0) {
-    views = view_types(scopes[0], impls, table);
+    views = view_types(scopes[0], impls, envs);
   }
   let decls: Produced[] = [];
   let names: string[] = [];
@@ -9624,7 +9634,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let fd = mod.funcs[i];
     let p = template_entry(parser.decl_key(fd), false, "uninstantiated generic", true);
     if (!generic_decl(fd)) {
-      let made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, impls, finalizers, memo, layout_of(opts, finalizers));
+      let made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, impls, finalizers, memo, layout_of(opts, finalizers), envs);
       p = made.p;
       memo = made.memo;
     }
@@ -9645,7 +9655,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     }
     let p = refuse("unbounded instantiation");
     if (at < instance_limit()) {
-      let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, impls, finalizers, memo, layout_of(opts, finalizers));
+      let made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, impls, finalizers, memo, layout_of(opts, finalizers), envs);
       p = made.p;
       memo = made.memo;
     }
