@@ -29642,8 +29642,8 @@ function ow_result_spelling(fn: parser.FuncDecl): string {
 // A value of type tn can lend a handle to a result of type ret only when the
 // two types can hold a handle of one kind.
 function ow_handle_kinds_meet(tn: string, ret: string, fn: parser.FuncDecl, dx: OwnDecls): boolean {
-  let given = ow_handle_kinds(tn, dx, fn.all_type_params, []);
-  let held = ow_handle_kinds(ret, dx, fn.all_type_params, []);
+  let given = ow_handle_kinds(tn, dx, fn.all_type_params);
+  let held = ow_handle_kinds(ret, dx, fn.all_type_params);
   if (given.len() == 0 || held.len() == 0) {
     return false;
   }
@@ -29662,46 +29662,50 @@ function ow_handle_kinds_meet(tn: string, ret: string, fn: parser.FuncDecl, dx: 
 // handle types, or "*" for any kind. A type parameter in open, a callback,
 // and a name with no declaration can hold any kind. The type parameters of a
 // declaration add nothing, because the arguments of its use count instead.
-// seen holds the declarations on the path.
-function ow_handle_kinds(tn: string, dx: OwnDecls, open: string[], seen: string[]): string[] {
-  let none: string[] = [];
+function ow_handle_kinds(tn: string, dx: OwnDecls, open: string[]): string[] {
+  return ow_kinds_in(tn, dx, open, OwKinds { kinds: [], visited: [] }).kinds;
+}
+
+// visited holds each declaration that the walk read. Its kinds are already in
+// kinds, so a second path to it adds nothing.
+struct OwKinds { kinds: string[], visited: string[] }
+
+function ow_kinds_in(tn: string, dx: OwnDecls, open: string[], own acc: OwKinds): OwKinds {
   let n = tn.len();
   if (tn == "fn" || parser.top_arrow_at(tn) >= 0 || util.has_str(open, tn)) {
-    return ["*"];
+    return ow_add_kind(acc, "*");
   }
   if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
-    return ow_handle_kinds(slice_unchecked(tn, 0, n - 2).to_owned(), dx, open, seen);
+    return ow_kinds_in(slice_unchecked(tn, 0, n - 2).to_owned(), dx, open, acc);
   }
   if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
-    return ow_handle_kinds(slice_unchecked(tn, 1, n - 1).to_owned(), dx, open, seen);
+    return ow_kinds_in(slice_unchecked(tn, 1, n - 1).to_owned(), dx, open, acc);
   }
   if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
-    return ow_all_handle_kinds(parser.split_top_commas(slice_unchecked(tn, 1, n - 1).to_owned()), dx, open, seen);
+    return ow_all_kinds_in(parser.split_top_commas(slice_unchecked(tn, 1, n - 1).to_owned()), dx, open, acc);
   }
-  if (ow_no_handle_in(tn, dx, [], seen)) {
-    return none;
+  if (ow_holds_no_handle(tn, dx)) {
+    return acc;
   }
   let name = tn;
-  let kinds = none;
   let at = util.index_of_sub(tn, "[");
   if (at > 0 && tn[n - 1] == b']') {
     name = slice_unchecked(tn, 0, at).to_owned();
-    kinds = ow_all_handle_kinds(parser.split_top_commas(slice_unchecked(tn, at + 1, n - 1).to_owned()), dx, open, seen);
+    acc = ow_all_kinds_in(parser.split_top_commas(slice_unchecked(tn, at + 1, n - 1).to_owned()), dx, open, acc);
   }
-  if (name == "Option" || name == "Result" || name == "Cell" || name == "Map" || util.has_str(seen, name)) {
-    return kinds;
+  if (name == "Option" || name == "Result" || name == "Cell" || name == "Map" || util.has_str(acc.visited, name)) {
+    return acc;
   }
   if (semtypes.is_fd_handle_name(name)) {
-    return ow_add_kind(kinds, name);
+    return ow_add_kind(acc, name);
   }
   if (dx.consuming.has(name)) {
-    kinds = ow_add_kind(kinds, name);
+    acc = ow_add_kind(acc, name);
   }
-  return ow_merge_kinds(kinds, ow_decl_handle_kinds(name, dx, open, seen.append(name)));
+  return ow_decl_kinds_in(name, dx, open, OwKinds { ...acc, visited: acc.visited.append(name) });
 }
 
-function ow_decl_handle_kinds(name: string, dx: OwnDecls, open: string[], seen: string[]): string[] {
-  let kinds: string[] = [];
+function ow_decl_kinds_in(name: string, dx: OwnDecls, open: string[], own acc: OwKinds): OwKinds {
   let found = false;
   for sd in dx.structs {
     if (sd.name == name && sd.enum_owner == "" || sd.enum_owner == name) {
@@ -29709,7 +29713,7 @@ function ow_decl_handle_kinds(name: string, dx: OwnDecls, open: string[], seen: 
       for f in sd.fields {
         let ft = f.type_name.trim();
         if (!util.has_str(sd.type_params, ft)) {
-          kinds = ow_merge_kinds(kinds, ow_handle_kinds(ft, dx, open, seen));
+          acc = ow_kinds_in(ft, dx, open, acc);
         }
       }
     }
@@ -29723,34 +29727,26 @@ function ow_decl_handle_kinds(name: string, dx: OwnDecls, open: string[], seen: 
           member = member + "[" + al.variant_args[i].join(", ") + "]";
         }
         if (!util.has_str(al.type_params, member)) {
-          kinds = ow_merge_kinds(kinds, ow_handle_kinds(member, dx, open, seen));
+          acc = ow_kinds_in(member, dx, open, acc);
         }
       }
     }
   }
-  return if (found) { kinds } else { ["*"] };
+  return if (found) { acc } else { ow_add_kind(acc, "*") };
 }
 
-function ow_all_handle_kinds(ts: string[], dx: OwnDecls, open: string[], seen: string[]): string[] {
-  let kinds: string[] = [];
+function ow_all_kinds_in(ts: string[], dx: OwnDecls, open: string[], own acc: OwKinds): OwKinds {
   for t in ts {
-    kinds = ow_merge_kinds(kinds, ow_handle_kinds(t.trim(), dx, open, seen));
+    acc = ow_kinds_in(t.trim(), dx, open, acc);
   }
-  return kinds;
+  return acc;
 }
 
-function ow_merge_kinds(own kinds: string[], more: string[]): string[] {
-  for kind in more {
-    kinds = ow_add_kind(kinds, kind);
+function ow_add_kind(own acc: OwKinds, kind: string): OwKinds {
+  if (util.has_str(acc.kinds, kind)) {
+    return acc;
   }
-  return kinds;
-}
-
-function ow_add_kind(own kinds: string[], kind: string): string[] {
-  if (util.has_str(kinds, kind)) {
-    return kinds;
-  }
-  return kinds.append(kind);
+  return OwKinds { ...acc, kinds: acc.kinds.append(kind) };
 }
 
 function ow_sig_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
