@@ -39641,7 +39641,6 @@ function lit_float_constructor(c: ast.ExprCall, want: typeinfo.Type, s: Scope, s
 function lit_typed_scope(s: Scope, st: LitInfer): Scope {
   let types = s.types;
   let lits = s.lit_locals;
-  let default_int: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: true };
   for i in 0..types.len() {
     let original = types[i];
     if (lit_free(original)) {
@@ -39651,35 +39650,35 @@ function lit_typed_scope(s: Scope, st: LitInfer): Scope {
     if (k >= 0) {
       let w = st.width[lit_find(st, k)];
       if (is_unknown(w)) {
-        w = default_int;
+        w = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: true };
         lits = lits.added(s.names[i]);
       }
       types = types.with(i, w);
     } else {
-      types = types.with(i, lit_typed_type(original, st, default_int));
+      types = types.with(i, lit_typed_type(original, st, true));
     }
   }
   return Scope { ...s, types: types, lit_locals: lits };
 }
 
-function lit_typed_type(t: typeinfo.Type, st: LitInfer, default_int: typeinfo.Type): typeinfo.Type {
+function lit_typed_type(t: typeinfo.Type, st: LitInfer, poly: boolean): typeinfo.Type {
   let k = lit_id(t);
   if (k >= 0) {
     let w = st.width[lit_find(st, k)];
     if (is_unknown(w)) {
-      return default_int;
+      return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: poly };
     }
     return w;
   }
   if let typeinfo.TypeTuple(tt) = t {
     let elems: typeinfo.Type[] = [];
     for el in tt.elements {
-      elems = elems.append(lit_typed_type(el, st, default_int));
+      elems = elems.append(lit_typed_type(el, st, poly));
     }
     return t_tuple(elems);
   }
   if let typeinfo.TypeArray(a) = t {
-    return typeinfo.TypeArray { ...a, elem: lit_typed_type(a.elem, st, default_int) };
+    return typeinfo.TypeArray { ...a, elem: lit_typed_type(a.elem, st, poly) };
   }
   return t;
 }
@@ -40493,10 +40492,9 @@ function lit_rewrites(st: LitInfer): LitRewrite {
   let (ook, oot) = open_rewrites(st, ok, ot);
   ok = ook;
   ot = oot;
-  let default_int = typeinfo.t_i32();
   for ti in 0..st.tkeys.len() {
     ok = ok.append(st.tkeys[ti]);
-    ot = ot.append(typeinfo.spelling(lit_typed_type(st.ttypes[ti], st, default_int)));
+    ot = ot.append(typeinfo.spelling(lit_typed_type(st.ttypes[ti], st, false)));
   }
   for si in 0..sk.len() {
     ok = ok.append(sk[si]);
@@ -40519,7 +40517,7 @@ function lit_rewrites(st: LitInfer): LitRewrite {
   let (fk, ft) = agreed_tags(st.fkeys, st.ftags, util.index_of_str);
   let ptypes: typeinfo.Type[] = [];
   for pt in st.ptypes {
-    ptypes = ptypes.append(lit_typed_type(pt, st, default_int));
+    ptypes = ptypes.append(lit_typed_type(pt, st, false));
   }
   return LitRewrite { keys: util.name_index(ok), tags: ot, cargs: ck, ctags: ct, fkeys: fk, ftags: ft, pargs: st.pargs, ptypes: ptypes };
 }
