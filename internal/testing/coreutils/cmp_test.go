@@ -185,6 +185,9 @@ func TestCmpInputPosition(t *testing.T) {
 		{"bounded pipe", true, 0, []string{"-n", "3", other, "-"}, 0, "3456789"},
 		{"skip and compare pipe", true, 0, []string{"-i", "2", "-n", "3", "-", other}, 0, "56789"},
 		{"skip only pipe", true, 0, []string{"-i", "2", "-n", "0", "-", other}, 0, "23456789"},
+		{"same pipe with different skips", true, 0, []string{"-", "-", "1", "2"}, 0, data},
+		{"shared file position after first skip", false, 1, []string{"-", "-", "2", "0"}, 0, "3456789"},
+		{"shared file quiet remaining sizes", false, 1, []string{"-s", "-", "-", "0", "2"}, 1, "3456789"},
 		{"same inode different positions", false, 1, []string{"-n", "2", "-", path}, 1, "3456789"},
 		{"same inode equal positions after skips", false, 1, []string{path, "-", "3", "2"}, 0, "3456789"},
 	} {

@@ -1,3 +1,4 @@
+import "std/option";
 import "std/string";
 import "../coreutils/lib/filetype";
 import "../coreutils/lib/gnu";
@@ -277,21 +278,20 @@ function fill(inp: Input, left: u64): Input {
   }
 }
 
-// skip_input drops the first `n` bytes: a seek on a regular file, else reads.
-function skip_input(inp: Input, n: u64, st: Option[FileStat]): Input {
-  if (n == 0 as u64) {
-    return inp;
+// Save each seek result before positioning the other operand. Two "-" operands
+// share one descriptor, so a later seek can move the position of both.
+function position(inp: Input, skip: u64, needed: boolean): Option[i64] {
+  if (skip == 0u64 && !needed) {
+    return None;
   }
-  if let Some(info) = st {
-    if (info.is_file) {
-      match (inp.r.seek(n as i64, 1)) {
-        Ok(_) => {
-          return inp;
-        },
-        Err(_) => {}
-      }
-    }
-  }
+  return match (inp.r.seek(skip as i64, 1)) {
+    Ok(pos) => Some(pos),
+    Err(_) => None,
+  };
+}
+
+// A non-seekable input consumes its skip by reading.
+function skip_bytes(inp: Input, n: u64): Input {
   let left = n;
   let i = inp;
   while (left > 0 as u64) {
@@ -315,10 +315,10 @@ function input_stat(inp: Input): Option[FileStat] {
 }
 
 // An opened regular file may already be positioned partway through its data.
-function remaining_size(input: Input, stat: Option[FileStat]): Option[u64] {
+function remaining_size(position: Option[i64], stat: Option[FileStat]): Option[u64] {
   if let Some(st) = stat {
     if (st.is_file && st.size >= 0i64) {
-      if let Ok(pos) = input.r.seek(0i64, 1) {
+      if let Some(pos) = position {
         return Some(if (pos < st.size) { (st.size - pos) as u64 } else { 0u64 });
       }
     }
@@ -552,16 +552,6 @@ function stdout_is_null(): boolean {
   return same_file(Some(out), Some(device));
 }
 
-function same_offset(a: Reader, b: Reader): boolean {
-  let Ok(first) = a.seek(0 as i64, 1) else {
-    return false;
-  };
-  let Ok(second) = b.seek(0 as i64, 1) else {
-    return false;
-  };
-  return first == second;
-}
-
 function main(): i32 {
   let argv = args();
   let parsed = parse(argv);
@@ -584,21 +574,19 @@ function main(): i32 {
   let inputs: Input[] = [first, open_input(cfg, names[1])];
   let stats: Option[FileStat][] = [input_stat(inputs[0]), input_stat(inputs[1])];
   let same = same_file(stats[0], stats[1]);
-  let regular = match (stats[0]) { Some(st) => st.is_file, None => false };
-  if (same && !regular && cfg.skip[0] == cfg.skip[1]) {
-    return 0;
-  }
-  inputs = [skip_input(inputs[0], cfg.skip[0], stats[0]), skip_input(inputs[1], cfg.skip[1], stats[1])];
-  if (same && regular && names[0] != names[1] && same_offset(inputs[0].r, inputs[1].r)) {
-    return 0;
-  }
   if (!cfg.quiet && stdout_is_null()) {
     cfg = Cfg { ...cfg, null_output: true, verbose: false };
   }
+  let need_position = same || cfg.verbose || cfg.quiet;
+  let pos0 = position(inputs[0], cfg.skip[0], need_position);
+  let pos1 = position(inputs[1], cfg.skip[1], need_position);
+  if (same && pos0 == pos1) {
+    return 0;
+  }
   let width = 1;
   if (cfg.verbose || cfg.quiet) {
-    let first = remaining_size(inputs[0], stats[0]);
-    let second = remaining_size(inputs[1], stats[1]);
+    let first = remaining_size(pos0, stats[0]);
+    let second = remaining_size(pos1, stats[1]);
     if (cfg.verbose) {
       width = offset_width(cfg.limit, first, second);
     } else if let Some(a) = first {
@@ -608,6 +596,12 @@ function main(): i32 {
         }
       }
     }
+  }
+  if (pos0.is_none() && cfg.skip[0] > 0u64) {
+    inputs = inputs.with(0, skip_bytes(inputs[0], cfg.skip[0]));
+  }
+  if (pos1.is_none() && cfg.skip[1] > 0u64) {
+    inputs = inputs.with(1, skip_bytes(inputs[1], cfg.skip[1]));
   }
   return compare(cfg, inputs, width);
 }
