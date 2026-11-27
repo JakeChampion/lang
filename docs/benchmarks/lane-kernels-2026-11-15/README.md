@@ -142,15 +142,31 @@ The compiler merges two lane operations that are the same.
 It moves a lane value that does not change out of a loop.
 A splat of a constant is 6 instructions on x86-64, so a value of constants moves also.
 
-A lane value does not move out of a loop that makes a call that returns.
-An abort of a bounds check does not return, so it does not count.
-No register keeps a lane value across a call, so such a value goes to a frame slot.
+No register keeps a lane value across a call that returns.
+So a value out of a loop that makes such a call goes to a frame slot.
+Each read then loads it again.
+So out of such a loop, a lane value moves only when the loop reads it one time, in the loop of its definition.
+An abort of a bounds check does not return, so it does not count as a call.
 
-#17369 moved a lane value out of a loop with a call when the loop reads it one time.
-On x86-64 that cut `base64_decode` by 38%, because a splat there is 6 instructions.
-On arm64 a splat is 2 or 3 instructions, and the values that moved took most of the lane registers.
-The values of each step then went through the frame: `aarch64/base64_decode.ir` went up 33%, and its `.dr` went from 8.7M to 136.7M.
-So that rule is out, and #17376 has the cause in the register allocator.
+The values that move hold lane registers for the whole loop.
+arm64 has 16 lane registers that a call does not keep, `v16` to `v31`.
+The 13 constants of the base64 step take most of them.
+The values of the step then take `v8` to `v15`.
+A call keeps only the low half of those, so a lane value that a call crosses cannot stay in one.
+A value of the step lives between two calls, so it can (#17376).
+
+The counts are instructions of the whole program on arm64-linux, from callgrind.
+The counts before are from the compiler of main at d33a4a2b, which moves no lane value out of a loop with a call that returns.
+
+| Program | Before | After | Change |
+| --- | --: | --: | --: |
+| `base64_decode` | 334,328,214 | 233,651,132 | -30% |
+| `base64_encode` | 63,122,785 | 58,928,751 | -7% |
+| `hex_decode` | 177,961,863 | 161,188,239 | -9% |
+| `utf8_validate` | 221,066,742 | 212,801,294 | -4% |
+
+The loops of `hex_decode` and `utf8_validate` make a call that returns, so each constant that moves costs one load from the frame for each trip.
+Their data reads go from 15.9M to 24.3M and from 29.6M to 33.7M.
 
 The blend loop of `draw_blend` has no call.
 Its step runs 30 instructions: 7.5 for each pixel.
