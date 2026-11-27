@@ -49,6 +49,8 @@ func cmpCases(t *testing.T) []invocation {
 	return []invocation{
 		{name: "equal files", args: []string{a, spaced}},
 		{name: "a file with itself", args: []string{a, a}},
+		{name: "a file with itself at different offsets", args: []string{a, a, "0", "1"}},
+		{name: "a missing file with itself", args: []string{missing, missing}},
 		{name: "a file with a link to it", args: []string{a, link}},
 		{name: "first difference", args: []string{a, b}},
 		{name: "first difference with bytes", args: []string{"-b", a, b}},
@@ -228,6 +230,15 @@ func TestCmpInputPosition(t *testing.T) {
 				t.Errorf("remaining stdin %q, want %q", rest, tc.rest)
 			}
 		})
+	}
+}
+
+// GNU cmp accepts two references to stdin at the same offset without reading it.
+func TestCmpIdenticalClosedStdin(t *testing.T) {
+	argv := crossArgv(fernBin(t, "cmp"), "-i", "1", "-", "-")
+	args := append([]string{"-c", `exec 0<&-; exec "$@"`, "sh"}, argv...)
+	if out, err := exec.Command("sh", args...).CombinedOutput(); err != nil || len(out) != 0 {
+		t.Fatalf("cmp on identical stdin operands: %v, %s", err, out)
 	}
 }
 

@@ -573,11 +573,15 @@ function main(): i32 {
     }
     cfg = specify_skip(cfg, k - 2, ops[k], 0, 0 as u8).0;
   }
-  let inputs: Input[] = [open_input(cfg, names[0]), open_input(cfg, names[1])];
+  let first = open_input(cfg, names[0]);
+  if (names[0] == names[1] && cfg.skip[0] == cfg.skip[1]) {
+    return 0;
+  }
+  let inputs: Input[] = [first, open_input(cfg, names[1])];
   let stats: Option[FileStat][] = [input_stat(inputs[0]), input_stat(inputs[1])];
   let same = same_file(stats[0], stats[1]);
   let regular = match (stats[0]) { Some(st) => st.is_file, None => false };
-  if (same && cfg.skip[0] == cfg.skip[1] && (names[0] == names[1] || !regular)) {
+  if (same && !regular && cfg.skip[0] == cfg.skip[1]) {
     return 0;
   }
   inputs = [skip_input(inputs[0], cfg.skip[0], stats[0]), skip_input(inputs[1], cfg.skip[1], stats[1])];
