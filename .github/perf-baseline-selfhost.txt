@@ -54,7 +54,7 @@ selfhost/arm64-linux/byte_copy_with.emit	1894
 selfhost/arm64-linux/call_overhead.emit	452
 selfhost/arm64-linux/closure_call.emit	1309
 selfhost/arm64-linux/deflate_decode.emit	15365
-selfhost/arm64-linux/deflate_encode.emit	7906
+selfhost/arm64-linux/deflate_encode.emit	8015
 selfhost/arm64-linux/enum_match.emit	1273
 selfhost/arm64-linux/http_hello.emit	17267
 selfhost/arm64-linux/int_loop.emit	376
@@ -87,8 +87,8 @@ selfhost/wasm32-wasi/byte_copy_append.emit	580
 selfhost/wasm32-wasi/byte_copy_with.emit	977
 selfhost/wasm32-wasi/call_overhead.emit	184
 selfhost/wasm32-wasi/closure_call.emit	523
-selfhost/wasm32-wasi/deflate_decode.emit	24666
-selfhost/wasm32-wasi/deflate_encode.emit	12853
+selfhost/wasm32-wasi/deflate_decode.emit	25263
+selfhost/wasm32-wasi/deflate_encode.emit	13450
 selfhost/wasm32-wasi/enum_match.emit	570
 selfhost/wasm32-wasi/http_hello.emit	21882
 selfhost/wasm32-wasi/int_loop.emit	76
@@ -195,8 +195,8 @@ selfhost/x86-64-linux/draw_rgba.emit	2350
 selfhost/arm64-linux/draw_rgba.emit	2539
 selfhost/wasm32-wasi/draw_rgba.emit	2642
 selfhost/x86-64-linux/jpeg_decode.emit	15188
-selfhost/arm64-linux/jpeg_decode.emit	15424
-selfhost/wasm32-wasi/jpeg_decode.emit	26739
+selfhost/arm64-linux/jpeg_decode.emit	15596
+selfhost/wasm32-wasi/jpeg_decode.emit	27573
 selfhost/x86-64-linux/draw_image.emit	1875
 selfhost/arm64-linux/draw_image.emit	2091
 selfhost/wasm32-wasi/draw_image.emit	1836
