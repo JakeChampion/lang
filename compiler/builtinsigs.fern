@@ -337,6 +337,29 @@ pub function builtin_result(name: string): string {
   return slice_unchecked(row, close + 3, row.len()).to_owned();
 }
 
+// The receiver types that have `__method_` rows.
+function builtin_method_owners(): string[] {
+  return ["Dir", "Reader", "Writer", "boolean", "string"];
+}
+
+// Whether a builtin receiver type has a method `field`.
+pub function is_builtin_method(field: string): boolean {
+  for owner in builtin_method_owners() {
+    if (builtin_row("__method_" + owner + "_" + field).len() > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The result type of method `field` of builtin receiver `recv`, or "".
+pub function builtin_method_result(recv: string, field: string): string {
+  if (recv.len() == 0) {
+    return "";
+  }
+  return builtin_result("__method_" + recv + "_" + field);
+}
+
 // An intrinsic that reaches a device or raw memory: an MMIO, raw memory or
 // port access, __fence, or a privileged op. No pass removes, merges or moves
 // one.

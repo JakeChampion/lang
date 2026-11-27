@@ -10958,6 +10958,14 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
   return result;
 }
 
+// The result of a method of a builtin receiver, as builtinsigs spells it.
+function builtin_method_type(cfa: ast.ExprFieldAccess, env: MEnv, funcs: MFns): string {
+  if (!builtinsigs.is_builtin_method(cfa.field)) {
+    return "";
+  }
+  return builtinsigs.builtin_method_result(mono_infer(cfa.obj, env, funcs), cfa.field);
+}
+
 // The result of a call of a name with no Fern signature: a function value,
 // a generic variant, or a builtin. The checker has not typed the call yet.
 function unsigned_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: MFns): string {
@@ -11228,6 +11236,10 @@ pub function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           let held = field_call_type(cfa, env, funcs);
           if (held.len() > 0) {
             return held;
+          }
+          let brt = builtin_method_type(cfa, env, funcs);
+          if (brt.len() > 0) {
+            return brt;
           }
           return stamped_type(c.ty);
         },
