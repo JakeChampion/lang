@@ -454,6 +454,7 @@ struct Walk {
   kept: boolean[],
   // The state a load starts with where a tested token decides its origin.
   token_loads: i32[],
+  tokens: i32[],
 }
 
 function returns_pair(f: ssa.SFunc, irops: ir.Op[]): boolean {
@@ -3834,13 +3835,36 @@ function phi_input(own p: Progress, w: Walk, a: i32): Fed {
 // that box, zero, or a token of that box, so it is the box when it is not
 // zero. -1 if `ins` is not a token.
 function token_box(w: Walk, ins: ssa.SInst): i32 {
-  return token_box_at(w, ins, 0);
-}
-
-function token_box_at(w: Walk, ins: ssa.SInst, depth: i32): i32 {
-  if (ins.kind_tag != ssa.PHI || ins.result < 0) {
+  if (ins.kind_tag != ssa.PHI || ins.result < 0 || ins.result >= w.tokens.len()) {
     return -1;
   }
+  return w.tokens[ins.result];
+}
+
+// The box of each phi that is a token, by value, or -1. A token inside a
+// token counts to a depth of 8. The pass for depth d reads the table of
+// depth d + 1, so each phi is read one time for each depth, not one time for
+// each path through the phis that feed it.
+function token_boxes(w: Walk): i32[] {
+  let deeper: i32[] = [];
+  for step in 0..9 {
+    let depth = 8 - step;
+    let at = util.minus_ones(w.insts.len());
+    for b in w.f.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag == ssa.PHI && ins.result >= 0 && ins.result < at.len()) {
+          at = at.with(ins.result, token_box_at(w, ins, depth, deeper));
+        }
+      }
+    }
+    deeper = at;
+  }
+  return deeper;
+}
+
+// The box of the token `ins` at `depth`, where `deeper` holds the boxes of
+// the tokens one level down.
+function token_box_at(w: Walk, ins: ssa.SInst, depth: i32, deeper: i32[]): i32 {
   let box = -1;
   let zero = false;
   for a in ins.args {
@@ -3852,7 +3876,7 @@ function token_box_at(w: Walk, ins: ssa.SInst, depth: i32): i32 {
       continue;
     }
     let r = w.root[a];
-    let inner = nested_token_box(w, r, w.root[ins.result], depth);
+    let inner = nested_token_box(w, r, w.root[ins.result], depth, deeper);
     if (inner >= 0) {
       r = inner;
       zero = true;
@@ -3869,11 +3893,11 @@ function token_box_at(w: Walk, ins: ssa.SInst, depth: i32): i32 {
 }
 
 // The box of `r` where `r` is a token that is not `outer`, or -1.
-function nested_token_box(w: Walk, r: i32, outer: i32, depth: i32): i32 {
-  if (r == outer || depth >= 8) {
+function nested_token_box(w: Walk, r: i32, outer: i32, depth: i32, deeper: i32[]): i32 {
+  if (r == outer || depth >= 8 || r < 0 || r >= deeper.len() || def_in(w, r).kind_tag != ssa.PHI) {
     return -1;
   }
-  return token_box_at(w, def_in(w, r), depth + 1);
+  return deeper[r];
 }
 
 // A token input makes its box a twin keyed on the token: on the edge where
@@ -4366,7 +4390,7 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
     uses = ssa.use_counts(f);
     paired = returns_pair(f, irops);
   }
-  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, rejoined: hold.rejoined, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] }, insts: ssa.inst_defs(f), token_loads: [] };
+  let w = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, rejoined: hold.rejoined, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [], splits: Splits { word: [], on_true: [], to: [], returns: [] }, insts: ssa.inst_defs(f), token_loads: [], tokens: [] };
   w = Walk { ...w, splits: splits_of(w) };
   w = Walk { ...w, carried: carried_of(w) };
   let rg = inherited_regions(unique_regions(w, dom, reach), f, reach, base);
@@ -4378,6 +4402,7 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   let takes = inherited_takes(takes_of(w, dom), w, base);
   let taken = null_takes(w, takes);
   w = Walk { ...w, takes: takes, debt: debts(w, taken, hold.from), kept: put_backs(w, st, dom), idx: indexes(w, touches(w, taken)) };
+  w = Walk { ...w, tokens: token_boxes(w) };
   let tracked = 0;
   for k in w.idx {
     if (k >= 0) {
