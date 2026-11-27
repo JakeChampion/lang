@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("[package]\nname = \"app\"\nindex = \"reg/index.toml\"\nindex_key = \x12ed25519:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n[dependencies]\nfoo =\x01\"1.1.0\"\n\x7far = { path = \"../bar\" }\n")
