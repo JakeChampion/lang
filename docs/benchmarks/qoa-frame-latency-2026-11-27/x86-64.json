@@ -1,0 +1,1058 @@
+{
+  "schema": 3,
+  "target": "x86-64-linux",
+  "platform": "Linux-6.18.44-fc-v880-x86_64-with-glibc2.39",
+  "cpu_model": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cpu": 3,
+  "rounds": 64,
+  "trials": 7,
+  "frames_per_file": 262144,
+  "git_head": "84ea3a5782e7fd47063fb327343567a771854d42",
+  "compiler": "fern (unknown build)\nbuilt for x86-64-linux",
+  "compiler_sha256": "c090272609d10dd55e74a22aeb7923317a6a4eb842070cd4f7370c23378e6404",
+  "reference_commit": "bc0589710ff6aa2f50e08fb4d0a815d567bc0f3e",
+  "reference_sha256": "a82da1ed87a0b1c260e5d3ff3b974464cfb4c11d23158d5cbd05629de2fce2a0",
+  "fern_sha256": "2c743055cab7f6571627fe57e0fc5399dbcc8e657f7369300fa3ee0f87df5096",
+  "source_sha256": {
+    "scripts/bench-audio": "456add153360d90fa4911dd9c304ff46dec8d037327f0b8243f29284672b8b89",
+    "scripts/audio-reference/qoa_bench.c": "c58dec3c5de33d1f6fb56595393e7a173bc5057811ef1ea5c1fe31a3bc2aa35e",
+    "bench/audio/qoa_decode.fern": "f0afbcdc311b694bdfef69e6ff8673f8bc5919079a697d766923c58c127f0c09",
+    "internal/stdlib/std/audio/qoa.fern.md": "a181c6cd0cff6c48d24eae73e209affe42b0fa754df8e4c16f9350907f37b239"
+  },
+  "measurement": "decode of every frame into reusable output, four warmup rounds; file read and decoder setup excluded; checksum pass after the timed region",
+  "frame_latency": "a second pass of the same rounds after the throughput region times each frame decode; each percentile is nearest-rank within a trial, then the median across trials; the maximum is across all trials",
+  "output_storage": "Fern: interleaved signed 32-bit PCM. C: interleaved signed 16-bit PCM. The checksum hashes each sample as a sign-extended 32-bit value",
+  "peak_rss": "Linux process peak resident set after decode, including code, input and output",
+  "cases": {
+    "silence": {
+      "channels": 2,
+      "wav_sha256": "46c6bb516ff2090eb0a3f5a79ae660653a7c5a306a3f431d2ba6878cea130ff4",
+      "qoa_sha256": "8b8157ddd88c883e1dbc5b765429862a7e65b883e67ff82c0b61f4ce9069caf7",
+      "encoded_bytes": 211816,
+      "checksum": 3881828123,
+      "median_ns_per_sample": {
+        "fern": 7.731703758239746,
+        "c": 3.1202795207500458
+      },
+      "fern_over_c": 2.4778881849601784,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "frame_latency_ns": {
+        "fern": {
+          "p50": 71021,
+          "p90": 81609,
+          "p99": 105323,
+          "max": 946665
+        },
+        "c": {
+          "p50": 30678,
+          "p90": 33782,
+          "p99": 48757,
+          "max": 440173
+        }
+      },
+      "peak_rss_kb": {
+        "fern": 536,
+        "c": 2052
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 259432928,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74034,
+            "frame_p90_ns": 84754,
+            "frame_p99_ns": 94501,
+            "frame_max_ns": 134591,
+            "peak_rss_kb": 532,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 193418916,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 55779,
+            "frame_p90_ns": 74786,
+            "frame_p99_ns": 112879,
+            "frame_max_ns": 679120,
+            "peak_rss_kb": 532,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 215275512,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 72509,
+            "frame_p90_ns": 133464,
+            "frame_p99_ns": 165202,
+            "frame_max_ns": 632340,
+            "peak_rss_kb": 532,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 294527046,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 70294,
+            "frame_p90_ns": 82580,
+            "frame_p99_ns": 115767,
+            "frame_max_ns": 946665,
+            "peak_rss_kb": 536,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 270517849,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 70899,
+            "frame_p90_ns": 79735,
+            "frame_p99_ns": 90238,
+            "frame_max_ns": 132129,
+            "peak_rss_kb": 532,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 248193297,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 71021,
+            "frame_p90_ns": 81609,
+            "frame_p99_ns": 92913,
+            "frame_max_ns": 143514,
+            "peak_rss_kb": 532,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 272432894,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 72008,
+            "frame_p90_ns": 79745,
+            "frame_p99_ns": 105323,
+            "frame_max_ns": 890575,
+            "peak_rss_kb": 532,
+            "observed": 1
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 108493452,
+            "frame_p50_ns": 30778,
+            "frame_p90_ns": 34299,
+            "frame_p99_ns": 48869,
+            "frame_max_ns": 82306,
+            "peak_rss_kb": 2048,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 102439367,
+            "frame_p50_ns": 24053,
+            "frame_p90_ns": 27945,
+            "frame_p99_ns": 39917,
+            "frame_max_ns": 89096,
+            "peak_rss_kb": 2048,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 145529511,
+            "frame_p50_ns": 30823,
+            "frame_p90_ns": 33782,
+            "frame_p99_ns": 48757,
+            "frame_max_ns": 319502,
+            "peak_rss_kb": 2052,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 104617603,
+            "frame_p50_ns": 31006,
+            "frame_p90_ns": 34747,
+            "frame_p99_ns": 49611,
+            "frame_max_ns": 64189,
+            "peak_rss_kb": 2052,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 146291866,
+            "frame_p50_ns": 26846,
+            "frame_p90_ns": 29047,
+            "frame_p99_ns": 38864,
+            "frame_max_ns": 53045,
+            "peak_rss_kb": 2048,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 87780135,
+            "frame_p50_ns": 28556,
+            "frame_p90_ns": 30759,
+            "frame_p99_ns": 43001,
+            "frame_max_ns": 137880,
+            "peak_rss_kb": 2048,
+            "observed": 1
+          },
+          {
+            "samples": 33554432,
+            "checksum": 3881828123,
+            "wall_ns": 104699207,
+            "frame_p50_ns": 30678,
+            "frame_p90_ns": 33790,
+            "frame_p99_ns": 49096,
+            "frame_max_ns": 440173,
+            "peak_rss_kb": 2048,
+            "observed": 1
+          }
+        ]
+      }
+    },
+    "impulse": {
+      "channels": 2,
+      "wav_sha256": "c008c53c95e842a438787bfa8cc1557656acfafb07d61f4d63d43415a861bb70",
+      "qoa_sha256": "0eae917e4a3d9eb74bbf6eda6a349d542d905e6d39de7038cd056332ef0f1858",
+      "encoded_bytes": 211816,
+      "checksum": 2392821869,
+      "median_ns_per_sample": {
+        "fern": 7.904085397720337,
+        "c": 3.33549702167511
+      },
+      "fern_over_c": 2.3696874397899625,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "frame_latency_ns": {
+        "fern": {
+          "p50": 73910,
+          "p90": 100173,
+          "p99": 141361,
+          "max": 1221130
+        },
+        "c": {
+          "p50": 30802,
+          "p90": 35194,
+          "p99": 49675,
+          "max": 759783
+        }
+      },
+      "peak_rss_kb": {
+        "fern": 536,
+        "c": 2052
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 355624483,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 85117,
+            "frame_p90_ns": 129934,
+            "frame_p99_ns": 157216,
+            "frame_max_ns": 1221130,
+            "peak_rss_kb": 536,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 265433122,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74463,
+            "frame_p90_ns": 89157,
+            "frame_p99_ns": 119422,
+            "frame_max_ns": 152460,
+            "peak_rss_kb": 532,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 258659183,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 61119,
+            "frame_p90_ns": 109255,
+            "frame_p99_ns": 141560,
+            "frame_max_ns": 825608,
+            "peak_rss_kb": 532,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 264813700,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 73782,
+            "frame_p90_ns": 87621,
+            "frame_p99_ns": 137630,
+            "frame_max_ns": 493822,
+            "peak_rss_kb": 532,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 265217096,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 73910,
+            "frame_p90_ns": 86812,
+            "frame_p99_ns": 119455,
+            "frame_max_ns": 464237,
+            "peak_rss_kb": 532,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 237137960,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 61702,
+            "frame_p90_ns": 108097,
+            "frame_p99_ns": 142892,
+            "frame_max_ns": 337093,
+            "peak_rss_kb": 536,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 326145200,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74712,
+            "frame_p90_ns": 100173,
+            "frame_p99_ns": 141361,
+            "frame_max_ns": 827998,
+            "peak_rss_kb": 536,
+            "observed": 5860
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 104407460,
+            "frame_p50_ns": 30802,
+            "frame_p90_ns": 34531,
+            "frame_p99_ns": 49675,
+            "frame_max_ns": 338592,
+            "peak_rss_kb": 2052,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 106372812,
+            "frame_p50_ns": 30909,
+            "frame_p90_ns": 35194,
+            "frame_p99_ns": 49636,
+            "frame_max_ns": 184131,
+            "peak_rss_kb": 2048,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 138746192,
+            "frame_p50_ns": 32850,
+            "frame_p90_ns": 55579,
+            "frame_p99_ns": 69648,
+            "frame_max_ns": 122298,
+            "peak_rss_kb": 2048,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 120649785,
+            "frame_p50_ns": 29207,
+            "frame_p90_ns": 41287,
+            "frame_p99_ns": 57158,
+            "frame_max_ns": 196218,
+            "peak_rss_kb": 2052,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 128777977,
+            "frame_p50_ns": 24248,
+            "frame_p90_ns": 44573,
+            "frame_p99_ns": 57224,
+            "frame_max_ns": 165120,
+            "peak_rss_kb": 2048,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 82273915,
+            "frame_p50_ns": 25322,
+            "frame_p90_ns": 27085,
+            "frame_p99_ns": 42128,
+            "frame_max_ns": 759783,
+            "peak_rss_kb": 2052,
+            "observed": 5860
+          },
+          {
+            "samples": 33554432,
+            "checksum": 2392821869,
+            "wall_ns": 111920708,
+            "frame_p50_ns": 30878,
+            "frame_p90_ns": 34220,
+            "frame_p99_ns": 49478,
+            "frame_max_ns": 240025,
+            "peak_rss_kb": 2048,
+            "observed": 5860
+          }
+        ]
+      }
+    },
+    "speech": {
+      "channels": 1,
+      "wav_sha256": "f23c7f57d5739fa4aa5653a40c1a93ab26379680e412fd80fbb81f0adc414613",
+      "qoa_sha256": "f9413f70a2e4b60a2a99a436de8235218ec336fed40234f574f42fd15a9ed555",
+      "encoded_bytes": 106120,
+      "checksum": 790822009,
+      "median_ns_per_sample": {
+        "fern": 7.8976370096206665,
+        "c": 3.2069482803344727
+      },
+      "fern_over_c": 2.4626642899264257,
+      "fern_allocs_per_frame": 2.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "frame_latency_ns": {
+        "fern": {
+          "p50": 37334,
+          "p90": 49298,
+          "p99": 75854,
+          "max": 2966097
+        },
+        "c": {
+          "p50": 16453,
+          "p90": 16545,
+          "p99": 29705,
+          "max": 761841
+        }
+      },
+      "peak_rss_kb": {
+        "fern": 408,
+        "c": 1940
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 152419538,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 37284,
+            "frame_p90_ns": 49298,
+            "frame_p99_ns": 64649,
+            "frame_max_ns": 401648,
+            "peak_rss_kb": 408,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 114560042,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 37565,
+            "frame_p90_ns": 51117,
+            "frame_p99_ns": 75854,
+            "frame_max_ns": 292043,
+            "peak_rss_kb": 408,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 156777914,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 37953,
+            "frame_p90_ns": 67043,
+            "frame_p99_ns": 91918,
+            "frame_max_ns": 326608,
+            "peak_rss_kb": 404,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 132500362,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 37232,
+            "frame_p90_ns": 41980,
+            "frame_p99_ns": 56061,
+            "frame_max_ns": 233326,
+            "peak_rss_kb": 408,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 130573264,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 37440,
+            "frame_p90_ns": 63244,
+            "frame_p99_ns": 92121,
+            "frame_max_ns": 2966097,
+            "peak_rss_kb": 408,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 131473312,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 37334,
+            "frame_p90_ns": 43137,
+            "frame_p99_ns": 64151,
+            "frame_max_ns": 633422,
+            "peak_rss_kb": 408,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 141300122,
+            "allocs": 6656,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 36784,
+            "frame_p90_ns": 44060,
+            "frame_p99_ns": 142325,
+            "frame_max_ns": 963961,
+            "peak_rss_kb": 408,
+            "observed": -3258
+          }
+        ],
+        "c": [
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 74841401,
+            "frame_p50_ns": 16485,
+            "frame_p90_ns": 17506,
+            "frame_p99_ns": 44524,
+            "frame_max_ns": 151519,
+            "peak_rss_kb": 1940,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 53712808,
+            "frame_p50_ns": 16455,
+            "frame_p90_ns": 16545,
+            "frame_p99_ns": 30012,
+            "frame_max_ns": 761841,
+            "peak_rss_kb": 1940,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 54081828,
+            "frame_p50_ns": 16447,
+            "frame_p90_ns": 16533,
+            "frame_p99_ns": 29705,
+            "frame_max_ns": 333831,
+            "peak_rss_kb": 1936,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 53314943,
+            "frame_p50_ns": 16453,
+            "frame_p90_ns": 16546,
+            "frame_p99_ns": 29618,
+            "frame_max_ns": 200537,
+            "peak_rss_kb": 1940,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 108667766,
+            "frame_p50_ns": 16526,
+            "frame_p90_ns": 34779,
+            "frame_p99_ns": 64710,
+            "frame_max_ns": 88128,
+            "peak_rss_kb": 1936,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 53803664,
+            "frame_p50_ns": 16451,
+            "frame_p90_ns": 16534,
+            "frame_p99_ns": 28460,
+            "frame_max_ns": 154390,
+            "peak_rss_kb": 1940,
+            "observed": -3258
+          },
+          {
+            "samples": 16777216,
+            "checksum": 790822009,
+            "wall_ns": 45510689,
+            "frame_p50_ns": 13600,
+            "frame_p90_ns": 13695,
+            "frame_p99_ns": 28508,
+            "frame_max_ns": 330319,
+            "peak_rss_kb": 1940,
+            "observed": -3258
+          }
+        ]
+      }
+    },
+    "music": {
+      "channels": 2,
+      "wav_sha256": "96b663fd010c8876e73671a3c14c50effb099716b502cf457e170af2acff6c05",
+      "qoa_sha256": "96b9bdd87d5cd88e4f8e566c7f0cb0461db90f496a2f1137864087d2db602ee7",
+      "encoded_bytes": 211816,
+      "checksum": 4103631056,
+      "median_ns_per_sample": {
+        "fern": 7.215246230363846,
+        "c": 2.770330488681793
+      },
+      "fern_over_c": 2.604471293169458,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "frame_latency_ns": {
+        "fern": {
+          "p50": 63737,
+          "p90": 78100,
+          "p99": 96047,
+          "max": 741105
+        },
+        "c": {
+          "p50": 26972,
+          "p90": 31104,
+          "p99": 52691,
+          "max": 530153
+        }
+      },
+      "peak_rss_kb": {
+        "fern": 536,
+        "c": 2052
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 215203993,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 62037,
+            "frame_p90_ns": 71904,
+            "frame_p99_ns": 87426,
+            "frame_max_ns": 120719,
+            "peak_rss_kb": 532,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 216974094,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 63597,
+            "frame_p90_ns": 73160,
+            "frame_p99_ns": 83790,
+            "frame_max_ns": 152004,
+            "peak_rss_kb": 532,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 251719773,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74850,
+            "frame_p90_ns": 93721,
+            "frame_p99_ns": 172689,
+            "frame_max_ns": 559301,
+            "peak_rss_kb": 532,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 248843745,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 70449,
+            "frame_p90_ns": 84252,
+            "frame_p99_ns": 145285,
+            "frame_max_ns": 413634,
+            "peak_rss_kb": 536,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 220881657,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 64058,
+            "frame_p90_ns": 85138,
+            "frame_p99_ns": 124237,
+            "frame_max_ns": 191290,
+            "peak_rss_kb": 532,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 295262533,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 63737,
+            "frame_p90_ns": 78100,
+            "frame_p99_ns": 96047,
+            "frame_max_ns": 741105,
+            "peak_rss_kb": 536,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 242103489,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 62282,
+            "frame_p90_ns": 69591,
+            "frame_p99_ns": 86400,
+            "frame_max_ns": 607575,
+            "peak_rss_kb": 532,
+            "observed": 1119
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 94779860,
+            "frame_p50_ns": 27371,
+            "frame_p90_ns": 29409,
+            "frame_p99_ns": 43849,
+            "frame_max_ns": 161292,
+            "peak_rss_kb": 2048,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 90956260,
+            "frame_p50_ns": 26972,
+            "frame_p90_ns": 29193,
+            "frame_p99_ns": 41784,
+            "frame_max_ns": 64093,
+            "peak_rss_kb": 2048,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 215898506,
+            "frame_p50_ns": 25556,
+            "frame_p90_ns": 29147,
+            "frame_p99_ns": 61673,
+            "frame_max_ns": 243315,
+            "peak_rss_kb": 2052,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 92956866,
+            "frame_p50_ns": 28979,
+            "frame_p90_ns": 31104,
+            "frame_p99_ns": 45225,
+            "frame_max_ns": 476567,
+            "peak_rss_kb": 2048,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 92210692,
+            "frame_p50_ns": 26891,
+            "frame_p90_ns": 40524,
+            "frame_p99_ns": 61181,
+            "frame_max_ns": 121461,
+            "peak_rss_kb": 2048,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 117176541,
+            "frame_p50_ns": 50240,
+            "frame_p90_ns": 56789,
+            "frame_p99_ns": 89139,
+            "frame_max_ns": 155160,
+            "peak_rss_kb": 2052,
+            "observed": 1119
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4103631056,
+            "wall_ns": 83976170,
+            "frame_p50_ns": 25459,
+            "frame_p90_ns": 32355,
+            "frame_p99_ns": 52691,
+            "frame_max_ns": 530153,
+            "peak_rss_kb": 2052,
+            "observed": 1119
+          }
+        ]
+      }
+    },
+    "noise": {
+      "channels": 2,
+      "wav_sha256": "bf8c95ada0cef825fd4c1b17b963af0bc755b1bc50a5813985b749a80fce5a41",
+      "qoa_sha256": "4b2976768948f8d1959ed159c621272006c4d1bc6c78914d341e5a660c673955",
+      "encoded_bytes": 211816,
+      "checksum": 4163020800,
+      "median_ns_per_sample": {
+        "fern": 7.716607183218002,
+        "c": 3.1146524250507355
+      },
+      "fern_over_c": 2.477517915371345,
+      "fern_allocs_per_frame": 3.0,
+      "fern_fresh_bytes_per_frame": 0.0,
+      "frame_latency_ns": {
+        "fern": {
+          "p50": 74156,
+          "p90": 85483,
+          "p99": 95139,
+          "max": 2272409
+        },
+        "c": {
+          "p50": 30910,
+          "p90": 33614,
+          "p99": 46216,
+          "max": 499600
+        }
+      },
+      "peak_rss_kb": {
+        "fern": 536,
+        "c": 2052
+      },
+      "trials": {
+        "fern": [
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 271637275,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74427,
+            "frame_p90_ns": 126278,
+            "frame_p99_ns": 164450,
+            "frame_max_ns": 2272409,
+            "peak_rss_kb": 532,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 194171811,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 55867,
+            "frame_p90_ns": 64792,
+            "frame_p99_ns": 75980,
+            "frame_max_ns": 137694,
+            "peak_rss_kb": 532,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 248752532,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74038,
+            "frame_p90_ns": 85276,
+            "frame_p99_ns": 95139,
+            "frame_max_ns": 333938,
+            "peak_rss_kb": 532,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 258616698,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74017,
+            "frame_p90_ns": 84996,
+            "frame_p99_ns": 94009,
+            "frame_max_ns": 215667,
+            "peak_rss_kb": 536,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 258926371,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74294,
+            "frame_p90_ns": 85483,
+            "frame_p99_ns": 95370,
+            "frame_max_ns": 167424,
+            "peak_rss_kb": 532,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 259664108,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74250,
+            "frame_p90_ns": 85639,
+            "frame_p99_ns": 94448,
+            "frame_max_ns": 140905,
+            "peak_rss_kb": 532,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 259995308,
+            "allocs": 9984,
+            "fresh_bytes": 0,
+            "frame_p50_ns": 74156,
+            "frame_p90_ns": 86013,
+            "frame_p99_ns": 95771,
+            "frame_max_ns": 119139,
+            "peak_rss_kb": 532,
+            "observed": -18983
+          }
+        ],
+        "c": [
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 107003807,
+            "frame_p50_ns": 31053,
+            "frame_p90_ns": 36280,
+            "frame_p99_ns": 64963,
+            "frame_max_ns": 225442,
+            "peak_rss_kb": 2048,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 144632264,
+            "frame_p50_ns": 25812,
+            "frame_p90_ns": 49429,
+            "frame_p99_ns": 65606,
+            "frame_max_ns": 90336,
+            "peak_rss_kb": 2052,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 104510393,
+            "frame_p50_ns": 31068,
+            "frame_p90_ns": 32492,
+            "frame_p99_ns": 45143,
+            "frame_max_ns": 84496,
+            "peak_rss_kb": 2048,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 104054084,
+            "frame_p50_ns": 31013,
+            "frame_p90_ns": 32768,
+            "frame_p99_ns": 45482,
+            "frame_max_ns": 134545,
+            "peak_rss_kb": 2052,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 104674628,
+            "frame_p50_ns": 30910,
+            "frame_p90_ns": 33614,
+            "frame_p99_ns": 44986,
+            "frame_max_ns": 96938,
+            "peak_rss_kb": 2052,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 103246786,
+            "frame_p50_ns": 30500,
+            "frame_p90_ns": 33694,
+            "frame_p99_ns": 46603,
+            "frame_max_ns": 499600,
+            "peak_rss_kb": 2052,
+            "observed": -18983
+          },
+          {
+            "samples": 33554432,
+            "checksum": 4163020800,
+            "wall_ns": 103273300,
+            "frame_p50_ns": 30529,
+            "frame_p90_ns": 33579,
+            "frame_p99_ns": 46216,
+            "frame_max_ns": 95081,
+            "peak_rss_kb": 2044,
+            "observed": -18983
+          }
+        ]
+      }
+    }
+  }
+}

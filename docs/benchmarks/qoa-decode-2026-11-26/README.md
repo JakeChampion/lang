@@ -65,5 +65,5 @@ Issue [#14515](https://github.com/JakeChampion/lang/issues/14515) owns these mea
 
 - Native ARM64. The `audio-pair` job of `.github/workflows/perf.yml` runs this script on `ubuntu-24.04-arm`.
 - Recorded speech and music corpora in place of synthetic signals.
-- Latency distributions for each frame.
+- Latency distributions for each frame. The [2026-11-27 report](../qoa-frame-latency-2026-11-27/README.md) adds them.
 - Android device time, underruns, battery use, and thermal conditions, which need the harness of [#14514](https://github.com/JakeChampion/lang/issues/14514).
