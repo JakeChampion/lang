@@ -90,9 +90,8 @@ function help_text(): string {
   return out;
 }
 
-// The options. `incompat` counts the options of -AeExX3, of which one at
-// most is valid.
-struct Cfg { incompat: i32, merge: boolean, show_2nd: boolean, flagging: boolean, overlap_only: boolean, simple_only: boolean, final_write: boolean, text: boolean, strip_cr: boolean, initial_tab: boolean, labels: string[], program: string[] }
+// Each distinct -AeExX3 mode sets one bit. Repeating a mode is valid.
+struct Cfg { output_modes: i32, merge: boolean, show_2nd: boolean, flagging: boolean, overlap_only: boolean, simple_only: boolean, final_write: boolean, text: boolean, strip_cr: boolean, initial_tab: boolean, labels: string[], program: string[] }
 
 // The options of GNU diff3 in the order of its table, which is the order of
 // the names in an ambiguity message.
@@ -116,13 +115,13 @@ function fatal(msg: string): void {
 }
 
 function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
-  let more = cfg.incompat + 1;
+  let modes = cfg.output_modes | 1 << m.id;
   return match (m.id) {
-    OPT_SHOW_ALL => Cfg { ...cfg, show_2nd: true, flagging: true, incompat: more },
-    OPT_SHOW_OVERLAP => Cfg { ...cfg, flagging: true, incompat: more },
-    OPT_ED => Cfg { ...cfg, incompat: more },
-    OPT_OVERLAP_ONLY | OPT_X => Cfg { ...cfg, overlap_only: true, incompat: more },
-    OPT_EASY_ONLY => Cfg { ...cfg, simple_only: true, incompat: more },
+    OPT_SHOW_ALL => Cfg { ...cfg, show_2nd: true, flagging: true, output_modes: modes },
+    OPT_SHOW_OVERLAP => Cfg { ...cfg, flagging: true, output_modes: modes },
+    OPT_ED => Cfg { ...cfg, output_modes: modes },
+    OPT_OVERLAP_ONLY | OPT_X => Cfg { ...cfg, overlap_only: true, output_modes: modes },
+    OPT_EASY_ONLY => Cfg { ...cfg, simple_only: true, output_modes: modes },
     OPT_FINAL_WRITE => Cfg { ...cfg, final_write: true },
     OPT_MERGE => Cfg { ...cfg, merge: true },
     OPT_INITIAL_TAB => Cfg { ...cfg, initial_tab: true },
@@ -142,7 +141,7 @@ function label_option(cfg: Cfg, v: string): Cfg {
 
 function parse(argv: string[]): (Cfg, string[]) {
   let none: string[] = [];
-  let cfg = Cfg { incompat: 0, merge: false, show_2nd: false, flagging: false, overlap_only: false, simple_only: false, final_write: false, text: false, strip_cr: false, initial_tab: false, labels: none, program: none };
+  let cfg = Cfg { output_modes: 0, merge: false, show_2nd: false, flagging: false, overlap_only: false, simple_only: false, final_write: false, text: false, strip_cr: false, initial_tab: false, labels: none, program: none };
   let g = gnu.getopt_new(argv, options(), "diff3", help_text(), EXIT_TROUBLE).in_package("diffutils");
   while (true) {
     let r: (Option[gnu.OptMatch], gnu.Getopt) = g.next();
@@ -152,10 +151,10 @@ function parse(argv: string[]): (Cfg, string[]) {
     };
     cfg = apply(cfg, m);
   }
-  if (cfg.merge && cfg.incompat == 0) {
+  if (cfg.merge && cfg.output_modes == 0) {
     cfg = Cfg { ...cfg, show_2nd: true, flagging: true };
   }
-  if (cfg.incompat > 1 || cfg.final_write && cfg.merge || cfg.labels.len() > 0 && !cfg.flagging) {
+  if ((cfg.output_modes & cfg.output_modes - 1) != 0 || cfg.final_write && cfg.merge || cfg.labels.len() > 0 && !cfg.flagging) {
     usage_error("incompatible options");
   }
   let ops = g.operands();
@@ -862,7 +861,7 @@ function main(): i32 {
   let parsed = parse(argv);
   let cfg = parsed.0;
   let files = parsed.1;
-  let edscript = cfg.incompat > 0 && !cfg.merge;
+  let edscript = cfg.output_modes > 0 && !cfg.merge;
   let common = if (edscript || cfg.merge) { 1 } else { 2 };
   if (files[common] == "-") {
     common = 3 - common;
