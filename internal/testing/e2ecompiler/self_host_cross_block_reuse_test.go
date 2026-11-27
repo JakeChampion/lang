@@ -31,7 +31,7 @@ function main(): i32 { return f(); }`, 14, 4},
 		{"early-return-path", `enum E { A(i32[]), B(i32[]) }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function f(n: i32): i32 { let a: E = A([n, 2]); match (a) { A(w) => { if (w[0] > 5) { return 1; } }, B(_) => {} } let c: E = B(id([3, 4])); match (c) { A(w) => { return w[0]; }, B(w) => { return w[0] + w[1]; } } return 0; }
-function main(): i32 { return f(9) * 10 + f(1); }`, 17, 5},
+function main(): i32 { return f(9) * 10 + f(1); }`, 17, 4},
 		{"construction-in-loop", `enum E { A(i32[]), B(i32[]) }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function f(): i32 { let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let s: i32 = 0; let i: i32 = 0; while (i < 3) { let c: E = B([i, 4]); match (c) { A(w) => { s = s + w[0]; }, B(w) => { s = s + w[0] + w[1]; } } i = i + 1; } return t + s; }
@@ -104,7 +104,7 @@ struct M { tag: i32, st: St }
 @noinline function id(n: i32): i32 { return n; }
 @noinline function key(p: M): i32 { return p.tag; }
 function f(n: i32): i32 { let read: (M) => i32 = key; let d: M = M { tag: n, st: On(id(n)) }; let s: i32 = 0; match (d.st) { On(v) => { s = v + read(d); }, Off => { s = read(d); } } let e: M = M { tag: n, st: Off }; if (n > 2) { s = s + read(e); } let b: M = M { tag: n + 1, st: On(id(3)) }; match (b.st) { On(v) => { s = s + v + read(b); }, Off => {} } return s; }
-function main(): i32 { return f(1) + f(5); }`, 31, 8},
+function main(): i32 { return f(1) + f(5); }`, 31, 6},
 		{"dying-in-both-if-arms", `struct P { x: i32, xs: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function f(n: i32): i32 { let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = 0; if (n > 3) { s = a.x; } else { let q: P = P { x: 9, xs: id([n]) }; s = q.x + a.xs[1]; } let b: P = P { x: n * 3, xs: id([4]) }; return s + b.x + b.xs[0]; }
