@@ -359,12 +359,12 @@ aarch64/jpeg_decode.dr	46855480
 aarch64/draw_image.text	2091
 aarch64/draw_image.ir	30938308
 aarch64/draw_image.dr	5015048
-aarch64/draw_scaled.text	1870
+aarch64/draw_scaled.text	2352
 aarch64/draw_scaled.ir	268354557
 aarch64/draw_scaled.dr	32000074
 x86_64/draw_image.text	1875
 x86_64/draw_image.ir	16696286
 x86_64/draw_image.dr	2363229
-x86_64/draw_scaled.text	1720
+x86_64/draw_scaled.text	2156
 x86_64/draw_scaled.ir	289489337
-x86_64/draw_scaled.dr	76058534
+x86_64/draw_scaled.dr	71907360
