@@ -200,7 +200,8 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 		})
 	}
 
-	noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = 5; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
+	// The bound comes from the arguments, so no proof covers the reads.
+	noElide := `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = args().len() + 4; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`
 	for _, d := range []struct{ name, src string }{
 		{"for_in", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; for x in xs { s = s + x; } return s; }`},
 		{"len_guard", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len()) { s = s + xs[i]; i = i + 1; } return s; }`},
@@ -209,6 +210,7 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 		{"conjunct", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len() && s < 100) { s = s + xs[i]; i = i + 1; } return s; }`},
 		{"cond_read_after_guard", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let i: i32 = 0; while (i < xs.len() && xs[i] > 0) { i = i + 1; } return i + 34; }`},
 		{"range_len", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; for i in 0..xs.len() { s = s + xs[i]; } return s; }`},
+		{"unrolled_constant_bound", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = 5; let s: i32 = 0; let i: i32 = 0; while (i < n) { s = s + xs[i]; i = i + 1; } return s; }`},
 		{"range_cached_len", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = xs.len(); let s: i32 = 0; for i in 0..n { s = s + xs[i]; } return s; }`},
 	} {
 		t.Run("elision_fired_differential/"+d.name, func(t *testing.T) {
