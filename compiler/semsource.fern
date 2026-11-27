@@ -6513,21 +6513,18 @@ function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type
   return pending;
 }
 
-struct Roots { types: typeinfo.Type[], at: i32[], ix: util.NameIndex }
-
-function with_distinct_root(r: Roots, t: typeinfo.Type): Roots {
+function with_distinct_root(roots: TypeSet, t: typeinfo.Type): TypeSet {
   if (!names_schema(t) && !typeinfo.is_dyn(t)) {
-    return r;
+    return roots;
   }
-  let sp = typeinfo.spelling(t);
-  if (sp.len() == 0) {
-    return Roots { ...r, types: r.types.append(t) };
+  let key = typeinfo.spelling(t);
+  if (key.len() > 0) {
+    let id = roots.by_spelling.find(key);
+    if (id >= 0 && semtypes.equal(roots.types[id], t)) {
+      return roots;
+    }
   }
-  let j = r.ix.find(sp);
-  if (j >= 0 && semtypes.equal(r.types[r.at[j]], t)) {
-    return r;
-  }
-  return Roots { types: r.types.append(t), at: r.at.append(r.types.len()), ix: r.ix.added(sp) };
+  return roots.added_type(key, t);
 }
 
 function names_schema(t: typeinfo.Type): boolean {
@@ -7170,7 +7167,7 @@ function env_serving(env: EnvContract, t: typeinfo.Type): Option[EnvCandidate] {
 
 struct Closed { rows: ssasem.EnvRow[], dyns: ssasem.EnvRow[], table: Schemas, requests: Request[] }
 
-// Each index identifies a type within one function or dynamic-trait table.
+// Each index identifies a type within this discovery table.
 // Spelling selects a bucket. Structural equality resolves its collisions.
 struct TypeSet { types: typeinfo.Type[], by_spelling: util.NameIndex }
 
@@ -7183,6 +7180,10 @@ function (ts: TypeSet) intern(t: typeinfo.Type): TypeSet {
     }
     i = ts.by_spelling.next[i];
   }
+  return ts.added_type(key, t);
+}
+
+function (ts: TypeSet) added_type(key: string, t: typeinfo.Type): TypeSet {
   return TypeSet { types: ts.types.append(t), by_spelling: ts.by_spelling.added(key) };
 }
 
@@ -7521,7 +7522,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
     params = params.append(f.values[at]);
     at += 1;
   }
-  let roots = Roots { types: [], at: [], ix: util.name_index([]) };
+  let roots = TypeSet { types: [], by_spelling: util.name_index([]) };
   for t in f.values {
     roots = with_distinct_root(roots, t);
   }
