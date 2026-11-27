@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
-      - uses: ./.github/actions/disable-chrome-apt
+      - uses: ./.github/actions/disable-runner-apt-feeds
       - name: Install native counter
         run: sudo apt-get update && sudo apt-get install -y valgrind
       - name: Prepare Perceus corpus

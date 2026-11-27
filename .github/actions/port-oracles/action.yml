@@ -10,7 +10,7 @@ description: >
 runs:
   using: composite
   steps:
-    - uses: ./.github/actions/disable-chrome-apt
+    - uses: ./.github/actions/disable-runner-apt-feeds
     - name: Install ripgrep
       shell: bash
       # timeout runs under sudo, so the signal stops apt, not the sudo wrapper.

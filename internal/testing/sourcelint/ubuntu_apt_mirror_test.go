@@ -8,7 +8,7 @@ import (
 )
 
 func TestPreferOfficialUbuntuAptMirror(t *testing.T) {
-	script, err := filepath.Abs("../../../.github/actions/disable-chrome-apt/prefer-ubuntu-mirror.sh")
+	script, err := filepath.Abs("../../../.github/actions/disable-runner-apt-feeds/prefer-ubuntu-mirror.sh")
 	if err != nil {
 		t.Fatal(err)
 	}

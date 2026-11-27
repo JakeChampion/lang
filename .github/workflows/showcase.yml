@@ -43,7 +43,7 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('examples/showcase/tests/package.json') }}
 
-      - uses: ./.github/actions/disable-chrome-apt
+      - uses: ./.github/actions/disable-runner-apt-feeds
       - name: Install Playwright
         working-directory: examples/showcase/tests
         run: |
