@@ -1,0 +1,41 @@
+// spec: RH-45
+// A handle that moves into the literal argument of a call belongs to the
+// local that the call initializes. A later call that borrows from that local
+// borrows from the local, not from the moved handle.
+
+struct Handle { id: i32, log: Cell[string] }
+
+function (own h: Handle) close(): void {
+  h.log.set(h.log.get() + "closed " + h.id.to_string() + "\n");
+}
+
+struct Leg { h: Handle, n: i32 }
+
+function step(leg: Leg): Leg {
+  return Leg { ...leg, n: leg.n + 1 };
+}
+
+function open(id: i32, log: Cell[string]): Result[Handle, string] {
+  return Ok(Handle { id: id, log: log });
+}
+
+function run(log: Cell[string]): i32 {
+  let Ok(first) = open(1, log) else {
+    return -1;
+  };
+  let leg = step(Leg { h: first, n: 0 });
+  let Ok(second) = open(2, log) else {
+    return -1;
+  };
+  let moved = step(Leg { ...leg, h: second, n: 10 });
+  let n = moved.n + moved.h.id;
+  moved.h.close();
+  return n;
+}
+
+function main(): i32 {
+  let log = cell_new("");
+  let n = run(log);
+  print(log.get() + n.to_string());
+  return 0;
+}

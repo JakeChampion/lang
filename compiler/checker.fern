@@ -21331,7 +21331,8 @@ function ow_lent_diags(id: ast.ExprIdent, spelling: string, moved: MovedEntry[],
   let lends = ctx.lends.get();
   let reported: string[] = [];
   let out: util.Diag[] = [];
-  for loan in ocl_lookup(ow_callback_facts(ctx), id.name) {
+  let loans = ocl_lookup(ow_callback_facts(ctx), id.name);
+  for loan in loans {
     if (!loan.lent || util.has_str(reported, loan.name)) {
       continue;
     }
@@ -21347,7 +21348,7 @@ function ow_lent_diags(id: ast.ExprIdent, spelling: string, moved: MovedEntry[],
       end = ow_lent_path_end(moved, loan);
     }
     if let Some(at) = end {
-      if (!ow_pos_has(lends.in_flight, "", at.mline, at.mcol) && !ow_pos_has(lends.init_consumes, id.name, at.mline, at.mcol)) {
+      if (!ow_pos_has(lends.in_flight, "", at.mline, at.mcol) && !ow_taken_by_holder(lends.init_consumes, id.name, loans, at)) {
         reported = reported.append(loan.name);
         out = out.append(ow_moved_diag(ow_loan_message("\"" + id.name + "\"", loan.name), id.line, id.col, [MovedEntry { ...at, mname: loan.name }], loan.name, "moved here"));
       }
@@ -21392,6 +21393,21 @@ function ow_moved_parts(value: ast.Expr, ctx: OwnCtx): ast.Expr[] {
     }
   }
   return values;
+}
+
+// The consume at moved an owner into the initializer of name, or of a local
+// that name borrows from. The loan then belongs to that local, which owns the
+// owner.
+function ow_taken_by_holder(takes: MovedEntry[], name: string, loans: OclCapture[], at: MovedEntry): boolean {
+  if (ow_pos_has(takes, name, at.mline, at.mcol)) {
+    return true;
+  }
+  for loan in loans {
+    if (loan.lent && ow_pos_has(takes, loan.name, at.mline, at.mcol)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // take records each lender that the initializer of the local moves into it.

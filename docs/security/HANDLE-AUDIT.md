@@ -108,6 +108,8 @@ A `Socket` held as a `Socket` is refused the same way.
 | A record that a function makes from its borrowed `Writer`, used after the close of the `Writer` | `E050` | `diag_e050_handle_kept_by_borrowing_call` |
 | The result of a function that returns its borrowed `Reader`, read after the close of the `Reader` | `E050` | `diag_e050_handle_returned_by_borrowing_call` |
 | A result that holds a handle of another kind than the borrowed argument or receiver, used after the close of the argument | accepted | `handle_lent_only_to_a_result_of_its_kind` |
+| A handle moved into the literal argument of a call, and a later call that borrows the local that the first call initialized | accepted | `owner_moved_into_an_argument_lends_through_its_holder` |
+| A local that borrows a handle directly, used after the handle moved into another local | `E050` | `diag_e050_direct_borrow_after_owner_moved_into_holder` |
 
 The rows for `diag_e051_variant_result_borrows_its_payload` and `diag_e051_local_from_borrowing_call` close two holes that the consuming close exposed.
 

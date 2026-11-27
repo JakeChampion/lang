@@ -861,6 +861,7 @@ owned_match_results_rebuild_literal                  0
 owned_spread_borrows_its_source                      0
 owned_spread_reads_replaced_field                    0
 owned_state_restored_on_each_loop_jump               0
+owner_moved_into_an_argument_lends_through_its_holder 0
 package_scoped_stdlib_helpers                        0
 pad_multibyte_fill                                   0
 pair_string_from_many_call_sites                     0
