@@ -75,7 +75,7 @@ function main(): i32 {
     let r: i32 = 0;
     while (r < ROUNDS) {
         let k: i32 = 0;
-        while (k < 4) {
+        while (k < args().len() + 3) {
             let b: Box = Val([k, k + 7]);
             held = take(b);
             acc = acc + held[0];

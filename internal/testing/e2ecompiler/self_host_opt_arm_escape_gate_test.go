@@ -137,7 +137,8 @@ function main(): i32 {
 	})
 
 	t.Run("escaping_arm_binding_array_still_reclaims", func(t *testing.T) {
-		src := `function mk(i: i32): Option[i32[]] {
+		src := `@noinline function churn(): i32 { return 6; }
+function mk(i: i32): Option[i32[]] {
     return Some([i + 11, i + 22]);
 }
 function round(r: i32): i32 {
@@ -151,7 +152,7 @@ function round(r: i32): i32 {
     }
     let junk: i32[] = [];
     let c: i32 = 0;
-    while (c < 6) { junk = [c + 90, c + 91]; c = c + 1; }
+    while (c < churn()) { junk = [c + 90, c + 91]; c = c + 1; }
     return acc + held[0] + held[1] + junk[0] + r;
 }
 function main(): i32 {

@@ -507,25 +507,26 @@ function trips_while(op: string, side: i32, bound: i64, c: Counted, on_true: boo
   return -1;
 }
 
-// A value of the body that a block outside the loop reads, or a debug name
-// on one, keeps the loop.
+// A value of the body that a block outside the loop reads keeps the loop.
 function escapes(f: ssasem.Func, c: Counted): boolean {
   let g = f.graph;
-  let inner = __alloc_bool(g.nvals);
-  for bi in c.bodies {
-    for ins in g.blocks[bi].insts {
-      inner = marked(inner, ins.result);
-    }
-  }
-  if (any_marked(inner, f.dbg_vals)) {
-    return true;
-  }
+  let inner = body_values(g, c);
   for k in 0..g.blocks.len() {
     if (util.index_of_i32(c.heads, k) < 0 && util.index_of_i32(c.bodies, k) < 0 && reads_any(g.blocks[k], inner)) {
       return true;
     }
   }
   return false;
+}
+
+function body_values(g: ssa.SFunc, c: Counted): boolean[] {
+  let inner = __alloc_bool(g.nvals);
+  for bi in c.bodies {
+    for ins in g.blocks[bi].insts {
+      inner = marked(inner, ins.result);
+    }
+  }
+  return inner;
 }
 
 function marked(own inner: boolean[], v: i32): boolean[] {
@@ -592,12 +593,19 @@ function unrolled_at(f: ssasem.Func, hi: i32): ssasem.Func {
       blocks = blocks.append(renamed_block(g.blocks[bi], finals, test_id, h.id));
     }
   }
+  // A debug name on a value of the body has no one value in the copies, so it goes.
+  let inner = body_values(g, c);
   let dbg: i32[] = [];
-  for v in cp.values.dbg_vals {
-    dbg = dbg.append(renamed(finals, v));
+  let dbg_names: string[] = [];
+  for di in 0..cp.values.dbg_vals.len() {
+    let v = cp.values.dbg_vals[di];
+    if (!is_marked(inner, v)) {
+      dbg = dbg.append(renamed(finals, v));
+      dbg_names = dbg_names.append(cp.values.dbg_names[di]);
+    }
   }
   let out = ssa.SFunc { ...g, blocks: blocks, nvals: cp.nvals };
-  return ssasem.Func { ...cp.values, dbg_vals: dbg, graph: ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) } };
+  return ssasem.Func { ...cp.values, dbg_vals: dbg, dbg_names: dbg_names, graph: ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) } };
 }
 
 // The value each header phi holds after the last pass, by phi id.

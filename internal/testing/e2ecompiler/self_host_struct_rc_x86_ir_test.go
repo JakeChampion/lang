@@ -16,7 +16,7 @@ var structRCIRCases = []struct {
 	body       string
 }{
 	{"loop-rebind-reclaimed",
-		`struct P { x: i32, y: i32 } function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5) { let p: P = P { x: i, y: i + 1 }; sum = sum + p.x + p.y; i = i + 1; } return sum; }`,
+		`struct P { x: i32, y: i32 } function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < args().len() + 4) { let p: P = P { x: i, y: i + 1 }; sum = sum + p.x + p.y; i = i + 1; } return sum; }`,
 		25, 1, ""},
 	{"single-reclaimed",
 		`struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 30, y: 12 }; return p.x + p.y; }`,
