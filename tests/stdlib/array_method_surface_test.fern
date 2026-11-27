@@ -69,7 +69,7 @@ function test_running(): test.TestOutcome {
   if (!same(xs.running_max(), [2, 2, 3]) || !same(xs.running_min(), [2, 1, 1])) {
     return test.fail("running_max or running_min");
   }
-  return test.assert_true(same(array.running_max(xs), xs |> array.running_max()));
+  return test.assert_true(same(array.running_max(xs), xs |> array.running_max));
 }
 
 function test_sets(): test.TestOutcome {
