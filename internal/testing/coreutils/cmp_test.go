@@ -165,6 +165,8 @@ func cmpCases(t *testing.T) []invocation {
 		{name: "null stdout empty input", args: []string{empty, a}, stdout: stdoutNull},
 		{name: "null stdout quiet EOF", args: []string{"-s", short, a}, stdout: stdoutNull},
 		{name: "full stdout", args: []string{a, b}, stdout: stdoutFull},
+		{name: "verbose EOF before final output error", args: []string{"-l", b, longer}, stdout: stdoutFull},
+		{name: "verbose second operand EOF before final output error", args: []string{"-lb", longer, b}, stdout: stdoutFull},
 		{name: "full stdout under verbose", args: []string{"-l", big1, big2}, stdout: stdoutFull},
 	}
 }
