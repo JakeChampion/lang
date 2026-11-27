@@ -636,6 +636,14 @@ func asmWholeFunc(asm, name string) (string, bool) {
 	return strings.Join(lines[start:], "\n"), true
 }
 
+// releases reports a call in body that ends the function's own reference to
+// a value of the type that the symbol `release` names. The function either
+// releases the value, or drops its fields and gives its box to a new value
+// of the same size.
+func releases(body, release string) bool {
+	return strings.Contains(body, release) || strings.Contains(body, strings.Replace(release, "__sem_release_", "__sem_drop_", 1))
+}
+
 func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot string) {
 	t.Helper()
 	proj := t.TempDir()
@@ -658,14 +666,14 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if !ok {
 		t.Fatal("no __fn_hands_back in the emitted code")
 	}
-	if !strings.Contains(back, drop) {
+	if !releases(back, drop) {
 		t.Fatalf("hands_back does not call %s — the marker this reads is gone, so the reader assertion below proves nothing", drop)
 	}
 	reader, ok := asmWholeFunc(string(asm), "reads_only")
 	if !ok {
 		t.Fatal("no __fn_reads_only in the emitted code")
 	}
-	if strings.Contains(reader, drop) {
+	if releases(reader, drop) {
 		t.Errorf("reads_only calls %s: a parameter the body only reads was inferred COUNTED, which costs a retain and a release per call and reclaims nothing", drop)
 	}
 	const recDrop = "__sem_release_Rec"
@@ -673,28 +681,28 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if !ok {
 		t.Fatal("no __fn_keep_or_new in the emitted code")
 	}
-	if !strings.Contains(keep, recDrop) {
+	if !releases(keep, recDrop) {
 		t.Fatalf("keep_or_new does not call %s — the marker this reads is gone, so the builtin assertion below proves nothing", recDrop)
 	}
 	lends, ok := asmWholeFunc(string(asm), "lends_to_builtin")
 	if !ok {
 		t.Fatal("no __fn_lends_to_builtin in the emitted code")
 	}
-	if strings.Contains(lends, recDrop) {
+	if releases(lends, recDrop) {
 		t.Errorf("lends_to_builtin calls %s: a record whose field only reaches a builtin's lent slot was inferred COUNTED", recDrop)
 	}
 	checked, ok := asmWholeFunc(string(asm), "checked_keep")
 	if !ok {
 		t.Fatal("no __fn_checked_keep in the emitted code")
 	}
-	if !strings.Contains(checked, recDrop) {
+	if !releases(checked, recDrop) {
 		t.Errorf("checked_keep does not call %s: a record read only through a user function whose result holds no reference was inferred BORROWED", recDrop)
 	}
 	viewed, ok := asmWholeFunc(string(asm), "view_keep")
 	if !ok {
 		t.Fatal("no __fn_view_keep in the emitted code")
 	}
-	if strings.Contains(viewed, recDrop) {
+	if releases(viewed, recDrop) {
 		t.Errorf("view_keep calls %s: a record lent to a user function returning a view of it was inferred COUNTED", recDrop)
 	}
 	const slotDrop = "__sem_release_Slot"
@@ -702,14 +710,14 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if !ok {
 		t.Fatal("no __fn_slot_or_new in the emitted code")
 	}
-	if !strings.Contains(slotNew, slotDrop) {
+	if !releases(slotNew, slotDrop) {
 		t.Fatalf("slot_or_new does not call %s — the marker this reads is gone, so the cell assertion below proves nothing", slotDrop)
 	}
 	writer, ok := asmWholeFunc(string(asm), "slot_push")
 	if !ok {
 		t.Fatal("no __fn_slot_push in the emitted code")
 	}
-	if strings.Contains(writer, slotDrop) {
+	if releases(writer, slotDrop) {
 		t.Errorf("slot_push calls %s: a record whose cell field the body only writes was inferred COUNTED", slotDrop)
 	}
 	const treeDrop = "__sem_release_Tree"
@@ -717,28 +725,28 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if !ok {
 		t.Fatal("no __fn_pick in the emitted code")
 	}
-	if !strings.Contains(picked, treeDrop) {
+	if !releases(picked, treeDrop) {
 		t.Fatalf("pick does not call %s — the marker this reads is gone, so the traversal assertion below proves nothing", treeDrop)
 	}
 	walk, ok := asmWholeFunc(string(asm), "depth")
 	if !ok {
 		t.Fatal("no __fn_depth in the emitted code")
 	}
-	if strings.Contains(walk, treeDrop) {
+	if releases(walk, treeDrop) {
 		t.Errorf("depth calls %s: a recursive walk whose result holds no reference was inferred COUNTED through its own recursive call", treeDrop)
 	}
 	visit, ok := asmWholeFunc(string(asm), "visit_depth")
 	if !ok {
 		t.Fatal("no __fn_visit_depth in the emitted code")
 	}
-	if strings.Contains(visit, treeDrop) {
+	if releases(visit, treeDrop) {
 		t.Errorf("visit_depth calls %s: a parameter lent to a function value's borrowing slot was inferred COUNTED", treeDrop)
 	}
 	names, ok := asmWholeFunc(string(asm), "names_of")
 	if !ok {
 		t.Fatal("no __fn_names_of in the emitted code")
 	}
-	if strings.Contains(names, treeDrop) {
+	if releases(names, treeDrop) {
 		t.Errorf("names_of calls %s: a recursive walk whose result cannot hold the tree was inferred COUNTED through its own recursive call", treeDrop)
 	}
 	const sealerDrop = "__sem_release_Sealer"
@@ -746,14 +754,14 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if !ok {
 		t.Fatal("no __fn_sealer_or_new in the emitted code")
 	}
-	if !strings.Contains(fresh, sealerDrop) {
+	if !releases(fresh, sealerDrop) {
 		t.Fatalf("sealer_or_new does not call %s — the marker this reads is gone, so the view-parameter assertion below proves nothing", sealerDrop)
 	}
 	sealing, ok := asmWholeFunc(string(asm), "sealed_len")
 	if !ok {
 		t.Fatal("no __fn_sealed_len in the emitted code")
 	}
-	if strings.Contains(sealing, sealerDrop) {
+	if releases(sealing, sealerDrop) {
 		t.Errorf("sealed_len calls %s: a record whose field only reaches a callee's view parameter, which the callee never counts, was inferred COUNTED", sealerDrop)
 	}
 	arrDrop := regexp.MustCompile(`__fern_(arr|box)_dec`)
@@ -807,7 +815,7 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if !ok {
 		t.Fatal("no __fn_rec_exclaim in the emitted code")
 	}
-	if strings.Contains(field, recDrop) {
+	if releases(field, recDrop) {
 		t.Errorf("rec_exclaim calls %s: a record whose string field is only concatenated was inferred COUNTED", recDrop)
 	}
 	const strDrop = "__fern_str_free"
@@ -825,7 +833,7 @@ func assertInferredModes(t *testing.T, runner []string, fernBin, stdlibRoot stri
 	if !ok {
 		t.Fatal("no __fn_trimmed_keep in the emitted code")
 	}
-	if !strings.Contains(trimmed, recDrop) {
+	if !releases(trimmed, recDrop) {
 		t.Errorf("trimmed_keep does not call %s: a record whose string field reaches a string method that the lowering replaces with a kernel was inferred BORROWED", recDrop)
 	}
 }
