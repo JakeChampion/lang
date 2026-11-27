@@ -140,6 +140,8 @@ func diff3Cases(t *testing.T) []invocation {
 		in("stdin as the first file of a merge", "x\nb\n", "-m", "-", "o", "m"),
 		in("stdin as the first file", "x\nb\n", "-", "o", "m"),
 		c("two operands", "m", "o"),
+		c("two operands before option argument", "m", "o", "--diff-program", "diff"),
+		c("one operand before double dash", "m", "--"),
 		c("four operands", "m", "o", "y", "m3"),
 		c("one operand", "m"),
 		c("no operands"),

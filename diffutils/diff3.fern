@@ -160,7 +160,7 @@ function parse(argv: string[]): (Cfg, string[]) {
   }
   let ops = g.operands();
   if (ops.len() < 3) {
-    usage_error("missing operand after '" + argv[argv.len() - 1] + "'");
+    diff.missing_operand(argv, ops);
   }
   if (ops.len() > 3) {
     usage_error("extra operand '" + ops[3] + "'");

@@ -293,6 +293,8 @@ func diffCases(t *testing.T) []invocation {
 
 		c("no operands"),
 		c("one operand", "a"),
+		c("one operand before an option", "a", "-u"),
+		c("one operand before double dash", "a", "--"),
 		c("extra operand", "a", "b", "c"),
 		c("conflicting styles", "-c", "-u", "a", "b"),
 		c("conflicting with normal", "-u", "--normal", "a", "b"),
