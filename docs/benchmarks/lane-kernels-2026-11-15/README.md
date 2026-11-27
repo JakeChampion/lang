@@ -95,6 +95,16 @@ So `image` copies each row of its box with one `__memcpy`, in place of a pack an
 `bench/draw_image.fern` copies 512 by 256 pixels 64 times.
 `image` and the copies that it calls run 9,396,713 instructions in place of 260,073,897: 1.1 for each pixel in place of 31.0.
 
+`scaled` does two channels in one step, as lanes of `f64x2`, with the operations of one channel in each lane.
+A channel is from 0 to 255.5, so its floor is the cast to `u8`.
+The step reads the byte from the bits of the lane, as the color conversion of `std/jpeg` does.
+It makes the source columns and weights of each x one time, and writes to an array of the full size.
+Each pixel is the same as before, on x86-64, arm64 and wasm, for 20 pairs of sizes.
+
+`bench/draw_scaled.fern` scales 600 by 300 pixels to about 512 by 256, 8 times.
+The code of `std/android/draw` runs 292,594,019 instructions in place of 497,435,183: 279 for each pixel in place of 474.
+The conversions of each byte to `f64` are most of what stays.
+
 ## The JPEG decoder (2026-11-26)
 
 The inverse transform of `std/jpeg` does two samples in one step, as lanes of `f64x2`.
