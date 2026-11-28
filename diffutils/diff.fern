@@ -1601,6 +1601,9 @@ function identical_ends(a: Text, b: Text, horizon: i64): (i32, i32, i32) {
     let p0 = n0;
     let p1 = n1;
     let beg0 = prefix_end + (if (n0 < n1) { 0 } else { n0 - n1 });
+    let matched = linediff.common_tail_blocks(a.buf, b.buf, p0 - beg0);
+    p0 -= matched;
+    p1 -= matched;
     while (p0 != beg0) {
       if (a.buf[p0 - 1] != b.buf[p1 - 1]) {
         beg0 = p0;

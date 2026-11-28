@@ -168,6 +168,13 @@ function test_common_tail(): test.TestOutcome {
   let tail = "line\n".repeat(600);
   let a = ("one\n" + tail).bytes();
   let b = ("two\n" + tail).bytes();
+  if (linediff.common_tail_blocks(a, b, 1023) != 0 || linediff.common_tail_blocks(a, b, 1024) != 1024) {
+    return test.fail("stop at the prefix boundary");
+  }
+  let no_lines = "x".repeat(2048).bytes();
+  if (linediff.common_tail(no_lines, no_lines) != 0) {
+    return test.fail("keep the final line without a newline");
+  }
   return test.assert_eq(linediff.common_tail(a, b), 2045);
 }
 

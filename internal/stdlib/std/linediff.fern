@@ -1339,38 +1339,31 @@ pub function diff(a: Lines, b: Lines, o: Options): Change[] {
   return build_script(e);
 }
 
-// The count of bytes at the end of `a` and of `b` that a diff with no
-// context leaves out: the common blocks of 1024 bytes at the ends, less
-// the part after their first line end (`trim_common_tail` of git).
+// Count equal trailing 1,024-byte blocks without crossing the caller's
+// prefix. A partial block is left for the caller's line-boundary rule.
+pub function common_tail_blocks(a: u8[], b: u8[], limit: i32): i32 {
+  let block = 1024;
+  let available = limit.min(a.len()).min(b.len());
+  let matched = 0;
+  while (available - matched >= block) {
+    let pa = a.len() - matched - block;
+    let pb = b.len() - matched - block;
+    if (__mismatch_bytes(a, pa, b, pb, block) < block) {
+      break;
+    }
+    matched += block;
+  }
+  return matched;
+}
+
+// Git trims equal trailing blocks after the first line end in those blocks.
 pub function common_tail(a: u8[], b: u8[]): i32 {
-  let blk = 1024;
-  let trimmed = 0;
-  let smaller = a.len().min(b.len());
-  while (blk + trimmed <= smaller) {
-    let same = true;
-    let pa = a.len() - trimmed - blk;
-    let pb = b.len() - trimmed - blk;
-    for k in 0..blk {
-      if (a[pa + k] != b[pb + k]) {
-        same = false;
-        break;
-      }
-    }
-    if (!same) {
-      break;
-    }
-    trimmed += blk;
+  let trimmed = common_tail_blocks(a, b, a.len().min(b.len()));
+  if (trimmed == 0) {
+    return 0;
   }
-  let recovered = 0;
-  let ap = a.len() - trimmed;
-  while (recovered < trimmed) {
-    let c = a[ap + recovered];
-    recovered += 1;
-    if (c == b'\n') {
-      break;
-    }
-  }
-  return trimmed - recovered;
+  let newline = __memchr_bytes(a, 10, a.len() - trimmed);
+  return if (newline < 0) { 0 } else { a.len() - newline - 1 };
 }
 
 // ---- Hunks ----
