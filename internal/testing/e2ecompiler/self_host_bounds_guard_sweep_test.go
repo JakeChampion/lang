@@ -75,8 +75,10 @@ func (g *guardGen) index(scope []string, d int) string {
 		return a + " / " + g.pick("2", "4", "3")
 	case k < 0.93:
 		return a + " % " + g.pick("2", "4", "3", "16")
-	case k < 0.97:
+	case k < 0.95:
 		return "(" + g.index(scope, d+1) + ") + (" + g.index(scope, d+1) + ")"
+	case k < 0.97:
+		return "(" + g.index(scope, d+1) + ") - (" + g.index(scope, d+1) + ")"
 	}
 	return g.pick("xs", "bs", "v") + ".len() - 1 - " + a
 }

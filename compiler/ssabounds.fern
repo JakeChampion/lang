@@ -334,13 +334,19 @@ function lane_nonneg(g: Graph, b: i32, idx: i32): boolean {
   return nonneg(g, b, idx, [], depth()) || nonneg(g, b, constant_offset(g, idx).root, [], depth());
 }
 
-// Whether a dominating fact holds `lo <= hi` or `lo < hi`.
+// Whether a dominating fact holds `lo <= hi` or `lo < hi`, or holds
+// `lo < h` where `hi` is `h - 1`. That `h` is above `lo`, so `h - 1` cannot wrap.
 function at_most(g: Graph, b: i32, lo: i32, hi: i32): boolean {
+  let dh = def_of(g, hi);
+  let h = -1;
+  if (binary(dh, "-") && is_const(g, dh.args[1]) && const_value(g, dh.args[1]) == 1) {
+    h = dh.args[0];
+  }
   let c = g.up[b];
   while (c >= 0) {
     for i in g.first[c]..g.first[c] + g.count[c] {
       let r = g.rels[i];
-      if (same(g, r.lo, lo) && same(g, r.hi, hi)) {
+      if (same(g, r.lo, lo) && (same(g, r.hi, hi) || r.strict && h >= 0 && same(g, r.hi, h))) {
         return true;
       }
     }
@@ -1006,6 +1012,13 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
       return true;
     }
   }
+  // x - y <= x when y is nonneg, and x >= -1 keeps the difference from wrapping.
+  if (binary(d, "-") && !is_const(g, d.args[1])) {
+    let at = g.home[x];
+    if (nonneg(g, at, d.args[1], [], steps - 1) && at_least_minus_one(g, at, d.args[0], steps - 1) && below(g, at, d.args[0], base, assume, steps - 1)) {
+      return true;
+    }
+  }
   if (d.kind_tag == ssa.PHI && g.i32s[x]) {
     if (assumed(assume, x)) {
       return true;
@@ -1043,6 +1056,14 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
     c = g.above[c];
   }
   return false;
+}
+
+function at_least_minus_one(g: Graph, b: i32, x: i32, steps: i32): boolean {
+  let d = def_of(g, x);
+  if (binary(d, "-") && is_const(g, d.args[1]) && const_value(g, d.args[1]) == 1 && nonneg(g, b, d.args[0], [], steps - 1)) {
+    return true;
+  }
+  return nonneg(g, b, x, [], steps);
 }
 
 function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
