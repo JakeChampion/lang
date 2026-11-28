@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// pairs, wide and half read two elements of one array in each trip, of 4
-// bytes with the sign, 4 bytes with no sign and 2 bytes with no sign. once
+// pairs, wide, half and signed_half read two elements of one array in each
+// trip, covering both signed and unsigned 4-byte and 2-byte loads. once
 // reads one element in each trip.
 const scaledElementLoadFunctions = `@noinline function pairs(xs: i32[], n: i32, k: i32): i64 {
   let s = 0i64;
@@ -26,6 +26,16 @@ const scaledElementLoadFunctions = `@noinline function pairs(xs: i32[], n: i32, 
   for i in 0..n { s += xs[i] as i32 - xs[i + k] as i32 * 2; }
   return s;
 }
+@noinline function signed_half(xs: i16[], n: i32, k: i32): i64 {
+  let s = 0i64;
+  for i in 0..n { s += xs[i] as i64 - 2i64 * xs[i + k] as i64; }
+  return s;
+}
+@noinline function float_pairs(xs: f64[], n: i32, k: i32): f64 {
+  let s = 0.0;
+  for i in 0..n { s += xs[i] * 2.0 - xs[i + k]; }
+  return s;
+}
 @noinline function once(xs: i32[], n: i32): i64 {
   let s = 0i64;
   for i in 0..n { s += xs[i] as i64; }
@@ -40,12 +50,17 @@ const scaledElementLoadMain = `function main(): i32 {
   if (wide(w, 2, 1) != 4000000000u64 + 1u64 + 1u64 + 4294967295u64) { return 2; }
   let h: u16[] = [65535u16, 3u16, 40000u16];
   if (half(h, 2, 1) != 65535 - 6 + 3 - 80000) { return 3; }
+  let sh: i16[] = [(0 - 32768) as i16, 32767 as i16, -1 as i16];
+  if (signed_half(sh, 2, 1) != -65533i64) { return 5; }
+  let floats: f64[] = [1.25, -2.5, 7.75];
+  if (float_pairs(floats, 2, 1) != -7.75) { return 6; }
   if (once(a, 5) != 0i64 - 5i64 + 7i64 - 2000000000i64 + 9i64 + 11i64) { return 4; }
   return 0;
 }`
 
 var (
-	arm64ScaledLoad  = regexp.MustCompile(`(?:ldrsw x\d+|ldr w\d+|ldrh w\d+), \[x\d+, x\d+, lsl #[12]\]`)
+	arm64ScaledLoad  = regexp.MustCompile(`(?:ldrsw x\d+|ldrsh x\d+|ldr w\d+|ldrh w\d+), \[x\d+, x\d+, lsl #[12]\]`)
+	arm64FloatLoad   = regexp.MustCompile(`ldr d\d+, \[x\d+, x\d+, lsl #3\]`)
 	arm64ElementAddr = regexp.MustCompile(`add x5, x\d+, x\d+, lsl #[12]`)
 )
 
@@ -66,7 +81,7 @@ func TestSelfHostScaledElementLoad(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"pairs", "wide", "half"} {
+	for _, name := range []string{"pairs", "wide", "half", "signed_half"} {
 		body := tailCallBody(t, string(asm), name)
 		if !arm64ScaledLoad.MatchString(body) {
 			t.Errorf("%s has no load with a scaled index:\n%s", name, body)
@@ -74,6 +89,9 @@ func TestSelfHostScaledElementLoad(t *testing.T) {
 		if arm64ElementAddr.MatchString(body) {
 			t.Errorf("%s forms the address of an element for a read:\n%s", name, body)
 		}
+	}
+	if body := tailCallBody(t, string(asm), "float_pairs"); len(arm64FloatLoad.FindAllString(body, -1)) < 2 {
+		t.Errorf("float_pairs needs two indexed loads into floating-point registers:\n%s", body)
 	}
 	if body := tailCallBody(t, string(asm), "once"); arm64ScaledLoad.MatchString(body) {
 		t.Errorf("once reads its array one time in a trip and has a load with a scaled index:\n%s", body)

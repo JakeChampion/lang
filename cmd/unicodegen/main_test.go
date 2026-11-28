@@ -495,7 +495,7 @@ func TestNormStepsRoundTrip(t *testing.T) {
 }
 
 // A class of a break property has the names of regex-syntax, and each
-// table holds the code points of gcbdata.txt and wbdata.txt.
+// table holds the code points of its Unicode break property.
 func TestBreakClassTables(t *testing.T) {
 	byKey := map[string][][2]rune{}
 	for _, pt := range propTables() {
@@ -512,6 +512,8 @@ func TestBreakClassTables(t *testing.T) {
 		{"wb:ex", '_', true}, {"wb:extendnumlet", '_', true}, {"wb:ex", 0x0301, false},
 		{"wb:extend", 0x0301, true}, {"gcb:regionalindicator", 0x1F1EC, true}, {"gcb:lv", 0xAC00, true},
 		{"gcb:lvt", 0xAC01, true}, {"gcb:cn", '\t', true}, {"gcb:cn", '\r', false}, {"wb:le", 'a', true},
+		{"sb:aterm", '.', true}, {"sb:at", '.', true}, {"sb:st", '.', false}, {"sb:le", '漢', true},
+		{"sb:lower", 'a', true}, {"sb:lo", 'A', false}, {"sb:ex", 0x0301, true},
 		{"wb:hl", 0x05D0, true}, {"wb:wsegspace", ' ', true}, {"wb:mb", '.', true},
 	} {
 		rs, ok := byKey[c.key]
@@ -523,7 +525,7 @@ func TestBreakClassTables(t *testing.T) {
 			t.Errorf("%s holds U+%04X = %v, want %v", c.key, c.r, got, c.want)
 		}
 	}
-	for _, key := range []string{"gcb:other", "gcb:xx", "wb:other", "wb:xx", "gcb:eb", "wb:gaz", "wb:extendnumletter"} {
+	for _, key := range []string{"sb:other", "sb:xx", "gcb:other", "gcb:xx", "wb:other", "wb:xx", "gcb:eb", "wb:gaz", "wb:extendnumletter"} {
 		if _, ok := byKey[key]; ok {
 			t.Errorf("%s has a table, and regex-syntax has no such value", key)
 		}

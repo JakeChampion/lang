@@ -8276,7 +8276,7 @@ function vec_bounds(r: parser.TypeRef, tps: string[], s: Scope): string {
 // vec_lane_types are the lane types a `Vec[N, T]` can stand for.
 function vec_lane_types(r: parser.TypeRef, tps: string[]): string[] {
   let out: string[] = [];
-  for lanes in typeinfo.lane_types() {
+  for lanes in typeinfo.vec_candidates(r.args[1].base) {
     let fit = typeinfo.lane_vec_spellings(lanes);
     if (vec_arg_fits(r.args[0], fit[0], tps) && vec_arg_fits(r.args[1], fit[1], tps)) {
       out = out.append(lanes);
@@ -31446,7 +31446,7 @@ function unknown_type_diag(name: string, traits: string[], line: i32, col: i32):
     return dg_at("E106", "type nests deeper than " + util.i32_to_string(MAX_TYPE_DEPTH) + " levels", line, col);
   }
   if (name.starts_with("Vec[")) {
-    return dg_at("E096", name + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", line, col);
+    return dg_at("E096", name + " names no lane type: supported pairs are Vec[2, f64], Vec[4, f32], Vec[16, u8], Vec[4, i32] and Vec[4, u32]", line, col);
   }
   return dg_at("E064", "cannot find type \"" + util.demangle(name) + "\" in this scope" + unknown_type_hint(name, traits), line, col);
 }
@@ -33164,7 +33164,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
     }
     let ir = parser.parse_type_ref(im.impl_type);
     if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
-      out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
+      out = out.append(dg_at("E096", im.impl_type + " names no lane type: supported pairs are Vec[2, f64], Vec[4, f32], Vec[16, u8], Vec[4, i32] and Vec[4, u32]", im.line, im.col));
       continue;
     }
     if (im.trait_name == "Send" && im.trait_module == "worker") {

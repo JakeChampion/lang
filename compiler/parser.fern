@@ -9667,7 +9667,7 @@ function vec_impl_parts(v: VecImpl, own_vec: boolean): VecImpl[] {
   }
   let ref = parse_type_ref(v.info.impl_type);
   let out: VecImpl[] = [];
-  for lane in typeinfo.lane_types() {
+  for lane in typeinfo.vec_candidates(ref.args[1].base) {
     let parts = typeinfo.lane_vec_spellings(lane);
     let names = vec_binding(ref.args, v.info.all_type_params, parts);
     if (names.len() > 0) {

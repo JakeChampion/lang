@@ -327,7 +327,7 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 			if !coreExports[coreName] {
 				continue
 			}
-			if err := g.liftExport(userInst, wi, f.Name, coreName, f.Sig, memIdx, reallocIdx, resourceInst); err != nil {
+			if err := g.liftExport(userInst, wi, f.Name, coreName, f.Sig, memIdx, reallocIdx, resourceInst, coreExports["cabi_post_"+coreName]); err != nil {
 				return nil, err
 			}
 			emitted++
@@ -386,7 +386,7 @@ func isStringOrList(wi componenttype.WorldInterface, v componenttype.Valtype) bo
 	return isList
 }
 
-func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32, resourceInst map[string]uint32) error {
+func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32, resourceInst map[string]uint32, hasPostReturn bool) error {
 	iface := wi.Name
 	if sig == nil {
 		return fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
@@ -515,6 +515,13 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	c.nType++
 
 	switch {
+	case hasPostReturn && hasMemResult:
+		post := c.aliasCoreFunc(userInst, "cabi_post_"+coreName)
+		var realloc *uint32
+		if hasMemParam {
+			realloc = &reallocIdx
+		}
+		c.buf = putCanonLiftMemory(c.buf, coreF, funcType, memIdx, realloc, &post)
 	case hasMemParam:
 		c.buf = PutCanonSectionLiftWithMemoryRealloc(c.buf, coreF, funcType, memIdx, reallocIdx)
 	case hasMemResult:

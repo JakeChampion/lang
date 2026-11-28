@@ -11486,16 +11486,15 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   return ssa_inst(ins, reg_of, lp, fr, r, s);
 }
 
-function ssa_mul_lo_dst(lo: ssa.SInst, reg_of: i32[]): string {
-  return if (ssa_in_x(reg_of, lo.result)) { ssa_reg(reg_of[lo.result]) } else { "%rax" };
+function ssa_mul_lo_dst(lo: ssa.SInst, reg_of: i32[], hi_dst: string): string {
+  if (ssa_in_x(reg_of, lo.result)) {
+    return ssa_reg(reg_of[lo.result]);
+  }
+  return if (reg_of[lo.result] <= -2) { "%r11" } else { hi_dst };
 }
 
 function ssa_mul_hi_dst(hi: ssa.SInst, reg_of: i32[]): string {
   return if (hi.result >= 0 && ssa_in_x(reg_of, hi.result)) { ssa_reg(reg_of[hi.result]) } else { "%rdx" };
-}
-
-function ssa_mulx_form(lo_dst: string, hi_dst: string): boolean {
-  return lo_dst != hi_dst && lo_dst != "%r11" && hi_dst != "%r11";
 }
 
 function ssa_homed_in_rdx(reg_of: i32[], v: i32): boolean {
@@ -11510,9 +11509,8 @@ function ssa_rdx_factor(blk: ssa.SBlock, ii: i32, reg_of: i32[]): i32 {
   while (j >= 1) {
     if (ssa.wide_product_at(blk, j - 1)) {
       let hi = blk.insts[j];
-      let lo_dst = ssa_mul_lo_dst(blk.insts[j - 1], reg_of);
       let hi_dst = ssa_mul_hi_dst(hi, reg_of);
-      if (!ssa_mulx_form(lo_dst, hi_dst) || lo_dst == "%rdx" || hi_dst == "%rdx") {
+      if (hi_dst == "%rdx" || ssa_mul_lo_dst(blk.insts[j - 1], reg_of, hi_dst) == "%rdx") {
         return -1;
       }
       return hi.args[0];
@@ -11547,29 +11545,25 @@ function ssa_keeps_rdx(ins: ssa.SInst, reg_of: i32[]): boolean {
   return true;
 }
 
-// One `mulxq` writes each half into its home register. `%rax` and `%rdx`
-// are free at the product, so they hold a half that has no register.
-// The `mulq` form stays for halves that share a register or use `%r11`.
+// One `mulxq` writes each half into its home register and leaves `%rax`
+// as it was. A low half in a slot goes through `%r11` and a high half in a
+// slot through `%rdx`, because no value holds them at the product. A low
+// half with no home shares the register of the high half: `mulxq` then
+// writes the high half.
 function ssa_mul_wide(lo: ssa.SInst, hi: ssa.SInst, reg_of: i32[], rdx_holds: boolean, s: asmcore.EmitState): asmcore.EmitState {
-  let lo_dst = ssa_mul_lo_dst(lo, reg_of);
   let hi_dst = ssa_mul_hi_dst(hi, reg_of);
-  if (ssa_mulx_form(lo_dst, hi_dst)) {
-    if (!rdx_holds) {
-      s = ssa_load(reg_of, hi.args[0], "%rdx", s);
-    }
-    s = s.write("    mulxq " + ssa_operand(reg_of, hi.args[1], s) + ", " + lo_dst + ", " + hi_dst + "\n");
-    if (lo_dst == "%rax") {
-      s = ssa_store(reg_of, lo.result, "%rax", s);
-    }
-    if (hi_dst == "%rdx" && hi.result >= 0) {
-      s = ssa_store(reg_of, hi.result, "%rdx", s);
-    }
-    return s;
+  let lo_dst = ssa_mul_lo_dst(lo, reg_of, hi_dst);
+  if (!rdx_holds) {
+    s = ssa_load(reg_of, hi.args[0], "%rdx", s);
   }
-  // The low half goes first, because the home of the high half can be `%rax`.
-  s = ssa_widening_mul(hi, reg_of, s);
-  s = ssa_store(reg_of, lo.result, "%rax", s);
-  return ssa_store(reg_of, hi.result, "%rdx", s);
+  s = s.write("    mulxq " + ssa_operand(reg_of, hi.args[1], s) + ", " + lo_dst + ", " + hi_dst + "\n");
+  if (reg_of[lo.result] <= -2) {
+    s = ssa_store(reg_of, lo.result, "%r11", s);
+  }
+  if (hi_dst == "%rdx" && hi.result >= 0) {
+    s = ssa_store(reg_of, hi.result, "%rdx", s);
+  }
+  return s;
 }
 
 // The product of `mulhi_u` or `mulhi_s` into %rdx:%rax. One factor goes in

@@ -210,8 +210,6 @@ func TestSelfHostArm64ExtractExtendGas(t *testing.T) {
 		"sbfx x0, x1, #64, #1",
 		"sbfx w0, w1, #0, #0",
 		"ubfx x0, x1, #4",
-		"ldrsb x0, [x1, x2]",
-		"ldrsh w0, [x1, w2, uxtw #1]",
 	})
 }
 
@@ -627,6 +625,12 @@ func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 	checkPinnedSelfHost(t, bin, runner, []pinnedAsm{
+		{"ldr d3, [x1, x2, lsl #3]", 0xfc627823},
+		{"str d7, [sp, w5, sxtw #3]", 0xfc25dbe7},
+		{"ldr s15, [x22, w19, uxtw #2]", 0xbc735acf},
+		{"str s2, [x8, x9]", 0xbc296902},
+		{"ldr q31, [x3, x2, lsl #4]", 0x3ce2787f},
+		{"str q0, [sp, w6, uxtw]", 0x3ca64be0},
 		{"ldr x0, [x1, w2, uxtw]", 0xf8624820},
 		{"ldr x23, [x9, w28, uxtw #3]", 0xf87c5937},
 		{"ldr x23, [x9, w28, sxtw #3]", 0xf87cd937},
@@ -636,6 +640,11 @@ func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 		{"ldr w23, [x9, w28, uxtw #2]", 0xb87c5937},
 		{"ldr w23, [x9, w28, sxtw]", 0xb87cc937},
 		{"ldr w0, [x1, x2]", 0xb8626820},
+		{"ldrsb x0, [x1, x2]", 0x38a26820},
+		{"ldrsb w23, [x9, w28, sxtw #0]", 0x38fcd937},
+		{"ldrsh x23, [x9, x28, lsl #1]", 0x78bc7937},
+		{"ldrsh w0, [x1, w2, uxtw #1]", 0x78e25820},
+		{"ldrsh x0, [sp, x2]", 0x78a26be0},
 		{"ldrsw x23, [x9, x28, lsl #2]", 0xb8bc7937},
 		{"ldrsw x0, [x1, x2]", 0xb8a26820},
 		{"ldrsw x23, [x9, w28, sxtw #2]", 0xb8bcd937},
@@ -662,6 +671,14 @@ func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 		"ldr x0, [x1, x2, lsl]",
 		"ldrb w0, [x1, w2, uxtw #1]",
 		"ldrh w0, [x1, w2, uxtw #2]",
+		"ldrsh x0, [x1, w2, sxtw #2]",
+		"ldrsw w0, [x1, x2]",
+		"ldrsb w0, [x1, x2, lsl #1]",
+		"ldr d0, [x1, w2, uxtw #2]",
+		"str s0, [x1, x2, lsl #3]",
+		"ldr d0, [x1, x2]!",
+		"ldr d0, [x1, x2], #8",
+		"ldr q0, [x1, x2, lsl #3]",
 		"ldr x0, [x1, x2, ror #3]",
 	})
 }
