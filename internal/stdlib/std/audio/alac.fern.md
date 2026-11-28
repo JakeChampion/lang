@@ -6,7 +6,7 @@ Samples use WAVE speaker order and retain their declared right-aligned depth.
 The information record includes the speaker mask.
 
 Create a decoder from a 24-byte configuration or a 48-byte configuration with a channel-layout extension.
-Decoder state retains two channel scratch arrays. Packets need no history from earlier packets.
+Decoder state retains two channel scratch arrays and two arrays of predictor taps. Packets need no history from earlier packets.
 The reusable-output method preserves buffer entries after the valid prefix.
 The valid prefix contains `frame.frames * frame.format.channels` samples.
 
@@ -32,17 +32,22 @@ import "std/audio/alac/entropy";
 import "std/audio/alac/predict";
 import "std/audio/pcm";
 
-pub opaque struct Decoder { info: config.Info, first: i32[], second: i32[] }
+pub opaque struct Decoder { info: config.Info, work: Work }
 
 pub struct Frame { format: pcm.Format, frames: i32, bytes_read: i32, samples: i32[] }
 
-struct Work { first: i32[], second: i32[] }
+struct Work { first: i32[], second: i32[], first_taps: i32[], second_taps: i32[] }
+
+// The coefficient count is a 5-bit field.
+const MAX_TAPS: i32 = 31;
 
 struct ElementHeader { at: i64, frames: i32, shift: i32, raw: boolean }
 
 pub function create(configuration: [u8], limits: pcm.Limits): Result[Decoder, pcm.AudioError] {
   let info = config.read(configuration, limits)?;
-  return Ok(Decoder { info: info, first: pcm.zeros(info.frame_length), second: if (info.format.channels > 1) { pcm.zeros(info.frame_length) } else { [] } });
+  let stereo = info.format.channels > 1;
+  let work = Work { first: pcm.zeros(info.frame_length), second: if (stereo) { pcm.zeros(info.frame_length) } else { [] }, first_taps: pcm.zeros(MAX_TAPS), second_taps: if (stereo) { pcm.zeros(MAX_TAPS) } else { [] } };
+  return Ok(Decoder { info: info, work: work });
 }
 
 pub function (value: Decoder) information(): config.Info {
@@ -124,7 +129,7 @@ function element(input: [u8], info: config.Info, paired: boolean, fields: Elemen
   let at = fields.at;
   let count = fields.frames;
   let shift = fields.shift;
-  let Work { first, second } = work;
+  let Work { first, second, first_taps, second_taps } = work;
   if (fields.raw) {
     let width = info.format.bits_per_sample;
     let channels = if (paired) { 2 } else { 1 };
@@ -138,7 +143,7 @@ function element(input: [u8], info: config.Info, paired: boolean, fields: Elemen
         at += width as i64;
       }
     }
-    return Ok((end, Work { first: first, second: second }));
+    return Ok((end, Work { first: first, second: second, first_taps: first_taps, second_taps: second_taps }));
   }
   let depth = info.format.bits_per_sample - shift + (if (paired) { 1 } else { 0 });
   let (p4, mid_shift) = bits.read(input, at, 8)?;
@@ -147,23 +152,31 @@ function element(input: [u8], info: config.Info, paired: boolean, fields: Elemen
     return Err(pcm.Header);
   }
   let (p6, parameters) = entropy.parameters(input, p5, info, depth)?;
-  at = p6;
+  let (p7, read_taps) = entropy.coefficients(input, p6, parameters, first_taps)?;
+  first_taps = read_taps;
+  at = p7;
   let other_parameters: Option[entropy.Parameters] = None;
   if (paired) {
-    let (p7, other) = entropy.parameters(input, at, info, depth)?;
-    at = p7;
+    let (p8, other) = entropy.parameters(input, at, info, depth)?;
+    let (p9, other_taps) = entropy.coefficients(input, p8, other, second_taps)?;
+    second_taps = other_taps;
+    at = p9;
     other_parameters = Some(other);
   }
   let tail = at;
   let channels = if (paired) { 2 } else { 1 };
   at = bits.skip(input, at, count as i64 * (channels as i64) * (shift as i64))?;
-  let (p8, residuals) = entropy.residuals(input, at, info, parameters, first, count)?;
-  first = predict.restore(residuals, count, parameters)?;
-  at = p8;
+  let (p10, residuals) = entropy.residuals(input, at, info, parameters, first, count)?;
+  let (restored, used_taps) = predict.restore(residuals, count, parameters, first_taps)?;
+  first = restored;
+  first_taps = used_taps;
+  at = p10;
   if let Some(other) = other_parameters {
-    let (p9, residual_pair) = entropy.residuals(input, at, info, other, second, count)?;
-    second = predict.restore(residual_pair, count, other)?;
-    at = p9;
+    let (p11, residual_pair) = entropy.residuals(input, at, info, other, second, count)?;
+    let (restored_pair, used_pair_taps) = predict.restore(residual_pair, count, other, second_taps)?;
+    second = restored_pair;
+    second_taps = used_pair_taps;
+    at = p11;
     if (weight != 0) {
       for i in 0..count {
         let left = first[i] + second[i] - (second[i] * weight >> mid_shift as i32);
@@ -193,7 +206,7 @@ function element(input: [u8], info: config.Info, paired: boolean, fields: Elemen
       second = second.with(i, second[i] << clip >> clip);
     }
   }
-  return Ok((at, Work { first: first, second: second }));
+  return Ok((at, Work { first: first, second: second, first_taps: first_taps, second_taps: second_taps }));
 }
 
 // Data and fill elements have distinct bounded length and alignment fields.
@@ -239,8 +252,7 @@ function ended(input: [u8], at: i64): Result[void, pcm.AudioError] {
 // fern-lint: allow cyclomatic-complexity
 pub function (own value: Decoder) decode_packet_into(input: [u8], own output: i32[], limits: pcm.Limits): Result[(Decoder, Frame), pcm.AudioError] {
   check_input(input, value.info, limits)?;
-  let Decoder { info, first, second } = value;
-  let work = Work { first: first, second: second };
+  let Decoder { info, work } = value;
   let at = 0i64;
   let channel = 0;
   let frames = 0;
@@ -252,9 +264,7 @@ pub function (own value: Decoder) decode_packet_into(input: [u8], own output: i3
         return Err(pcm.Header);
       }
       ended(input, at)?;
-      let Work { first: a, second: b } = work;
-      let decoder = Decoder { info: info, first: a, second: b };
-      return Ok((decoder, Frame { format: info.format, frames: frames, bytes_read: input.len(), samples: output }));
+      return Ok((Decoder { info: info, work: work }, Frame { format: info.format, frames: frames, bytes_read: input.len(), samples: output }));
     }
     if (tag == 4u32 || tag == 6u32) {
       at = ancillary(input, at, tag)?;
