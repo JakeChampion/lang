@@ -198,15 +198,18 @@ func idContinue(r rune) bool {
 // package that UTS #18 names, and properties that UCD derives from them.
 func binaryProps() map[string]func(rune) bool {
 	props := map[string]func(rune) bool{
-		"Alphabetic":  isAlphabetic,
-		"ID_Start":    idStart,
-		"ID_Continue": idContinue,
-		"Lowercase":   func(r rune) bool { return unicode.In(r, unicode.Ll, unicode.Other_Lowercase) },
-		"Uppercase":   func(r rune) bool { return unicode.In(r, unicode.Lu, unicode.Other_Uppercase) },
-		"Math":        func(r rune) bool { return unicode.In(r, unicode.Sm, unicode.Other_Math) },
-		"Any":         func(r rune) bool { return true },
-		"ASCII":       func(r rune) bool { return r < 128 },
-		"Assigned":    isAssigned,
+		"Alphabetic":    isAlphabetic,
+		"ID_Start":      idStart,
+		"ID_Continue":   idContinue,
+		"XID_Start":     func(r rune) bool { return idStart(r) && !inRuneRanges(xidStartExcluded, r) },
+		"XID_Continue":  func(r rune) bool { return idContinue(r) && !inRuneRanges(xidContinueExcluded, r) },
+		"Bidi_Mirrored": func(r rune) bool { return inRuneRanges(bidiMirrored, r) },
+		"Lowercase":     func(r rune) bool { return unicode.In(r, unicode.Ll, unicode.Other_Lowercase) },
+		"Uppercase":     func(r rune) bool { return unicode.In(r, unicode.Lu, unicode.Other_Uppercase) },
+		"Math":          func(r rune) bool { return unicode.In(r, unicode.Sm, unicode.Other_Math) },
+		"Any":           func(r rune) bool { return true },
+		"ASCII":         func(r rune) bool { return r < 128 },
+		"Assigned":      isAssigned,
 	}
 	for name, t := range unicode.Properties {
 		if name == "STerm" {
