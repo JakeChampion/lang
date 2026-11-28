@@ -90,8 +90,8 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
   record payload { name: string, bytes: list<u8> }
   record tagged { tag: s32, value: payload }
   record envelope { marker: u8, value: tagged, tail: u64 }
-  record samples { counts: list<s64>, points: list<f32> }
-  record series { id: u32, data: samples }
+  record samples { counts: list<s64>, points: list<f32>, enabled: list<bool> }
+  record series { id: u32, data: samples, mask: list<bool> }
   echo-series: func(v: series) -> series;
   wrap: func(v: tagged) -> envelope;
   span-check: func(v: tagged) -> s32;
@@ -136,14 +136,18 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
     (i64.const 1099511627781))
   (func (export "local:test/src@0.1.0#make-onef") (result f32)
     (f32.const 1.5))
-  (func (export "local:test/src@0.1.0#echo-series") (param $id i32) (param $p i32) (param $n i32) (param $q i32) (param $m i32) (result i32)
+  (func (export "local:test/src@0.1.0#echo-series") (param $id i32) (param $p i32) (param $n i32) (param $q i32) (param $m i32) (param $f i32) (param $nf i32) (param $b i32) (param $nb i32) (result i32)
     (local $r i32)
-    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 20)))
+    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 4) (i32.const 36)))
     (i32.store (local.get $r) (local.get $id))
     (i32.store offset=4 (local.get $r) (local.get $p))
     (i32.store offset=8 (local.get $r) (local.get $n))
     (i32.store offset=12 (local.get $r) (local.get $q))
     (i32.store offset=16 (local.get $r) (local.get $m))
+    (i32.store offset=20 (local.get $r) (local.get $f))
+    (i32.store offset=24 (local.get $r) (local.get $nf))
+    (i32.store offset=28 (local.get $r) (local.get $b))
+    (i32.store offset=32 (local.get $r) (local.get $nb))
     (local.get $r))
   (func $span (param $p i32) (param $n i32) (result i32)
     (if (result i32) (local.get $n)
@@ -231,8 +235,8 @@ struct Outer { p: Inner, n: i64 }
 struct One { v: u64 }
 struct OneF { v: f32 }
 struct Payload { name: string, bytes: u8[] }
-struct Samples { counts: i64[], points: f32[] }
-struct Series { id: u32, data: Samples }
+struct Samples { counts: i64[], points: f32[], enabled: boolean[] }
+struct Series { id: u32, data: Samples, mask: boolean[] }
 @import("local:test/src@0.1.0", "echo-series")
 function echo_series(v: Series): Series;
 struct Tagged { tag: i32, value: Payload }
@@ -258,9 +262,11 @@ function sum_u64(data: u64[]): u64;
 @import("local:test/src@0.1.0", "iota-u64")
 function iota_u64(n: u32): u64[];
 function main(): i32 {
-    let series = echo_series(Series { id: 42u32, data: Samples { counts: [-4294967297i64, 11i64], points: [1.25 as f32, -3.5 as f32] } });
-    let blank = echo_series(Series { id: 0u32, data: Samples { counts: [], points: [] } });
+    let series = echo_series(Series { id: 42u32, data: Samples { counts: [-4294967297i64, 11i64], points: [1.25 as f32, -3.5 as f32], enabled: [true, false, true] }, mask: [false, true] });
+    let blank = echo_series(Series { id: 0u32, data: Samples { counts: [], points: [], enabled: [] }, mask: [] });
     if (series.id != 42u32 || series.data.counts.len() != 2 || series.data.counts[0] != -4294967297i64 || series.data.counts[1] != 11i64 || series.data.points.len() != 2 || series.data.points[0] as f64 != 1.25 || series.data.points[1] as f64 != -3.5) { return 3; }
+    if (series.data.enabled.len() != 3 || !series.data.enabled[0] || series.data.enabled[1] || !series.data.enabled[2]) { return 5; }
+    if (series.mask.len() != 2 || series.mask[0] || !series.mask[1] || blank.mask.len() != 0 || blank.data.enabled.len() != 0) { return 6; }
     if (blank.data.counts.len() != 0 || blank.data.points.len() != 0) { return 4; }
     let result = wrap(Tagged { tag: -7, value: Payload { name: "hé", bytes: [255u8, 0u8, 143u8] } });
     let empty = wrap(Tagged { tag: 1, value: Payload { name: "", bytes: [] } });
@@ -328,8 +334,8 @@ function main(): i32 {
 		cli := buildSelfHostCLI(t)
 		t.Setenv("FERN_LEAKCHECK", "1")
 		src := mustWrite(t, dir, "owned.fern", `struct Payload { name: string, bytes: u8[] }
-struct Samples { counts: i64[], points: f32[] }
-struct Series { id: u32, data: Samples }
+struct Samples { counts: i64[], points: f32[], enabled: boolean[] }
+struct Series { id: u32, data: Samples, mask: boolean[] }
 @import("local:test/src@0.1.0", "echo-series")
 function echo_series(v: Series): Series;
 struct Tagged { tag: i32, value: Payload }
@@ -337,9 +343,11 @@ struct Envelope { marker: u8, value: Tagged, tail: u64 }
 @import("local:test/src@0.1.0", "wrap")
 function wrap(v: Tagged): Envelope;
 function main(): i32 {
-    let series = echo_series(Series { id: 42u32, data: Samples { counts: [-4294967297i64, 11i64], points: [1.25 as f32, -3.5 as f32] } });
-    let blank = echo_series(Series { id: 0u32, data: Samples { counts: [], points: [] } });
+    let series = echo_series(Series { id: 42u32, data: Samples { counts: [-4294967297i64, 11i64], points: [1.25 as f32, -3.5 as f32], enabled: [true, false, true] }, mask: [false, true] });
+    let blank = echo_series(Series { id: 0u32, data: Samples { counts: [], points: [], enabled: [] }, mask: [] });
     if (series.id != 42u32 || series.data.counts.len() != 2 || series.data.counts[0] != -4294967297i64 || series.data.counts[1] != 11i64 || series.data.points.len() != 2 || series.data.points[0] as f64 != 1.25 || series.data.points[1] as f64 != -3.5) { return 3; }
+    if (series.data.enabled.len() != 3 || !series.data.enabled[0] || series.data.enabled[1] || !series.data.enabled[2]) { return 5; }
+    if (series.mask.len() != 2 || series.mask[0] || !series.mask[1] || blank.mask.len() != 0 || blank.data.enabled.len() != 0) { return 6; }
     if (blank.data.counts.len() != 0 || blank.data.points.len() != 0) { return 4; }
     let kept = wrap(Tagged { tag: 5, value: Payload { name: "hé", bytes: [255u8] } });
     let empty = wrap(Tagged { tag: 0, value: Payload { name: "", bytes: [] } });
