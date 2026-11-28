@@ -341,8 +341,9 @@ With git 2.43, these settings, messages and merges are also different:
 ## What it does not have yet
 
 - Three parts of the merge of `--remerge-diff`. They are the merge of a
-  submodule that the two parents changed when its history contains a
-  possible merge resolution or cannot be fully read. When the submodule
+  submodule that the two parents changed when its history cannot be fully
+  read or the patch needs a header listing possible merge resolutions.
+  Raw, name and stat formats can show the remerged tree without this header. When the submodule
   checkout is a linked worktree with shared refs and a detached HEAD, the
   search uses that checkout’s HEAD and its private refs under `refs/bisect`,
   `refs/worktree`, and `refs/rewritten`. A primary or linked worktree
