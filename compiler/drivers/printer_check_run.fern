@@ -1029,10 +1029,9 @@ function check_visibility_and_destructuring(): test.TestOutcome {
 
   let srcTd = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
   let rtTd = roundtrip_module(srcTd);
-  let mti = func_index(rtTd.funcs, "main");
-  if (mti < 0) {
-    return test.fail("mti < 0");
-  }
+  let Some(mti) = func_index(rtTd.funcs, "main") else {
+    return test.fail("no function main");
+  };
   if (rtTd.funcs[mti].body.len() != 2) {
     return test.fail("rtTd.funcs[mti].body.len() != 2");
   }
@@ -1051,10 +1050,9 @@ function check_visibility_and_destructuring(): test.TestOutcome {
   }
   let srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
   let rtSd = roundtrip_module(srcSd);
-  let msi = func_index(rtSd.funcs, "main");
-  if (msi < 0) {
-    return test.fail("msi < 0");
-  }
+  let Some(msi) = func_index(rtSd.funcs, "main") else {
+    return test.fail("no function main");
+  };
   match (rtSd.funcs[msi].body[0]) {
     ast.StmtVar(v) => {
       if (ast.destr_text(v.destr) != "x,bb" || v.name.len() != 0) {
@@ -1071,10 +1069,9 @@ function check_visibility_and_destructuring(): test.TestOutcome {
 
   let srcMt = "enum Opt[T] { Some(T), None } pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
   let rtMt = roundtrip_module(srcMt);
-  let mmi = func_index(rtMt.funcs, "map");
-  if (mmi < 0) {
-    return test.fail("mmi < 0");
-  }
+  let Some(mmi) = func_index(rtMt.funcs, "map") else {
+    return test.fail("no function map");
+  };
   if (rtMt.funcs[mmi].receiver_name != "o") {
     return test.fail("rtMt.funcs[mmi].receiver_name != \"o\"");
   }
@@ -1159,8 +1156,8 @@ function check_traits_and_impls(): test.TestOutcome {
   if (pfIm.pimpls[1].methods.len() != 1) {
     return test.fail("pfIm.pimpls[1].methods.len() != 1");
   }
-  if (func_index(pfIm.pmod.funcs, "to_string") >= 0) {
-    return test.fail("func_index(pfIm.pmod.funcs, \"to_string\") >= 0");
+  if (func_index(pfIm.pmod.funcs, "to_string").is_some()) {
+    return test.fail("func_index(pfIm.pmod.funcs, \"to_string\").is_some()");
   }
   let outIm = printer.format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
   if (!util.contains(outIm, "impl Display for i32 {}")) {
@@ -1248,13 +1245,13 @@ function struct_index(structs: parser.StructDecl[], name: string): i32 {
   return -1;
 }
 
-function func_index(funcs: parser.FuncDecl[], name: string): i32 {
+function func_index(funcs: parser.FuncDecl[], name: string): Option[i32] {
   for i in 0..funcs.len() {
     if (funcs[i].name == name) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function diff_replay(sc: printer.DiffScript, keep: i32): string {
