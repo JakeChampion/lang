@@ -3557,44 +3557,48 @@ function wrap_tuple_elems(path: ast.Stmt[], kinds: i32[], pats: ast.Pattern[], p
     if (kinds[wi] == 3) {
       cur = match_sub_pattern(cur, en, pats[wi], line, col);
     } else if (kinds[wi] == 4) {
-      let (nk, nb, nl, np) = pv_tup(pats[wi]);
-      let sub = wrap_tuple_elems(cur, nk, np, en, line, col);
-      let body: ast.Stmt[] = [];
-      for bk in 0..nk.len() {
-        if (nk[bk] == 0) {
-          body = body.append(as_header(s_var_at(nb[bk], "", e_ident_at(en + "_e" + util.i32_to_string(bk), line, col), line, col)));
-        }
-      }
-      for si in 0..sub.len() {
-        body = body.append(sub[si]);
-      }
-      let ncond = e_bool(true);
-      let has_ncond = false;
-      for lk in 0..nk.len() {
-        if (nk[lk] == 2) {
-          let one = e_binary("==", e_ident(en + "_e" + util.i32_to_string(lk)), nl[lk]);
-          if (has_ncond) {
-            ncond = e_binary("&&", ncond, one);
-          } else {
-            ncond = one;
-          }
-          has_ncond = true;
-        }
-      }
-      let nwrap: ast.Stmt[] = [];
-      nwrap = nwrap.append(s_destr_at(tuple_elem_pattern(en, nk.len()), e_ident_at(en, line, col), line, col));
-      if (has_ncond) {
-        nwrap = nwrap.append(s_if(ncond, body, []));
-      } else {
-        for ci in 0..body.len() {
-          nwrap = nwrap.append(body[ci]);
-        }
-      }
-      cur = nwrap;
+      cur = wrap_tuple_pattern(cur, en, pats[wi], line, col);
     }
     wi -= 1;
   }
   return cur;
+}
+
+function wrap_tuple_pattern(path: ast.Stmt[], en: string, pat: ast.Pattern, line: i32, col: i32): ast.Stmt[] {
+  let (nk, nb, nl, np) = pv_tup(pat);
+  let sub = wrap_tuple_elems(path, nk, np, en, line, col);
+  let body: ast.Stmt[] = [];
+  for bk in 0..nk.len() {
+    if (nk[bk] == 0) {
+      body = body.append(as_header(s_var_at(nb[bk], "", e_ident_at(en + "_e" + util.i32_to_string(bk), line, col), line, col)));
+    }
+  }
+  for si in 0..sub.len() {
+    body = body.append(sub[si]);
+  }
+  let ncond = e_bool(true);
+  let has_ncond = false;
+  for lk in 0..nk.len() {
+    if (nk[lk] == 2) {
+      let one = e_binary("==", e_ident(en + "_e" + util.i32_to_string(lk)), nl[lk]);
+      if (has_ncond) {
+        ncond = e_binary("&&", ncond, one);
+      } else {
+        ncond = one;
+      }
+      has_ncond = true;
+    }
+  }
+  let nwrap: ast.Stmt[] = [];
+  nwrap = nwrap.append(s_destr_at(tuple_elem_pattern(en, nk.len()), e_ident_at(en, line, col), line, col));
+  if (has_ncond) {
+    nwrap = nwrap.append(s_if(ncond, body, []));
+  } else {
+    for ci in 0..body.len() {
+      nwrap = nwrap.append(body[ci]);
+    }
+  }
+  return nwrap;
 }
 
 // A tuple match takes only tuple patterns and `_`, as the oracle's checker requires.
@@ -3761,6 +3765,15 @@ function parse_struct_arm_pattern(p: Par): (StructArmPattern, Par) {
         fkind = 2;
         flit = le_expr;
         bind = "";
+      } else if (p.peek_punct() == "(") {
+        let (tk, tb, tl, tp, next) = parse_tuple_arm_pattern(p);
+        if (tk.len() == 0) {
+          next = next.refused_at(parse_fault("expected a tuple pattern"), p.peek_line(), p.peek_col());
+        }
+        p = next;
+        fkind = 3;
+        fpat = p_tuple_carrier(tk, tb, tl, tp);
+        bind = "";
       } else if (struct_field_variant_start(p)) {
         let (fp, fpp) = parse_pattern(p);
         p = fpp;
@@ -3895,15 +3908,9 @@ function wrap_struct_fields(path: ast.Stmt[], a: ast.StructArm, tmp: string): as
   let wi = a.field_kinds.len() - 1;
   while (wi >= 0) {
     if (a.field_kinds[wi] == 3) {
-      let mk_arms: ast.MatchArm[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: a.field_pats[wi], body: cur, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
-      let mk_skip: ast.Stmt[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
       let fv = tmp + "_f" + util.i32_to_string(wi);
-      let mk_wrap: ast.Stmt[] = [];
-      mk_wrap = mk_wrap.append(as_header(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col)));
-      mk_wrap = mk_wrap.append(s_match_origin(e_ident_at(fv, a.line, a.col), mk_arms, a.line, a.col, ORIGIN_PATTERN_PROBE));
-      cur = mk_wrap;
+      let bind = as_header(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col));
+      cur = [bind].concat(match_sub_pattern(cur, fv, a.field_pats[wi], a.line, a.col));
     }
     wi -= 1;
   }
@@ -5343,11 +5350,14 @@ function pattern_is_wildcard(pat: ast.Pattern): boolean {
   return false;
 }
 
-function pattern_needs_probe(pat: ast.Pattern): boolean {
+pub function pattern_needs_probe(pat: ast.Pattern): boolean {
   if let ast.PatLiteral(_) = pat {
     return true;
   }
-  return pv_name(pat).len() > 0;
+  if let ast.PatVariant(pv) = pat {
+    return pv.type_name.len() > 0 || pv.tup_kinds.len() > 0;
+  }
+  return false;
 }
 
 function arm_is_nested(arm: ast.MatchArm): boolean {
@@ -5516,6 +5526,9 @@ function match_sub_pattern(path: ast.Stmt[], scrut: string, pat: ast.Pattern, li
   match (pat) {
     ast.PatVariant(pv) => {
       if (pv.tup_kinds.len() > 0) {
+        if (pv.type_name.len() == 0) {
+          return wrap_tuple_pattern(path, scrut, pat, line, col);
+        }
         tuple_slot = true;
       } else {
         body = wrap_payload_pats(path, pv, line, col);
