@@ -1512,16 +1512,24 @@ function keyed(what: string, f: filter.Ast, input: json.JsonValue, e: Env, k: (j
     return raised(st, items.error[0]);
   }
   let saved = st.items;
-  let s = St { ...st, items: [] };
-  let ks: json.JsonValue[] = [];
-  for x in items.values {
-    s = drive(collected(f, x, e, s));
-    if (s.sig != OK) {
-      return St { ...s, items: saved };
+  return keyed_items(what, f, input, items.values, 0, [], e, k, saved, st);
+}
+
+function keyed_items(what: string, f: filter.Ast, input: json.JsonValue, items: json.JsonValue[], at: i32, ks: json.JsonValue[], e: Env, k: (json.JsonValue, own St) => own St, saved: json.JsonValue[], own s: St): own St {
+  while (s.sig == OK) {
+    if (at > 0) {
+      ks = ks.append(json.JArray(s.items));
     }
-    ks = ks.append(json.JArray(s.items));
+    if (at == items.len()) {
+      return give(by(what, input, items, ks), k, St { ...s, items: saved });
+    }
+    s = collected(f, items[at], e, s);
+    at += 1;
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => keyed_items(what, f, input, items, at, ks, e, k, saved, t)) };
+    }
   }
-  return give(by(what, input, items.values, ks), k, St { ...s, items: saved });
+  return St { ...s, items: saved };
 }
 
 function walk(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
