@@ -1002,3 +1002,15 @@ net/h2o-h3/c64m32.server_sys_us_per_req	0.98
 net/fern/held.bytes_per_connection	672
 net/fern/held.bytes_per_suspended_handler	4050
 net/fern/held.bytes_per_stream	3922
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	578.5
+tls/client/openssl.handshakes_per_s	113.0
+tls/client/go.bulk_mbytes_per_s	479.3
+tls/client/go.handshakes_per_s	113.0
+tls/client/rustls.handshakes_per_s	115.6
+tls/client/bssl.handshakes_per_s	114.9
+tls/server/go.bulk_mbytes_per_s	258.1
+tls/server/curl.bulk_mbytes_per_s	279.7
+tls/server/handshakes_per_s	794.2
+tls/server/resumed_handshakes_per_s	839.5
