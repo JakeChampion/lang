@@ -1,0 +1,20 @@
+// spec: RH-04
+struct Handle { n: i32 }
+
+function (own h: Handle) close(): void {}
+
+function factory(h: Handle): own () => i32 {
+  let read = (): i32 => 0;
+  read = (): i32 => h.n;
+  return read;
+}
+
+function check_factory(own h: Handle): i32 {
+  let saved = factory(h);
+  h.close();
+  return saved();
+}
+
+function main(): i32 {
+  return 0;
+}

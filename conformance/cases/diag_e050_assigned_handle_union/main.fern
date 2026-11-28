@@ -1,0 +1,14 @@
+// spec: RH-48
+function check_branches(path: string, other: Writer, use_other: boolean): Result[i32, IoError] {
+  let first: Writer = open_writer(path)?;
+  let ws = [first];
+  if (use_other) {
+    ws = [other];
+  }
+  first.close()?;
+  return Ok(ws.len());
+}
+
+function main(): i32 {
+  return 0;
+}
