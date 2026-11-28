@@ -1,5 +1,6 @@
 import "core/cmp";
 import "std/tz";
+import "std/io";
 import "std/errno";
 import "std/linediff";
 import "../coreutils/lib/gnu";
@@ -295,6 +296,8 @@ function help_text(): string {
   return out;
 }
 
+struct Exclude { pattern: string, fold_case: boolean }
+
 struct Cfg {
   style: i32,
   context: i64,
@@ -334,7 +337,7 @@ struct Cfg {
   paginate: boolean,
   color: i32,
   palette: string,
-  excludes: string[],
+  excludes: Exclude[],
   starting_file: string[],
   from_file: string[],
   to_file: string[],
@@ -574,9 +577,16 @@ function diff_syntax(): bre.Syntax {
   return bre.posix_basic();
 }
 
+// GNU records the filename case mode when each exclusion is added.
+function add_exclude(cfg: Cfg, pattern: string): Cfg {
+  let rule = Exclude { pattern: if (cfg.name_case) { lower(pattern) } else { pattern }, fold_case: cfg.name_case };
+  return Cfg { ...cfg, excludes: cfg.excludes.append(rule) };
+}
+
 // -X FILE: each line of FILE is a pattern.
 function exclude_from(cfg: Cfg, name: string): Cfg {
-  let bytes = match (read_file_bytes(name)) {
+  let patterns = if (name == "-") { io.read_all_bytes(stdin()) } else { read_file_bytes(name) };
+  let bytes = match (patterns) {
     Ok(b) => b,
     Err(e) => {
       gnu.error(name + ": " + gnu.io_error_text(e));
@@ -596,7 +606,7 @@ function exclude_from(cfg: Cfg, name: string): Cfg {
       last -= 1;
     }
     if (last > at) {
-      c = Cfg { ...c, excludes: c.excludes.append(slice_unchecked(text, at, last) + "") };
+      c = add_exclude(c, slice_unchecked(text, at, last) + "");
     }
     at = end + 1;
   }
@@ -657,7 +667,7 @@ function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
     OPT_PAGINATE => Cfg { ...cfg, paginate: true },
     OPT_COLOR => color_option(cfg, m),
     OPT_PALETTE => Cfg { ...cfg, palette: m.value },
-    OPT_EXCLUDE => Cfg { ...cfg, excludes: cfg.excludes.append(m.value) },
+    OPT_EXCLUDE => add_exclude(cfg, m.value),
     OPT_EXCLUDE_FROM => exclude_from(cfg, m.value),
     OPT_STARTING_FILE => Cfg { ...cfg, starting_file: file_option(cfg.starting_file, m.value, "-S") },
     OPT_FROM_FILE => Cfg { ...cfg, from_file: file_option(cfg.from_file, m.value, "--from-file") },
@@ -707,7 +717,7 @@ function mark_taken(own taken: boolean[], from: i32, to: i32, operands: i32): bo
 
 function parse(argv: string[]): (Cfg, string[]) {
   let empty: string[] = [];
-  let cfg = Cfg { style: STYLE_NONE, context: 0i64, explicit_context: false, ocontext: -1i64, prev: -1, horizon: 0i64, brief: false, identical: false, ignore_case: false, white: WS_NONE, blank: false, text: false, new_file: false, unidirectional: false, recursive: false, minimal: false, speed: false, labels: empty, switches: "", width: 0i64, left_column: false, suppress_common: false, groups: ["", "", "", ""], groups_set: [false, false, false, false], lines: ["", "", ""], lines_set: [false, false, false], show_c_function: false, function_res: [], ignore_res: [], expand_tabs: false, initial_tab: false, tabsize: 0i64, suppress_blank: false, paginate: false, color: COLOR_NEVER, palette: "", excludes: empty, starting_file: empty, from_file: empty, to_file: empty, no_dereference: false, name_case: false, strip_cr: false, inhibit_merge: false, merge_assist: false, no_directory: false, presume_output_tty: false };
+  let cfg = Cfg { style: STYLE_NONE, context: 0i64, explicit_context: false, ocontext: -1i64, prev: -1, horizon: 0i64, brief: false, identical: false, ignore_case: false, white: WS_NONE, blank: false, text: false, new_file: false, unidirectional: false, recursive: false, minimal: false, speed: false, labels: empty, switches: "", width: 0i64, left_column: false, suppress_common: false, groups: ["", "", "", ""], groups_set: [false, false, false, false], lines: ["", "", ""], lines_set: [false, false, false], show_c_function: false, function_res: [], ignore_res: [], expand_tabs: false, initial_tab: false, tabsize: 0i64, suppress_blank: false, paginate: false, color: COLOR_NEVER, palette: "", excludes: [], starting_file: empty, from_file: empty, to_file: empty, no_dereference: false, name_case: false, strip_cr: false, inhibit_merge: false, merge_assist: false, no_directory: false, presume_output_tty: false };
   let g = gnu.getopt_new(argv, options(), "diff", help_text(), EXIT_TROUBLE).in_package("diffutils");
   let taken: boolean[] = [];
   for _ in 0..argv.len() {
@@ -1373,8 +1383,8 @@ function compare_names(cfg: Cfg, a: string, b: string): i32 {
 }
 
 function excluded(cfg: Cfg, name: string): boolean {
-  for pat in cfg.excludes {
-    if (cfg.name_case && fnmatch.fnmatch(lower(pat), lower(name)) || !cfg.name_case && fnmatch.fnmatch(pat, name)) {
+  for rule in cfg.excludes {
+    if (fnmatch.fnmatch(rule.pattern, if (rule.fold_case) { lower(name) } else { name })) {
       return true;
     }
   }
@@ -2159,7 +2169,7 @@ function diff_texts(cfg: Cfg, a: Text, b: Text): (Script, i32) {
 // part, the names for the header and the status of each file. `searched`
 // is the line where the last search for a function line of -F started, and
 // `found` the line that it found, or -1.
-struct Pair { a: Text, b: Text, first: i32, names: string[], labels: string[], stats: FileStat[], nested: boolean, searched: Cell[i32], found: Cell[i32] }
+struct Pair { a: Text, b: Text, first: i32, names: string[], stats: FileStat[], nested: boolean, searched: Cell[i32], found: Cell[i32] }
 
 // A hunk: the kinds of change in it (1 deletes, 2 inserts, 3 both, 0 when
 // each line is one that -B or -I ignores) and its bounds in each file,
@@ -2367,8 +2377,8 @@ function time_text(run: Run, st: FileStat): string {
 
 function header_line(run: Run, p: Pair, f: i32, mark: string): void {
   set_color(run, C_HEADER);
-  if (p.labels[f].len() > 0) {
-    buf_push(run.out, mark + " " + p.labels[f]);
+  if (f < run.cfg.labels.len()) {
+    buf_push(run.out, mark + " " + run.cfg.labels[f]);
   } else {
     buf_push(run.out, mark + " " + p.names[f] + "\t" + time_text(run, p.stats[f]));
   }
@@ -3395,9 +3405,8 @@ function diff_2_files(run: Run, nested: boolean, sides: Side[], c0: Contents, c1
   }
   let r = diff_texts(cfg, a, b);
   let s = r.0;
-  let labels: string[] = [if (cfg.labels.len() > 0) { cfg.labels[0] } else { "" }, if (cfg.labels.len() > 1) { cfg.labels[1] } else { "" }];
   let names: string[] = [c_escape(label_or(run, 0, sides[0].name)), c_escape(label_or(run, 1, sides[1].name))];
-  let p = Pair { a: a, b: b, first: r.1, names: names, labels: labels, stats: [sides[0].st, sides[1].st], nested: nested, searched: cell_new(0), found: cell_new(-1) };
+  let p = Pair { a: a, b: b, first: r.1, names: names, stats: [sides[0].st, sides[1].st], nested: nested, searched: cell_new(0), found: cell_new(-1) };
   let changed = any_change(cfg, p, s);
   if (cfg.brief) {
     if (changed) {

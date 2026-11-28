@@ -6892,7 +6892,8 @@ function emit_arm64_op_memcpy(s: asmcore.EmitState): asmcore.EmitState {
   let tag = asmcore.fresh_label(s);
   let t = tag.name;
   s = tag.state.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
-  s = arm64_copy_bytes(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, t + "mc", t + "mct", t + "mcb", t + "mcd");
+  // The op is a call for the register allocator, so v16 and v17 are free.
+  s = arm64_copy_bytes_wide(s, CopyRegs { dst: "x0", src: "x1", n: "x2", tmp: "x4", src_end: "x9", dst_end: "x10" }, t + "mcv", t + "mc", t + "mct", t + "mcb", t + "mcd");
   s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
 
   return s;
@@ -6901,9 +6902,18 @@ function emit_arm64_op_memcpy(s: asmcore.EmitState): asmcore.EmitState {
 struct CopyRegs { dst: string, src: string, n: string, tmp: string, src_end: string, dst_end: string }
 
 function arm64_copy_bytes(s: asmcore.EmitState, r: CopyRegs, words: string, tail: string, bytes: string, done: string): asmcore.EmitState {
+  return arm64_copy_bytes_wide(s, r, "", words, tail, bytes, done);
+}
+
+// With a `wide` label, a copy of 32 bytes or more goes through v16 and v17.
+function arm64_copy_bytes_wide(s: asmcore.EmitState, r: CopyRegs, wide: string, words: string, tail: string, bytes: string, done: string): asmcore.EmitState {
   let tb = "w" + slice_unchecked(r.tmp, 1, r.tmp.len());
-  s = s.write("    cbz " + r.n + ", " + done + "\n");
   s = s.write("    cmp " + r.n + ", #8\n    b.lo " + bytes + "\n");
+  if (wide != "") {
+    s = s.write("    cmp " + r.n + ", #32\n    b.lo " + wide + "_s\n");
+    s = s.write(wide + ":\n    ldp q16, q17, [" + r.src + "], #32\n    stp q16, q17, [" + r.dst + "], #32\n    sub " + r.n + ", " + r.n + ", #32\n    cmp " + r.n + ", #32\n    b.hs " + wide + "\n");
+    s = s.write("    cmp " + r.n + ", #8\n    b.lo " + bytes + "\n" + wide + "_s:\n");
+  }
   s = s.write("    add " + r.src_end + ", " + r.src + ", " + r.n + "\n    sub " + r.src_end + ", " + r.src_end + ", #8\n");
   s = s.write("    add " + r.dst_end + ", " + r.dst + ", " + r.n + "\n    sub " + r.dst_end + ", " + r.dst_end + ", #8\n");
   s = s.write(words + ":\n");
@@ -6913,9 +6923,9 @@ function arm64_copy_bytes(s: asmcore.EmitState, r: CopyRegs, words: string, tail
   s = s.write(tail + ":\n");
   s = s.write("    ldr " + r.tmp + ", [" + r.src_end + "]\n    str " + r.tmp + ", [" + r.dst_end + "]\n");
   s = s.write("    b " + done + "\n");
-  s = s.write(bytes + ":\n");
+  s = s.write(bytes + ":\n    cbz " + r.n + ", " + done + "\n" + bytes + "_l:\n");
   s = s.write("    ldrb " + tb + ", [" + r.src + "], #1\n    strb " + tb + ", [" + r.dst + "], #1\n    sub " + r.n + ", " + r.n + ", #1\n");
-  s = s.write("    cbnz " + r.n + ", " + bytes + "\n");
+  s = s.write("    cbnz " + r.n + ", " + bytes + "_l\n");
   return s.write(done + ":\n");
 }
 
