@@ -20,6 +20,7 @@ $ cd my-repo
 $ lucky_commit             # the hash starts with 0000000
 $ lucky_commit 1010101     # the hash starts with 1010101
 $ lucky_commit 00_111      # `_` matches any hex digit
+$ lucky_commit --header    # put the padding in a header, not in the message
 $ time lucky_commit --benchmark
 ```
 
@@ -36,6 +37,40 @@ gives the old hash, so it fails if `HEAD` moved during the search.
 A signed commit keeps its message, because the signature covers the
 message. The tool adds the whitespace to the end of the `gpgsig` header
 instead.
+
+## The `--header` flag
+
+With `--header`, the message does not change. The tool adds a header line
+after the other headers, and puts the padding in that line:
+
+```
+committer Baz Qux <baz@example.com> 1513980898 -0500
+nonce <spaces and tabs>
+
+Do a thing
+```
+
+Git keeps a header that it does not know, and `git fsck --strict` accepts it.
+`git log` and GitHub do not show it. You see it only with
+`git cat-file -p` or `git log --format=raw`. A second run replaces the
+`nonce` header of the first run.
+
+A signed commit gets no `nonce` header, because the signature covers all
+headers other than `gpgsig`. The tool puts the padding at the end of the
+`gpgsig` header, as it does without the flag. The message of a signed commit
+does not change in either mode.
+
+The `nonce` header has two costs:
+
+- `git commit --amend`, `git rebase` and `git cherry-pick` write a new
+  commit without the header, and thus with a different hash.
+- Each attempt hashes the message too, because the message comes after the
+  padding. For a short message, that is one or two more blocks. The
+  `--benchmark` commit needs two blocks for each attempt, not one. On the
+  host of the table below, its search took 5.6 s with `--header` and 3.1 s
+  without it (mean of 3, 2026-11-28).
+
+## The padding
 
 The whitespace has two parts:
 
@@ -64,6 +99,7 @@ CPUs. It is the same commit that the upstream single-threaded search finds.
 wasm it runs each worker inline, so the search uses one CPU there.
 
 The `--benchmark` flag makes a search of 2^28 hashes that does not succeed.
+With `--header`, the benchmark puts the padding in a `nonce` header.
 Upstream has the same flag with the same search, so you can compare the two.
 
 | Program | `--benchmark` (mean of 5) | Hashes per second on each core |
@@ -109,7 +145,7 @@ benchmark.
 - `TestSelfHostExampleLuckyCommitUnit` runs `lucky_test.fern` on x86-64,
   arm64 and wasm32-wasi, with a balanced leak census.
 - `TestSelfHostExampleLuckyCommitGit` runs the command in new git repositories
-  on x86-64 and arm64: an unsigned commit, a second run, a signed commit, a
-  SHA-256 repository, and the error cases.
+  on x86-64 and arm64: an unsigned commit, a second run, a `nonce` header, a
+  signed commit, a SHA-256 repository, and the error cases.
 
 Both are in `internal/testing/e2ecompiler/self_host_example_lucky_commit_test.go`.

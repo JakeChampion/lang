@@ -7,6 +7,7 @@
 //   $ lucky_commit             # the hash starts with 0000000
 //   $ lucky_commit 1010101
 //   $ lucky_commit 00_111      # `_` matches any hex digit
+//   $ lucky_commit --header    # pad a `nonce` header, not the message
 //   $ lucky_commit --benchmark # a fixed search of 2^28 hashes, no git
 //
 // The search runs on every CPU, in share-nothing `std/worker` workers. A
@@ -17,10 +18,19 @@ import "./lucky";
 const CHUNK: i64 = 4194304;
 
 function usage(): i32 {
-  eprint("Usage: lucky_commit [commit-hash-prefix]\n\n"
+  eprint("Usage: lucky_commit [--header] [commit-hash-prefix]\n\n"
     + "`commit-hash-prefix` must contain hex characters and underscores. An underscore indicates "
-    + "that the hash may have any value in the given position.");
+    + "that the hash may have any value in the given position.\n\n"
+    + "--header puts the padding in a `nonce` header line, so the commit message does not change. "
+    + "A signed commit gets the padding at the end of its signature, as without the flag.");
   return 1;
+}
+
+function processed(header: boolean, commit: string): lucky.Processed {
+  if (header) {
+    return lucky.process_header(commit);
+  }
+  return lucky.process(commit);
 }
 
 function workers(): i32 {
@@ -42,7 +52,7 @@ function git(argv: string[], input: string): Option[string] {
 
 // benchmark makes a search that does not succeed, so it always costs 2^28
 // hashes. Time it with `time lucky_commit --benchmark`.
-function benchmark(): i32 {
+function benchmark(header: boolean): i32 {
   let commit = "tree 6f4e79123e206448f80ec73b9a53e07eb0784fef\n"
     + "author Foo Bar <foo@example.com> 1611912738 -0500\n"
     + "committer Foo Bar <foo@example.com> 1611912738 -0500\n"
@@ -51,7 +61,7 @@ function benchmark(): i32 {
   let Ok(spec) = lucky.parse_spec(lucky.Algo.Sha1, "000000000000000000000000000000000000000") else {
     return 2;
   };
-  let job = lucky.job(lucky.Algo.Sha1, lucky.process(commit), spec);
+  let job = lucky.job(lucky.Algo.Sha1, processed(header, commit), spec);
   if let Some(_) = lucky.search(job, 0, 1 as i64 << 28, workers(), CHUNK) {
     eprint("lucky_commit: the benchmark found a match");
     return 1;
@@ -59,7 +69,7 @@ function benchmark(): i32 {
   return 0;
 }
 
-function run(prefix: Option[string]): i32 {
+function run(header: boolean, prefix: Option[string]): i32 {
   let Some(existing) = git(["cat-file", "commit", "HEAD"], "") else {
     return 1;
   };
@@ -77,7 +87,7 @@ function run(prefix: Option[string]): i32 {
     }
   }
 
-  let p = lucky.process(existing);
+  let p = processed(header, existing);
   let Some(found) = lucky.search(lucky.job(algo, p, spec), 0, lucky.SEARCH_SPACE, workers(), CHUNK) else {
     eprint("Sorry, failed to find a commit matching the given prefix despite searching hundreds "
       + "of trillions of possible commits. Hopefully you haven't just been sitting here "
@@ -103,15 +113,26 @@ function run(prefix: Option[string]): i32 {
 
 function main(): i32 {
   let argv = args();
-  if (argv.len() == 1) {
-    return run(None);
+  let header = false;
+  let bench = false;
+  let prefix: Option[string] = None;
+  for i in 1..argv.len() {
+    let arg = argv[i];
+    if (arg == "--header") {
+      header = true;
+    } else if (arg == "--benchmark") {
+      bench = true;
+    } else if (arg == "-h" || arg == "--help" || prefix != None) {
+      return usage();
+    } else {
+      prefix = Some(arg);
+    }
   }
-  if (argv.len() != 2) {
-    return usage();
+  if (bench) {
+    if (prefix != None) {
+      return usage();
+    }
+    return benchmark(header);
   }
-  return match (argv[1]) {
-    "--benchmark" => benchmark(),
-    "-h" | "--help" => usage(),
-    _ => run(Some(argv[1])),
-  };
+  return run(header, prefix);
 }

@@ -91,14 +91,15 @@ func matchesSpec(hash, spec string) bool {
 	return true
 }
 
-// checkLucky runs the CLI with `spec` and checks that only whitespace and the
-// hash changed.
-func checkLucky(t *testing.T, r *luckyRepo, lucky func(args ...string) *exec.Cmd, spec string) {
+// checkLucky runs the CLI with `flags` and `spec`, and checks that only
+// whitespace and the hash changed.
+func checkLucky(t *testing.T, r *luckyRepo, lucky func(args ...string) *exec.Cmd, spec string, flags ...string) {
 	t.Helper()
 	tree, parent := r.rev(t, "HEAD^{tree}"), r.rev(t, "HEAD^")
 	message := r.git(t, "", "log", "-1", "--format=%B")
-	if stderr, code := r.run(t, lucky, spec); code != 0 {
-		t.Fatalf("lucky_commit %s: exit %d\n%s", spec, code, stderr)
+	args := append(flags, spec)
+	if stderr, code := r.run(t, lucky, args...); code != 0 {
+		t.Fatalf("lucky_commit %v: exit %d\n%s", args, code, stderr)
 	}
 	head := r.rev(t, "HEAD")
 	if !matchesSpec(head, spec) {
@@ -152,6 +153,31 @@ func TestSelfHostExampleLuckyCommitGit(t *testing.T) {
 				}
 			})
 
+			t.Run("header", func(t *testing.T) {
+				r := newLuckyRepo(t)
+				object := r.git(t, "", "cat-file", "commit", "HEAD")
+				message := object[strings.Index(object, "\n\n"):]
+				checkLucky(t, r, lucky, "0000", "--header")
+				got := r.git(t, "", "cat-file", "commit", "HEAD")
+				if !strings.HasSuffix(got, message) {
+					t.Errorf("the message changed:\n%q", got)
+				}
+				headers := got[:len(got)-len(message)]
+				nonce := strings.LastIndex(headers, "\nnonce ")
+				if nonce < 0 || strings.Trim(headers[nonce+len("\nnonce "):], " \t") != "" {
+					t.Errorf("the padding is not in a nonce header after the other headers:\n%q", got)
+				}
+				if log := r.git(t, "", "log", "-1", "--format=%B"); log != r.git(t, "", "log", "-1", "--format=%B", "HEAD@{1}") {
+					t.Errorf("git log shows a different message: %q", log)
+				}
+				// A second run replaces the header of the first.
+				checkLucky(t, r, lucky, "abc_e", "--header")
+				again := r.git(t, "", "cat-file", "commit", "HEAD")
+				if len(again) != len(got) || strings.Count(again, "\nnonce ") != 1 || !strings.HasSuffix(again, message) {
+					t.Errorf("a second run did not replace the nonce header:\n%q", again)
+				}
+			})
+
 			t.Run("signed", func(t *testing.T) {
 				r := newLuckyRepo(t)
 				object := r.git(t, "", "cat-file", "commit", "HEAD")
@@ -189,8 +215,10 @@ func TestSelfHostExampleLuckyCommitGit(t *testing.T) {
 				}{
 					{[]string{"abcdefg"}, "Error: hash spec contains invalid character 'g' (only hex characters and underscores are allowed)\n"},
 					{[]string{strings.Repeat("0", 41)}, "Error: hash spec can't be longer than an actual hash\n"},
-					{[]string{"00", "11"}, "Usage: lucky_commit [commit-hash-prefix]\n"},
-					{[]string{"--help"}, "Usage: lucky_commit [commit-hash-prefix]\n"},
+					{[]string{"00", "11"}, "Usage: lucky_commit [--header] [commit-hash-prefix]\n"},
+					{[]string{"--help"}, "Usage: lucky_commit [--header] [commit-hash-prefix]\n"},
+					{[]string{"--header", "00", "11"}, "Usage: lucky_commit [--header] [commit-hash-prefix]\n"},
+					{[]string{"--benchmark", "00"}, "Usage: lucky_commit [--header] [commit-hash-prefix]\n"},
 				} {
 					stderr, code := r.run(t, lucky, tc.args...)
 					if code != 1 || !strings.HasPrefix(stderr, tc.want) {
