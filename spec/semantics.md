@@ -254,6 +254,8 @@ of them.
 | `RH-47` | `docs/security/HANDLE-AUDIT.md` | A built-in method lends each argument to a result that can hold a handle of its kind, so a use of the map that `insert` returns after the close of its handle is refused (`E050`) | `diag_e050_handle_kept_by_builtin_map_insert` |
 | `RH-48` | `docs/security/HANDLE-AUDIT.md` | The array that `append` returns holds its argument, so a use of it after the close of the handle is refused (`E050`) | `diag_e050_handle_kept_by_builtin_array_append` |
 | `RH-49` | `docs/security/HANDLE-AUDIT.md` | A built-in method result that cannot hold a handle lends nothing, and a close after the last use of the holder is accepted | `builtin_method_lends_only_to_a_holder_of_its_kind` |
+| `RH-50` | `docs/security/HANDLE-AUDIT.md` | An assignment that does not read the holder, after the close of a handle, ends the loan of that handle on each path that makes it | `handle_holder_reassigned_after_close` |
+| `RH-51` | `docs/security/HANDLE-AUDIT.md` | An assignment on one branch ends the loan on that branch only, so a use after the join is refused (`E050`) | `diag_e050_handle_holder_reassigned_on_one_branch` |
 
 | `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through generic callbacks, function-valued fields, and nested fields of named locals. `checked_owned_nested_results` covers scalar copies before a field transfer | `checked_owned_results` |
 | `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |

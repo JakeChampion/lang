@@ -112,6 +112,8 @@ A `Socket` held as a `Socket` is refused the same way.
 | A local that borrows a handle directly, used after the handle moved into another local | `E050` | `diag_e050_direct_borrow_after_owner_moved_into_holder` |
 | A map that `insert` returns, or an array that `append` returns, used after the close of the handle it holds | `E050` | `diag_e050_handle_kept_by_builtin_map_insert`, `diag_e050_handle_kept_by_builtin_array_append` |
 | A built-in method result that cannot hold a handle, used after the close, and a close after the last use of the map that holds the handle | accepted | `builtin_method_lends_only_to_a_holder_of_its_kind` |
+| An array that an assignment replaces after the close of its handle, used after the assignment | accepted | `handle_holder_reassigned_after_close` |
+| A holder that an assignment replaces on one branch only, used after the branches join | `E050` | `diag_e050_handle_holder_reassigned_on_one_branch` |
 
 The rows for `diag_e051_variant_result_borrows_its_payload` and `diag_e051_local_from_borrowing_call` close two holes that the consuming close exposed.
 
@@ -124,6 +126,14 @@ A variant constructor carries its payload, so its result borrows what the payloa
 A built-in method, such as `Map.insert` or the array `append`, has no declaration.
 It lends its receiver and each argument to a result that can hold a handle of their kind.
 The methods that open a file or a directory under a `Dir` are fresh.
+
+A local that an assignment gives a value keeps the loans of each of its definitions.
+This applies when its declared container names a callback or a built-in handle.
+A record with a handle field does not keep its loans across an assignment yet (#17537).
+An assignment that does not read the holder replaces its whole value.
+When a lender was consumed before such an assignment, and the new value does not borrow from it, the holder no longer borrows from that lender.
+This end holds after a join only when each branch that runs on makes it.
+A loop drops it for each holder that the loop body assigns or declares.
 
 A generic type parameter can hold a handle after substitution.
 An identity function retains that borrow in its result.

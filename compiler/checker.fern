@@ -21242,10 +21242,99 @@ function ow_keep_stale_loans(moved: MovedEntry[], owner: string, line: i32, col:
   return out;
 }
 
+// An assignment that does not read the holder replaces its whole value. A
+// lender that was consumed before the assignment lends nothing to the new
+// value, under this key. The key holds only where each path to a use sets it.
+function ow_ended_loan(holder: string, owner: string): string {
+  return holder + "&" + owner;
+}
+
+function ow_is_ended_loan(key: string): boolean {
+  return util.index_of_sub(key, "&") >= 0;
+}
+
+function ow_end_consumed_loans(m: MovedEntry[], before: MovedEntry[], a: ast.StmtAssign, ctx: OwnCtx): MovedEntry[] {
+  let facts = ow_callback_facts(ctx);
+  let consumed: string[] = [];
+  for loan in ocl_lookup(facts, a.target) {
+    if (loan.lent && ow_moved_has(before, loan.name) && !util.has_str(consumed, loan.name)) {
+      consumed = consumed.append(loan.name);
+    }
+  }
+  let none: string[] = [];
+  if (consumed.len() == 0 || util.has_str(astwalk.fold_expr(a.value, none, astwalk.keep_names), a.target)) {
+    return m;
+  }
+  let kept: string[] = [];
+  for loan in ocl_value(annotate_expr(a.value, ctx.scope), facts) {
+    kept = kept.append(loan.name);
+  }
+  let out = m;
+  for name in consumed {
+    if (!util.has_str(kept, name)) {
+      out = ow_moved_add(out, ow_ended_loan(a.target, name), a.line, a.col);
+    }
+  }
+  return out;
+}
+
+// A loop body can give a holder a new value, so a later iteration does not
+// see the ended loans of that holder.
+function ow_loop_entry(moved: MovedEntry[], body: ast.Stmt[]): MovedEntry[] {
+  let names: string[] = [];
+  for st in body {
+    names = astwalk.fold_stmt_nodes(st, names, ow_bound_name, (e: ast.Expr, own acc: string[]): string[] => acc, astwalk.descend_all);
+  }
+  let out = moved;
+  for name in names {
+    out = ow_drop_ended_loans(out, name);
+  }
+  return out;
+}
+
+function ow_bound_name(st: ast.Stmt, own acc: string[]): string[] {
+  if let ast.StmtAssign(a) = st {
+    return acc.append(a.target);
+  }
+  if let ast.StmtVar(v) = st {
+    return acc.append(v.name);
+  }
+  return acc;
+}
+
+function ow_drop_ended_loans(moved: MovedEntry[], holder: string): MovedEntry[] {
+  let head = holder + "&";
+  let out: MovedEntry[] = [];
+  for elem in moved {
+    if (!elem.mname.starts_with(head)) {
+      out = out.append(elem);
+    }
+  }
+  return out;
+}
+
+// Keep an ended loan in out only when each set in paths also has it.
+function ow_common_ended_loans(out: MovedEntry[], paths: MovedEntry[][]): MovedEntry[] {
+  let kept: MovedEntry[] = [];
+  for elem in out {
+    let common = true;
+    if (ow_is_ended_loan(elem.mname)) {
+      for path in paths {
+        common = common && ow_moved_has(path, elem.mname);
+      }
+    }
+    if (common) {
+      kept = kept.append(elem);
+    }
+  }
+  return kept;
+}
+
+// The loan facts of the old value of holder: its stale loans and its ended loans.
 function ow_drop_stale_loans(moved: MovedEntry[], holder: string): MovedEntry[] {
   let head = holder + "#";
   let out: MovedEntry[] = [];
-  for elem in moved {
+  for elem in ow_drop_ended_loans(moved, holder) {
     if (!elem.mname.starts_with(head)) {
       out = out.append(elem);
     }
@@ -21434,7 +21523,7 @@ function ow_lent_diags(id: ast.ExprIdent, spelling: string, moved: MovedEntry[],
   let out: util.Diag[] = [];
   let loans = ocl_lookup(ow_callback_facts(ctx), id.name);
   for loan in loans {
-    if (!loan.lent || util.has_str(reported, loan.name)) {
+    if (!loan.lent || util.has_str(reported, loan.name) || ow_moved_has(moved, ow_ended_loan(id.name, loan.name))) {
       continue;
     }
     let key = loan.name;
@@ -21784,18 +21873,18 @@ function ow_moved_join(dst: MovedEntry[], branch: MovedEntry[], diverges: boolea
 // clears its move. When no branch runs on, the set before the branches stays.
 function ow_settle(before: MovedEntry[], branches: MovedEntry[][], runs_on: boolean[]): MovedEntry[] {
   let out = before;
-  let any = false;
+  let running: MovedEntry[][] = [];
   for i in 0..branches.len() {
     if (runs_on[i]) {
-      if (any) {
+      if (running.len() > 0) {
         out = ow_moved_join(out, branches[i], false);
       } else {
         out = branches[i];
-        any = true;
       }
+      running = running.append(branches[i]);
     }
   }
-  return out;
+  return ow_common_ended_loans(out, running);
 }
 
 // An arm that binds nothing sees the scrutinee as it was before the match:
@@ -27981,26 +28070,36 @@ function ow_branch_stmts(body: ast.Stmt[]): ast.Stmt[] {
 // A later iteration starts from the end of the body, when the end is
 // reachable, and from each continue. Each break joins the moved set after
 // the loop. A jump to an outer loop goes on to that loop.
-function ow_loop(label: string, body: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+function ow_loop(label: string, body: ast.Stmt[], entry: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  let moved = ow_loop_entry(entry, body);
   let depth = ctx.loops.len();
   let lctx = OwnCtx { ...ctx, in_loop: true, loops: ctx.loops.append(label), jumps: ow_fresh_jumps() };
   let r = ow_stmts(body, moved, lctx);
   let back = r.moved;
   let any = !ow_block_diverges(body, ctx.noret);
   let after = moved;
+  let exits: MovedEntry[][] = [];
+  let entries: MovedEntry[][] = [moved];
+  if (any) {
+    entries = entries.append(back);
+  }
   let outer = ctx.jumps.get();
   for j in lctx.jumps.get() {
     if (j.target < depth) {
       outer = outer.append(j);
     } else if (j.breaks) {
       after = ow_moved_join(after, j.moved, false);
+      exits = exits.append(j.moved);
     } else if (any) {
       back = ow_moved_join(back, j.moved, false);
+      entries = entries.append(j.moved);
     } else {
       back = j.moved;
       any = true;
+      entries = entries.append(j.moved);
     }
   }
+  after = ow_common_ended_loans(after, entries.concat(exits));
   ctx.jumps.set(outer);
   let out = r.diags;
   if (any) {
@@ -28010,7 +28109,7 @@ function ow_loop(label: string, body: ast.Stmt[], moved: MovedEntry[], ctx: OwnC
       if (ow_moved_has(moved, elem.mname)) {
         continue;
       }
-      if (elem.mname.starts_with("~")) {
+      if (elem.mname.starts_with("~") || ow_is_ended_loan(elem.mname)) {
         continue;
       }
       let cut = util.index_of_sub(elem.mname, "#");
@@ -28354,7 +28453,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       if (ow_borrowed_replacement(a, actx)) {
         rv = OwnWalk { ...rv, diags: rv.diags.append(dg_at("E051", "assignment to owned binding \"" + lexical.source_name(a.target) + "\" must take an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one", ast.expr_line(a.value), ast.expr_col(a.value))) };
       }
-      let m = ow_drop_stale_loans(ow_moved_del(rv.moved, "~" + a.target), a.target);
+      let m = ow_end_consumed_loans(ow_drop_stale_loans(ow_moved_del(rv.moved, "~" + a.target), a.target), moved, a, ctx);
       // A local that a callback captures is in moved only after a consume.
       if (ow_is_owned(ctx, a.target) || ow_moved_has(m, a.target)) {
         m = ow_keep_stale_loans(m, a.target, a.line, a.col, ctx);
@@ -28383,7 +28482,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: m, diags: util.append_diags(util.append_diags(rc.diags, rt.diags), re.diags) };
     },
     ast.StmtWhile(w) => {
-      let rc = ru_expr(w.cond, moved, ctx);
+      let rc = ru_expr(w.cond, ow_loop_entry(moved, w.body), ctx);
       let ld = ow_loop(w.label, w.body, rc.moved, ctx);
       return OwnWalk { moved: ld.moved, diags: util.append_diags(rc.diags, ld.diags) };
     },

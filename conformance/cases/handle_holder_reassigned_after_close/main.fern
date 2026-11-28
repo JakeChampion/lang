@@ -1,0 +1,88 @@
+// spec: RH-50
+// An assignment that does not read the holder replaces its value. After the
+// close of a handle, such an assignment ends the loan of that handle on each
+// path, so the holder is usable again.
+struct Sinks { writers: Writer[] }
+
+function rotate_array(dir: string): Result[i32, IoError] {
+  let first: Writer = open_writer(dir + "/a.txt")?;
+  let ws: Writer[] = [first];
+  ws[0].write("a")?;
+  first.close()?;
+  let second: Writer = open_writer(dir + "/b.txt")?;
+  ws = [second];
+  ws[0].write("b")?;
+  let count = ws.len();
+  second.close()?;
+  return Ok(count);
+}
+
+function rotate_record(dir: string): Result[i32, IoError] {
+  let first: Writer = open_writer(dir + "/c.txt")?;
+  let sinks = Sinks { writers: [first] };
+  sinks.writers[0].write("c")?;
+  first.close()?;
+  let second: Writer = open_writer(dir + "/d.txt")?;
+  sinks = Sinks { writers: [second] };
+  sinks.writers[0].write("d")?;
+  let count = sinks.writers.len();
+  second.close()?;
+  return Ok(count);
+}
+
+function clear_on_each_branch(dir: string, early: boolean): Result[i32, IoError] {
+  let w: Writer = open_writer(dir + "/e.txt")?;
+  let ws: Writer[] = [w];
+  w.close()?;
+  if (early) {
+    ws = [];
+  } else {
+    ws = [];
+  }
+  let i = 0;
+  while (i < 2) {
+    if (ws.len() > 0) {
+      ws[0].write("never")?;
+    }
+    i += 1;
+  }
+  return Ok(ws.len());
+}
+
+function report(label: string, r: Result[i32, IoError]): void {
+  match (r) {
+    Ok(n) => {
+      print(label + " " + n.to_string());
+    },
+    Err(_) => {
+      print(label + " failed");
+    }
+  }
+}
+
+function main(): i32 {
+  match (temp_dir("fern-holder-reassigned")) {
+    Err(_) => {
+      print("temp_dir failed");
+      return 1;
+    },
+    Ok(dir) => {
+      report("array", rotate_array(dir));
+      report("record", rotate_record(dir));
+      report("branches", clear_on_each_branch(dir, true));
+      match (read_file(dir + "/b.txt")) {
+        Ok(text) => {
+          print("b.txt " + text);
+        },
+        Err(_) => {
+          print("b.txt missing");
+        }
+      }
+      for name in ["a.txt", "b.txt", "c.txt", "d.txt", "e.txt"] {
+        let _ = remove_file(dir + "/" + name);
+      }
+      let _ = remove_dir(dir);
+      return 0;
+    }
+  }
+}
