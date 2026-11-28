@@ -89,6 +89,8 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
   record onef { v: f32 }
   record payload { name: string, bytes: list<u8> }
   record tagged { tag: s32, value: payload }
+  record envelope { marker: u8, value: tagged, tail: u64 }
+  wrap: func(v: tagged) -> envelope;
   span-check: func(v: tagged) -> s32;
   make-wide: func() -> wide;
   make-outer: func() -> outer;
@@ -135,6 +137,17 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
     (if (result i32) (local.get $n)
       (then (i32.add (local.get $n) (i32.load8_u (i32.sub (i32.add (local.get $p) (local.get $n)) (i32.const 1)))))
       (else (i32.const 0))))
+  (func (export "local:test/src@0.1.0#wrap") (param $tag i32) (param $p i32) (param $n i32) (param $b i32) (param $m i32) (result i32)
+    (local $r i32)
+    (local.set $r (call 0 (i32.const 0) (i32.const 0) (i32.const 8) (i32.const 32)))
+    (i32.store8 (local.get $r) (i32.const 231))
+    (i32.store offset=4 (local.get $r) (local.get $tag))
+    (i32.store offset=8 (local.get $r) (local.get $p))
+    (i32.store offset=12 (local.get $r) (local.get $n))
+    (i32.store offset=16 (local.get $r) (local.get $b))
+    (i32.store offset=20 (local.get $r) (local.get $m))
+    (i64.store offset=24 (local.get $r) (i64.const 4294967305))
+    (local.get $r))
   (func (export "local:test/src@0.1.0#span-check") (param $tag i32) (param $p i32) (param $n i32) (param $b i32) (param $m i32) (result i32)
     (i32.add (local.get $tag) (i32.add (call $span (local.get $p) (local.get $n)) (call $span (local.get $b) (local.get $m)))))
   (func (export "local:test/src@0.1.0#sum-wide") (param $a i32) (param $b i64) (param $c f32) (param $d f64) (param $e i32) (result f64)
@@ -183,7 +196,7 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
 		t.Fatalf("write user src dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/src@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import wasi:cli/exit@0.2.0;\n    import local:test/src@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "empty.wat", "(module)"), "-o", filepath.Join(dir, "empty.wasm"))
@@ -207,6 +220,9 @@ struct One { v: u64 }
 struct OneF { v: f32 }
 struct Payload { name: string, bytes: u8[] }
 struct Tagged { tag: i32, value: Payload }
+struct Envelope { marker: u8, value: Tagged, tail: u64 }
+@import("local:test/src@0.1.0", "wrap")
+function wrap(v: Tagged): Envelope;
 @import("local:test/src@0.1.0", "span-check")
 function span_check(v: Tagged): i32;
 @import("local:test/src@0.1.0", "make-wide")
@@ -226,6 +242,11 @@ function sum_u64(data: u64[]): u64;
 @import("local:test/src@0.1.0", "iota-u64")
 function iota_u64(n: u32): u64[];
 function main(): i32 {
+    let result = wrap(Tagged { tag: -7, value: Payload { name: "hé", bytes: [255u8, 0u8, 143u8] } });
+    let empty = wrap(Tagged { tag: 1, value: Payload { name: "", bytes: [] } });
+    if (empty.value.value.name.len() != 0 || empty.value.value.bytes.len() != 0) { write("bad empty result\n"); }
+    if (result.marker != 231u8 || result.tail != 4294967305u64 || result.value.tag != -7) { write("bad record offsets\n"); }
+    if (result.value.value.name != "hé" || result.value.value.bytes.len() != 3 || result.value.value.bytes[0] != 255u8 || result.value.value.bytes[1] != 0u8 || result.value.value.bytes[2] != 143u8) { write("bad record result\n"); }
     if (span_check(Tagged { tag: 7, value: Payload { name: "é", bytes: [0u8, 255u8] } }) != 435) { write("bad spans\n"); }
     if (span_check(Tagged { tag: 7, value: Payload { name: "", bytes: [] } }) != 7) { write("bad empty spans\n"); }
     let w: Wide = make_wide();
@@ -283,12 +304,39 @@ function main(): i32 {
 	if !bytes.Contains(watBytes, []byte(`"make-one" (func $make_one__import (result i64))`)) {
 		t.Errorf("make-one is not imported returning its lone u64 by value")
 	}
+	t.Run("owned-result-storage", func(t *testing.T) {
+		cli := buildSelfHostCLI(t)
+		t.Setenv("FERN_LEAKCHECK", "1")
+		src := mustWrite(t, dir, "owned.fern", `struct Payload { name: string, bytes: u8[] }
+struct Tagged { tag: i32, value: Payload }
+struct Envelope { marker: u8, value: Tagged, tail: u64 }
+@import("local:test/src@0.1.0", "wrap")
+function wrap(v: Tagged): Envelope;
+function main(): i32 {
+    let kept = wrap(Tagged { tag: 5, value: Payload { name: "hé", bytes: [255u8] } });
+    let empty = wrap(Tagged { tag: 0, value: Payload { name: "", bytes: [] } });
+    if (empty.value.value.name.len() != 0 || empty.value.value.bytes.len() != 0) { return 1; }
+    if (kept.value.value.name != "hé" || kept.value.value.bytes[0] != 255u8) { return 2; }
+    return 0;
+}`)
+		user := filepath.Join(dir, "owned.wasm")
+		if out, err := cli.compileCmd("wasm32-wasi", user, src, "-wit", filepath.Join(dir, "embedded.wasm")).CombinedOutput(); err != nil {
+			t.Fatalf("compile: %v\n%s", err, out)
+		}
+		final := filepath.Join(dir, "owned-final.wasm")
+		run(wasmtools, "compose", user, "--definitions", provider, "-o", final)
+		out, err := exec.Command(wasmtime, "run", final).CombinedOutput()
+		if err != nil {
+			t.Fatalf("run: %v\n%s", err, out)
+		}
+		assertBalancedCensus(t, string(out))
+	})
 }
 
 func TestSelfHostExternRecordOutsideTheBridgeIsRefused(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, decl, call, want string }{
-		{"result", "function make_named(): Named;", "make_named().id", "@import make_named returns record Named, which wasm cannot lower"},
+		{"result", "function make_values(): Values;", "make_values().data.len()", "@import make_values returns record Values, which wasm cannot lower"},
 		{"param", "function take_values(n: Values): i32;", `take_values(Values { data: [1] })`, "@import take_values takes record Values, which wasm cannot lower"},
 		{"indirect", "function take_many(n: Named, a: string, b: string, c: string, d: string, e: string, f: string, g: string): i32;", `take_many(Named { id: 1, name: "a" }, "", "", "", "", "", "", "")`, "@import take_many requires indirect parameters"},
 	} {

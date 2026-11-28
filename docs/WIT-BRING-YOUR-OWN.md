@@ -232,8 +232,10 @@ A self-hosted synchronous import can take a record containing `string`
 and `u8[]` fields, including inside nested records. Each contributes an
 `i32` pointer and an `i32` length to the canonical parameter list. Imports
 with record parameters support up to 16 flat parameters across the call.
-Returning records containing these fields still requires additional lifting
-support.
+A record result can contain the same fields. The wrapper reads each pointer
+and length from the canonical result area, copies the contents into a Fern
+string or packed byte array, and releases the transferred storage. Nested
+records use canonical field alignment, including padding around wide scalars.
 
 ## P4 design: `extern` import declarations
 
