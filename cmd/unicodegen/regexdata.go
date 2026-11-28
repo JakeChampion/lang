@@ -484,6 +484,24 @@ func encodePropNames(index map[string][2]int) string {
 	return b.String()
 }
 
+// Each interval records its first release once. A query includes every
+// interval up to the requested release, in code point order.
+func emitAge(b *strings.Builder) int {
+	var table strings.Builder
+	for _, span := range ageRanges {
+		encField(&table, span[0])
+		encField(&table, span[1])
+		table.WriteByte(enc6(span[2]))
+	}
+	emitTable(b, "_age_table", table.String())
+	b.WriteString("function _age_rank(value: string): i32 {\n    return match (value) {\n")
+	for rank, names := range ageVersions {
+		fmt.Fprintf(b, "        %q => %d,\n        %q => %d,\n", names[0], enc6(rank), names[1], enc6(rank))
+	}
+	b.WriteString("        _ => -1,\n    };\n}\n\n")
+	return table.Len()
+}
+
 // regexData writes the tables and the functions of std/unicode that
 // std/regex uses.
 func regexData(b *strings.Builder) int {
@@ -496,7 +514,8 @@ func regexData(b *strings.Builder) int {
 	namesT := encodePropNames(index)
 	emitTable(b, "_prop_names_table", namesT)
 	b.WriteString(regexFunctions)
-	return len(propT) + len(foldT) + len(namesT)
+	ageBytes := emitAge(b)
+	return len(propT) + len(foldT) + len(namesT) + ageBytes
 }
 
 const regexFunctions = `// _prop_kept says whether a byte of a name counts: not a space, an
@@ -565,6 +584,28 @@ function _prop_decode(span: (i32, i32)): Option[i32[]] {
     return Some(out);
 }
 
+// Age matches characters first assigned in the named release or earlier.
+function _age_ranges(value: string): Option[i32[]] {
+    let rank = _age_rank(value);
+    if (rank < 0) { return None; }
+    let t = _age_table();
+    let out: i32[] = [];
+    for j in 0..t.len() / 9 {
+        let at = j * 9;
+        if (t[at + 8] as i32 <= rank) {
+            let lo = _fld(t, at);
+            let hi = _fld(t, at + 4);
+            let n = out.len();
+            if (n > 0 && out[n - 1] + 1 == lo) {
+                out = out.with(n - 1, hi);
+            } else {
+                out = out.append(lo).append(hi);
+            }
+        }
+    }
+    return Some(out);
+}
+
 // property_ranges gives the code points of a general category, a script, a
 // binary property or a break class, as pairs of the first and the last code
 // point of each range in order. The name is that of ` + "`\\p{...}`" + ` in a regular
@@ -581,7 +622,9 @@ pub function property_ranges(name: string): Option[i32[]] {
     let (op, width) = _prop_op(name);
     if (op >= 0) {
         let kind = _prop_key(slice_unchecked(name, 0, op) + "");
-        return _prop_decode(_prop_valued(kind, _prop_key(slice_unchecked(name, op + width, name.len()) + "")));
+        let value = _prop_key(slice_unchecked(name, op + width, name.len()) + "");
+        if (kind == "age") { return _age_ranges(value); }
+        return _prop_decode(_prop_valued(kind, value));
     }
     let key = _prop_key(name);
     let span = if (key != "cf" && key != "sc" && key != "lc") { _prop_index("bp:" + key) } else { (-1, 0) };

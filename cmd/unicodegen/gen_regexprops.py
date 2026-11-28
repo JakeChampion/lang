@@ -84,6 +84,30 @@ def emit_script_extensions(version, ucd):
     print("}")
 
 
+def emit_age(version, ucd):
+    versions = {}
+    for line in ucd_file(version, ucd, "PropertyValueAliases.txt").splitlines():
+        fields = [part.strip() for part in line.partition("#")[0].split(";")]
+        if fields[0] == "age" and fields[1] != "NA":
+            versions[fields[1]] = fields[2].lower().replace("_", "")
+    order = sorted(versions, key=lambda v: tuple(map(int, v.split("."))))
+    classes = properties(ucd_file(version, ucd, "DerivedAge.txt"), order)
+    print("\nvar ageVersions = [][2]string{")
+    records = []
+    for rank, name in enumerate(order):
+        print(f'\t{{"{name}", "{versions[name]}"}},')
+        records.extend((lo, hi, rank) for lo, hi in ranges(classes[name]))
+    print("}")
+    print("\nvar ageRanges = [][3]int{")
+    last = -1
+    for lo, hi, rank in sorted(records):
+        if lo <= last:
+            raise ValueError("overlapping Unicode age intervals")
+        print(f"\t{{0x{lo:04X}, 0x{hi:04X}, {rank}}},")
+        last = hi
+    print("}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version")
@@ -114,6 +138,7 @@ def main():
         raise ValueError("unexpected Changes_When_Casemapped definition")
     emit_sentence_break(args.version, args.ucd)
     emit_script_extensions(args.version, args.ucd)
+    emit_age(args.version, args.ucd)
 
 
 if __name__ == "__main__":

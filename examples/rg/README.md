@@ -220,9 +220,8 @@ order of the walk.
   Go's `unicode` package, and ripgrep 14.1.0 uses Unicode 15.0 through
   regex-syntax 0.8.2. A script takes its long name or its short name, as
   `\p{Greek}` and `\p{Grek}`, and the properties of emoji are there. As in
-  ripgrep, `\p{sc!=Greek}` is `\p{Greek}`. Some properties are not in
-  `std/regex`, and a pattern with one of them gives an error of
-  `std/regex`. One is Age. Script_Extensions uses the Unicode 17 script sets. The
+  ripgrep, `\p{sc!=Greek}` is `\p{Greek}`. Script_Extensions uses the Unicode 17 script sets. Age matches characters
+  assigned by the selected release, including earlier releases. The
   binary properties include ID_Start, ID_Continue, XID_Start, XID_Continue,
   Bidi_Mirrored and the five Changes_When case properties.
 

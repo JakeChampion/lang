@@ -119,6 +119,12 @@ function test_property_aliases(): test.TestOutcome {
   return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / α / α℘ / _9·α / α / αำ9 / (∫)");
 }
 
+function test_unicode_age(): test.TestOutcome {
+  let text = "A€😀🫨";
+  let got = [all("\\p{Age=1.1}+", text), all("\\p{age:v2_1}+", text), all("\\p{age!=6.1}+", text), all("\\P{age=V6_1}+", text), all("\\p{age=15.0}+", text), all("\\p{age=NA}", text)];
+  return test.assert_eq(got.join(" / "), "A / A€ / A€😀 / 🫨 / A€😀🫨 / error");
+}
+
 function test_script_extensions(): test.TestOutcome {
   let text = "あーア!";
   let got = [all("\\p{scx=Hira}+", text), all("\\p{Script_Extensions:Katakana}+", text), all("\\p{sc=Common}+", text), all("\\p{scx!=Zyyy}+", text), all("\\P{scx=Hira}+", text)];
@@ -471,6 +477,7 @@ function main(): i32 {
   r = r.it("property aliases", test_property_aliases);
   r = r.it("case change properties", test_case_change_properties);
   r = r.it("break classes", test_break_classes);
+  r = r.it("cumulative Unicode age", test_unicode_age);
   r = r.it("script extensions", test_script_extensions);
   r = r.it("sentence break classes", test_sentence_break_classes);
   r = r.it("break class errors", test_break_class_errors);
