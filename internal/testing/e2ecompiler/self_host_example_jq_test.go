@@ -279,6 +279,9 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		args  []string
 		input string
 	}{
+		{[]string{"-nc", `try until((true, error("late")); .) catch .`}, ""},
+		{[]string{"-nc", `first(until((true, error("late")); .))`}, ""},
+		{[]string{"-nc", `try until(. > 0; (1, error("later"))) catch .`}, ""},
 		{[]string{"."}, "{\"b\":[1,{}],\"a\":[],\"c\":\"x\\u0001\\u007f\u00e9/\"}"},
 		{[]string{"-c", "."}, "1 2 {\"a\":1}[3]"},
 		{[]string{"-c", ".[]"}, "1\n2\n"},
