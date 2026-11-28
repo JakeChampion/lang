@@ -58,6 +58,16 @@ function repeated(channels: i32): i32 {
 }
 
 function main(): i32 {
+  for kind in 0..3 {
+    for m in 0..4 {
+      mode(m);
+      let ptr = if (m == 3) { 0 as usize } else { 123 as usize };
+      let count = if (kind == 0) { audio.Stream { ptr: ptr, rate: 48000 }.xrun_count() } else if (kind == 1) { audio.Music { ptr: ptr, rate: 48000, channels: 2 }.xrun_count() } else { audio.Buffered { ptr: ptr, rate: 48000, channels: 2, ring: 0 as usize }.xrun_count() };
+      if (count != (if (m == 0) { Some(0) } else if (m == 1) { Some(17) } else { None }) || calls() != (if (m == 3) { 0 } else { 1 })) {
+        return 500 + kind * 4 + m;
+      }
+    }
+  }
   for channels in [0, 1, 2] {
     mode(0);
     let absent = if (channels == 0) { audio.Stream { ptr: 0 as usize, rate: 0 }.timestamp() } else { audio.Music { ptr: 0 as usize, rate: 0, channels: channels }.timestamp() };
