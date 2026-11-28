@@ -1002,6 +1002,11 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   if (binary(d, "+") && plus_fits(g, b, d, base, 0)) {
     return true;
   }
+  // Each phi in `assume` is assumed below or at most the length.
+  let hi = midpoint_hi(g, b, x, [], depth() + 1);
+  if (hi >= 0 && (assumed(assume, ssa.copy_root(g.defs, hi)) || is_length_of(g, hi, base) || phi_at_most_length(g, hi, base, assume, steps - 1) || below(g, b, hi, base, assume, steps - 1))) {
+    return true;
+  }
   if (binary(d, "-") && is_const(g, d.args[1])) {
     let c = const_value(g, d.args[1]);
     if (c >= 1 && (is_length_of(g, d.args[0], base) || phi_at_most_length(g, d.args[0], base, assume, steps - 1))) {
@@ -1058,6 +1063,42 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   return false;
 }
 
+// `hi` when `x` is `lo + (hi - lo) / 2` and a dominating fact holds
+// `lo < hi`, or -1. A nonneg `lo` keeps `hi - lo` and the sum from wrapping,
+// so `x` is in `lo..hi`. `assume` holds only phis assumed nonneg.
+function midpoint_hi(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): i32 {
+  let d = def_of(g, x);
+  if (b < 0 || steps <= 0 || !binary(d, "+")) {
+    return -1;
+  }
+  for k in 0..2 {
+    let lo = d.args[k];
+    let dh = def_of(g, d.args[1 - k]);
+    if (binary(dh, "/") && is_const(g, dh.args[1]) && const_value(g, dh.args[1]) == 2 || binary(dh, ">>") && is_const(g, dh.args[1]) && const_value(g, dh.args[1]) == 1) {
+      let dd = def_of(g, dh.args[0]);
+      if (binary(dd, "-") && same(g, dd.args[1], lo) && strictly_below(g, b, lo, dd.args[0]) && nonneg(g, b, lo, assume, steps - 1)) {
+        return dd.args[0];
+      }
+    }
+  }
+  return -1;
+}
+
+// Whether a dominating fact holds `lo < hi`.
+function strictly_below(g: Graph, b: i32, lo: i32, hi: i32): boolean {
+  let c = g.up[b];
+  while (c >= 0) {
+    for i in g.first[c]..g.first[c] + g.count[c] {
+      let r = g.rels[i];
+      if (r.strict && same(g, r.lo, lo) && same(g, r.hi, hi)) {
+        return true;
+      }
+    }
+    c = g.above[c];
+  }
+  return false;
+}
+
 function at_least_minus_one(g: Graph, b: i32, x: i32, steps: i32): boolean {
   let d = def_of(g, x);
   if (binary(d, "-") && is_const(g, d.args[1]) && const_value(g, d.args[1]) == 1 && nonneg(g, b, d.args[0], [], steps - 1)) {
@@ -1095,7 +1136,10 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     } else if (is_const(g, d.args[0]) && const_value(g, d.args[0]) == 1) {
       y = d.args[1];
     }
-    if (y >= 0 && nonneg(g, at, y, assume, steps - 1) && below_a_length(g, at, y)) {
+    if (y >= 0 && nonneg(g, at, y, assume, steps - 1) && (below_a_length(g, at, y) || midpoint_hi(g, at, y, assume, steps - 1) >= 0)) {
+      return true;
+    }
+    if (midpoint_hi(g, b, x, assume, steps) >= 0) {
       return true;
     }
     if (y >= 0 && counts_up_from(g, x, y, assume, steps - 1)) {
@@ -1234,7 +1278,7 @@ function phi_at_most_length(g: Graph, y: i32, base: i32, assume: i32[], steps: i
       continue;
     }
     let step = g.defs[a];
-    if (binary(step, "-") && ssa.copy_root(g.defs, step.args[0]) == y && is_const(g, step.args[1]) && const_value(g, step.args[1]) >= 0 && nonneg(g, g.home[a], y, inner, steps - 1)) {
+    if (binary(step, "-") && ssa.copy_root(g.defs, step.args[0]) == y && is_const(g, step.args[1]) && const_value(g, step.args[1]) >= 0 && nonneg(g, g.home[a], y, [], steps - 1)) {
       continue;
     }
     if (!below(g, edge_block(g, y, k, d.args[k]), d.args[k], base, inner, steps - 1)) {

@@ -239,7 +239,11 @@ func (g *guardGen) stmt(scope []string, out *[]string, ind int, inLoop bool) {
 		}
 		add("}")
 	case k < 0.72:
-		g.snake(scope, out, ind)
+		if g.r.Float64() < 0.5 {
+			g.snake(scope, out, ind)
+		} else {
+			g.bisect(scope, out, ind)
+		}
 	default:
 		g.names++
 		j := fmt.Sprintf("j%d", g.names)
@@ -312,6 +316,30 @@ func (g *guardGen) snake(scope []string, out *[]string, ind int) {
 	}
 	add("}")
 	add("acc = acc + %s * 3 - %s;", j, k)
+}
+
+// bisect writes a binary search that reads at a midpoint of l and h. The ends
+// start in or out of the array, and the midpoint is one of three forms.
+func (g *guardGen) bisect(scope []string, out *[]string, ind int) {
+	pad := strings.Repeat("    ", ind)
+	add := func(format string, args ...any) { *out = append(*out, pad+fmt.Sprintf(format, args...)) }
+	g.names++
+	l, h, m := fmt.Sprintf("l%d", g.names), fmt.Sprintf("h%d", g.names), fmt.Sprintf("m%d", g.names)
+	a := g.arr()
+	add("let %s: i32 = %s;", l, g.pick("0", "0", "1", "0 - 1", "a", g.atom(scope)))
+	add("let %s: i32 = %s;", h, g.pick(a+".len()", a+".len()", a+".len() + 1", a+".len() - 1", "a", "b", g.atom(scope)))
+	add("while (%s < %s) {", l, h)
+	switch g.pick("half", "half", "shift", "sum") {
+	case "half":
+		add("    let %s: i32 = %s + (%s - %s) / 2;", m, l, h, l)
+	case "shift":
+		add("    let %s: i32 = %s + ((%s - %s) >> 1);", m, l, h, l)
+	default:
+		add("    let %s: i32 = (%s + %s) / 2;", m, l, h)
+	}
+	add("    if (%s[%s] < %s) { %s = %s + 1; } else { %s = %s; }", a, m, g.index(scope, 0), l, m, h, m)
+	add("}")
+	add("acc = acc + %s;", l)
 }
 
 const guardLaneBody = `    let o: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
