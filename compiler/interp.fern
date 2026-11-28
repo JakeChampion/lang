@@ -1574,16 +1574,25 @@ pub function cellify_captures(own env: Env, st: ast.Stmt, body: ast.Stmt[]): Env
     return out;
   }
   let reassigned = body_assign_names(body, []);
-  let hit: string[] = [];
-  for i in 0..reads.len() {
-    if (util.index_of_str(reassigned, reads[i]) >= 0) {
-      hit = hit.append(reads[i]);
+  return cellify_env(out, captured_reassignments(reads, reassigned, []));
+}
+
+function captured_reassignments(reads: string[], reassigned: string[], own names: string[]): string[] {
+  for name in reads {
+    if (util.index_of_str(reassigned, name) >= 0) {
+      names = names.append(name);
     }
   }
-  if (hit.len() == 0) {
-    return out;
+  return names;
+}
+
+function loop_capture_names(body: ast.Stmt[]): string[][] {
+  let assigned = body_assign_names(body, []);
+  let plan: string[][] = [];
+  for st in body {
+    plan = plan.append(captured_reassignments(lam_read_names(st), assigned, stmt_lambda_writes(st)));
   }
-  return cellify_env(Env { ...out }, hit);
+  return plan;
 }
 
 // False when cellify_captures changes nothing for each statement of `body`
@@ -10542,6 +10551,7 @@ function eval_while_stmt(w: ast.StmtWhile, own env: Env): StepResult {
   let base = env.depth;
   let cur = env;
   let scoped = body_binds(w.body);
+  let captures: string[][] = [];
   while (true) {
     let cv = eval_expr(w.cond, cur);
     if (is_err(cv)) {
@@ -10557,7 +10567,10 @@ function eval_while_stmt(w: ast.StmtWhile, own env: Env): StepResult {
         return step_stop(cur, v_err("while cond not bool"));
       }
     }
-    let step = eval_block(w.body, scope_env(Env { ...cur }, scoped));
+    if (cur.cells && captures.len() == 0 && w.body.len() > 0) {
+      captures = loop_capture_names(w.body);
+    }
+    let step = eval_block_with_captures(w.body, scope_env(Env { ...cur }, scoped), captures);
     if (step.sig == 2) {
       return step_none(trim_env(unsafe { share_unchecked(step.env) }, base));
     }
@@ -11204,9 +11217,15 @@ function bind_peers(own env: Env, fv: VFunc): Env {
 }
 
 function eval_block(body: ast.Stmt[], own env: Env): StepResult {
+  return eval_block_with_captures(body, env, []);
+}
+
+function eval_block_with_captures(body: ast.Stmt[], own env: Env, captures: string[][]): StepResult {
   let cur = env;
   for i in 0..body.len() {
-    cur = cellify_captures(cur, body[i], body);
+    if (cur.cells) {
+      cur = if (captures.len() > 0) { cellify_env(cur, captures[i]) } else { cellify_captures(cur, body[i], body) };
+    }
     let r = block_stmt(body, i, cur);
     cur = r.env;
     if (r.sig != 0) {
