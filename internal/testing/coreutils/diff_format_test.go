@@ -414,6 +414,8 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("no dereference directory with link and regular file", "--no-dereference", "lA", "lB/mixed"),
 		c("no dereference links", "--no-dereference", "ka", "kb"),
 		c("no dereference same links", "--no-dereference", "ka", "ka2"),
+		c("no dereference differing links with labels", "--no-dereference", "-L", "left", "-L", "right", "ka", "kb"),
+		c("no dereference identical links with labels", "--no-dereference", "-s", "-L", "left", "-L", "right", "ka", "ka2"),
 		c("no dereference brief", "--no-dereference", "-q", "ka", "kb"),
 		c("no dereference link and file", "--no-dereference", "ka", "b"),
 		c("no dereference file and link", "--no-dereference", "a", "kb"),
