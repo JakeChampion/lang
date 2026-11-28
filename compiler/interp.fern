@@ -41,7 +41,7 @@ pub struct VFloat32 { v: f64 }
 // [length, each slot of the capacity] and read in place of `items`. A view
 // keeps its own length and reads its parent's store from `offset`. A packed
 // array holds its elements in `bytes`, one byte each, and `items` is empty.
-pub struct VArr { items: Value[], bytes: u8[], packed: boolean, elem: string, view: boolean, store: interpheap.Root, offset: i32 }
+pub struct VArr { items: Value[], bytes: u8[], packed: boolean, elem: string, elem_code: i32, view: boolean, store: interpheap.Root, offset: i32 }
 
 // A tuple, a map or a record that the program builds has a key that no other
 // value has. A shared value is then stored and copied one time. The key is
@@ -671,17 +671,17 @@ function v_arr(heap: interpheap.Heap, elements: Value[]): Value {
 
 function v_arr_of(heap: interpheap.Heap, elements: Value[], elem: string): Value {
   let unwritten: i64[] = [];
-  return VArr { items: elements, bytes: [], packed: false, elem: elem, view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
+  return VArr { items: elements, bytes: [], packed: false, elem: elem, elem_code: scalar_code(elem), view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
 }
 
 function v_bytes_of(heap: interpheap.Heap, b: u8[], elem: string): Value {
   let unwritten: i64[] = [];
-  return VArr { items: [], bytes: b, packed: true, elem: elem, view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
+  return VArr { items: [], bytes: b, packed: true, elem: elem, elem_code: scalar_code(elem), view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
 }
 
 function v_view_of(heap: interpheap.Heap, elements: Value[], elem: string): Value {
   let unwritten: i64[] = [];
-  return VArr { items: elements, bytes: [], packed: false, elem: elem, view: true, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
+  return VArr { items: elements, bytes: [], packed: false, elem: elem, elem_code: scalar_code(elem), view: true, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
 }
 
 function arr_len(a: VArr): i32 {
@@ -699,11 +699,11 @@ function arr_at(a: VArr, i: i32): Value {
   let st = interpheap.get(a.store).words;
   if (st.len() == 0) {
     if (a.packed) {
-      return coerce_int_width(v_int(a.bytes[i] as i32), a.elem);
+      return coerce_scalar(v_int(a.bytes[i] as i32), a.elem_code, a.elem);
     }
-    return coerce_int_width(a.items[i], a.elem);
+    return coerce_scalar(a.items[i], a.elem_code, a.elem);
   }
-  return coerce_int_width(v_int(st[1 + a.offset + i] as i32), a.elem);
+  return coerce_scalar(v_int(st[1 + a.offset + i] as i32), a.elem_code, a.elem);
 }
 
 // The elements of an array the caller hands over, moved out when nothing
@@ -744,10 +744,10 @@ function arr_items(a: VArr): Value[] {
 // length it has now; a view taken as an array is a copy.
 function arr_retyped(a: VArr, elem: string, view: boolean): Value {
   if (view == a.view) {
-    return VArr { ...a, elem: elem };
+    return VArr { ...a, elem: elem, elem_code: scalar_code(elem) };
   }
   if (view) {
-    return arr_view(VArr { ...a, elem: elem }, 0, arr_len(a));
+    return arr_view(VArr { ...a, elem: elem, elem_code: scalar_code(elem) }, 0, arr_len(a));
   }
   if (a.packed && interpheap.get(a.store).words.len() == 0) {
     return v_bytes_of(a.store.heap, a.bytes, elem);
@@ -768,7 +768,7 @@ function arr_view(a: VArr, from: i32, to: i32): Value {
       items = items.append(els[i]);
     }
   }
-  return VArr { items: items, bytes: [], packed: false, elem: a.elem, view: true, store: a.store, offset: a.offset + from };
+  return VArr { items: items, bytes: [], packed: false, elem: a.elem, elem_code: a.elem_code, view: true, store: a.store, offset: a.offset + from };
 }
 
 // Every slot of the array's capacity, as the integers a builtin writes.
@@ -884,7 +884,7 @@ function send_copy_array(heap: interpheap.Heap, a: VArr, own c: SendCopies): Sen
   if let Some(done) = send_copied(c, key) {
     if let VArr(d) = done {
       if (d.elem != a.elem) {
-        return Sent { value: VArr { ...d, elem: a.elem }, copies: c };
+        return Sent { value: VArr { ...d, elem: a.elem, elem_code: a.elem_code }, copies: c };
       }
     }
     return Sent { value: done, copies: c };
@@ -2099,7 +2099,7 @@ function cell_any_value(s: string, at: Cell[i32], edges: interpheap.Root[], heap
     let elem = cell_name_value(s, at);
     if let VArr(a) = first {
       if (a.elem != elem) {
-        return Got { value: VArr { ...a, elem: elem }, seen: seen };
+        return Got { value: VArr { ...a, elem: elem, elem_code: scalar_code(elem) }, seen: seen };
       }
     }
     return Got { value: first, seen: seen };
@@ -2128,7 +2128,7 @@ function cell_compound_value(s: string, at: Cell[i32], edges: interpheap.Root[],
     let view = cell_hex_value(s, at) != 0i64;
     let elem = cell_name_value(s, at);
     let items = cell_parts_value(s, at, edges, heap, seen);
-    return Got { value: VArr { items: items.values, bytes: [], packed: false, elem: elem, view: view, store: edges[edge], offset: offset }, seen: items.seen };
+    return Got { value: VArr { items: items.values, bytes: [], packed: false, elem: elem, elem_code: scalar_code(elem), view: view, store: edges[edge], offset: offset }, seen: items.seen };
   }
   if (tag == 116) {
     let els = cell_parts_value(s, at, edges, heap, seen);
@@ -7411,7 +7411,7 @@ function arr_reserved(heap: interpheap.Heap, reserve: i64[], items: Value[], ele
   for i in items.len()..cap {
     words = words.append(reserve[1 + i]);
   }
-  return VArr { items: items, bytes: [], packed: false, elem: elem, view: false, store: interpheap.allocate(heap, "", words, []), offset: 0 };
+  return VArr { items: items, bytes: [], packed: false, elem: elem, elem_code: scalar_code(elem), view: false, store: interpheap.allocate(heap, "", words, []), offset: 0 };
 }
 
 // .len, .with, .truncate, .append and a reserved .concat on an array; None for
