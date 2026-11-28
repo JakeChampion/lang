@@ -843,7 +843,13 @@ function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
     for gx in 0..font.CELL_W {
       let a = font.glyph_coverage(g, gx, gy);
       if (a > 0) {
-        dot(f, x + gx * scale, y + gy * scale, scale, color, a);
+        let px = x + gx * scale;
+        let py = y + gy * scale;
+        if (scale >= 4) {
+          f.fill(px, py, scale, scale, with_alpha(color, weight(color, a)));
+        } else {
+          dot(f, px, py, scale, color, a);
+        }
       }
     }
   }
