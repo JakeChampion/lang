@@ -326,28 +326,15 @@ function is_in(name: string, list: string[]): boolean {
 
 // The parser's range desugar qualifies its call with the import path
 // `parser.RANGE_MODULE`, so that path resolves like the import's own name.
-function range_import_at(mod: parser.Module): i32 {
+function rewrite_imports(mod: parser.Module, ids: string[], pfxs: string[]): (string[], string[]) {
+  let names = mod_names(mod);
+  let prefixes = import_prefixes(mod, ids, pfxs);
   for i in 0..mod.imports.len() {
     if (mod.imports[i].path == parser.RANGE_MODULE) {
-      return i;
+      return (names.append(parser.RANGE_MODULE), prefixes.append(prefixes[i]));
     }
   }
-  return -1;
-}
-
-function path_aliased_names(mod: parser.Module, names: string[]): string[] {
-  if (range_import_at(mod) < 0) {
-    return names;
-  }
-  return names.append(parser.RANGE_MODULE);
-}
-
-function path_aliased_prefixes(mod: parser.Module, prefixes: string[]): string[] {
-  let at = range_import_at(mod);
-  if (at < 0 || at >= prefixes.len()) {
-    return prefixes;
-  }
-  return prefixes.append(prefixes[at]);
+  return (names, prefixes);
 }
 
 pub function mod_names(mod: parser.Module): string[] {
@@ -1438,7 +1425,8 @@ pub function flatten_qualified(mod: parser.Module, ids: string[], pfxs: string[]
     }
   }
   let shadows = builtin_shadows(mod);
-  let ctx = RewriteCtx { type_params: [], modnames: path_aliased_names(mod, mod_names(mod)), modprefixes: path_aliased_prefixes(mod, import_prefixes(mod, ids, pfxs)), prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty, method_paths: method_paths };
+  let (names, prefixes) = rewrite_imports(mod, ids, pfxs);
+  let ctx = RewriteCtx { type_params: [], modnames: names, modprefixes: prefixes, prefix: "", declnames: shadows, declnames_mangled: entry_shadow_names(shadows), dn_head: build_declname_head(shadows), dn_next: build_declname_next(shadows), locals: util.name_index(empty), enumnames: empty, imported_enums: imported, ivar_names: ivn, ivar_mangled: ivm, variant_scope: scope, reexport_keys: reexport_keys, reexport_targets: reexport_targets, own_variants: empty, method_paths: method_paths };
   return rewrite_module_bodies(mod, ctx);
 }
 
@@ -1521,10 +1509,11 @@ pub function mangle_module(mod: parser.Module, prefix: string, ids: string[], pf
 
 function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: string[], scope: string[], ivar_names: string[], ivar_mangled: string[], reexport_keys: string[], reexport_targets: string[], imported: ImportedEnum[], method_paths: util.NameIndex): RewriteCtx {
   let decls = collect_decl_names(mod);
+  let (names, prefixes) = rewrite_imports(mod, ids, pfxs);
   return RewriteCtx {
     type_params: [],
-    modnames: path_aliased_names(mod, mod_names(mod)),
-    modprefixes: path_aliased_prefixes(mod, import_prefixes(mod, ids, pfxs)),
+    modnames: names,
+    modprefixes: prefixes,
     prefix: prefix,
     declnames: decls,
     declnames_mangled: build_mangled_names(prefix, decls),
