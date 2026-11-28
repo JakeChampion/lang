@@ -134,7 +134,11 @@ printf ' note\000hidden\ni1,1\000hidden\nleft\000right\n'
 		merge("merge with a diff program that fails", "", nil, "--diff-program=false", "a", "b"),
 		merge("merge with a diff program that succeeds", "", nil, "--diff-program=true", "a", "b"),
 		merge("merge with a diff program that echoes", "", nil, "--diff-program=echo", "a", "b"),
-		merge("merge with omitted line counts", "", nil, "--diff-program=./empty-count", "a", "b"),
+		func() invocation {
+			inv := merge("merge with omitted line counts", "", nil, "--diff-program=./empty-count", "a", "b")
+			inv.darwinLibcDefect = "Apple's strtoimax sets EINVAL when it converts no digits, so GNU sdiff refuses the omitted count that glibc reads as 0"
+			return inv
+		}(),
 		merge("merge with a sign but no digits", "", nil, "--diff-program=./invalid-count", "a", "b"),
 		merge("merge with diff as the diff program", "l\nr\n", nil, "--diff-program=diff", "a", "b"),
 		merge("merge with cat as the diff program", "", nil, "--diff-program=cat", "a", "b"),

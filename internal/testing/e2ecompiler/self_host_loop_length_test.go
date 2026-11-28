@@ -32,6 +32,27 @@ const loopLengthProg = `@noinline function pick(a: i32[], s: string, ix: i32[]):
     }
     return t + a.len();
 }
+@noinline function scan(a: i32[]): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < a.len()) {
+        t = t + a[i];
+        i += 1;
+    }
+    return t;
+}
+@noinline function same(x: i32): i32 {
+    return x;
+}
+@noinline function scan_call(a: i32[]): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < a.len()) {
+        t = t + same(a[i]);
+        i += 1;
+    }
+    return t;
+}
 function main(): i32 {
     let n: i32 = args().len();
     let a = [10, 20, 30, 40];
@@ -50,14 +71,17 @@ function main(): i32 {
         return bytes(raw, [2, 3]);
     }
     let empty: i32[] = [];
-    return pick(a, "abcd", [3, 0, 2]) + pick(empty, "", none) + grow(a, [0, 4, 5]) + bytes(raw, [1, 2, 1]) - 813;
+    return pick(a, "abcd", [3, 0, 2]) + pick(empty, "", none) + grow(a, [0, 4, 5]) + bytes(raw, [1, 2, 1]) - 813 + scan(a) + scan(empty) - 100 + scan_call(a) - 100;
 }
 `
 
 // A checked read of an array or a string in a loop that cannot change a
 // length compares its index with one load of the length before the loop,
 // on arm64, and a byte read loads from the address of the elements. A loop
-// that grows the array still loads the length on each trip. An index out of range still aborts with the message of an array or
+// that grows the array still loads the length on each trip. The length load
+// in the head of `while (i < a.len())` moves before the loop, so the loop
+// ends in one conditional branch. A call in the loop keeps the load in the
+// head. An index out of range still aborts with the message of an array or
 // of a string.
 func TestSelfHostLoopLengthLoad(t *testing.T) {
 	h := selfHostCLIForHost(t)
@@ -86,6 +110,14 @@ func TestSelfHostLoopLengthLoad(t *testing.T) {
 	}
 	if body := condBranchBody(t, string(asm), "grow"); !ownLoad.MatchString(body) {
 		t.Errorf("grow compares with a length from before the loop that grows the array:\n%s", body)
+	}
+	firstWord := regexp.MustCompile(`ldr x\d+, \[x\d+, #0\]\n`)
+	backJump := regexp.MustCompile(`\n    b \.Lssa_`)
+	if body := condBranchBody(t, string(asm), "scan"); len(firstWord.FindAllString(body, -1)) != 1 || backJump.MatchString(body) {
+		t.Errorf("scan loads the length in its loop, or jumps back to the head:\n%s", body)
+	}
+	if body := condBranchBody(t, string(asm), "scan_call"); !backJump.MatchString(body) {
+		t.Errorf("scan_call moves the length load over a call in its loop:\n%s", body)
 	}
 	for _, tg := range h.targets {
 		bin := filepath.Join(dir, tg.target+".bin")

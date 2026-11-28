@@ -8060,14 +8060,26 @@ function scaled_read(ins: SInst, defs: SInst[], nvals: i32): boolean {
   return i >= 0 && i < nvals && !is_constant(defs[i], nvals);
 }
 
-// The arrays that the loop from `h` to `last` reads two times or more with a
-// scaled index. The address of the elements holds a register for the loop,
-// and each read gains one instruction, so one read does not pay for it.
+// A write of a byte, or of an element of 2 or 4 bytes, with an index in a
+// register. A store with a register index can take it. A store has no sign,
+// so a signed element of 2 bytes is in this set.
+function indexed_write(ins: SInst, defs: SInst[], nvals: i32): boolean {
+  if (ins.kind_tag != ARR_ST || ins.args.len() != 3 || ins.imm > 1) {
+    return false;
+  }
+  let i = ins.args[1];
+  return (ins.str == "u8" || ins.str == "i16" || scaled_sum_mark(ins.str)) && i >= 0 && i < nvals && !is_constant(defs[i], nvals);
+}
+
+// The arrays that the loop from `h` to `last` touches two times or more with
+// a read or a write that one instruction at the address of the elements can
+// take. That address holds a register for the loop, and each access gains
+// one instruction, so one access does not pay for it.
 function read_twice(blocks: SBlock[], defs: SInst[], h: i32, last: i32, nvals: i32): boolean[] {
   let reads = __alloc_i32(nvals);
   for bi in h..=last {
     for ins in blocks[bi].insts {
-      if (scaled_read(ins, defs, nvals) && ins.args[0] >= 0 && ins.args[0] < nvals) {
+      if ((scaled_read(ins, defs, nvals) || indexed_write(ins, defs, nvals)) && ins.args[0] >= 0 && ins.args[0] < nvals) {
         reads = reads.with(ins.args[0], reads[ins.args[0]] + 1);
       }
     }
@@ -8080,6 +8092,9 @@ function read_twice(blocks: SBlock[], defs: SInst[], h: i32, last: i32, nvals: i
 // in, and nothing in it can change a length, one load of the length in the
 // block before the loop serves each trip. The base must be defined before
 // the loop. A target that compares with the length in memory gains nothing.
+// A load of the first word of such a base in the loop head, as the length in
+// `while (i < a.len())`, moves to that block too. The head runs each time
+// that block runs, so the load runs no more often than before.
 pub function hoisted_lengths(f: SFunc): SFunc {
   if (f.blocks.len() < 3) {
     return f;
@@ -8092,6 +8107,7 @@ pub function hoisted_lengths(f: SFunc): SFunc {
   let preds = position_preds(f, at);
   let blocks = f.blocks;
   let made: i32[] = [];
+  let moved = false;
   for h in 0..latch.len() {
     let last = latch[h];
     if (last <= h) {
@@ -8106,6 +8122,18 @@ pub function hoisted_lengths(f: SFunc): SFunc {
     let addressed: i32[] = [];
     let datas: i32[] = [];
     let loads: SInst[] = [];
+    let head: SInst[] = [];
+    for ins in blocks[h].insts {
+      if (ins.kind_tag == LD_AT && ins.imm == 0 && ins.str == "" && ins.result >= 0 && defined_before(f, def_pos, ins.args[0], h, last)) {
+        loads = loads.append(ins);
+      } else {
+        head = head.append(ins);
+      }
+    }
+    if (loads.len() > 0) {
+      blocks = blocks.with(h, SBlock { ...blocks[h], insts: head });
+      moved = true;
+    }
     let twice = read_twice(blocks, defs, h, last, f.nvals);
     for bi in h..=last {
       let insts: SInst[] = [];
@@ -8117,9 +8145,11 @@ pub function hoisted_lengths(f: SFunc): SFunc {
         // A read of a byte, or of an element of 2 or 4 bytes that the loop
         // reads two times or more, loads from the address of the elements,
         // which the block before the loop forms one time.
-        let scaled = b >= 0 && b < f.nvals && invariant && scaled_read(ins, defs, f.nvals) && twice[b] && (ins.imm == 1 || checked);
+        let touched = b >= 0 && b < f.nvals && invariant && twice[b] && (ins.imm == 1 || checked);
+        let scaled = touched && scaled_read(ins, defs, f.nvals);
+        let write = touched && indexed_write(ins, defs, f.nvals);
         let data = -1;
-        if (scaled || checked && ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
+        if (scaled || write || checked && ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
           let dk = util.index_of_i32(addressed, b);
           if (dk < 0) {
             dk = addressed.len();
@@ -8133,8 +8163,11 @@ pub function hoisted_lengths(f: SFunc): SFunc {
           data = datas[dk];
         }
         let read = SInst { ir_kind: if (scaled) { SUM_SCALED } else { 0 }, kind_tag: LD_SUM, result: ins.result, args: [data, if (ins.args.len() > 1) { ins.args[1] } else { -1 }], imm: 0, str: if (scaled) { ins.str } else { "" } };
-        if (scaled && ins.imm == 1) {
-          insts = insts.append(read);
+        // A write of such an element, or of a byte, is one store at that
+        // address with the index.
+        let stored = if (write) { SInst { ir_kind: if (ins.str == "u8") { 0 } else { SUM_SCALED }, kind_tag: ST_BYTE, result: ins.result, args: [data, ins.args[1], ins.args[2]], imm: 0, str: if (ins.str == "u8") { "" } else { ins.str } } } else { ins };
+        if ((scaled || write) && ins.imm == 1) {
+          insts = insts.append(if (write) { stored } else { read });
           changed = true;
           continue;
         }
@@ -8152,7 +8185,9 @@ pub function hoisted_lengths(f: SFunc): SFunc {
           loads = loads.append(SInst { ir_kind: 0, kind_tag: LD_AT, result: id, args: [b], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
         }
         insts = insts.append(SInst { ir_kind: 0, kind_tag: BOUND, result: -1, args: [ins.args[1], lens[k]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
-        if (data >= 0) {
+        if (write) {
+          insts = insts.append(stored);
+        } else if (data >= 0) {
           insts = insts.append(read);
         } else if (ins.kind_tag == ARR_ST || ins.imm == 0) {
           insts = insts.append(SInst { ...ins, imm: 1 });
@@ -8167,7 +8202,7 @@ pub function hoisted_lengths(f: SFunc): SFunc {
       blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(loads) });
     }
   }
-  if (made.len() == 0) {
+  if (made.len() == 0 && !moved) {
     return f;
   }
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };

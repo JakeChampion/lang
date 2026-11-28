@@ -606,7 +606,12 @@ function exclude_from(cfg: Cfg, name: string): Cfg {
       last -= 1;
     }
     if (last > at) {
-      c = add_exclude(c, slice_unchecked(text, at, last) + "");
+      let pattern = slice_unchecked(text, at, last);
+      // GNU consumes the whole line and passes its pattern as a C string.
+      if let Some(nul) = pattern.index_of("\x00") {
+        pattern = slice_unchecked(pattern, 0, nul);
+      }
+      c = add_exclude(c, pattern + "");
     }
     at = end + 1;
   }
@@ -1072,7 +1077,8 @@ function dir_and_file(run: Run, sides: Side[]): (Side[], i32) {
   if (sides[fnm].name == "-") {
     fatal(run, "cannot compare '-' to a directory");
   }
-  let name = file_name_concat(sides[dir].name, last_component(sides[fnm].name));
+  let base = last_component(sides[fnm].name);
+  let name = file_name_concat(sides[dir].name, directory_match(run.cfg, sides[dir].name, base));
   return match (stat(name)) {
     Ok(st) => (sides.with(dir, Side { ...sides[dir], name: name, st: st }), 0),
     Err(e) => {
@@ -1080,6 +1086,29 @@ function dir_and_file(run: Run, sides: Side[]): (Side[], i32) {
       (sides.with(dir, Side { ...sides[dir], name: name }), EXIT_TROUBLE)
     },
   };
+}
+
+// Prefer the exact basename, then the first case-insensitive match.
+function directory_match(cfg: Cfg, dir: string, base: string): string {
+  if (!cfg.name_case) {
+    return base;
+  }
+  let Ok(names) = read_dir(dir) else {
+    return base;
+  };
+  let found = base;
+  for name in names {
+    if (excluded(cfg, name)) {
+      continue;
+    }
+    if (name == base) {
+      return base;
+    }
+    if (found == base && compare_names(cfg, name, base) == 0) {
+      found = name;
+    }
+  }
+  return found;
 }
 
 function regular_or_link(s: Side): boolean {

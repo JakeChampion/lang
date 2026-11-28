@@ -4,8 +4,10 @@ Status: [reference] probe record for [SEC-004](https://github.com/JakeChampion/l
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 
 Each probe is a short program with one suspect pattern.
-Both checkers ran each probe.
+The first audit ran each probe through both checkers.
 A probe that both checkers accept also ran natively under `-sanitize -g` with a heap array.
+Since [#16331](https://github.com/JakeChampion/lang/issues/16331), only the self-host checker reports the ownership codes `E050` and `E051`.
+The Go checker does not implement the ownership rules, and the conformance cases are the second check.
 The probes live in the normative corpus where a rule was missing, and in this record otherwise.
 
 ## Refused by both checkers
@@ -35,22 +37,25 @@ The self-host checker discarded the closure's moves and accepted the use.
 The ownership walk now propagates the closure body's moves and restores only the closure's own parameters.
 The normative case is `diag_e050_closure_consumes_captured_owned`.
 
-## Divergence left for a language decision
+## Iteration over an owned parameter
 
-A `for` loop over an owned parameter, followed by a later use of that parameter, splits the checkers.
-The Go oracle counts the iteration as a consuming move and refuses the later use with `E050`.
-The self-host walk borrows the iteration source and accepts the later use.
-[MODE-LATTICE.md](../MODE-LATTICE.md) does not state which rule holds.
+A `for` loop over an `own` parameter borrows the parameter and does not consume it.
+The function can use the parameter after the loop.
+[MODE-LATTICE.md](../MODE-LATTICE.md) states the rule, and claim `ML-11` in [semantics.md](../../spec/semantics.md) pins it with the case `own_param_iterated_then_used`.
 
-Three probes show the split.
-One appends to a scalar array after the loop.
-One reads a scalar array after the loop.
-One appends to a struct array after the loop, inside a nested loop and a match.
-The lowering keeps the value alive through the loop, so the permissive side is sound at run time.
-The strict side rejects a natural pattern that `compiler/semlower.fern` on #13646 writes.
+The first audit found that the two checkers did not agree on this pattern.
+The Go oracle refused the later use with `E050`.
+The self-host walk accepted it.
+The rule follows the self-host walk for three reasons:
 
-The owner must pick one rule.
-Then one checker changes and a normative case pins the rule.
+- Parameters borrow by default, and a loop reads its source.
+- A `for` over a borrowed array also borrows the array (`RH-39`).
+- The lowering keeps the value alive through the loop.
+
+The case reads and appends to a scalar array after the loop.
+It also appends to a struct array in an outer loop and a match.
+It runs natively under `-sanitize -g` with balanced allocations.
+A consuming call of the parameter inside the loop body stays refused with `E050` (`RH-32`).
 
 ## Accepted by both checkers, sound at run time
 
@@ -65,6 +70,19 @@ Then one checker changes and a normative case pins the rule.
 The first three follow the view rule in [STR-VIEW-CONTRACT.md](../STR-VIEW-CONTRACT.md): a view keeps its storage alive.
 The last two are permissive at the checker and sound in the lowering.
 A stricter checker rule for them is a language decision, not a defect.
+
+## Probes of 2026-11-28
+
+The self-host checker ran these probes after #16331.
+
+| Pattern | Result |
+|---|---|
+| A local alias of an owned parameter, then the parameter consumed, then the alias read | `E050` at the consume |
+| A view of a borrowed array captured by a returned closure | `E082` |
+| An owned parameter consumed inside the body of a `for` loop over it | `E050` |
+| An owned parameter read after a `for` loop over it | Accepted, sound under `-sanitize -g` |
+| An owned parameter appended to after a `for` loop over it | Accepted, sound under `-sanitize -g` |
+| An owned struct array appended to after an inner loop, inside an outer loop and a match | Accepted, sound under `-sanitize -g` |
 
 ## Limits
 

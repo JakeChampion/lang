@@ -248,7 +248,7 @@ function zero_runs(): test.TestOutcome {
     return test.fail("configuration");
   };
   let initial = config.Info { ...info, mb: 0 };
-  let parameters = entropy.Parameters { depth: 16, mode: 0, shift: 0, factor: 0u32, coefficients: [] };
+  let parameters = entropy.Parameters { depth: 16, mode: 0, shift: 0, factor: 0u32, order: 0 };
   if let Err(pcm.Header) = entropy.residuals([127u8, 255u8, 255u8, 192u8], 0i64, initial, parameters, pcm.zeros(2), 2) {} else {
     return test.fail("zero run beyond current frame");
   }
@@ -258,8 +258,20 @@ function zero_runs(): test.TestOutcome {
   if (values[0] != 0 || values[1] != 0 || values[2] != 23) {
     return test.fail("zero-run prefix and retained scratch suffix");
   }
-  if let Err(pcm.Header) = predict.restore([0], 1, entropy.Parameters { ...parameters, coefficients: [1] }) {} else {
+  if let Err(pcm.Header) = predict.restore([0], 1, entropy.Parameters { ...parameters, order: 1 }, [1]) {} else {
     return test.fail("predictor warm-up extent");
+  }
+  if let Err(pcm.Header) = predict.restore([0, 0, 0], 3, entropy.Parameters { ...parameters, order: 2 }, [1]) {} else {
+    return test.fail("predictor order beyond the tap buffer");
+  }
+  if let Err(pcm.Header) = entropy.coefficients([0u8, 0u8, 0u8, 0u8], 0i64, entropy.Parameters { ...parameters, order: 3 }, pcm.zeros(2)) {} else {
+    return test.fail("coefficient count beyond the tap buffer");
+  }
+  let Ok((after, taps)) = entropy.coefficients([0u8, 1u8, 255u8, 254u8], 0i64, entropy.Parameters { ...parameters, order: 2 }, [7, 7, 7]) else {
+    return test.fail("coefficient read");
+  };
+  if (after != 32i64 || taps[0] != 1 || taps[1] != -2 || taps[2] != 7) {
+    return test.fail("coefficient prefix and retained tap suffix");
   }
   return test.pass();
 }
@@ -301,6 +313,55 @@ function layouts(): test.TestOutcome {
   return test.pass();
 }
 
+function packet_allocations(configuration: [u8], packets: [u8], channels: i32, passes: i32): i64 {
+  let Ok(first) = alac.create(configuration, pcm.default_limits()) else {
+    return -1i64;
+  };
+  let decoder = first;
+  let output = pcm.zeros(decoder.information().frame_length * channels);
+  let before = 0i64;
+  for pass in 0..passes {
+    if (pass == 1) {
+      before = __heap_alloc_count();
+    }
+    let at = 4;
+    for _ in 0..ref.word(packets, 0) {
+      let bytes = ref.word(packets, at);
+      at += 4;
+      let Ok((next, frame)) = decoder.decode_packet_into(packets[at:at + bytes], output, pcm.default_limits()) else {
+        return -1i64;
+      };
+      decoder = next;
+      output = frame.samples;
+      at += bytes;
+    }
+  }
+  return __heap_alloc_count() - before;
+}
+
+function steady_state(): test.TestOutcome {
+  for value in alac_vectors.vectors() {
+    if (value.frames != 19) {
+      continue;
+    }
+    let Ok(configuration) = ref.unpack(value.configuration) else {
+      return test.fail("configuration fixture");
+    };
+    let Ok(packets) = ref.unpack(value.packets) else {
+      return test.fail("packet fixture");
+    };
+    // Interpreters return zero for the allocator counters. The scratch arrays
+    // and the predictor taps stay in the decoder. A packet can allocate only
+    // its two returned records and one predictor record for each channel (#16964).
+    let limit = 4i64 * (ref.word(packets, 0) as i64) * (2i64 + value.channels as i64);
+    let allocations = packet_allocations(configuration, packets, value.channels, 5);
+    if (allocations < 0i64 || allocations > limit) {
+      return test.fail(value.name + ": allocations for 4 steady-state passes: " + allocations.to_string());
+    }
+  }
+  return test.pass();
+}
+
 function main(): i32 {
   let runner = test.new("ALAC malformed input and resource boundaries");
   runner = runner.it("configuration prefixes, layouts, versions, and depths", configurations);
@@ -311,5 +372,6 @@ function main(): i32 {
   runner = runner.it("fields at every position near the end of the input", window_fields);
   runner = runner.it("bounded zero runs and predictor warm-up", zero_runs);
   runner = runner.it("channel permutations and declared predictor width", layouts);
+  runner = runner.it("steady-state packets keep scratch and predictor taps", steady_state);
   return runner.finish();
 }

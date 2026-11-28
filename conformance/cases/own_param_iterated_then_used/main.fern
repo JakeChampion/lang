@@ -1,0 +1,53 @@
+// spec: ML-11
+// A `for` over an `own` parameter borrows the parameter. The parameter is not
+// consumed, so the function can read it, append to it, and return it after the
+// loop.
+
+import "std/string";
+import "std/i32";
+
+struct Item { name: string, n: i32 }
+
+enum Pick { Keep, Skip }
+
+function pick(i: i32): Pick {
+    if (i % 2 == 0) { return Pick.Keep; }
+    return Pick.Skip;
+}
+
+function read_after(own xs: i32[]): i32 {
+    let s = 0;
+    for x in xs { s += x; }
+    return s + xs[0] + xs.len();
+}
+
+function append_after(own xs: i32[]): i32[] {
+    let s = 0;
+    for x in xs { s += x; }
+    return xs.append(s);
+}
+
+function append_in_outer_loop(own items: Item[]): Item[] {
+    for r in 0..3 {
+        let s = 0;
+        for it in items { s += it.n; }
+        match (pick(s + r)) {
+            Pick.Keep => { items = items.append(Item { name: "k".repeat(r + 1), n: s }); },
+            Pick.Skip => {},
+        }
+    }
+    return items;
+}
+
+function main(): i32 {
+    print(read_after([4, 5, 6]).to_string());
+    let b = append_after([1, 2, 3]);
+    print(b.len().to_string());
+    print(b[3].to_string());
+    let ys = append_in_outer_loop([Item { name: "a", n: 1 }, Item { name: "b", n: 2 }]);
+    print(ys.len().to_string());
+    print(ys[2].name);
+    print(ys[3].name);
+    print(ys[3].n.to_string());
+    return 0;
+}
