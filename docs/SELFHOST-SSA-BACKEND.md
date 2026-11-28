@@ -592,6 +592,12 @@ across a whole loop body frees more by leaving than a temporary read on the
 next line, and taking that rule instead of the lowest raw weight made the
 `std/crypto` digests 1.3x to 4x faster (#10615).
 
+A result in a frame slot can compute in the register of an operand that
+dies at the operation (`ssa_spilled_dst`). The store follows. For a
+commutative operation, that operand can be the right one. The operands
+then swap (`dying_right`). The chi step of Keccak, `x ^ (~y & z)`, has
+that shape. Each of its 25 lanes then takes 3 instructions, not 4.
+
 On x86-64 the weight gives no cost to an ALU right operand: add, subtract,
 and, or and xor read it from its frame slot (`SpillCosts.fold_alu_rhs`).
 That holds only when the left operand has a register. When both operands

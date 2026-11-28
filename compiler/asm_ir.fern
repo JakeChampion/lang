@@ -8561,6 +8561,17 @@ function ssa_dst(reg_of: i32[], v: i32): string {
 // spilled and `a` dies at this instruction, the operation writes the register
 // of `a` in place and needs no copy to %r11. A result that the next
 // instruction reads stays in %r11, which the emitter reads without a reload.
+// A result in a frame slot can compute in the register of an operand that
+// dies here. For a commutative operation that operand can be the right one:
+// the operands swap, so that no scratch copies the left one first.
+function dying_right(fr: SsaFrame, reg_of: i32[], a: i32, b: i32, v: i32): boolean {
+  if (ssa_in_x(reg_of, v) || reg_of[v] == -1 || fr.read_next[v] || fr.imm.is_imm[a] || fr.imm.is_imm[b] || reg_of[v] == reg_of[a]) {
+    return false;
+  }
+  let left_dies = ssa_in_x(reg_of, a) && fr.local_last[a] && ssa_reg(reg_of[a]) != "%r11";
+  return !left_dies && ssa_in_x(reg_of, b) && fr.local_last[b] && ssa_reg(reg_of[b]) != "%r11";
+}
+
 function ssa_spilled_dst(fr: SsaFrame, reg_of: i32[], a: i32, v: i32): string {
   if (!ssa_in_x(reg_of, v) && reg_of[v] != -1 && !fr.read_next[v] && ssa_in_x(reg_of, a) && fr.local_last[a] && ssa_reg(reg_of[a]) != "%r11") {
     return ssa_reg(reg_of[a]);
@@ -8635,6 +8646,9 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     } else {
       dh = "%r11";
     }
+  }
+  if (!swap && ssa_commutative(tag) && dying_right(fr, reg_of, a, b, v)) {
+    swap = true;
   }
   if (swap) {
     tag = ircore.flip_int_cmp_kind(tag);
