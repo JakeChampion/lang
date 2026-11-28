@@ -15,7 +15,7 @@ import (
 // block (#15650). An index can be the counter times a constant, a lane
 // access covers each element that it reads or writes, and the array can be
 // a view. A term of the index can be a value from before the loop times a
-// constant.
+// constant, and a group of accesses that one check covers is one access.
 const versionedLoops = `import "std/array";
 struct J { a: i32, b: i32 }
 @noinline function slide(own a: i32[], n: i32): i32[] {
@@ -123,6 +123,11 @@ struct J { a: i32, b: i32 }
   for i in 0..n { s += __u8x16_lane(__u8x16_load_view(b, i * 16 + off), 15) as i32; }
   return s;
 }
+@noinline function pairs2(a: i32[], n: i32): i32 {
+  let s = 0;
+  for i in 0..n { s += a[i * 2] * 2 + a[i * 2 + 1]; }
+  return s;
+}
 @noinline function rowed(t: i32[], y: i32, n: i32): i32 {
   let s = 0;
   for v in 0..n { s += t[y * 8 + v]; }
@@ -180,6 +185,7 @@ const versionedMain = `function main(): i32 {
   if (r[0] != 27 || r[9] != 0 || r[4] != 15) { return 15; }
   if (viewed_in(5) != 135 || view_bytes_in(0) != 62) { return 16; }
   if (rowed(seq(20), 1, 8) != 276 || rowed(seq(20), 2, 4) != 210) { return 17; }
+  if (pairs2(seq(10), 5) != 195) { return 18; }
   return 0;
 }`
 
@@ -231,8 +237,10 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 				"fill":  "fill(fseq(7), 4).len()",
 				"bytes": "bytes(bseq(32), 1, 2)",
 				// Each index past the view is still in the array under it.
-				"viewed":     "viewed_in(6)",
-				"rowed":      "rowed(seq(20), 2, 5)",
+				"viewed": "viewed_in(6)",
+				"rowed":  "rowed(seq(20), 2, 5)",
+				// The first element of the last pair is in range, and the second is not.
+				"pairs2":     "pairs2(seq(9), 5)",
 				"view_bytes": "view_bytes_in(1)",
 			}
 			for name, call := range past {
@@ -259,7 +267,7 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 			for _, c := range []struct {
 				name          string
 				reads, checks int
-			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}, {"scaled", 2, 1}, {"viewed", 2, 1}, {"reverse_into", 2, 2}, {"rowed", 2, 1}} {
+			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}, {"scaled", 2, 1}, {"viewed", 2, 1}, {"reverse_into", 2, 2}, {"rowed", 2, 1}, {"pairs2", 4, 1}} {
 				body := asmFunction(string(asm), "__fn_"+c.name+":")
 				if got, checks := len(load.FindAllString(body, -1)), strings.Count(body, "oob_abort"); got != c.reads || checks != c.checks {
 					t.Errorf("%s has %d element reads and %d checks, want %d and %d: two versions of the loop\n%s", c.name, got, checks, c.reads, c.checks, body)

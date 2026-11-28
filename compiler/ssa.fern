@@ -1925,7 +1925,7 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
 }
 
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
-  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] });
+  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 });
 }
 
 // A spill definition or normal read needs an extra transfer instruction.
@@ -1936,7 +1936,9 @@ pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i
 // read whose left operand is one of them costs a load.
 // On a two-address ISA, a subtract that writes the register of its right
 // operand needs a scratch register and one more move.
-pub struct SpillCosts { fold_alu_rhs: boolean, two_address: boolean, spilled: boolean[] }
+// The parameters from `stack_params` on arrive in the frame of the caller.
+// Their slot is that place, so the definition costs nothing. -1 names none.
+pub struct SpillCosts { fold_alu_rhs: boolean, two_address: boolean, spilled: boolean[], stack_params: i32 }
 
 function phi_count(insts: SInst[]): i32 {
   let count = 0;
@@ -2231,7 +2233,8 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       }
     }
     let v = order[oi];
-    if (hi[v] < 0) {
+    // A stack parameter that costs nothing in its slot keeps no register.
+    if (hi[v] < 0 || weight[v] == 0 && stack_param(costs, f, v)) {
       oi += 1;
       continue;
     }
@@ -2484,7 +2487,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   if (sites.start.len() == 0 && spilled_mates(reg_of, def_pos, mates.hint)) {
     sites = read_sites(f, at, blk_start);
   }
-  return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites), def_pos: def_pos, lo: lo, hi: hi, cold: cold };
+  return Alloc { reg_of: assign_spill_slots(f, shape, lo, hi, reg_of, slot_hints(f, sites, def_blk, def_pos, reg_of, mates), sites, costs), def_pos: def_pos, lo: lo, hi: hi, cold: cold };
 }
 
 // A phi in a register whose only reads are phis in memory, one of which is
@@ -2631,6 +2634,9 @@ function sole_readers(f: SFunc): i32[] {
   return out;
 }
 
+// A product and its high half read both factors from a slot at no cost
+// when `fold_alu_rhs` holds: `mulxq` moves one factor into a register and
+// reads the other from memory.
 function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[], uses: i32[]): i32[] {
   let w = __alloc_i32(f.nvals);
   for bi in 0..f.blocks.len() {
@@ -2644,9 +2650,13 @@ function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[], uses: 
         folded = last.result;
       }
     }
-    for ins in blk.insts {
-      if (ins.result >= 0 && ins.result < f.nvals) {
+    for k in 0..blk.insts.len() {
+      let ins = blk.insts[k];
+      if (ins.result >= 0 && ins.result < f.nvals && !stack_param(costs, f, ins.result)) {
         w = w.with(ins.result, w[ins.result] + bw[bi]);
+      }
+      if (costs.fold_alu_rhs && (wide_product_at(blk, k) || wide_product_at(blk, k - 1))) {
+        continue;
       }
       for sl in 0..ins.args.len() {
         let a = ins.args[sl];
@@ -2681,6 +2691,10 @@ function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[], uses: 
     }
   }
   return w;
+}
+
+function stack_param(costs: SpillCosts, f: SFunc, v: i32): boolean {
+  return costs.stack_params >= 0 && v >= costs.stack_params && v < f.nparams;
 }
 
 function in_slot(spilled: boolean[], v: i32): boolean {
@@ -3361,7 +3375,7 @@ pub function spill_slot(code: i32): i32 {
 // register index or frame slot it took. FERN_DEBUG_SSA_ALLOC=<function> prints it,
 // and `*` prints each function.
 pub function print_alloc(f: SFunc, a: Alloc): string {
-  return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] });
+  return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 });
 }
 
 pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {
@@ -3683,7 +3697,7 @@ function take_pair(t: PairSlots, p: i32, end: i32, v: i32): PairSlots {
   return t;
 }
 
-function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], reg_of: i32[], hints: SlotHints, given: ReadSites): i32[] {
+function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], reg_of: i32[], hints: SlotHints, given: ReadSites, costs: SpillCosts): i32[] {
   let def_pos = shape.def_pos;
   let from = spill_starts(lo, def_pos);
   let wanted_by = mates_wanted(hi, reg_of, hints.hint);
@@ -3695,8 +3709,13 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
   let built = given.start.len() > 0;
   let live = no_spill_live();
   let pairs: i32[] = [];
+  let deferred: i32[] = [];
   for v in order_by_lo(reg_of.len(), from) {
     if (hi[v] < 0 || reg_of[v] >= 0) {
+      continue;
+    }
+    if (stack_param(costs, f, v) && !marked(lanes, v)) {
+      deferred = deferred.append(v);
       continue;
     }
     if (marked(lanes, v)) {
@@ -3751,6 +3770,11 @@ function assign_spill_slots(f: SFunc, shape: SlotShape, lo: i32[], hi: i32[], re
       occupants = occupants.with(s, still_in(occupants[s], hi, from[v]).append(v));
     }
     reg_of = reg_of.with(v, spill_code(s));
+  }
+  // Each stack parameter takes a slot of its own after the others, because
+  // that slot is in the frame of the caller.
+  for k in 0..deferred.len() {
+    reg_of = reg_of.with(deferred[k], spill_code(slot_end.len() + k));
   }
   return reg_of;
 }

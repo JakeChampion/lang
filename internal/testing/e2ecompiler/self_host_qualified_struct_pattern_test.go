@@ -11,17 +11,30 @@ import (
 func TestSelfHostQualifiedStructPatterns(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := buildLangBinForInterp(t)
-	path := langSrcAbs(t, "conformance/cases/qualified_struct_patterns/main.fern")
-	for name, cmd := range map[string]*exec.Cmd{
+	testStructPatternCase(t, cli, oracle, "qualified_struct_patterns")
+	testQualifiedOpaquePatterns(t, cli, oracle)
+}
+
+// A struct pattern of a local struct takes the same parse path as a
+// qualified one, nested in a field included.
+func TestSelfHostNestedStructFieldPatterns(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := buildLangBinForInterp(t)
+	testStructPatternCase(t, cli, oracle, "nested_struct_field_patterns")
+}
+
+func testStructPatternCase(t *testing.T, cli *selfHostCLI, oracle, name string) {
+	path := langSrcAbs(t, "conformance/cases/"+name+"/main.fern")
+	for leg, cmd := range map[string]*exec.Cmd{
 		"Go-check":         exec.Command(oracle, "-check", path),
 		"self-host-check":  runX86_64Bin(cli.runner, cli.bin, "-check", path, cli.stdlib),
 		"Go-interp":        exec.Command(oracle, "-interp", path),
 		"self-host-interp": runX86_64Bin(cli.runner, cli.bin, "-interp", path, cli.stdlib),
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(leg, func(t *testing.T) {
 			out, err := cmd.CombinedOutput()
 			if err != nil || len(out) != 0 {
-				t.Fatalf("qualified struct patterns: %v\n%s", err, out)
+				t.Fatalf("%s: %v\n%s", name, err, out)
 			}
 		})
 	}
@@ -29,12 +42,11 @@ func TestSelfHostQualifiedStructPatterns(t *testing.T) {
 		t.Run(target, func(t *testing.T) {
 			stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 			if code != 0 {
-				t.Fatalf("qualified struct patterns: exit %d, want 0\n%s", code, stderr)
+				t.Fatalf("%s: exit %d, want 0\n%s", name, code, stderr)
 			}
 			assertBalancedCensus(t, stderr)
 		})
 	}
-	testQualifiedOpaquePatterns(t, cli, oracle)
 }
 
 func testQualifiedOpaquePatterns(t *testing.T, cli *selfHostCLI, oracle string) {

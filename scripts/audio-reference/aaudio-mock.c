@@ -19,6 +19,12 @@ void mock_timestamp_value(int64_t position, int64_t time_ns) {
     mode = 10; calls = 0; custom_position = position; custom_time = time_ns;
 }
 
+int32_t AAudioStream_getXRunCount(AAudioStream *stream) {
+    assert(stream == (AAudioStream *)123);
+    calls++;
+    return mode == 0 ? 0 : mode == 1 ? 17 : -895;
+}
+
 aaudio_result_t AAudioStream_getTimestamp(AAudioStream *stream, clockid_t clock,
                                         int64_t *position, int64_t *time_ns) {
     _Static_assert(sizeof(clockid_t) == sizeof(int32_t), "clockid_t ABI");

@@ -188,9 +188,6 @@ function sugar_forks(sg: ast.MatchSugar): i32 {
   for a in sg.tup {
     n += arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
   }
-  for a in sg.strct {
-    n += arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
-  }
   for a in sg.lits {
     n += arm_fork(a.is_wild, a.has_guard, a.guard, a.body);
   }
@@ -201,7 +198,7 @@ function sugar_forks(sg: ast.MatchSugar): i32 {
 }
 
 function has_sugar(sg: ast.MatchSugar): boolean {
-  return sg.tup.len() > 0 || sg.strct.len() > 0 || sg.lits.len() > 0 || sg.arms.len() > 0;
+  return sg.tup.len() > 0 || sg.lits.len() > 0 || sg.arms.len() > 0;
 }
 
 function stmt_forks(st: ast.Stmt): i32 {

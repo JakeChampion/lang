@@ -1739,7 +1739,7 @@ function any_pair(f: ssasem.Func): boolean {
   for blk in f.graph.blocks {
     let one = false;
     for ins in blk.insts {
-      if (checked_index(ins) && scalar(f, ins.result) || scalar_write(f, ins) && ins.imm == 0) {
+      if (checked_index(ins) && element(f, ins.result) || scalar_write(f, ins) && ins.imm == 0) {
         if (one) {
           return true;
         }
@@ -1770,7 +1770,7 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
   let reads: i32[] = [];
   for k in start..end {
     let ins = insts[k];
-    let read = checked_index(ins) && scalar(f, ins.result) && !accessed_before(before.g, before.seen, before.dom, b, k, ins);
+    let read = checked_index(ins) && element(f, ins.result) && !accessed_before(before.g, before.seen, before.dom, b, k, ins);
     if ((read || scalar_write(f, ins) && ins.imm == 0) && ssasem.is_i32(f.values[ins.args[1]])) {
       reads = reads.append(k);
     }
@@ -1790,7 +1790,7 @@ function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], st
     let members: i32[] = [reads[i]];
     for j in i + 1..reads.len() {
       let r = insts[reads[j]];
-      if (!done[j] && written_root(f, defs, r.args[0]) == arr && offset_base(f, defs, r.args[1]) == x) {
+      if (!done[j] && written_root(f, defs, r.args[0]) == arr && same_value(f, defs, offset_base(f, defs, r.args[1]), x, 3)) {
         done = done.with(j, true);
         let c = offset_of(f, defs, r.args[1]);
         if (c < low) {
@@ -1843,6 +1843,29 @@ function offset_base(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   return defs[v].args[1 - c];
 }
 
+// Two values that the same operation makes from the same operands, as the
+// copies of an unrolled loop make them.
+function same_value(f: ssasem.Func, defs: ssa.SInst[], a: i32, b: i32, depth: i32): boolean {
+  if (a == b) {
+    return true;
+  }
+  if (a < 0 || b < 0 || depth == 0) {
+    return false;
+  }
+  let x = defs[ssa.copy_root(defs, a)];
+  let y = defs[ssa.copy_root(defs, b)];
+  if (x.result == y.result) {
+    return true;
+  }
+  if (x.kind_tag == ssa.CONST_INT && y.kind_tag == ssa.CONST_INT) {
+    return x.imm == y.imm && x.str == y.str;
+  }
+  if (x.kind_tag != ssa.BINARY || y.kind_tag != ssa.BINARY || x.str != y.str || x.args.len() != 2 || y.args.len() != 2 || !silent(f, x) || !silent(f, y)) {
+    return false;
+  }
+  return same_value(f, defs, x.args[0], y.args[0], depth - 1) && same_value(f, defs, x.args[1], y.args[1], depth - 1);
+}
+
 function offset_of(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
   if (constant_index(f, defs, v)) {
     return defs[v].imm;
@@ -1875,6 +1898,11 @@ function scalar(f: ssasem.Func, v: i32): boolean {
   return ssasem.is_integer(f.values[v]) || ssasem.is_bool(f.values[v]);
 }
 
+// A value of one element: a scalar or a float, and not a lane value.
+function element(f: ssasem.Func, v: i32): boolean {
+  return scalar(f, v) || ssasem.is_float(f.values[v]);
+}
+
 function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   let k = ins.kind_tag;
   if (k == ssa.CONST_INT || k == ssa.CONST_BOOL || k == ssa.CONST_I64 || k == ssa.COPY || k == ssa.PHI || k == ssa.LINE || k == ssasem.param()) {
@@ -1887,11 +1915,12 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
     return false;
   }
   let t = f.values[ins.result];
+  // A float operation does not trap, and an integer division can.
   if (k == ssa.BINARY) {
-    return ins.str != "/" && ins.str != "%" && scalar(f, ins.result);
+    return ins.str != "/" && ins.str != "%" && scalar(f, ins.result) || ssasem.is_float(t) && ssasem.is_float(f.values[ins.args[0]]);
   }
   if (k == ssa.UNARY) {
-    return scalar(f, ins.result);
+    return element(f, ins.result);
   }
   if (k == ssasem.cast()) {
     return ins.args.len() == 1 && ssasem.is_integer(t) && ssasem.is_integer(f.values[ins.args[0]]);

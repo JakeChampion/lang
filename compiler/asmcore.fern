@@ -90,6 +90,9 @@ pub struct EmitState {
   const_agg_ix: util.NameIndex,
   ssa_frame: i32,
   ssa_save: i32,
+  // For each frame slot of an SSA function, the %rbp offset of the stack
+  // argument that has the slot as its home, or 0.
+  ssa_arg_homes: i32[],
   lane_consts: boolean,
   shuffle_masks: string[],
   ssa_lane_slots: boolean[],
@@ -654,6 +657,7 @@ pub function new_state(): EmitState {
     const_agg_ix: util.name_index([]),
     ssa_frame: 0,
     ssa_save: 0,
+    ssa_arg_homes: [],
     lane_consts: false,
     shuffle_masks: [],
     ssa_lane_slots: [],

@@ -33,7 +33,7 @@ func TestSelfHostExternBoolArrayResultCustomProvider(t *testing.T) {
 	if err := os.MkdirAll(provWit, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	const iface = "interface src { bits: func(n: u32) -> list<bool>; }"
+	const iface = "interface src { bits: func(n: u32) -> list<bool>; first-two: func(xs: list<bool>) -> list<bool>; }"
 	if err := os.WriteFile(filepath.Join(provWit, "src.wit"),
 		[]byte("package local:test@0.1.0;\n"+iface+"\nworld provider { export src; }\n"), 0o644); err != nil {
 		t.Fatalf("write provider wit: %v", err)
@@ -46,6 +46,10 @@ func TestSelfHostExternBoolArrayResultCustomProvider(t *testing.T) {
     (local.set $p (global.get $h))
     (global.set $h (i32.add (global.get $h) (local.get $ns)))
     (local.get $p))
+  (func (export "local:test/src@0.1.0#first-two") (param $ptr i32) (param $len i32) (result i32)
+    (i32.store (i32.const 16) (local.get $ptr))
+    (i32.store (i32.const 20) (select (local.get $len) (i32.const 2) (i32.lt_u (local.get $len) (i32.const 2))))
+    (i32.const 16))
   (func (export "local:test/src@0.1.0#bits") (param $n i32) (result i32)
     (local $buf i32) (local $i i32) (local $ret i32)
     (local.set $buf (call 0 (i32.const 0) (i32.const 0) (i32.const 1) (local.get $n)))
@@ -99,8 +103,12 @@ func TestSelfHostExternBoolArrayResultCustomProvider(t *testing.T) {
 	const want = "bits-ok"
 	prog := `@import("local:test/src@0.1.0", "bits")
 function bits(n: u32): boolean[];
+@import("local:test/src@0.1.0", "first-two")
+function first_two(xs: boolean[]): boolean[];
 function main(): i32 {
     let xs: boolean[] = bits(4u32);
+    let prefix = first_two(xs);
+    if (prefix.len() != 2 || !prefix[0] || prefix[1]) { write("first-two-bad"); return 1; }
     if (xs.len() == 4 && xs[0] && !xs[1] && xs[2] && !xs[3]) { write("` + want + `"); } else { write("bits-bad"); }
     return 0;
 }`

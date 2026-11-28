@@ -610,18 +610,37 @@ function give_all(vs: json.JsonValue[], k: (json.JsonValue, own St) => own St, o
 // an array, so that its frames are gone while `k` runs: a function that
 // calls itself then needs less stack for each call.
 function each_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  if let filter.Collect(inner) = f {
-    return run_collect(inner, input, e, k, st);
+  match (f) {
+    filter.Identity => {
+      return k(input, st);
+    },
+    filter.Literal(v) => {
+      return k(v, st);
+    },
+    filter.Collect(inner) => {
+      return run_collect(inner, input, e, k, st);
+    },
+    _ => {}
   }
   if (!single(f, e)) {
     return run(f, input, e, k, st);
   }
   let saved = st.items;
-  let c = drive(collected(f, input, e, st));
+  let c = collected(f, input, e, st);
+  if (c.sig == BOUNCE) {
+    return St { ...c, next: c.next.append((own t: St): own St => finish_each(saved, k, t)) };
+  }
+  return finish_each(saved, k, c);
+}
+
+function finish_each(saved: json.JsonValue[], k: (json.JsonValue, own St) => own St, own c: St): own St {
   let vs = c.items;
   let s = St { ...c, items: saved };
   if (s.sig != OK) {
     return s;
+  }
+  if (vs.len() == 1) {
+    return k(vs[0], s);
   }
   return give_all(vs, k, s);
 }
@@ -808,23 +827,7 @@ function object_entry(keys: filter.Ast[], values: filter.Ast[], at: i32, names: 
   let json.JString(name) = kv else {
     return failed_with(st, "Cannot use " + output.type_name(kv) + " (" + output.shown(kv) + ") as object key");
   };
-  if (!single(values[at], e)) {
-    return run(values[at], input, e, (v: json.JsonValue, own s: St): own St => build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s), st);
-  }
-  let saved = st.items;
-  let c = drive(collected(values[at], input, e, st));
-  let vs = c.items;
-  let s = St { ...c, items: saved };
-  if (s.sig != OK) {
-    return s;
-  }
-  for v in vs {
-    s = drive(build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s));
-    if (s.sig != OK) {
-      return s;
-    }
-  }
-  return s;
+  return each_of(values[at], input, e, (v: json.JsonValue, own s: St): own St => build_object(keys, values, at + 1, names.append(name), items.append(v), input, e, k, s), st);
 }
 
 // jq takes each right value, and then each left value. A single right value
@@ -835,28 +838,7 @@ function run_binary(op: string, a: filter.Ast, b: filter.Ast, input: json.JsonVa
   if let filter.Literal(r) = b {
     return run(a, input, e, (l: json.JsonValue, own s: St): own St => give(binary(op, l, r), k, s), st);
   }
-  if (!single(b, e)) {
-    return run(b, input, e, (r: json.JsonValue, own s: St): own St => run(a, input, e, (l: json.JsonValue, own s2: St): own St => give(binary(op, l, r), k, s2), s), st);
-  }
-  let saved = st.items;
-  let c = drive(collected(b, input, e, st));
-  let rights = c.items;
-  let s = St { ...c, items: saved };
-  if (s.sig != OK) {
-    return s;
-  }
-  for i in 0..rights.len() {
-    let r = rights[i];
-    let t = run(a, input, e, (l: json.JsonValue, own s1: St): own St => give(binary(op, l, r), k, s1), s);
-    if (i + 1 == rights.len()) {
-      return t;
-    }
-    s = drive(t);
-    if (s.sig != OK) {
-      return s;
-    }
-  }
-  return s;
+  return each_of(b, input, e, (r: json.JsonValue, own s: St): own St => run(a, input, e, (l: json.JsonValue, own s2: St): own St => give(binary(op, l, r), k, s2), s), st);
 }
 
 // `a and b` is false for a false left value and takes each right value
@@ -2012,6 +1994,9 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
 
 function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
   match (f) {
+    filter.Reduce(source, name, init, update) => {
+      return run_paths(init, it, e, (first: PathItem, own s: St): own St => paths_reduce(source, name, update, first, it, e, k, s), st);
+    },
     filter.Foreach(source, name, init, update, extract) => {
       return run_paths(init, it, e, (first: PathItem, own s: St): own St => paths_foreach(source, name, update, extract, first, it, e, k, s), st);
     },
@@ -2123,6 +2108,36 @@ function paths_index(target: filter.Ast, key: filter.Ast, it: PathItem, e: Env, 
 
 function paths_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, it: PathItem, e: Env, guard: boolean, k: (PathItem, own St) => own St, own st: St): own St {
   return run(to, it.value, e, (t: json.JsonValue, own s: St): own St => run(from, it.value, e, (fv: json.JsonValue, own s2: St): own St => run_paths(target, it, e, (x: PathItem, own s3: St): own St => path_step(x, json.JObject(json.object_of(["start", "end"], [fv, t])), guard, k, s3), s2), s), st);
+}
+
+// The source and update of a reduce run on a branch that backtracks.
+// Only the accumulator survives that branch, on the initializer's path.
+function paths_reduce(source: filter.Ast, name: string, update: filter.Ast, first: PathItem, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
+  let saved = st.found;
+  let s = run_paths(source, off_path(first, it.value, true), e, (x: PathItem, own t: St): own St => paths_reduce_step(update, name, x, e, t), St { ...st, found: [first] });
+  return finish_path_reduce(first, saved, k, s);
+}
+
+function finish_path_reduce(first: PathItem, saved: PathItem[], k: (PathItem, own St) => own St, own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => finish_path_reduce(first, saved, k, t)) };
+  }
+  if (s.sig != OK) {
+    return St { ...s, found: saved };
+  }
+  return k(rebase_path(first, s.found[0]), St { ...s, found: saved });
+}
+
+function rebase_path(to: PathItem, from: PathItem): PathItem {
+  if (order(json.JArray(to.path), json.JArray(from.path)) == 0) {
+    return from;
+  }
+  return off_path(to, from.value, true);
+}
+
+function paths_reduce_step(update: filter.Ast, name: string, x: PathItem, e: Env, own s: St): own St {
+  let acc = s.found[0];
+  return run_paths(update, rebase_path(x, acc), e.with(name, x.value), (u: PathItem, own t: St): own St => St { ...t, found: [u] }, St { ...s, found: [off_path(x, json.JNull, true)] });
 }
 
 function paths_alt(a: filter.Ast, b: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
