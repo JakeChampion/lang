@@ -989,7 +989,7 @@ function p_variant(type_name: string, binding: string): ast.Pattern {
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  return ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
+  return ast.PatVariant { record_syntax: false, scalar_cells: [], scalar_binding: false, bare_name: false, type_name: type_name, binding: binding, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
 }
 
 function p_variant_n(type_name: string, prefix: string, n: i32): ast.Pattern {
@@ -1005,7 +1005,7 @@ function p_variant_n(type_name: string, prefix: string, n: i32): ast.Pattern {
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  return ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
+  return ast.PatVariant { record_syntax: false, scalar_cells: [], scalar_binding: false, bare_name: false, type_name: type_name, binding: prefix + "0", extra_bindings: extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
 }
 
 function fold_lit_cond(pat: ast.Pattern, guard: ast.Expr, has_guard: boolean): (ast.Pattern, ast.Expr, boolean) {
@@ -3441,7 +3441,7 @@ function with_sugar_origin(st: ast.Stmt, origin: string, else_chained: boolean):
 function p_tuple_carrier(kinds: i32[], binds: string[], lits: ast.Expr[], pats: ast.Pattern[]): ast.Pattern {
   let no_extra: string[] = [];
   let no_nested: ast.Pattern[] = [];
-  return ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: "", binding: "", extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: kinds, tup_binds: binds, tup_lits: lits, tup_pats: pats, rest_written: false };
+  return ast.PatVariant { record_syntax: false, scalar_cells: [], scalar_binding: false, bare_name: false, type_name: "", binding: "", extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: kinds, tup_binds: binds, tup_lits: lits, tup_pats: pats, rest_written: false };
 }
 
 function parse_tuple_arm_pattern(p: Par): (i32[], string[], ast.Expr[], ast.Pattern[], Par) {
@@ -5093,7 +5093,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     }
   }
   let no_fields: string[] = [];
-  return (ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: bare_name, type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: no_fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: tup_kinds, tup_binds: tup_binds, tup_lits: tup_lits, tup_pats: tup_pats, rest_written: false }, p);
+  return (ast.PatVariant { record_syntax: false, scalar_cells: [], scalar_binding: false, bare_name: bare_name, type_name: name, binding: binding, extra_bindings: extra_bindings, nested: nested, at_binding: at_binding, field_names: no_fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: tup_kinds, tup_binds: tup_binds, tup_lits: tup_lits, tup_pats: tup_pats, rest_written: false }, p);
 }
 
 function parse_record_variant_pattern(p: Par, name: string, at_binding: string): (ast.Pattern, Par) {
@@ -5127,7 +5127,7 @@ function parse_record_variant_pattern(p: Par, name: string, at_binding: string):
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  return (ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: name, binding: binding, extra_bindings: extra, nested: nested, at_binding: at_binding, field_names: sap.fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: sap.rest_written }, sp);
+  return (ast.PatVariant { record_syntax: true, scalar_cells: [], scalar_binding: false, bare_name: false, type_name: name, binding: binding, extra_bindings: extra, nested: nested, at_binding: at_binding, field_names: sap.fields, lit_cond: lit_cond, has_lit_cond: has_lit_cond, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: sap.rest_written }, sp);
 }
 
 function and_cond(acc: ast.Expr, has_acc: boolean, one: ast.Expr): ast.Expr {
@@ -5615,7 +5615,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
     let t_nb: string[] = [];
     let t_nl: ast.Expr[] = [];
     let t_np: ast.Pattern[] = [];
-    let t_merged: ast.Pattern = ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: vn, binding: tmp, extra_bindings: t_no_extra, nested: t_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: t_nk, tup_binds: t_nb, tup_lits: t_nl, tup_pats: t_np, rest_written: false };
+    let t_merged: ast.Pattern = ast.PatVariant { record_syntax: false, scalar_cells: [], scalar_binding: false, bare_name: false, type_name: vn, binding: tmp, extra_bindings: t_no_extra, nested: t_no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: t_nk, tup_binds: t_nb, tup_lits: t_nl, tup_pats: t_np, rest_written: false };
     let t_body: ast.Stmt[] = [tmatch];
     return ast.MatchArm { pattern: t_merged, body: t_body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false };
   }
@@ -5627,7 +5627,7 @@ function build_merged_arm(vn: string, arms: ast.MatchArm[], lo: i32, hi: i32, fa
   let no_tup_binds: string[] = [];
   let no_tup_lits: ast.Expr[] = [];
   let no_tup_pats: ast.Pattern[] = [];
-  let merged_pat: ast.Pattern = ast.PatVariant { scalar_cells: [], scalar_binding: false, bare_name: false, type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
+  let merged_pat: ast.Pattern = ast.PatVariant { record_syntax: false, scalar_cells: [], scalar_binding: false, bare_name: false, type_name: vn, binding: tmp, extra_bindings: no_extra, nested: no_nested, at_binding: "", field_names: [], lit_cond: e_bool(true), has_lit_cond: false, tup_kinds: no_tup_kinds, tup_binds: no_tup_binds, tup_lits: no_tup_lits, tup_pats: no_tup_pats, rest_written: false };
   let body: ast.Stmt[] = [inner_match];
   return ast.MatchArm { pattern: merged_pat, body: body, line: gp_line, col: gp_col, guard: e_bool(true), has_guard: false, alt_cont: false };
 }
@@ -13162,7 +13162,7 @@ function same_names(a: string[], b: string[]): boolean {
 }
 
 pub function is_record_pattern(pv: ast.PatVariant): boolean {
-  return pv.field_names.len() > 0 || pv.rest_written;
+  return pv.record_syntax;
 }
 
 pub function record_pattern_settles(decl_names: string[], pv: ast.PatVariant): boolean {
@@ -13206,7 +13206,7 @@ pub function rebind_record_positional(pv: ast.PatVariant, decl_names: string[]):
   }
   let (binding, extra) = split_payload_slots(slots);
   let no_names: string[] = [];
-  return ast.PatVariant { ...pv, binding: binding, extra_bindings: extra, nested: nested, field_names: no_names, rest_written: false };
+  return ast.PatVariant { ...pv, binding: binding, extra_bindings: extra, nested: nested, field_names: no_names, record_syntax: false, rest_written: false };
 }
 
 pub function resolve_record_pattern(pv: ast.PatVariant, decl_names: string[]): ast.PatVariant {
