@@ -1300,14 +1300,25 @@ function repeat_to(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue,
 
 // jq 1.7: `def _while: if cond then ., (update | _while) else empty end`.
 function while_to(v: json.JsonValue, cond: filter.Ast, update: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  return run(cond, v, e, (c: json.JsonValue, own s: St): own St => while_body(v, c, cond, update, e, k, s), st);
+  if (st.calls >= BOUNCE_EVERY) {
+    return bounce(st, (own s: St): own St => while_to(v, cond, update, e, k, s));
+  }
+  return run(cond, v, e, (c: json.JsonValue, own s: St): own St => while_body(v, c, cond, update, e, k, s), St { ...st, calls: st.calls + 1 });
 }
 
 function while_body(v: json.JsonValue, c: json.JsonValue, cond: filter.Ast, update: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   if (!truthy(c)) {
     return st;
   }
-  let s = drive(k(v, st));
+  return while_update(v, cond, update, e, k, k(v, st));
+}
+
+// Yield the current value before evaluating its update. A downstream
+// break or error can stop the update after the sink resumes.
+function while_update(v: json.JsonValue, cond: filter.Ast, update: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => while_update(v, cond, update, e, k, t)) };
+  }
   if (s.sig != OK) {
     return s;
   }

@@ -220,6 +220,8 @@ func jqSuiteCase(t *testing.T, bin, ref, modules string, c jqCase) bool {
 func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
 	bin := buildJq(t)
 	for _, c := range []struct{ program, want string }{
+		{`[0 | while(. < 25000; . + 1)] | length`, "25000"},
+		{`def f: if . == 0 then . else .-1 | f end; first(0 | while(true; error("unused")) | 25001 | f)`, "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) end; 3000000 | f", "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) + 1 end; 3000000 | f", "3000000"},
 		{"def f($n): if $n == 0 then . else f($n - 1) end; 7 | f(1000000)", "7"},
