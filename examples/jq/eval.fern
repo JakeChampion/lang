@@ -863,13 +863,20 @@ function logic_right(is_or: boolean, l: json.JsonValue, b: filter.Ast, input: js
 // of `b` when `a` has none. The top of the stack says whether `a` gave one.
 function run_alt(a: filter.Ast, b: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let depth = st.stack.len();
-  let s = drive(run(a, input, e, (v: json.JsonValue, own s1: St): own St => alt_out(v, depth, k, s1), St { ...st, stack: st.stack.append(json.JBool(false)) }));
+  let s = run(a, input, e, (v: json.JsonValue, own s1: St): own St => alt_out(v, depth, k, s1), St { ...st, stack: st.stack.append(json.JBool(false)) });
+  return finish_alt(depth, (own t: St): own St => run(b, input, e, k, t), s);
+}
+
+function finish_alt(depth: i32, fallback: (own St) => own St, own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => finish_alt(depth, fallback, t)) };
+  }
   let gave = truthy(s.stack[depth]);
   let t = St { ...s, stack: s.stack.truncate(depth) };
   if (t.sig != OK || gave) {
     return t;
   }
-  return run(b, input, e, k, t);
+  return fallback(t);
 }
 
 function alt_out(v: json.JsonValue, depth: i32, k: (json.JsonValue, own St) => own St, own s: St): own St {
@@ -1418,8 +1425,16 @@ function limit_to(n: json.JsonValue, f: filter.Ast, input: json.JsonValue, e: En
   }
   let (id, s) = new_label(st);
   let depth = s.stack.len();
-  let t = drive(run(f, input, e, (v: json.JsonValue, own s1: St): own St => limit_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(n) }));
-  return ended(id, St { ...t, stack: t.stack.truncate(depth) });
+  let t = run(f, input, e, (v: json.JsonValue, own s1: St): own St => limit_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(n) });
+  return finish_counted(id, depth, t);
+}
+
+// Restore the count's stack slot after the generator and its sinks finish.
+function finish_counted(id: i32, depth: i32, own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => finish_counted(id, depth, t)) };
+  }
+  return ended(id, St { ...s, stack: s.stack.truncate(depth) });
 }
 
 function limit_out(v: json.JsonValue, id: i32, depth: i32, k: (json.JsonValue, own St) => own St, own s: St): own St {
@@ -1428,9 +1443,9 @@ function limit_out(v: json.JsonValue, id: i32, depth: i32, k: (json.JsonValue, o
     return raised(s, less.error[0]);
   }
   let left = less.values[0];
-  let t = drive(k(v, St { ...s, stack: s.stack.with(depth, left) }));
-  if (t.sig == OK && order(left, whole(0)) <= 0) {
-    return broken(t, id);
+  let t = k(v, St { ...s, stack: s.stack.with(depth, left) });
+  if (order(left, whole(0)) <= 0) {
+    return then_break(t, id);
   }
   return t;
 }
@@ -1447,8 +1462,8 @@ function nth_to(n: json.JsonValue, f: filter.Ast, input: json.JsonValue, e: Env,
   }
   let (id, s) = new_label(st);
   let depth = s.stack.len();
-  let t = drive(run(f, input, e, (v: json.JsonValue, own s1: St): own St => nth_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(start.values[0]) }));
-  return ended(id, St { ...t, stack: t.stack.truncate(depth) });
+  let t = run(f, input, e, (v: json.JsonValue, own s1: St): own St => nth_out(v, id, depth, k, s1), St { ...s, stack: s.stack.append(start.values[0]) });
+  return finish_counted(id, depth, t);
 }
 
 function nth_out(v: json.JsonValue, id: i32, depth: i32, k: (json.JsonValue, own St) => own St, own s: St): own St {
@@ -1461,7 +1476,7 @@ function nth_out(v: json.JsonValue, id: i32, depth: i32, k: (json.JsonValue, own
   if (order(left, whole(0)) > 0) {
     return t;
   }
-  return then_break(drive(k(v, t)), id);
+  return then_break(k(v, t), id);
 }
 
 // A field lookup gives exactly one value or an error. Its keys compare
@@ -2089,13 +2104,8 @@ function paths_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, it: P
 
 function paths_alt(a: filter.Ast, b: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
   let depth = st.stack.len();
-  let s = drive(run_paths(a, it, e, (x: PathItem, own s1: St): own St => if (truthy(x.value)) { k(x, St { ...s1, stack: s1.stack.with(depth, json.JBool(true)) }) } else { s1 }, St { ...st, stack: st.stack.append(json.JBool(false)) }));
-  let gave = truthy(s.stack[depth]);
-  let t = St { ...s, stack: s.stack.truncate(depth) };
-  if (t.sig != OK || gave) {
-    return t;
-  }
-  return run_paths(b, it, e, k, t);
+  let s = run_paths(a, it, e, (x: PathItem, own s1: St): own St => if (truthy(x.value)) { k(x, St { ...s1, stack: s1.stack.with(depth, json.JBool(true)) }) } else { s1 }, St { ...st, stack: st.stack.append(json.JBool(false)) });
+  return finish_alt(depth, (own t: St): own St => run_paths(b, it, e, k, t), s);
 }
 
 // jq keeps the value of the state of a `foreach` and not its path. Each
@@ -2190,8 +2200,8 @@ function paths_limit(n: json.JsonValue, f: filter.Ast, it: PathItem, e: Env, k: 
   }
   let (id, s) = new_label(st);
   let depth = s.stack.len();
-  let t = drive(run_paths(f, it, e, (x: PathItem, own s1: St): own St => paths_limit_out(x, id, depth, k, s1), St { ...s, stack: s.stack.append(n) }));
-  return ended(id, St { ...t, stack: t.stack.truncate(depth) });
+  let t = run_paths(f, it, e, (x: PathItem, own s1: St): own St => paths_limit_out(x, id, depth, k, s1), St { ...s, stack: s.stack.append(n) });
+  return finish_counted(id, depth, t);
 }
 
 function paths_limit_out(x: PathItem, id: i32, depth: i32, k: (PathItem, own St) => own St, own s: St): own St {
@@ -2200,9 +2210,9 @@ function paths_limit_out(x: PathItem, id: i32, depth: i32, k: (PathItem, own St)
     return raised(s, less.error[0]);
   }
   let left = less.values[0];
-  let t = drive(k(x, St { ...s, stack: s.stack.with(depth, left) }));
-  if (t.sig == OK && order(left, whole(0)) <= 0) {
-    return broken(t, id);
+  let t = k(x, St { ...s, stack: s.stack.with(depth, left) });
+  if (order(left, whole(0)) <= 0) {
+    return then_break(t, id);
   }
   return t;
 }
