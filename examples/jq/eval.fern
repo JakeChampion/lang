@@ -468,7 +468,7 @@ function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, o
     },
     filter.Label(name, body) => {
       let id = st.labels;
-      return ended(id, drive(run(body, input, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 })));
+      return ended(id, run(body, input, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 }));
     },
     filter.Break(name) => {
       let found = lookup(e, filter.label_var(name));
@@ -621,6 +621,9 @@ function run_branch(cond: filter.Ast, yes: filter.Ast, no: filter.Ast, input: js
 
 // The state after the body of the label `id`: its own `break` ends it.
 function ended(id: i32, own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => ended(id, t)) };
+  }
   if (s.sig == BREAK && s.brk == id) {
     return St { ...s, sig: OK };
   }
@@ -1010,7 +1013,7 @@ function call1(name: string, arg: filter.Ast, input: json.JsonValue, e: Env, k: 
     },
     "first" => {
       let (id, s) = new_label(st);
-      return ended(id, drive(run(arg, input, e, (v: json.JsonValue, own s1: St): own St => then_break(drive(k(v, s1)), id), s)));
+      return ended(id, run(arg, input, e, (v: json.JsonValue, own s1: St): own St => then_break(k(v, s1), id), s));
     },
     "last" => {
       return last_of(arg, input, e, k, st);
@@ -1110,6 +1113,9 @@ function entries_to(v: json.JsonValue, k: (json.JsonValue, own St) => own St, ow
 
 // The state after an output of `first`: the output ends the label `id`.
 function then_break(own s: St, id: i32): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => then_break(t, id)) };
+  }
   if (s.sig != OK) {
     return s;
   }
@@ -1981,7 +1987,7 @@ function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =
     },
     filter.Label(name, body) => {
       let id = st.labels;
-      return ended(id, drive(run_paths(body, it, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 })));
+      return ended(id, run_paths(body, it, e.with(filter.label_var(name), whole(id)), k, St { ...st, labels: id + 1 }));
     },
     filter.Var(_) => {
       return paths_plain(f, it, e, true, k, st);
@@ -2128,7 +2134,8 @@ function paths_call(name: string, args: filter.Ast[], it: PathItem, e: Env, k: (
       return path_step(it, whole(-1), false, k, st);
     },
     "first/1" => {
-      return paths_limit(whole(1), args[0], it, e, k, st);
+      let (id, s) = new_label(st);
+      return ended(id, run_paths(args[0], it, e, (v: PathItem, own s1: St): own St => then_break(k(v, s1), id), s));
     },
     "limit/2" => {
       return run(args[0], it.value, e, (n: json.JsonValue, own s: St): own St => paths_limit(n, args[1], it, e, k, s), st);
