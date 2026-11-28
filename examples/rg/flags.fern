@@ -611,8 +611,8 @@ function set_style_text(o: Options, name: string, flag: string, value: string): 
     "colors" => in_flag(flag, colors.apply(o.colors, value)).map((c: colors.Colors): Options => Options { ...o, colors: c }),
     "hyperlink-format" => in_flag(flag + ": invalid hyperlink format", hyperlink.parse(value)).map((f: hyperlink.Format): Options => Options { ...o, hyperlink: f }),
     "hostname-bin" => Ok(Options { ...o, hostname_bin: value }),
-    "field-context-separator" => separator(flag, value).map((v: string): Options => Options { ...o, field_context: v }),
-    "field-match-separator" => separator(flag, value).map((v: string): Options => Options { ...o, field_match: v }),
+    "field-context-separator" => Ok(Options { ...o, field_context: unescape(value) }),
+    "field-match-separator" => Ok(Options { ...o, field_match: unescape(value) }),
     _ => set_late_text(o, name, flag, value),
   };
 }
@@ -644,14 +644,6 @@ function set_engine(o: Options, flag: string, value: string): Result[Options, st
   return Ok(Options { ...o, engine: value });
 }
 
-// A field separator with its escapes made bytes.
-function separator(flag: string, value: string): Result[string, string] {
-  if (encoding.invalid_at(value) >= 0) {
-    return Err("error parsing flag " + flag + ": separator must be valid UTF-8 (use escape sequences to provide a separator that is not valid UTF-8)");
-  }
-  return Ok(unescape(value));
-}
-
 // The flags whose value is text for the search: -e, -f, -r and -E.
 function set_search_text(o: Options, name: string, flag: string, value: string): Result[Options, string] {
   return match (name) {
@@ -676,6 +668,15 @@ function set_encoding(o: Options, flag: string, value: string): Result[Options, 
 }
 
 function set_value(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  // Paths can contain arbitrary bytes. Other flag values must be UTF-8.
+  if (encoding.invalid_at(value) >= 0) {
+    if (name == "context-separator" || name == "field-context-separator" || name == "field-match-separator") {
+      return Err("error parsing flag " + flag + ": separator must be valid UTF-8 (use escape sequences to provide a separator that is not valid UTF-8)");
+    }
+    if (name != "file" && name != "ignore-file" && name != "hostname-bin" && name != "pre") {
+      return Err("error parsing flag " + flag + ": value is not valid UTF-8");
+    }
+  }
   if (name == "sort" || name == "sortr") {
     return set_sort(o, name, flag, value);
   }
