@@ -247,14 +247,86 @@ function task_return_result(lifts: watbin.AsyncLift[], name: string): Option[i32
   return None;
 }
 
+pub struct ExportDecl { iface: string, name: string, params: string[], result: string }
+
+function primitive_name(v: i32): string {
+  let names: string[] = ["boolean", "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64", "f32", "f64", "char", "string"];
+  return if (v < 0 && v >= -names.len()) { names[-1 - v] } else { "" };
+}
+
+// Exported function types live in their interface's type space. Rebuild
+// primitive lists in the component type space before encoding the signature.
+function export_val(w: WorldWired, tbody: i32[], scope: wit_decode.WitScope, v: i32, fern: string): (WorldWired, i32, boolean) {
+  if (v < 0) {
+    if (primitive_name(v) != fern) {
+      return (refuse(w, "WIT expects " + primitive_name(v) + " where Fern declares " + fern), v, false);
+    }
+    return (w, v, v == -13);
+  }
+  if (v < scope.offs.len() && scope.offs[v] >= 0) {
+    let d = wit_decode.wit_decode_def(tbody, scope.offs[v]).def;
+    if (d.tag == 112 && (d.elem == -1 || d.elem == -3 || d.elem <= -6 && d.elem >= -11)) {
+      if (primitive_name(d.elem) + "[]" != fern) {
+        return (refuse(w, "WIT expects a list of " + primitive_name(d.elem) + " where Fern declares " + fern), v, false);
+      }
+      let sec = watbin.wsection(7, watbin.leb_i32([1, 112], d.elem));
+      return (WorldWired { ...w, o: util.append_all(w.o, sec), n_type: w.n_type + 1 }, w.n_type, true);
+    }
+  }
+  return (refuse(w, "the synchronous export type is outside the scalar, string and numeric or boolean list bridge"), v, false);
+}
+
+function export_type(w: WorldWired, tbody: i32[], decl: ExportDecl): (WorldWired, watbin.SyncLift) {
+  let lift = watbin.SyncLift { iface: decl.iface, name: decl.name, ty: 0, heap_arg: false, heap_result: false };
+  let lookup = wit_decode.wit_iface_func_lookup(tbody, decl.iface, decl.name, true);
+  if (!lookup.found) {
+    return (refuse(w, "world does not export " + decl.iface + "#" + decl.name), lift);
+  }
+  let f = wit_decode.wit_decode_func(tbody, lookup.off).fn;
+  let vals: i32[] = [];
+  if (f.p_vals.len() != decl.params.len()) {
+    return (refuse(w, "WIT and Fern declare a different number of parameters"), lift);
+  }
+  for i in 0..f.p_vals.len() {
+    let (next, val, heap) = export_val(w, tbody, lookup.scope, f.p_vals[i], decl.params[i]);
+    w = next;
+    vals = vals.append(val);
+    lift = watbin.SyncLift { ...lift, heap_arg: lift.heap_arg || heap };
+  }
+  f = wit_decode.WitFunc { ...f, p_vals: vals };
+  if (f.named == 0) {
+    let (next, val, heap) = export_val(w, tbody, lookup.scope, f.result, decl.result);
+    w = next;
+    f = wit_decode.WitFunc { ...f, result: val };
+    lift = watbin.SyncLift { ...lift, heap_result: heap };
+  } else if (f.r_vals.len() > 0 || decl.result != "" && decl.result != "void") {
+    return (refuse(w, "WIT and Fern declare different results"), lift);
+  }
+  let section = watbin.wsection(7, wit_decode.wit_encode_func([1], f));
+  return (WorldWired { ...w, o: util.append_all(w.o, section), n_type: w.n_type + 1 }, watbin.SyncLift { ...lift, ty: w.n_type });
+}
+
 pub function compose_run(tbody: i32[], core: i32[], asy: watbin.AsyncSurface): Composed {
+  return compose_run_exports(tbody, core, asy, []);
+}
+
+pub function compose_run_exports(tbody: i32[], core: i32[], asy: watbin.AsyncSurface, exports: ExportDecl[]): Composed {
   let ci = wit_decode.wit_core_func_imports(core);
   let w = wire_world(tbody, ci, [], [], asy);
   if (w.refused.len() > 0) {
     return Composed { bytes: [], refused: w.refused };
   }
+  let lifts: watbin.SyncLift[] = [];
+  for decl in exports {
+    let (next, lift) = export_type(w, tbody, decl);
+    if (next.refused.len() > 0) {
+      return Composed { bytes: [], refused: decl.iface + "#" + decl.name + ": " + next.refused };
+    }
+    w = next;
+    lifts = lifts.append(lift);
+  }
   let o = util.append_all(w.o, watbin.comp_core_module_section(core));
-  o = util.append_all(o, watbin.component_suffix(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.n_inst, 0, "_lang_run", asy.lifts));
+  o = util.append_all(o, watbin.component_suffix_exports(ci.ifaces, ci.names, w.kinds, w.insts, ci.params, ci.results, w.rts, w.n_type, w.n_inst, 0, "_lang_run", asy.lifts, lifts));
   return Composed { bytes: o, refused: "" };
 }
 

@@ -33,6 +33,13 @@ function main(): i32 { return run(); }`
 }
 
 func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
+	t.Run("u32", func(t *testing.T) { runScalarExport(t, "i32", "u32", "add(20u32, 3u32) == 23u32") })
+	t.Run("f32", func(t *testing.T) { runScalarExport(t, "f32", "f32", "add(0.25f32, 1.5f32) == 1.75f32") })
+}
+
+func runScalarExport(t *testing.T, providerType, witType, check string) {
+	t.Helper()
+	mathWIT := "package local:test@0.1.0;\ninterface math { add: func(a: " + witType + ", b: " + witType + ") -> " + witType + "; }\n"
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -54,7 +61,7 @@ func TestSelfHostExportScalarRunsViaConsumer(t *testing.T) {
 	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/math@0.1.0", "add")
-function add(a: i32, b: i32): i32 { return a + b; }
+function add(a: ` + providerType + `, b: ` + providerType + `): ` + providerType + ` { return a + b; }
 
 function main(): i32 { return 0; }`
 	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
@@ -81,7 +88,7 @@ function main(): i32 { return 0; }`
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(expWit, "deps", "test", "math.wit"),
-		[]byte("package local:test@0.1.0;\ninterface math { add: func(a: u32, b: u32) -> u32; }\n"), 0o644); err != nil {
+		[]byte(mathWIT), 0o644); err != nil {
 		t.Fatalf("write math dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(expWit, "world.wit"),
@@ -117,7 +124,7 @@ function main(): i32 { return 0; }`
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "deps", "test", "math.wit"),
-		[]byte("package local:test@0.1.0;\ninterface math { add: func(a: u32, b: u32) -> u32; }\n"), 0o644); err != nil {
+		[]byte(mathWIT), 0o644); err != nil {
 		t.Fatalf("write math dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
@@ -136,10 +143,10 @@ function main(): i32 { return 0; }`
 	}
 	const want = "export-ok"
 	userSrc := `@import("local:test/math@0.1.0", "add")
-function add(a: u32, b: u32): u32;
+function add(a: ` + witType + `, b: ` + witType + `): ` + witType + `;
 
 function main(): i32 {
-	if (add(20 as u32, 3 as u32) == 23 as u32) { write("` + want + `"); } else { write("export-bad"); }
+	if (` + check + `) { write("` + want + `"); } else { write("export-bad"); }
 	return 0;
 }`
 	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
@@ -321,6 +328,12 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 	exporterSrc := `@export("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32 { return s.len(); }
 
+@export("local:test/strings@0.1.0", "double")
+function twice(b: i32): i32 { return b + b; }
+
+@export("local:test/numbers@0.1.0", "half")
+function half(b: i32): i32 { return b / 2; }
+
 function main(): i32 { return 0; }`
 	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/strings@0.1.0#len-of")) {
@@ -346,11 +359,11 @@ function main(): i32 { return 0; }`
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(expWit, "deps", "test", "strings.wit"),
-		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; }\n"), 0o644); err != nil {
+		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; double: func(b: u32) -> u32; }\ninterface numbers { half: func(b: u32) -> u32; }\n"), 0o644); err != nil {
 		t.Fatalf("write strings dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(expWit, "world.wit"),
-		[]byte("package local:exporter@0.0.0;\nworld m {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    export local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:exporter@0.0.0;\nworld m {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    export local:test/strings@0.1.0;\n    export local:test/numbers@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write exporter wit: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ee.wat", "(module)"), "-o", filepath.Join(dir, "ee.wasm"))
@@ -382,11 +395,11 @@ function main(): i32 { return 0; }`
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "deps", "test", "strings.wit"),
-		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; }\n"), 0o644); err != nil {
+		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; double: func(b: u32) -> u32; }\ninterface numbers { half: func(b: u32) -> u32; }\n"), 0o644); err != nil {
 		t.Fatalf("write strings dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/strings@0.1.0;\n    import local:test/numbers@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))
@@ -403,9 +416,16 @@ function main(): i32 { return 0; }`
 	userSrc := `@import("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32;
 
+@import("local:test/strings@0.1.0", "double")
+function twice(b: i32): i32;
+
+@import("local:test/numbers@0.1.0", "half")
+function half(b: i32): i32;
+
 function main(): i32 {
 	let text = "` + strings.Repeat("abcdefgh", 16) + `";
 	for i in 0..12000 {
+		if (twice(21) != 42 || half(42) != 21) { write("double-bad"); return 1; }
 		if (len_of(text) != 128) { write("len-bad"); return 1; }
 	}
 	write("` + want + `");

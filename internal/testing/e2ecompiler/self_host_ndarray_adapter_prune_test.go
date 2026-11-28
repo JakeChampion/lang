@@ -36,6 +36,10 @@ function main(): i32 {
   let implicit = [body("ndarray__Record.method", []), body("__runtime", [])];
   let routed = bodies.with(1, body("", [ir.op_call_direct("ndarray__Record.method", 0), ir.op_call_direct("__runtime", 0)]));
   if (semndprune.unused_adapter(mod, routed, implicit).extra.len() != 2) { return 7; }
+  let short = semndprune.unused_adapter_mapped(mod, [bodies[0]], extra);
+  if (short.result.bodies.len() != 1 || short.result.extra.len() != 3 || short.extra_indices.len() != 3 || short.extra_indices[0] != 0 || short.extra_indices[1] != 1 || short.extra_indices[2] != 2) { return 8; }
+  let mapped = semndprune.unused_adapter_mapped(mod, bodies, extra);
+  if (mapped.extra_indices.len() != 1 || mapped.extra_indices[0] != 2) { return 9; }
   return 0;
 }`
 	gcc, runner := x86_64Tooling(t)

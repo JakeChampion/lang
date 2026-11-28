@@ -856,9 +856,18 @@ function dot(f: Frame, x: i32, y: i32, scale: i32, color: i32, a: i32): void {
 }
 
 function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
+  let right = x as i64 + font.CELL_W as i64 * (scale as i64);
+  let bottom = y as i64 + font.CELL_H as i64 * (scale as i64);
+  if (scale <= 0 || right <= 0 || bottom <= 0 || x >= f.width || y >= f.height) {
+    return;
+  }
+  let x0 = if (x < 0) { (-(x as i64) / (scale as i64)) as i32 } else { 0 };
+  let y0 = if (y < 0) { (-(y as i64) / (scale as i64)) as i32 } else { 0 };
+  let x1 = if (right > f.width as i64) { ((f.width as i64 - x as i64 - 1i64) / (scale as i64) + 1i64) as i32 } else { font.CELL_W };
+  let y1 = if (bottom > f.height as i64) { ((f.height as i64 - y as i64 - 1i64) / (scale as i64) + 1i64) as i32 } else { font.CELL_H };
   let g = font.glyph_index(c);
-  for gy in 0..font.CELL_H {
-    for gx in 0..font.CELL_W {
+  for gy in y0..y1 {
+    for gx in x0..x1 {
       let a = font.glyph_coverage(g, gx, gy);
       if (a > 0) {
         let px = x + gx * scale;

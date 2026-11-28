@@ -650,7 +650,15 @@ function finish_each(saved: json.JsonValue[], k: (json.JsonValue, own St) => own
 // last call.
 function run_branch(cond: filter.Ast, yes: filter.Ast, no: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.items;
-  let c = drive(collected(cond, input, e, st));
+  let c = collected(cond, input, e, st);
+  if (c.sig == BOUNCE) {
+    let finish = (own t: St): own St => finish_branch(yes, no, input, e, k, saved, t);
+    return St { ...c, next: c.next.append(finish) };
+  }
+  return finish_branch(yes, no, input, e, k, saved, c);
+}
+
+function finish_branch(yes: filter.Ast, no: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, saved: json.JsonValue[], own c: St): own St {
   let taken = c.items.len() > 0 && truthy(c.items[0]);
   let given = c.items.len() > 0;
   let s = St { ...c, items: saved };

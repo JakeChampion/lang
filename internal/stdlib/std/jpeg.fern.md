@@ -131,14 +131,16 @@ function zigzag(): i32[] {
 
 // A Huffman table in canonical form: for each code length, the largest
 // code, and the index of the first symbol of the length minus its first
-// code.
-struct Huffman { maxcode: i32[], offset: i32[], symbols: i32[], ok: boolean }
+// code. The eight-bit prefix table packs the length and symbol of each
+// short code. A zero entry continues the canonical search at length nine.
+struct Huffman { prefix: i32[], maxcode: i32[], offset: i32[], symbols: i32[], ok: boolean }
 
 function no_table(): Huffman {
-  return Huffman { maxcode: [], offset: [], symbols: [], ok: false };
+  return Huffman { prefix: [], maxcode: [], offset: [], symbols: [], ok: false };
 }
 
 function huffman(counts: i32[], symbols: i32[]): Huffman {
+  let prefix = __alloc_i32(256);
   let maxcode: i32[] = [];
   let offset: i32[] = [];
   let code = 0;
@@ -146,6 +148,20 @@ function huffman(counts: i32[], symbols: i32[]): Huffman {
   for len in 0..16 {
     let n = counts[len];
     offset = offset.append(k - code);
+    if (len < 8) {
+      let shift = 7 - len;
+      for j in 0..n {
+        let start = code + j << shift;
+        if (start >= 256) {
+          break;
+        }
+        let symbol = if (k + j < symbols.len()) { symbols[k + j] } else { 0 };
+        let entry = len + 1 << 8 | symbol;
+        for slot in start..start + (1 << shift) {
+          prefix = prefix.with(slot, entry);
+        }
+      }
+    }
     code += n;
     k += n;
     if (n > 0) {
@@ -155,7 +171,7 @@ function huffman(counts: i32[], symbols: i32[]): Huffman {
     }
     code <<= 1;
   }
-  return Huffman { maxcode: maxcode, offset: offset, symbols: symbols, ok: true };
+  return Huffman { prefix: prefix, maxcode: maxcode, offset: offset, symbols: symbols, ok: true };
 }
 
 // A component of the frame: its sampling factors, its quantization table,
@@ -233,8 +249,15 @@ function decode(b: [u8], own s: Bits, t: Huffman): (Bits, i32) {
   if (!t.ok) {
     return (st, 0);
   }
-  let code = 0;
-  for len in 0..16 {
+  let (next, leading) = bits(b, st, 8);
+  let entry = t.prefix[leading];
+  if (entry != 0) {
+    // Keep the peeked bits beyond the length of this code in the buffer.
+    return (Bits { ...next, cnt: next.cnt + 8 - (entry >> 8) }, entry & 255);
+  }
+  st = next;
+  let code = leading;
+  for len in 8..16 {
     let (next, bit) = bits(b, st, 1);
     st = next;
     code = code << 1 | bit;
