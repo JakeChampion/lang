@@ -10774,6 +10774,25 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): 
 
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind = r.ops[ins.imm].kind_tag;
+  if (kind == ir.K_PTR_WIDTH || ir.is_sha_hw_op(kind)) {
+    if (reg_of[ins.result] == -1) {
+      return s;
+    }
+    let value = if (kind == ir.K_PTR_WIDTH) { 8i64 } else if (s.sha_ext || kind == ir.K_SHA1X8_HW) { 1i64 } else { 0i64 };
+    return ssa_imm_to(value, reg_of[ins.result], asmcore.ssa_x0_forget(s));
+  }
+  if (kind == ir.K_STORAGE_BYTES || kind == ir.K_ARR_RC) {
+    let d = ssa_dst(reg_of, ins.result);
+    let a = ssa_src(reg_of, ins.args[0], d);
+    s = ssa_load(reg_of, ins.args[0], a, s);
+    if (kind == ir.K_STORAGE_BYTES) {
+      s = ssa_mov_rm(s, 64, true, d, a, -16);
+      s = s.write("    shlq $3, " + d + "\n");
+    } else {
+      s = s.write("    movslq -8(" + a + "), " + d + "\n");
+    }
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (kind == ir.K_TCP_POLLABLE) {
     s = asmcore.ssa_x0_forget(s);
     let d = ssa_dst(reg_of, ins.result);
@@ -13365,12 +13384,7 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     return s;
   }
 
-  if (o.kind_tag == ir.K_PTR_WIDTH) {
-    s = s.write("    pushq $8\n");
-  } else if (ir.is_sha_hw_op(o.kind_tag)) {
-    let on = s.sha_ext || o.kind_tag == ir.K_SHA1X8_HW;
-    s = s.write(if (on) { "    pushq $1\n" } else { "    pushq $0\n" });
-  } else if (o.kind_tag == ir.K_MEMCPY) {
+  if (o.kind_tag == ir.K_MEMCPY) {
     s = s.write(ir_memcpy_asm()).need("memcpy");
   } else if (o.kind_tag == ir.K_MEMSET) {
     s = s.write(ir_memset_asm());
@@ -13386,10 +13400,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     }
     s = s.write("    pushq $0\n");
     s = s.need("heap");
-  } else if (o.kind_tag == ir.K_STORAGE_BYTES) {
-    s = s.write("    popq %rax\n    movq -16(%rax), %rax\n    shlq $3, %rax\n    pushq %rax\n");
-  } else if (o.kind_tag == ir.K_ARR_RC) {
-    s = s.write("    popq %rax\n    movslq -8(%rax), %rax\n    pushq %rax\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {
     s = emit_str_op(o, s);
   } else if (o.kind_tag == ir.K_RANDOM_BYTES) {
