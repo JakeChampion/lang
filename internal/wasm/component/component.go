@@ -2020,30 +2020,34 @@ func PutCanonTaskReturnTypeIdx(buf []byte, typeIdx uint32) []byte {
 }
 
 func PutCanonSectionLiftWithMemory(buf []byte, coreFuncIdx uint32, typeidx uint32, memIdx uint32) []byte {
-	body := []byte{}
-	body = leb128.UlebU64(body, 1)
-	body = append(body, 0x00)
-	body = append(body, 0x00)
-	body = leb128.UlebU64(body, uint64(coreFuncIdx))
-	body = leb128.UlebU64(body, 1)
-	body = append(body, 0x03)
-	body = leb128.UlebU64(body, uint64(memIdx))
-	body = leb128.UlebU64(body, uint64(typeidx))
-	return wrapSection(buf, SectionCanon, body)
+	return putCanonLiftMemory(buf, coreFuncIdx, typeidx, memIdx, nil, nil)
 }
 
 func PutCanonSectionLiftWithMemoryRealloc(buf []byte, coreFuncIdx uint32, typeidx uint32, memIdx uint32, reallocFuncIdx uint32) []byte {
-	body := []byte{}
-	body = leb128.UlebU64(body, 1)
-	body = append(body, 0x00)
-	body = append(body, 0x00)
-	body = leb128.UlebU64(body, uint64(coreFuncIdx))
-	body = leb128.UlebU64(body, 2)
-	body = append(body, 0x03)
-	body = leb128.UlebU64(body, uint64(memIdx))
-	body = append(body, 0x04)
-	body = leb128.UlebU64(body, uint64(reallocFuncIdx))
-	body = leb128.UlebU64(body, uint64(typeidx))
+	return putCanonLiftMemory(buf, coreFuncIdx, typeidx, memIdx, &reallocFuncIdx, nil)
+}
+
+func putCanonLiftMemory(buf []byte, coreFunc, typ, memory uint32, realloc, postReturn *uint32) []byte {
+	body := []byte{1, 0, 0}
+	body = leb128.UlebU64(body, uint64(coreFunc))
+	options := byte(1)
+	if realloc != nil {
+		options++
+	}
+	if postReturn != nil {
+		options++
+	}
+	body = append(body, options, 0x03)
+	body = leb128.UlebU64(body, uint64(memory))
+	if realloc != nil {
+		body = append(body, 0x04)
+		body = leb128.UlebU64(body, uint64(*realloc))
+	}
+	if postReturn != nil {
+		body = append(body, 0x05)
+		body = leb128.UlebU64(body, uint64(*postReturn))
+	}
+	body = leb128.UlebU64(body, uint64(typ))
 	return wrapSection(buf, SectionCanon, body)
 }
 

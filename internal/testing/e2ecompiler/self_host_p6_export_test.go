@@ -238,6 +238,10 @@ function main(): i32 { return 0; }`
 		t.Fatalf("write exporter component: %v", err)
 	}
 	run(wasmtools, "validate", exporter)
+	encoded, err := exec.Command(wasmtools, "print", exporter).CombinedOutput()
+	if err != nil || !bytes.Contains(encoded, []byte("(post-return ")) {
+		t.Fatalf("missing post-return option on the string lift: %v", err)
+	}
 
 	userWit := filepath.Join(dir, "userwit")
 	if err := os.MkdirAll(userWit, 0o755); err != nil {
