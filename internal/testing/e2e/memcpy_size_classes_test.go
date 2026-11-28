@@ -31,7 +31,7 @@ function check(n: i32, soff: i32, doff: i32): i32 {
 function main(): i32 {
     let bad: i32 = 0;
     let n: i32 = 0;
-    while (n <= 96) {
+    while (n <= 136) {
         bad = bad + check(n, 0, 0);
         bad = bad + check(n, 1, 0);
         bad = bad + check(n, 0, 3);
@@ -73,6 +73,12 @@ func TestWASMMemcpySizeClasses(t *testing.T) {
 func TestX86_64MemcpySizeClasses(t *testing.T) {
 	if _, code := compileAndRunX86_64(t, memcpySizeClassesProgram); code != 0 {
 		t.Errorf("x86-64 __memcpy size classes: exit = %d, want 0 (bad byte count)", code)
+	}
+}
+
+func TestArm64MemcpySizeClasses(t *testing.T) {
+	if _, code := compileAndRunArm64(t, memcpySizeClassesProgram); code != 0 {
+		t.Errorf("arm64 __memcpy size classes: exit = %d, want 0 (bad byte count)", code)
 	}
 }
 
