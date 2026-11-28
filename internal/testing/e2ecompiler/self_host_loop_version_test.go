@@ -12,8 +12,9 @@ import (
 // array runs a copy with no checks when one test before the loop shows that
 // every index is in range (#15975). The loop can count up or down by a
 // constant, test a second counter in its body, and leave from more than one
-// block (#15650). An index can be the counter times a constant, and a lane
-// access covers each element that it reads or writes.
+// block (#15650). An index can be the counter times a constant, a lane
+// access covers each element that it reads or writes, and the array can be
+// a view.
 const versionedLoops = `import "std/array";
 struct J { a: i32, b: i32 }
 @noinline function slide(own a: i32[], n: i32): i32[] {
@@ -111,6 +112,24 @@ struct J { a: i32, b: i32 }
   for i in 0..n { s += __u8x16_lane(__u8x16_load(b, i * 16 + off), 15) as i32; }
   return s;
 }
+@noinline function viewed(t: [i32], n: i32): i32 {
+  let s = 0;
+  for i in 0..n { s += t[i * 2 + 1]; }
+  return s;
+}
+@noinline function view_bytes(b: [u8], off: i32, n: i32): i32 {
+  let s = 0;
+  for i in 0..n { s += __u8x16_lane(__u8x16_load_view(b, i * 16 + off), 15) as i32; }
+  return s;
+}
+@noinline function viewed_in(n: i32): i32 {
+  let a = seq(20);
+  return viewed(a[4:14], n);
+}
+@noinline function view_bytes_in(off: i32): i32 {
+  let b = bseq(48);
+  return view_bytes(b[8:40], off, 2);
+}
 @noinline function reverse_into(own b: i32[], a: i32[], n: i32): i32[] {
   for i in 0..n { b = b.with(n - 1 - i, a[i]); }
   return b;
@@ -153,6 +172,7 @@ const versionedMain = `function main(): i32 {
   if (bytes(bseq(32), 0, 2) != 46 || bytes(bseq(40), 8, 2) != 62) { return 14; }
   let r = reverse_into(seq(10), seq(10), 10);
   if (r[0] != 27 || r[9] != 0 || r[4] != 15) { return 15; }
+  if (viewed_in(5) != 135 || view_bytes_in(0) != 62) { return 16; }
   return 0;
 }`
 
@@ -203,6 +223,9 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 				"lanes": "lanes(fseq(8), 4)",
 				"fill":  "fill(fseq(7), 4).len()",
 				"bytes": "bytes(bseq(32), 1, 2)",
+				// Each index past the view is still in the array under it.
+				"viewed":     "viewed_in(6)",
+				"view_bytes": "view_bytes_in(1)",
 			}
 			for name, call := range past {
 				out := versionedLoops + "function main(): i32 { return " + call + "; }"
@@ -228,7 +251,7 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 			for _, c := range []struct {
 				name          string
 				reads, checks int
-			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}, {"scaled", 2, 1}, {"reverse_into", 2, 2}} {
+			}{{"snake", 4, 2}, {"back", 4, 2}, {"diagonals", 4, 4}, {"wraps", 2, 1}, {"scaled", 2, 1}, {"viewed", 2, 1}, {"reverse_into", 2, 2}} {
 				body := asmFunction(string(asm), "__fn_"+c.name+":")
 				if got, checks := len(load.FindAllString(body, -1)), strings.Count(body, "oob_abort"); got != c.reads || checks != c.checks {
 					t.Errorf("%s has %d element reads and %d checks, want %d and %d: two versions of the loop\n%s", c.name, got, checks, c.reads, c.checks, body)

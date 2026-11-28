@@ -1052,12 +1052,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_clamped + ":\n");
     s = s.write("    cmp x2, x3\n    b.ge " + a_none + "\n");
     s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n");
+    // The first 16 bytes go alone, so a short run does not pay for a 64-byte
+    // block. The 16-byte loop finds the byte in a 64-byte block that has one.
+    s = s.write("    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + a_tail + "\n");
+    s = s.write("    ld1 {v0.16b}, [x5]\n    cmlt v0.16b, v0.16b, #0\n");
+    s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+    s = s.write("    cbnz x7, " + a_vec + "_h\n    add x5, x5, #16\n");
+    s = s.write(a_vec + "_w:\n");
+    s = s.write("    sub x7, x6, x5\n    cmp x7, #64\n    b.lt " + a_vec + "\n");
+    s = s.write("    ldp q0, q1, [x5]\n    ldp q2, q3, [x5, #32]\n");
+    s = s.write("    orr v0.16b, v0.16b, v1.16b\n    orr v2.16b, v2.16b, v3.16b\n    orr v0.16b, v0.16b, v2.16b\n");
+    s = s.write("    cmlt v0.16b, v0.16b, #0\n    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+    s = s.write("    cbnz x7, " + a_vec + "\n    add x5, x5, #64\n    b " + a_vec + "_w\n");
     s = s.write(a_vec + ":\n");
     s = s.write("    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + a_tail + "\n");
     s = s.write("    ld1 {v0.16b}, [x5]\n    cmlt v0.16b, v0.16b, #0\n");
     s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
     s = s.write("    cbz x7, " + a_next + "\n");
-    s = s.write("    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
+    s = s.write(a_vec + "_h:\n    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
     s = s.write("    add x5, x5, x4\n    sub x2, x5, x0\n    b " + a_done + "\n");
     s = s.write(a_next + ":\n    add x5, x5, #16\n    b " + a_vec + "\n");
     s = s.write(a_tail + ":\n");
@@ -5441,16 +5453,36 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   return ssa_only_test(fr, h);
 }
 
-// The head has no instruction before its fused test but phis and immediates.
+// The head has no instruction before its fused test but phis, immediates,
+// and constants that the latch loads again (ssa_latch_constants).
 function ssa_only_test(fr: SsaFrame, h: ssa.SBlock): boolean {
   let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
   for k in 0..tail {
     let ins = h.insts[k];
-    if (ins.kind_tag != ssa.PHI && !(asmcore.immediate_inst(ins) && fr.imm.is_imm[ins.result])) {
+    if (ins.kind_tag != ssa.PHI && !(asmcore.immediate_inst(ins) && fr.imm.is_imm[ins.result]) && !ssa_latch_constant(fr, ins)) {
       return false;
     }
   }
   return true;
+}
+
+function ssa_latch_constant(fr: SsaFrame, ins: ssa.SInst): boolean {
+  return ssa_is_constant(ins) && !fr.imm.is_imm[ins.result] && !ssa_lane_arm_at(ins, fr);
+}
+
+// A rotated test does not run the head, so the latch loads the constants of
+// the head into their homes.
+function ssa_latch_constants(fr: SsaFrame, h: ssa.SBlock, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
+  for k in 0..tail {
+    let ins = h.insts[k];
+    if (ssa_latch_constant(fr, ins)) {
+      let d = ssa_dst(reg_of, ins.result);
+      let text = if (ins.kind_tag == ssa.CONST_INT) { util.i32_to_string(ins.imm) } else { ins.str };
+      s = ssa_store(reg_of, ins.result, d, ssa_const_reg(text, d, s));
+    }
+  }
+  return s;
 }
 
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
@@ -5478,6 +5510,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     if (ssa_rotates(f, fr, ssa.block_index(fr.blk_pos, blk.id), head)) {
       let h = f.blocks[ssa.block_index(fr.blk_pos, head)];
       let hfu = ssa_fuse(ssa_fuse_view(fr), h);
+      s = ssa_latch_constants(fr, h, reg_of, s);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
     }
     return ssa_jump_on(f, fr, reg_of, lp, t.target, next, s);
@@ -6695,7 +6728,16 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
 function emit_arm64_op_memset(s: asmcore.EmitState): asmcore.EmitState {
   let tag = asmcore.fresh_label(s);
   s = tag.state;
+  let t = tag.name;
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+  // The op is a call for the register allocator, so v16 is free. The last
+  // store of a fill of 16 bytes or more ends at the end of the range, and
+  // can write again some bytes that an earlier store wrote.
+  s = s.write("    cmp x2, #16\n    b.lo " + t + "ms\n");
+  s = s.write("    dup v16.16b, w1\n    add x4, x0, x2\n    cmp x2, #32\n    b.lo " + t + "msm\n");
+  s = s.write(t + "msv:\n    stp q16, q16, [x0], #32\n    sub x2, x2, #32\n    cmp x2, #32\n    b.hs " + t + "msv\n");
+  s = s.write("    sub x4, x4, #32\n    stp q16, q16, [x4]\n    b " + t + "msd\n");
+  s = s.write(t + "msm:\n    str q16, [x0]\n    sub x4, x4, #16\n    str q16, [x4]\n    b " + t + "msd\n");
   s = s.write(tag.name + "ms:\n");
   s = s.write("    cbz x2, " + tag.name + "msd\n");
   s = s.write("    strb w1, [x0], #1\n    sub x2, x2, #1\n");

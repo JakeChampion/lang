@@ -2857,7 +2857,7 @@ TestSelfHostResultTupleIR 5
 TestSelfHostResultTuplePayloadIR 4
 TestSelfHostRetArrEnumIR 3
 TestSelfHostRetStructFieldIR 3
-TestSelfHostRetainedNativeBodies 847
+TestSelfHostRetainedNativeBodies 1200
 TestSelfHostRetainedWideHelperControls 163
 TestSelfHostRetiredArgvBuiltinsUndefined 4
 TestSelfHostReturnClosureContainerIRArm64 2

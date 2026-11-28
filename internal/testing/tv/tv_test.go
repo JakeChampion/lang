@@ -83,6 +83,9 @@ func TestProvesSoundRewrites(t *testing.T) {
 	for _, c := range []struct{ before, after string }{
 		{"const_i32 1 ; mul", ""},
 		{"const_i32 0 ; mul", "drop ; const_i32 0"},
+		// Nightly seed 197396 uses the strength-reduced result as a divisor.
+		{"load_local 35 ; load_local 95 ; load_local 35 ; sub ; const_i32 256 ; mul ; div_s",
+			"load_local 35 ; load_local 95 ; load_local 35 ; sub ; const_i32 8 ; shl ; div_s"},
 		{"const_i32 8 ; mul", "const_i32 3 ; shl"},
 		{"const_i32 1073741824 ; mul", "const_i32 30 ; shl"},
 		{"const_i32 0 ; add", ""},

@@ -8,6 +8,8 @@ The historical study after it records research issue #5365.
 
 - Parameters borrow by default. An `own` parameter accepts an ownership transfer under E051.
   E050 rejects use of that parameter after consumption.
+  A `for` loop over an `own` parameter borrows the parameter and does not consume it.
+  The function can use the parameter after the loop.
 
 - A checked `@value` record remains copyable when a method takes an `own` receiver.
   [VALUE-TYPES.md](VALUE-TYPES.md) defines its field proof and COW cleanup contract.

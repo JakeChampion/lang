@@ -212,6 +212,7 @@ func diffOptionCases(t *testing.T) []invocation {
 	w("blank2", "a\nb\n\t\nc\nd\n")
 	w("re1", "a\nbb\nc\n# x\n")
 	w("re2", "a\nb+\nc\n# y\n")
+	w("ex-nul", "m*\x00ignored\nx\nMixed\x00suffix")
 	w("ex", "x\n  \nm*\n")
 	w("bin1", "\x00a\n")
 	w("bin2", "\x00b\n")
@@ -382,6 +383,8 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("exclude a file operand", "-x", "a", "a", "b"),
 		c("exclude an invalid pattern", "-x", "[", "a", "b"),
 		c("exclude from a file", "-r", "-X", "ex", "dA", "dB"),
+		c("exclude patterns with embedded NULs", "-r", "-X", "ex-nul", "dA", "dB"),
+		in("exclude wildcard before NUL", "*\x00suffix\n", "-r", "-X", "-", "dA", "dB"),
 		c("exclude from a file twice", "-r", "--exclude-from=ex", "-X", "ex", "dA", "dB"),
 		in("exclude from standard input", "*", "-r", "-X", "-", "dA", "dB"),
 		in("exclude from standard input twice", "x\nm*\n", "-r", "--exclude-from=-", "-X", "-", "dA", "dB"),
@@ -415,6 +418,9 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("ignore file name case", "--ignore-file-name-case", "cA", "cB"),
 		c("ignore file name case off again", "--ignore-file-name-case", "--no-ignore-file-name-case", "cA", "cB"),
 		c("file name case", "cA", "cB"),
+		c("ignore file name case with directory on right", "-q", "--ignore-file-name-case", "cA/Foo", "cB"),
+		c("ignore file name case with directory on left", "-q", "--ignore-file-name-case", "cB", "cA/Foo"),
+		c("ignore file name case with excluded directory entry", "-q", "--ignore-file-name-case", "-x", "foo", "cA/Foo", "cB"),
 		c("ignore file name case and exclude", "-r", "--ignore-file-name-case", "-x", "f*", "cA", "cB"),
 		c("ignore file name case and exclude upper", "--ignore-file-name-case", "-x", "B*", "cA", "cB"),
 		c("ignore file name case and starting file", "--ignore-file-name-case", "-r", "-S", "MIXED", "dA", "dB"),
