@@ -217,7 +217,7 @@ function coerce_int_width(val: Value, type_name: string): Value {
 // coerce_scalar is coerce_int_width with the scalar code `k` of `type_name`.
 function coerce_scalar(val: Value, k: i32, type_name: string): Value {
   if (k == SC_OTHER) {
-    return coerce_to_declared(val, type_name);
+    return if (type_name.len() == 0) { val } else { coerce_to_declared(val, type_name) };
   }
   if (k == SC_CHAR) {
     return char_value(val);
@@ -1148,7 +1148,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
 
 pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, try_cleanup: ast.Stmt[], heap: interpheap.Heap, cells: boolean, tynames: boolean }
 
-pub struct CallParams { names: string[], types: string[] }
+pub struct CallParams { names: string[], types: string[], codes: i32[], result_code: i32 }
 
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
@@ -1163,15 +1163,18 @@ pub struct Funcs { params: CallParams[], decls: parser.FuncDecl[], runtime_names
 function param_layout(fd: parser.FuncDecl): CallParams {
   let names: string[] = [];
   let types: string[] = [];
+  let codes: i32[] = [];
   if (fd.receiver_name.len() > 0) {
+    codes = codes.append(SC_OTHER);
     names = names.append(fd.receiver_name);
     types = types.append("");
   }
   for p in fd.params {
     names = names.append(p.name);
     types = types.append(p.type_name);
+    codes = codes.append(scalar_code(p.type_name));
   }
-  return CallParams { names: names, types: types };
+  return CallParams { names: names, types: types, codes: codes, result_code: scalar_code(fd.ret_type) };
 }
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
@@ -1318,7 +1321,7 @@ function (e: Env) bind_params(at: i32, args: Value[], recv: Value, has_recv: boo
     return frame;
   }
   for i in 0..args.len() {
-    vs = vs.append(coerce_int_width(args[i], layout.types[offset + i]));
+    vs = vs.append(coerce_scalar(args[i], layout.codes[offset + i], layout.types[offset + i]));
   }
   if (e.names.len() == 0) {
     return Env { ...e, names: layout.names, types: layout.types, values: vs };
@@ -6979,7 +6982,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
   if (step.sig != 1) {
     return v_void();
   }
-  return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
+  return coerce_scalar(unwrap_try(step.ret), funcs.params[ai].result_code, fd.ret_type);
 }
 
 function tyarg_of_value(v: Value): string {
@@ -7652,7 +7655,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
     if (step.sig != 1) {
       return v_void();
     }
-    return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
+    return coerce_scalar(unwrap_try(step.ret), funcs.params[at].result_code, fd.ret_type);
   }
   if (name == "to_string" && args.len() == 0) {
     match (recv) {
@@ -10152,7 +10155,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   if (step.sig != 1) {
     return v_void();
   }
-  return coerce_int_width(unwrap_try(step.ret), fd.ret_type);
+  return coerce_scalar(unwrap_try(step.ret), funcs.params[at].result_code, fd.ret_type);
 }
 
 // The function with no receiver whose name no builtin takes, or -1.
