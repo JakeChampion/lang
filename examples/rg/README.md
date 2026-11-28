@@ -223,8 +223,8 @@ order of the walk.
   ripgrep, `\p{sc!=Greek}` is `\p{Greek}`. Some properties are not in
   `std/regex`, and a pattern with one of them gives an error of
   `std/regex`. They are Script_Extensions, Age and Sentence_Break. The
-  binary properties that are not in Go's tables are also not there, such as
-  XID_Start and Bidi_Mirrored.
+  binary properties include ID_Start, ID_Continue, XID_Start, XID_Continue
+  and Bidi_Mirrored. Changes_When_Casefolded is still missing.
 
 - **Pattern errors.** `regex.check` reports each error of regex-syntax
   0.8.2 with its text and its span, and ripgrep's hint about PCRE2. `-P`

@@ -114,8 +114,9 @@ function test_property_aliases(): test.TestOutcome {
     all("\\p{EPres}", "😀"), all("\\p{Extended_Pictographic}", "x©"), all("\\p{wspace}", "a b"), all("\\p{Zyyy}", "1a"),
     all("\\p{scx=Grek}", "α"),
     all("\\p{IDS}+", "ⸯα℘1"), all("\\p{ID_Continue}+", "ⸯ_9·α"),
+    all("\\p{XIDS}+", "ͺαำ"), all("\\p{XIDC}+", "ͺαำ9"), all("\\p{Bidi_M}+", "x(∫)"),
   ];
-  return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / error / α℘ / _9·α");
+  return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / error / α℘ / _9·α / α / αำ9 / (∫)");
 }
 
 // A class of Grapheme_Cluster_Break or Word_Break needs the name of its
