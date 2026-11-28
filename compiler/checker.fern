@@ -40839,8 +40839,10 @@ function lit_rewrite_expr(e: ast.Expr, rw: LitRewrite): (ast.Expr, LitRewrite, b
     return (e, rw, false);
   }
   if let ast.ExprCall(c) = e {
-    if (lit_call_settled(c, rw)) {
-      return (lit_rewrite_call(c, rw), rw, true);
+    let scalar = if (c.args.len() > 0) { lit_first_call_arg(rw.cargs, c, 0) } else { rw.cargs.len() };
+    let composite = lit_first_call_arg(rw.pargs, c, LIT_STEP_RECV);
+    if (scalar < rw.cargs.len() || composite < rw.pargs.len()) {
+      return (lit_rewrite_call(c, rw, scalar, composite), rw, true);
     }
   }
   return (e, rw, false);
@@ -40873,7 +40875,11 @@ function lit_float_read(e: ast.Expr, want: parser.TypeRef): ast.Expr {
 }
 
 function lit_arg_index(sites: LitArgSite[], wanted: LitArgSite): i32 {
-  for i in 0..sites.len() {
+  return lit_arg_index_from(sites, wanted, 0);
+}
+
+function lit_arg_index_from(sites: LitArgSite[], wanted: LitArgSite, start: i32): i32 {
+  for i in start..sites.len() {
     let site = sites[i];
     if (site.line == wanted.line && site.col == wanted.col && site.arg == wanted.arg) {
       return i;
@@ -40882,30 +40888,29 @@ function lit_arg_index(sites: LitArgSite[], wanted: LitArgSite): i32 {
   return -1;
 }
 
-function lit_has_call_arg(sites: LitArgSite[], c: ast.ExprCall, first: i32): boolean {
+// The rewrite can skip every fact before the first applicable argument or
+// receiver. The length also marks a list with no facts for this call.
+function lit_first_call_arg(sites: LitArgSite[], c: ast.ExprCall, first: i32): i32 {
   let end = c.args.len();
-  for site in sites {
+  for i in 0..sites.len() {
+    let site = sites[i];
     if (site.line == c.line && site.col == c.col && site.arg >= first && site.arg < end) {
-      return true;
+      return i;
     }
   }
-  return false;
+  return sites.len();
 }
 
-function lit_call_settled(c: ast.ExprCall, rw: LitRewrite): boolean {
-  return c.args.len() > 0 && lit_has_call_arg(rw.cargs, c, 0) || lit_has_call_arg(rw.pargs, c, LIT_STEP_RECV);
-}
-
-function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
+function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite, scalar: i32, composite: i32): ast.Expr {
   let args: ast.Expr[] = [];
   for k in 0..c.args.len() {
     let a = c.args[k];
     let site = lit_arg_site(c, k);
-    let at = lit_arg_index(rw.cargs, site);
+    let at = lit_arg_index_from(rw.cargs, site, scalar);
     if (at >= 0) {
       a = settle_int_tree(a, rw.ctags[at]);
     }
-    let pt = lit_arg_index(rw.pargs, site);
+    let pt = lit_arg_index_from(rw.pargs, site, composite);
     if (pt >= 0) {
       a = settle_wide_literals(a, rw.ptypes[pt]);
     }
@@ -40913,7 +40918,7 @@ function lit_rewrite_call(c: ast.ExprCall, rw: LitRewrite): ast.Expr {
     args = args.append(ae);
   }
   let (ce, ca, ch) = astwalk.map_expr_where(c.callee, rw, lit_rewrite_stmt, lit_rewrite_expr, astwalk.descend_all);
-  let rt = lit_arg_index(rw.pargs, lit_arg_site(c, LIT_STEP_RECV));
+  let rt = lit_arg_index_from(rw.pargs, lit_arg_site(c, LIT_STEP_RECV), composite);
   if (rt >= 0) {
     return settle_array_step(ast.ExprCall { ...c, callee: ce, args: args }, rw.ptypes[rt]);
   }
