@@ -93,7 +93,8 @@ from any block.
 
 A checked access is a candidate when its index is a counter, or a counter
 times a constant, plus constants and values from before the loop. The length
-of its array also must not change in the loop. An access in the header is not
+of its array also must not change in the loop. The array can be a view, and
+then the test reads the length of the view. An access in the header is not
 a candidate, because the header runs before the test. A lane access reads or
 writes more than one element: 2 for `f64x2`, 4 for `f32x4`, and 16 for an
 integer lane type or a `_bytes` access. Before the loop, one test computes in
