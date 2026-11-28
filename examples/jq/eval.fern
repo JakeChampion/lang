@@ -1297,50 +1297,14 @@ function while_update(v: json.JsonValue, cond: filter.Ast, update: filter.Ast, e
   return run(update, v, e, (n: json.JsonValue, own s1: St): own St => while_to(n, cond, update, e, k, s1), s);
 }
 
-// jq 1.7: `def _until: if cond then . else (next | _until) end`. A single
-// output of the condition and of `next` goes on in a loop.
+// jq 1.7: `def _until: if cond then . else (next | _until) end`.
+// Consume each condition or update as it arrives, so a later error cannot
+// discard earlier outputs and a downstream break can stop the generator.
 function until_to(v: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let cur = v;
-  let s = st;
-  while (true) {
-    let saved = s.items;
-    s = drive(collected(cond, cur, e, s));
-    let conds = s.items;
-    s = St { ...s, items: saved };
-    if (s.sig != OK) {
-      return s;
-    }
-    if (conds.len() != 1) {
-      for x in conds {
-        s = drive(until_branch(cur, x, cond, next, e, k, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
-    }
-    if (truthy(conds[0])) {
-      return k(cur, s);
-    }
-    let saved2 = s.items;
-    s = drive(collected(next, cur, e, s));
-    let nexts = s.items;
-    s = St { ...s, items: saved2 };
-    if (s.sig != OK) {
-      return s;
-    }
-    if (nexts.len() != 1) {
-      for n in nexts {
-        s = drive(until_to(n, cond, next, e, k, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
-    }
-    cur = nexts[0];
+  if (st.calls >= BOUNCE_EVERY) {
+    return bounce(st, (own s: St): own St => until_to(v, cond, next, e, k, s));
   }
-  return s;
+  return run(cond, v, e, (c: json.JsonValue, own s: St): own St => until_branch(v, c, cond, next, e, k, s), St { ...st, calls: st.calls + 1 });
 }
 
 function until_branch(v: json.JsonValue, c: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {

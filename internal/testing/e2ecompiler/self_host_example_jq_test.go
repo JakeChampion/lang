@@ -223,6 +223,8 @@ func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
 		{`[0 | while(. < 25000; . + 1)] | length`, "25000"},
 		{`def f: if . == 0 then . else .-1 | f end; first(0 | while(true; error("unused")) | 25001 | f)`, "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) end; 3000000 | f", "0"},
+		{`def f: if . == 0 then true else until((. - 1 | f); .) | true end; 25001 | f`, "true"},
+		{`def f: if . <= 0 then 0 else until(. <= 0; . - 1 | f) end; 25001 | f`, "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) + 1 end; 3000000 | f", "3000000"},
 		{"def f($n): if $n == 0 then . else f($n - 1) end; 7 | f(1000000)", "7"},
 		{"def f: ., (. + 1 | f); first(0 | f | select(. >= 3000000))", "3000000"},
@@ -283,6 +285,9 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		args  []string
 		input string
 	}{
+		{[]string{"-nc", `try until((true, error("late")); .) catch .`}, ""},
+		{[]string{"-nc", `first(until((true, error("late")); .))`}, ""},
+		{[]string{"-nc", `try until(. > 0; (1, error("later"))) catch .`}, ""},
 		{[]string{"."}, "{\"b\":[1,{}],\"a\":[],\"c\":\"x\\u0001\\u007f\u00e9/\"}"},
 		{[]string{"-c", "."}, "1 2 {\"a\":1}[3]"},
 		{[]string{"-c", ".[]"}, "1\n2\n"},
