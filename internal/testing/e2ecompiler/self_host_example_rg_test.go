@@ -109,7 +109,7 @@ func rgFixtures(t *testing.T, dir string) {
 		"z/raw.lz4":   "foo in no lz4 frame\n",
 		"z/raw.zst":   "foo in no zstd frame\n",
 		"z/raw.br":    "foo in no brotli stream\n",
-		"rgconfig":    "# A comment\n\n  --colors=match:fg:green  \n-n\n--color=always\n",
+		"rgconfig":    "\u2002# A comment\n\u3000\n  --colors=match:fg:green  \n\u00a0-n\u2003\n--color=always\n",
 		"badconfig":   "--bogus\n",
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "z"), 0o755); err != nil {
