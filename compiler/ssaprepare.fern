@@ -60,6 +60,10 @@ pub struct Allocation {
   saved: i32[],
   save_bytes: i32,
   frame_bytes: i32,
+  // Incoming x86-64 arguments that supply storage for a spill slot.
+  arg_homes: i32[],
+  // Bytes claimed by the ARM64 frame-record store, zero for other targets.
+  frame_record_bytes: i32,
   framed: boolean,
   views: i32[],
   block_positions: i32[],

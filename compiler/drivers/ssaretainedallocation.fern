@@ -26,13 +26,22 @@ function require(ok: boolean, code: i32): void {
   }
 }
 
+// Only trailing slots with storage in the caller can shrink the local frame.
+function local_slots(a: ssaprepare.Allocation): i32 {
+  let slots = ssa.spill_count(a.alloc.reg_of);
+  while (slots > 0 && slots <= a.arg_homes.len() && a.arg_homes[slots - 1] != 0) {
+    slots -= 1;
+  }
+  return slots;
+}
+
 pub function consistent(row: ssaprepare.Emitted): void {
   let a = row.allocation;
   let f = row.body.formed.f;
   require(a.alloc.reg_of.len() == f.nvals && a.imm.is_imm.len() == f.nvals, 110);
   require(a.alloc.def_pos.len() == f.nvals && a.alloc.hi.len() == f.nvals, 111);
   require(a.fusions.len() == f.blocks.len(), 112);
-  require(a.frame_bytes >= ssa.spill_count(a.alloc.reg_of) * 8 && (a.framed || a.frame_bytes == 0), 113);
+  require(a.frame_bytes >= local_slots(a) * 8 && (a.framed || a.frame_bytes == 0), 113);
   let arm = row.context.architecture == "arm64";
   require(a.save_bytes == (if (arm) { (a.saved.len() + 1) / 2 * 16 } else { a.saved.len() * 8 }), 114);
   require(!arm || a.framed == sites.arm_frame_record(row, false), 115);
@@ -78,9 +87,9 @@ function spill_frame(out: ssaprepare.Output, arm: boolean): void {
     return;
   }
   let a = out.bodies[0].allocation;
-  let raw = ssa.spill_count(a.alloc.reg_of) * 8;
+  let raw = local_slots(a) * 8;
   let padded = (raw + a.save_bytes + 15) / 16 * 16 - a.save_bytes;
-  require(a.frame_bytes == padded && frame_matches(out.text, a.frame_bytes), 128);
+  require(a.frame_bytes == padded && (a.frame_bytes == 0 || frame_matches(out.text, a.frame_bytes)), 128);
   require(!frame_matches(out.text, a.frame_bytes + 8) && !frame_matches(out.text, a.frame_bytes - 8), 129);
   if (raw != padded) {
     require(!frame_matches(out.text, raw), 130);
@@ -96,12 +105,23 @@ function spills(g: ircore.Gated, arm: boolean, params: i32): void {
   let out = checked(g, r, arm);
   spill_frame(out, arm);
   let a = out.bodies[0].allocation;
-  require(a.framed && ssa.spill_count(a.alloc.reg_of) > 0 && a.saved.len() > 0, 119);
+  require(a.framed && ssa.spill_count(a.alloc.reg_of) > 0, 119);
+  if (arm) {
+    require(a.saved.len() > 0, 119);
+  } else {
+    let incoming = false;
+    for p in 6..params {
+      let h = a.alloc.reg_of[p];
+      if (h < -1 && a.arg_homes[ssa.spill_slot(h)] != 0) {
+        require(a.arg_homes[ssa.spill_slot(h)] == 16 + 8 * p, 119);
+        incoming = true;
+      }
+    }
+    require(incoming, 119);
+  }
   for home in a.alloc.reg_of {
     if (home < -1) {
-      let offset = 0 - 8 * (ssa.spill_slot(home) + 1) - a.save_bytes;
-      let address = if (arm) { "[sp, #" + util.i32_to_string(a.frame_bytes + a.save_bytes + offset) + "]" } else { util.i32_to_string(offset) + "(%rbp)" };
-      require(out.text.contains(address), 120);
+      require(out.text.contains(sites.spill_address(out.bodies[0], home)), 120);
     }
   }
 }

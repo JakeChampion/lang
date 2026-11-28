@@ -21,13 +21,13 @@ function label(line: string): boolean {
   return line.len() > 3;
 }
 
-function location(name: string, arm: boolean): boolean {
+function location(name: string, arm: boolean, input: boolean = false): boolean {
   let r = isa.reg(name, arm, 64);
   // Frame bases must stay fixed. A caller with a frame can use x30 for data.
   if (r >= 0) {
     return if (arm) { r != 29 } else { r != 4 && r != 5 };
   }
-  return isa.frame_slot(name, arm);
+  return isa.frame_slot(name, arm, input);
 }
 
 function program(text: string, arm: boolean): Program {
@@ -121,7 +121,7 @@ pub function check_fragment(text: string, architecture: string, input: string, r
   let arm = architecture == "arm64";
   let b = flow.Boundary { arm: arm, input: input, result: result, flags: flags };
   let supported = architecture == "arm64" || architecture == "x86-64";
-  let valid = supported && location(input, arm) && (if (flags) { result == "" } else { location(result, arm) });
+  let valid = supported && location(input, arm, true) && (if (flags) { result == "" } else { location(result, arm) });
   if (!valid) {
     return helper.Proof { ok: false, function_name: "inline __fern_rc_is_unique", message: "unsupported uniqueness machine boundary" };
   }

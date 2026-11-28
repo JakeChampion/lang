@@ -9,16 +9,13 @@ function require(ok: boolean, code: i32): void {
   }
 }
 
-// A compact save-only frame includes the register save area in the
-// pre-indexed pair. Its post-indexed restore releases the same byte count.
+// Match the frame record that the emitter retained, including its restore.
 pub function arm_frame_record(row: ssaprepare.Emitted, check_restore: boolean): boolean {
-  for bytes in [16, 16 + row.allocation.save_bytes] {
-    let size = bytes.to_string();
-    if (row.assembly.contains("    stp x29, x30, [sp, #-" + size + "]!\n")) {
-      return !check_restore || row.assembly.contains("    ldp x29, x30, [sp], #" + size + "\n");
-    }
+  if (row.allocation.frame_record_bytes == 0) {
+    return row.assembly.contains("    stp x29, x30, [sp, #-");
   }
-  return false;
+  let size = row.allocation.frame_record_bytes.to_string();
+  return row.assembly.contains("    stp x29, x30, [sp, #-" + size + "]!\n") && (!check_restore || row.assembly.contains("    ldp x29, x30, [sp], #" + size + "\n"));
 }
 
 pub function consistent(row: ssaprepare.Emitted): void {
@@ -122,11 +119,16 @@ pub function pressure(row: ssaprepare.Emitted): void {
   require(row.context.architecture != "x86-64" || cached_results > 0, 163);
 }
 
-function spill_address(row: ssaprepare.Emitted, home: i32): string {
+pub function spill_address(row: ssaprepare.Emitted, home: i32): string {
   let a = row.allocation;
-  let offset = 0 - 8 * (ssa.spill_slot(home) + 1) - a.save_bytes;
+  let slot = ssa.spill_slot(home);
+  let offset = 0 - 8 * (slot + 1) - a.save_bytes;
   if (row.context.architecture == "arm64") {
-    return "[sp, #" + (a.frame_bytes + a.save_bytes + offset).to_string() + "]";
+    let record = if (a.frame_record_bytes > 16) { 16 } else { 0 };
+    return "[sp, #" + (a.frame_bytes + a.save_bytes + offset + record).to_string() + "]";
+  }
+  if (slot < a.arg_homes.len() && a.arg_homes[slot] != 0) {
+    offset = a.arg_homes[slot];
   }
   return offset.to_string() + "(%rbp)";
 }
