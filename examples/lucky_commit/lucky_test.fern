@@ -85,6 +85,52 @@ function pathological_commit(spaces: string, padding: string): string {
     + "ProcessedCommit will add more than 63 bytes of static padding." + spaces + padding + "\n\n\n";
 }
 
+function nonced_commit(spaces: string, padding: string, message: string): string {
+  return "tree 0123456701234567012345670123456701234567\n"
+    + "parent 7654321076543210765432107654321076543210\n"
+    + "author Foo Bár <foo@example.com> 1513980859 -0500\n"
+    + "committer Baz Qux <baz@example.com> 1513980898 -0500\n"
+    + "nonce " + spaces + padding + "\n"
+    + "\n"
+    + message;
+}
+
+function foo_message(): string {
+  return "Do a thing\n\nMakes some changes to the foo feature\n";
+}
+
+function test_nonce_header_replaced(): test.TestOutcome {
+  let first = lucky.process_header(unsigned_commit("", "")).with_padding(0x5a5a);
+  let again = lucky.process_header(first);
+  if (again.commit.len() != first.len()) {
+    return test.fail("a second run changed the length of the commit");
+  }
+  return check_layout(again, nonced_commit(spaces(41), tabs(), foo_message()));
+}
+
+function test_nonce_header_signed(): test.TestOutcome {
+  return check_layout(lucky.process_header(signed_commit("", "")), signed_commit(spaces(31), tabs()));
+}
+
+// The search in header mode finds a commit with the prefix, and the message
+// is the same byte for byte.
+function test_search_with_nonce_header(): test.TestOutcome {
+  let p = lucky.process_header(unsigned_commit("", ""));
+  let job = lucky.job(lucky.Algo.Sha1, p, spec_of(lucky.Algo.Sha1, "000"));
+  match (lucky.search(job, 0, 1 as i64 << 20, 2, 1 as i64 << 16)) {
+    Some(found) => {
+      let commit = p.with_padding(found);
+      if (!commit.ends_with("\n\n" + foo_message())) {
+        return test.assert_eq(commit, nonced_commit("", "", foo_message()));
+      }
+      return test.assert_true(lucky.object_hex(lucky.Algo.Sha1, commit).starts_with("000"));
+    },
+    None => {
+      return test.fail("no match for 000");
+    }
+  }
+}
+
 function tabs(): string {
   return "\t".repeat(48);
 }
@@ -94,7 +140,10 @@ function spaces(n: i32): string {
 }
 
 function check_processed(input: string, expected: string): test.TestOutcome {
-  let p = lucky.process(input);
+  return check_layout(lucky.process(input), expected);
+}
+
+function check_layout(p: lucky.Processed, expected: string): test.TestOutcome {
   if (p.with_padding(0xffffffffffff) != p.commit) {
     return test.fail("the all-tabs specifier does not give the processed commit");
   }
@@ -385,6 +434,11 @@ function main(): i32 {
   r = r.it("processed commit with gpg text in the message", (): test.TestOutcome => check_processed(gpg_text_in_message("", ""), gpg_text_in_message(spaces(42), tabs())));
   r = r.it("processed commit with gpg text in the email", (): test.TestOutcome => check_processed(gpg_text_in_email("", ""), gpg_text_in_email(spaces(7), tabs())));
   r = r.it("processed commit with pathological alignment", (): test.TestOutcome => check_processed(pathological_commit("", ""), pathological_commit(spaces(105), tabs())));
+  r = r.it("processed commit with a nonce header", (): test.TestOutcome => check_layout(lucky.process_header(unsigned_commit("", "")), nonced_commit(spaces(41), tabs(), foo_message())));
+  r = r.it("processed commit with a nonce header already", (): test.TestOutcome => check_layout(lucky.process_header(nonced_commit(spaces(3), "\t \t", foo_message())), nonced_commit(spaces(41), tabs(), foo_message())));
+  r = r.it("nonce header replaced on a second run", test_nonce_header_replaced);
+  r = r.it("nonce text in the message stays", (): test.TestOutcome => check_layout(lucky.process_header(nonced_commit("", "", "nonce abc\n").replace("nonce \n", "")), nonced_commit(spaces(41), tabs(), "nonce abc\n")));
+  r = r.it("signed commit in header mode pads the signature", test_nonce_header_signed);
   r = r.it("static padding lengths", test_static_padding_lengths);
   r = r.it("padding bit order", test_padding_order);
   r = r.it("parse specs", test_parse_specs);
@@ -403,5 +457,6 @@ function main(): i32 {
   r = r.it("search after many iterations", test_search_after_many_iterations);
   r = r.it("search with a large specifier", test_search_with_large_specifier);
   r = r.it("search with a signature", test_search_with_signature);
+  r = r.it("search with a nonce header", test_search_with_nonce_header);
   return r.finish();
 }

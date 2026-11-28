@@ -7,10 +7,12 @@
 //   "commit <length>\0"            the git object header
 //   commit up to the insertion     the metadata, and the message too when
 //                                  the commit is not signed
+//   `nonce ` (header mode only)    a header line after the other headers
 //   static padding (spaces)        aligns the next byte to 64
 //   dynamic padding (48 bytes)     a space or a tab for each bit of a 48-bit
 //                                  "padding specifier"
 //   rest of the commit             a newline, or the message after a signature
+//                                  or after the `nonce` header
 //   SHA finalization padding
 //
 // The blocks before the dynamic padding do not change between attempts, so
@@ -202,17 +204,61 @@ pub struct Processed {
   header_len: i32,
 }
 
+// layout gives `src` up to `at`, then `lead`, the static padding, tabs for
+// the dynamic padding and `trail`, then `src` from `resume`.
+function layout(src: string, at: i32, resume: i32, lead: string, trail: string): Processed {
+  let before = at + lead.len();
+  let without_static = before + DYNAMIC_PADDING + trail.len() + src.len() - resume;
+  let spaces = static_padding_length(before, without_static);
+  let commit = slice_unchecked(src, 0, at) + lead + " ".repeat(spaces) + "\t".repeat(DYNAMIC_PADDING) + trail
+    + slice_unchecked(src, resume, src.len());
+  return Processed { commit: commit, padding_at: before + spaces, header_len: header(commit.len()).len() };
+}
+
+// process puts the padding at the end of the message, or at the end of the
+// `gpgsig` header of a signed commit.
 pub function process(original: string): Processed {
   let at_point = padding_insertion_point(original);
   let old_padding = 0;
   while (at_point + old_padding < original.len() && is_blank(original[at_point + old_padding])) {
     old_padding += 1;
   }
-  let without_static = original.len() - old_padding + DYNAMIC_PADDING;
-  let spaces = static_padding_length(at_point, without_static);
-  let commit = slice_unchecked(original, 0, at_point) + " ".repeat(spaces) + "\t".repeat(DYNAMIC_PADDING)
-    + slice_unchecked(original, at_point + old_padding, original.len());
-  return Processed { commit: commit, padding_at: at_point + spaces, header_len: header(commit.len()).len() };
+  return layout(original, at_point, at_point + old_padding, "", "");
+}
+
+// The header line that `process_header` adds. Git keeps a header that it
+// does not know, and `git log` does not show it.
+pub const NONCE_HEADER: string = "nonce ";
+
+// process_header puts the padding in a `nonce` header after the other
+// headers, so the message does not change. It replaces a `nonce` header that
+// is already there. A signed commit gets the padding of `process`, because a
+// new header breaks the signature.
+pub function process_header(original: string): Processed {
+  if (signature_end(original) < original.len()) {
+    return process(original);
+  }
+  let commit = without_nonce(original);
+  let end = match (commit.index_of("\n\n")) { Some(i) => i + 1, None => commit.len() };
+  return layout(commit, end, end, NONCE_HEADER, "\n");
+}
+
+// without_nonce removes the first `nonce` header line before the message.
+function without_nonce(commit: string): string {
+  let n = commit.len();
+  let i = 0;
+  while (i < n && commit[i] != b'\n') {
+    let j = i;
+    while (j < n && commit[j] != b'\n') {
+      j += 1;
+    }
+    if (at(commit, i, NONCE_HEADER)) {
+      let next = if (j < n) { j + 1 } else { n };
+      return slice_unchecked(commit, 0, i) + slice_unchecked(commit, next, n);
+    }
+    i = j + 1;
+  }
+  return commit;
 }
 
 // padding_byte gives the index in the dynamic padding of a specifier bit.
