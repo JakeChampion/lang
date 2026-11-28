@@ -50,7 +50,7 @@ profile/arm64-linux/enum_match.minimal.bytes	5752
 profile/arm64-linux/enum_match.minimal.emit	1192
 profile/arm64-linux/enum_match.safe.bytes	6072
 profile/arm64-linux/enum_match.safe.emit	1273
-profile/arm64-linux/http_hello.diagnostic.bytes	182208
+profile/arm64-linux/http_hello.diagnostic.bytes	184160
 profile/arm64-linux/http_hello.diagnostic.emit	22192
 profile/arm64-linux/http_hello.hardened.bytes	81416
 profile/arm64-linux/http_hello.hardened.emit	18347
@@ -67,8 +67,8 @@ profile/arm64-linux/int_loop.minimal.emit	314
 profile/arm64-linux/int_loop.safe.bytes	2344
 profile/arm64-linux/int_loop.safe.emit	376
 profile/arm64-linux/map_string.diagnostic.bytes	144568
-profile/arm64-linux/map_string.diagnostic.emit	11754
-profile/arm64-linux/map_string.hardened.bytes	50680
+profile/arm64-linux/map_string.diagnostic.emit	11904
+profile/arm64-linux/map_string.hardened.bytes	51304
 profile/arm64-linux/map_string.hardened.emit	11692
 profile/arm64-linux/map_string.minimal.bytes	42248
 profile/arm64-linux/map_string.minimal.emit	9469
