@@ -5275,8 +5275,7 @@ function violation_diag(merged: parser.Module, v: caps.Violation): util.Diag {
   let line = 0;
   let col = 0;
   if (v.chain.len() > 0) {
-    let fi = caps.func_index(merged, v.chain[0]);
-    if (fi >= 0) {
+    if let Some(fi) = caps.func_index(merged, v.chain[0]) {
       line = merged.funcs[fi].line;
       col = merged.funcs[fi].col;
     }
