@@ -1,0 +1,24 @@
+// spec: RH-48
+// The array that `append` returns holds its argument, so a write through an
+// element after the close of the Writer is refused.
+
+function write_late(path: string): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  let none: Writer[] = [];
+  let ws = none.append(w);
+  w.close()?;
+  ws[0].write("late")?;
+  return Ok(());
+}
+
+function main(): i32 {
+  match (write_late("late.txt")) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}

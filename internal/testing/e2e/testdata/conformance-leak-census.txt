@@ -204,6 +204,7 @@ both_arms_read_p                                     0
 bound_generic_parameter_takes_a_string_literal       0
 bounded_array_method_extra_type_param                0
 break_continue                                       0
+builtin_method_lends_only_to_a_holder_of_its_kind    0
 byte_slice_after_set_len_regrows                     0
 byte_stream_and_async_channel                        0
 byte_view_of_a_field_after_a_failed_try              0
