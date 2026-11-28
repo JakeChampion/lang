@@ -1293,7 +1293,10 @@ function paths_select(p: json.JsonValue, input: json.JsonValue, f: filter.Ast, e
 function repeat_to(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let s = st;
   while (s.sig == OK) {
-    s = drive(run(f, v, e, k, s));
+    s = run(f, v, e, k, s);
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => repeat_to(v, f, e, k, t)) };
+    }
   }
   return s;
 }
