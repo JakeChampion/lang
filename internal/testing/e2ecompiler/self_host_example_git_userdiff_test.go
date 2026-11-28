@@ -100,6 +100,16 @@ func TestSelfHostExampleGitDrivers(t *testing.T) {
 			for _, c := range gitDriverCases {
 				gitCompare(t, oracle, port, dir, "", strings.Fields(c)...)
 			}
+			for _, setting := range [][2]string{{"diff.wordRegex", "[a-z]+"}, {"diff.mine.wordRegex", "."}, {"diff.default.wordRegex", "[0-9]+"}, {"diff.mine.wordRegex", "["}} {
+				if _, stderr, code := oracle.run(t, dir, "", "config", setting[0], setting[1]); code != 0 {
+					t.Fatalf("config %s: %s", setting[0], stderr)
+				}
+				for _, mode := range []string{"--word-diff=plain", "--word-diff=porcelain", "--word-diff-regex=."} {
+					for _, rev := range []string{"HEAD", "HEAD~1"} {
+						gitCompare(t, oracle, port, dir, "", "log", "-1", "-p", mode, rev, "--", "n.txt")
+					}
+				}
+			}
 			for _, setting := range gitDriverSettings {
 				if _, stderr, code := oracle.run(t, dir, "", "config", setting[0], setting[1]); code != 0 {
 					t.Fatalf("git config %v: %s", setting, stderr)

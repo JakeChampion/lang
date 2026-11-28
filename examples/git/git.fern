@@ -1081,7 +1081,7 @@ function log_limit(text: string): i32 {
 // "name-only" or "name-status", and `patch` holds the other forms of the
 // diff. `no_output` is `-s`. `full_diff` shows each path of a commit that
 // the pathspec selects, and `renames` finds the renames of the diff.
-struct LogOpts { lines: string[], hi: log.Highlight, gpg: sig.Programs, show_signature: boolean, notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: string, merges: string, merges_default: string, merges_need: boolean, imply_patch: boolean, remerge: merge.Configured[], pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
+struct LogOpts { lines: string[], hi: log.Highlight, gpg: sig.Programs, show_signature: boolean, notes: notes.Tree[], notes_given: boolean, show_notes: boolean, notes_default: i32, notes_extra: string[], find: treediff.Detect, moved_default: i32, word_regex: Option[string], merges: string, merges_default: string, merges_need: boolean, imply_patch: boolean, remerge: merge.Configured[], pick: patch.Pickaxe, follow: boolean, walk_reflogs: boolean, reflog_names: string[], date_explicit: boolean, left_right: boolean, ancestry_names: string[], mm: mailmap.Mailmap, use_mailmap: boolean, limit: i32, skip: i32, form: string, format: string, terminator: boolean, abbrev_commit: boolean, dates: date.Mode, reverse: boolean, parents: boolean, graph: boolean, diff: string, patch: patch.Opts, no_output: boolean, names_twice: boolean, full_diff: boolean, renames: boolean, decorate: i32, decorate_filter: DecorationFilter, walk: revwalk.Opts, bad: string }
 
 // The patterns of grep as the options give them.
 struct GrepArgs { authors: string[], committers: string[], body: string[], all_match: boolean, invert: boolean, icase: boolean, kind: string }
@@ -1189,12 +1189,12 @@ function diff_option(o: LogOpts, argv: string[], i: i32): (LogOpts, i32) {
     return (LogOpts { ...o, bad: "error: bad --word-diff argument: " + v }, 1);
   }
   if (x == "--color-words" || x.starts_with("--color-words=")) {
-    let re = if (x == "--color-words") { "" } else { objects.part(x, 14, x.len()) };
+    let re = if (x == "--color-words") { None } else { Some(objects.part(x, 14, x.len())) };
     return (LogOpts { ...o, word_regex: re, patch: patch.Opts { ...d, word_diff: patch.WORDS_COLOR, color: true } }, 1);
   }
   let (wr, wr_taken) = option_value(argv, i, "--word-diff-regex");
   if (wr_taken > 0) {
-    return (LogOpts { ...o, word_regex: wr, patch: patch.Opts { ...d, word_diff: if (d.word_diff == patch.WORDS_NONE) { patch.WORDS_PLAIN } else { d.word_diff } } }, wr_taken);
+    return (LogOpts { ...o, word_regex: Some(wr), patch: patch.Opts { ...d, word_diff: if (d.word_diff == patch.WORDS_NONE) { patch.WORDS_PLAIN } else { d.word_diff } } }, wr_taken);
   }
   if (x == "--color-moved" || x == "--no-color-moved" || x.starts_with("--color-moved=")) {
     let form = if (x == "--no-color-moved") { moved.NO } else if (x == "--color-moved") { if (o.moved_default != moved.NO) { o.moved_default } else { moved.ZEBRA } } else { moved.parse(objects.part(x, 14, x.len())) };
@@ -3109,7 +3109,7 @@ function log_command(argv: string[]): i32 {
   if (driver_config_status(r) != 0) {
     return 128;
   }
-  let o = LogOpts { lines: [], hi: log.no_highlight(), gpg: gpg_programs(r), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: r.config.get("diff.wordregex").unwrap_or(""), merges: "", merges_default: "separate", merges_need: false, imply_patch: false, remerge: [], pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
+  let o = LogOpts { lines: [], hi: log.no_highlight(), gpg: gpg_programs(r), show_signature: r.config.flag("log.showsignature", false), notes: [], notes_given: false, show_notes: false, notes_default: -1, notes_extra: [], find: treediff.detect_default(), moved_default: moved.NO, word_regex: None, merges: "", merges_default: "separate", merges_need: false, imply_patch: false, remerge: [], pick: patch.no_pickaxe(), follow: false, walk_reflogs: argv.any((a: string): boolean => a == "-g" || a == "--walk-reflogs"), reflog_names: [], date_explicit: false, left_right: false, ancestry_names: [], mm: mailmap.empty(), use_mailmap: r.config.flag("log.mailmap", true), limit: -1, skip: 0, form: "medium", format: "", terminator: false, abbrev_commit: false, dates: date.normal_mode(), reverse: false, parents: false, graph: false, diff: "", patch: patch.defaults(), no_output: false, names_twice: false, full_diff: false, renames: true, decorate: 0, decorate_filter: DecorationFilter { include: [], exclude: [], config_exclude: r.config.all("log.excludedecoration").map((p: string): string => ref_pattern(p)), clear: r.config.get("log.initialdecorationset").unwrap_or("") == "all" }, walk: revwalk.options(), bad: "" };
   let g = GrepArgs { authors: [], committers: [], body: [], all_match: false, invert: false, icase: false, kind: "basic" };
   for e in r.config.entries {
     if (e.name == "diff.renames") {
@@ -3292,10 +3292,12 @@ function log_command(argv: string[]): i32 {
   if (o.names_twice) {
     return fatal("options '--name-only', '--name-status', '--check', and '-s' cannot be used together");
   }
-  if (o.word_regex.len() > 0 && o.patch.word_diff != patch.WORDS_NONE) {
-    let re = bre.bre_compile_syntax(o.word_regex, bre.Syntax { ...bre.posix_basic(), extended: true, newline_anchor: true, multiline: true });
-    let d = if (re.err.len() > 0) { patch.Opts { ...o.patch, word_regex_error: o.word_regex } } else { patch.Opts { ...o.patch, word_regex: [re] } };
-    o = LogOpts { ...o, patch: d };
+  if (o.patch.word_diff != patch.WORDS_NONE) {
+    if let Some(explicit) = o.word_regex {
+      o = LogOpts { ...o, patch: patch.with_word_pattern(patch.Opts { ...o.patch, driver_words: false }, explicit) };
+    } else if let Some(fallback) = r.config.get("diff.wordregex") {
+      o = LogOpts { ...o, patch: patch.with_word_pattern(o.patch, fallback) };
+    }
   }
   let pretty_given = args.any((a: string): boolean => a == "--oneline" || a.starts_with("--pretty") || a.starts_with("--format"));
   if (!o.notes_given && (!pretty_given || o.form == "format" && o.format.contains("%N"))) {

@@ -37,10 +37,10 @@ import "../../coreutils/lib/bre";
 // patches are in the order of their old paths, as git gives them with
 // such lines. With `header_pairs`, a path with header lines and no
 // change has a patch of its header.
-pub struct Opts { headers: Map[string, string[]], remerge: boolean, header_pairs: boolean, line_ranges: Map[string, i32[]], pal: color.Palette, attrs: attr.Attrs[], drivers: userdiff.Drivers, color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
+pub struct Opts { headers: Map[string, string[]], remerge: boolean, header_pairs: boolean, line_ranges: Map[string, i32[]], pal: color.Palette, attrs: attr.Attrs[], drivers: userdiff.Drivers, color_moved: i32, color_moved_ws: i32, word_diff: i32, word_regex: bre.Bre[], word_regex_error: string, driver_words: boolean, ws_rule: i32, abbrev: i32, raw: boolean, patch: boolean, stat: boolean, numstat: boolean, shortstat: boolean, summary: boolean, context: i32, interhunk: i32, src: string, dst: string, algo: linediff.Options, full_index: boolean, text: boolean, stat_width: i32, stat_name_width: i32, stat_graph_width: i32, stat_count: i32, color: boolean }
 
 pub function defaults(): Opts {
-  return Opts { headers: Map { }, remerge: false, header_pairs: false, line_ranges: Map { }, pal: color.palette_default(), attrs: [], drivers: userdiff.none(), color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
+  return Opts { headers: Map { }, remerge: false, header_pairs: false, line_ranges: Map { }, pal: color.palette_default(), attrs: [], drivers: userdiff.none(), color_moved: moved.NO, color_moved_ws: 0, word_diff: WORDS_NONE, word_regex: [], word_regex_error: "", driver_words: true, ws_rule: ws.DEFAULT_RULE, abbrev: -1, raw: false, patch: false, stat: false, numstat: false, shortstat: false, summary: false, context: 3, interhunk: 0, src: "a/", dst: "b/", algo: linediff.defaults(), full_index: false, text: false, stat_width: -1, stat_name_width: 0, stat_graph_width: 0, stat_count: 0, color: false };
 }
 
 // True when the options print a diff.
@@ -755,6 +755,15 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   }
   let tab0 = if (lbl0.contains(" ")) { "\t" } else { "" };
   let tab1 = if (lbl1.contains(" ")) { "\t" } else { "" };
+  if (o.word_diff != WORDS_NONE && o.driver_words) {
+    let pattern = if (one.valid) { o.drivers.word_pattern(o.attrs, text(name_a)) } else { o.drivers.words.get("default") };
+    if (pattern == None) {
+      pattern = if (two.valid) { o.drivers.word_pattern(o.attrs, text(name_b)) } else { o.drivers.words.get("default") };
+    }
+    if let Some(word) = pattern {
+      o = with_word_pattern(o, word);
+    }
+  }
   if (o.word_diff != WORDS_NONE && o.word_regex_error.len() > 0) {
     return (s, Text { ...t_in, fatal: "invalid regular expression: " + o.word_regex_error });
   }
@@ -771,6 +780,14 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
 }
 
 // ---- The diff of words (`--word-diff`, diff_words_show of git) ----
+
+pub function with_word_pattern(o: Opts, word: string): Opts {
+  let re = bre.bre_compile_syntax(word, bre.Syntax { ...bre.posix_basic(), extended: true, newline_anchor: true, multiline: true });
+  if (re.err.len() > 0) {
+    return Opts { ...o, word_regex_error: word, word_regex: [] };
+  }
+  return Opts { ...o, word_regex_error: "", word_regex: [re] };
+}
 
 // The forms of `--word-diff`.
 pub const WORDS_NONE: i32 = 0;
