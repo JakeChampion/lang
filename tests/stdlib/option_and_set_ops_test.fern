@@ -112,11 +112,11 @@ function test_is_none_string_some_quotes_value(): test.TestOutcome {
 }
 
 function test_intersects_i32_pass(): test.TestOutcome {
-  return test.assert_array_intersects_i32([1, 2, 3], [3, 4, 5]);
+  return test.assert_array_intersects([1, 2, 3], [3, 4, 5]);
 }
 
 function test_intersects_i32_no_overlap_fails(): test.TestOutcome {
-  match (test.assert_array_intersects_i32([1, 2, 3], [4, 5, 6])) {
+  match (test.assert_array_intersects([1, 2, 3], [4, 5, 6])) {
     Pass => {
       return test.fail("disjoint should fail intersects");
     },
@@ -131,7 +131,7 @@ function test_intersects_i32_no_overlap_fails(): test.TestOutcome {
 
 function test_intersects_i32_empty_fails(): test.TestOutcome {
   let empty: i32[] = [];
-  match (test.assert_array_intersects_i32(empty, [1, 2, 3])) {
+  match (test.assert_array_intersects(empty, [1, 2, 3])) {
     Pass => {
       return test.fail("empty A should fail intersects");
     },
@@ -142,21 +142,21 @@ function test_intersects_i32_empty_fails(): test.TestOutcome {
 }
 
 function test_intersects_string_pass(): test.TestOutcome {
-  return test.assert_array_intersects_string(["a", "b"], ["b", "c"]);
+  return test.assert_array_intersects(["a", "b"], ["b", "c"]);
 }
 
 function test_disjoint_i32_pass(): test.TestOutcome {
-  return test.assert_array_disjoint_i32([1, 2, 3], [4, 5, 6]);
+  return test.assert_array_disjoint([1, 2, 3], [4, 5, 6]);
 }
 
 function test_disjoint_i32_shared_fails(): test.TestOutcome {
-  match (test.assert_array_disjoint_i32([1, 2, 3], [3, 5, 7])) {
+  match (test.assert_array_disjoint([1, 2, 3], [3, 5, 7])) {
     Pass => {
       return test.fail("shared elem should fail disjoint");
     },
     Fail(msg) => {
-      if (!msg.contains("shared element 3")) {
-        return test.fail("expected 'shared element 3': " + msg);
+      if (!msg.contains("shared element \"3\"")) {
+        return test.fail("expected 'shared element \"3\"': " + msg);
       }
       return test.pass();
     }
@@ -165,11 +165,11 @@ function test_disjoint_i32_shared_fails(): test.TestOutcome {
 
 function test_disjoint_i32_empty_vacuous(): test.TestOutcome {
   let empty: i32[] = [];
-  return test.assert_array_disjoint_i32(empty, [1, 2, 3]);
+  return test.assert_array_disjoint(empty, [1, 2, 3]);
 }
 
 function test_disjoint_string_pass(): test.TestOutcome {
-  return test.assert_array_disjoint_string(["a", "b"], ["c", "d"]);
+  return test.assert_array_disjoint(["a", "b"], ["c", "d"]);
 }
 
 function main(): i32 {
