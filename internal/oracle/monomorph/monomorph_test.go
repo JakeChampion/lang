@@ -430,10 +430,10 @@ function main(): i32 {
     while (id(i) < 3) { i = id(i) + 1; }
     return i;
 }`},
-		{node: "For.Init+Cond+Step+Body", src: `function id[T](x: T): T { return x; }
+		{node: "For.Body", src: `function id[T](x: T): T { return x; }
 function main(): i32 {
     let sum: i32 = 0;
-    for (let i: i32 = id(0); i < 3; i = id(i) + 1) { sum = id(sum) + i; }
+    for i in id(0)..id(3) { sum = id(sum) + i; }
     return sum;
 }`},
 		{node: "Match.Tag+Arms", src: `function id[T](x: T): T { return x; }
