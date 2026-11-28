@@ -1162,28 +1162,29 @@ function last_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValu
 // `isempty(g)` is `first((g | false), true)`.
 function is_empty(g: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let (id, s) = new_label(st);
-  let t = drive(run(g, input, e, (v: json.JsonValue, own s1: St): own St => then_break(drive(k(json.JBool(false), s1)), id), s));
-  if (t.sig == BREAK && t.brk == id) {
-    return St { ...t, sig: OK };
-  }
-  if (t.sig != OK) {
-    return t;
-  }
-  return k(json.JBool(true), t);
+  let t = run(g, input, e, (v: json.JsonValue, own s1: St): own St => broken(s1, id), s);
+  return finish_quantifier(false, id, k, t);
 }
 
 // `any(g; c)` and `all(g; c)`: the first output of `c` that decides the answer
 // stops `g`.
 function quantify(is_any: boolean, g: filter.Ast, cond: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let (id, s) = new_label(st);
-  let t = drive(run(g, input, e, (v: json.JsonValue, own s1: St): own St => run(cond, v, e, (c: json.JsonValue, own s2: St): own St => if (truthy(c) == is_any) { broken(s2, id) } else { s2 }, s1), s));
+  let t = run(g, input, e, (v: json.JsonValue, own s1: St): own St => run(cond, v, e, (c: json.JsonValue, own s2: St): own St => if (truthy(c) == is_any) { broken(s2, id) } else { s2 }, s1), s);
+  return finish_quantifier(is_any, id, k, t);
+}
+
+function finish_quantifier(decided: boolean, id: i32, k: (json.JsonValue, own St) => own St, own t: St): own St {
+  if (t.sig == BOUNCE) {
+    return St { ...t, next: t.next.append((own s: St): own St => finish_quantifier(decided, id, k, s)) };
+  }
   if (t.sig == BREAK && t.brk == id) {
-    return k(json.JBool(is_any), St { ...t, sig: OK });
+    return k(json.JBool(decided), St { ...t, sig: OK });
   }
   if (t.sig != OK) {
     return t;
   }
-  return k(json.JBool(!is_any), t);
+  return k(json.JBool(!decided), t);
 }
 
 // `v`, and then the same for each output of `f` on `v`. With a condition,
