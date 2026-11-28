@@ -4,6 +4,7 @@ import "core/cmp";
 import "std/glob";
 import "std/option";
 import "std/string";
+import "std/unicode";
 import "std/utf8";
 import "./logs";
 import "./types";
@@ -84,6 +85,22 @@ function trim_end(s: string): string {
   return slice_unchecked(s, 0, end).to_owned();
 }
 
+// Rust trims ignore patterns by Unicode scalar, except for an escaped space.
+function trim_pattern_end(s: string): string {
+  let end = s.len();
+  while (end > 0) {
+    let start = utf8.floor_char_boundary(s, end - 1);
+    let Some(c) = utf8.codepoint_at(s, start) else {
+      break;
+    };
+    if (!c.is_whitespace()) {
+      break;
+    }
+    end = start;
+  }
+  return slice_unchecked(s, 0, end).to_owned();
+}
+
 function rest(s: string, from: i32): string {
   return slice_unchecked(s, from, s.len()).to_owned();
 }
@@ -133,7 +150,7 @@ function rule_of(raw: string, ci: boolean): Result[Option[Rule], string] {
   if (raw.starts_with("#")) {
     return Ok(None);
   }
-  let line = if (raw.ends_with("\\ ")) { raw } else { trim_end(raw) };
+  let line = if (raw.ends_with("\\ ")) { raw } else { trim_pattern_end(raw) };
   if (line.len() == 0) {
     return Ok(None);
   }
