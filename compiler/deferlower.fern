@@ -172,24 +172,26 @@ function dl_iter_cleanup(actions: ast.Stmt[], flags: i32[], start: i32, end: i32
 
 struct DeferEdges { stmts: ast.Stmt[], armed: i32 }
 
-pub function defer_flag(name: string): i32 {
+// A generated defer flag numbered n arms the first n + 1 actions.
+pub function armed_after_flag(name: string, armed: i32): i32 {
   if (name.len() < 6 || !name.starts_with("__dfa")) {
-    return -1;
+    return armed;
   }
   let digits = slice_unchecked(name, 5, name.len()).to_owned();
   if (!util.is_all_digits(digits)) {
-    return -1;
+    return armed;
   }
-  return util.digits_to_i32(digits);
+  let flag = util.digits_to_i32(digits);
+  return if (flag >= armed) { flag + 1 } else { armed };
 }
 
-pub function defer_armed(a: ast.StmtAssign): i32 {
+pub function armed_after_assign(a: ast.StmtAssign, armed: i32): i32 {
   if let ast.ExprBool(b) = a.value {
     if (b.value) {
-      return defer_flag(a.target);
+      return armed_after_flag(a.target, armed);
     }
   }
-  return -1;
+  return armed;
 }
 
 struct DeferEdgeExpr { expr: ast.Expr, armed: i32 }
@@ -232,10 +234,7 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
         let ave = dl_edges_expr(a.value, actions, flags, start, armed, label, own_level);
         armed = ave.armed;
         let ast = ast.StmtAssign { ...a, value: ave.expr };
-        let ax = defer_armed(ast);
-        if (ax >= armed) {
-          armed = ax + 1;
-        }
+        armed = armed_after_assign(ast, armed);
         out = out.append(ast);
       },
       ast.StmtVar(v) => {
@@ -523,10 +522,7 @@ function dl_armed_after_expr(e: ast.Expr, armed: i32): i32 {
 
 function dl_arm_stmt(st: ast.Stmt, own acc: i32): i32 {
   if let ast.StmtAssign(a) = st {
-    let ax = defer_armed(a);
-    if (ax >= acc) {
-      return ax + 1;
-    }
+    return armed_after_assign(a, acc);
   }
   return acc;
 }
