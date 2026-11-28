@@ -1079,13 +1079,13 @@ function dir_and_file(run: Run, sides: Side[]): (Side[], i32) {
   }
   let base = last_component(sides[fnm].name);
   let name = file_name_concat(sides[dir].name, directory_match(run.cfg, sides[dir].name, base));
-  return match (stat(name)) {
-    Ok(st) => (sides.with(dir, Side { ...sides[dir], name: name, st: st }), 0),
-    Err(e) => {
-      fail(run, name + ": " + gnu.io_error_text(e));
-      (sides.with(dir, Side { ...sides[dir], name: name }), EXIT_TROUBLE)
-    },
-  };
+  let entry = stat_side(name, !run.cfg.no_dereference);
+  let result = sides.with(dir, entry);
+  if (entry.kind == K_ERROR) {
+    fail(run, name + ": " + entry.err_text);
+    return (result, EXIT_TROUBLE);
+  }
+  return (result, 0);
 }
 
 // Prefer the exact basename, then the first case-insensitive match.
