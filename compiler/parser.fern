@@ -722,25 +722,6 @@ pub function with_loop_label(st: ast.Stmt, label: string): ast.Stmt {
     ast.StmtFor(fr) => {
       return ast.StmtFor { decl_id: fr.decl_id, var_name: fr.var_name, iter: fr.iter, body: fr.body, label: label, line: fr.line, col: fr.col, destr: fr.destr };
     },
-    ast.StmtIf(f) => {
-      let n = f.then_body.len();
-      if (n == 0) {
-        return st;
-      }
-      match (f.then_body[n - 1]) {
-        ast.StmtWhile(w2) => {
-          let relabelled: ast.Stmt[] = [];
-          for i in 0..n - 1 {
-            relabelled = relabelled.append(f.then_body[i]);
-          }
-          relabelled = relabelled.append(ast.StmtWhile { cond: w2.cond, body: w2.body, label: label, line: w2.line, is_loop: w2.is_loop });
-          return ast.StmtIf { ...f, cond: f.cond, then_body: relabelled, else_body: f.else_body };
-        },
-        _ => {
-          return st;
-        }
-      }
-    },
     _ => {
       return st;
     }
@@ -1153,7 +1134,7 @@ function missing_fault(what: string): ast.Fault {
   return parse_fault(match (what) {
     "= in let" => "expected \"=\" after the name in this declaration",
     "`in` in for" => "expected \"in\" after the `for` pattern",
-    "for-let name" => "expected a name after \"let\" in this `for` loop",
+    "for name" => "expected a name or a pattern after \"for\"",
     "binding name" => "expected a name to bind",
     "statement in braceless body" => "expected a statement",
     "{ in block" => "expected \"{\" to open a block",
@@ -6076,64 +6057,15 @@ function parse_loop_stmt(p: Par): (ast.Stmt, Par) {
   return (ast.StmtWhile { cond: e_bool(true), body: lb_body, label: "", line: 0, is_loop: true }, lb_p);
 }
 
+const THREE_PART_FOR_MESSAGE: string = "Fern has no three-part `for (init; cond; step)`. Write `for i in lo..hi { … }` or a `while` loop";
+
 function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   let for_col = p.peek_col();
   p = p.advance();
   if (p.peek_punct() == "(") {
-    let cfl = p.peek_line();
-    let cfc = p.peek_col();
     let kv_open = p;
-    p = p.advance();
-    let is_cfor = !kv_open.paren_then_in();
-    if (is_cfor) {
-      let initstmts: ast.Stmt[] = [];
-      let init_head = p.advance();
-      if (p.peek_punct() == ";") {
-        p = p.advance();
-      } else if (p.peek_keyword() == "let" && init_head.peek_ident().len() == 0 && init_head.peek_punct() != "(") {
-        let bad_head = s_unknown(init_head, decl_fault("expected a name, got " + tok_desc(init_head.peek())));
-        let (bh_body, bh_p) = parse_block(init_head.skip_to_close(")"));
-        return (bad_head, bh_p);
-      } else {
-        let (fcinit_stmt, fcinit_p) = parse_stmt(p);
-        p = fcinit_p;
-        initstmts = [fcinit_stmt];
-      }
-      let condexpr = e_bool(true);
-      if (p.peek_punct() != ";") {
-        let (fccond_expr, fccond_p) = parse_expr(p);
-        p = fccond_p;
-        condexpr = fccond_expr;
-      }
-      p = p.expect_semi();
-      let stepone: ast.Stmt[] = [];
-      if (p.peek_punct() != ")") {
-        let (fcstep_stmt, fcstep_p) = parse_stmt(p);
-        p = fcstep_p;
-        stepone = [fcstep_stmt];
-      }
-      p = p.expect(")");
-      let (fcbody_body, fcbody_p) = parse_block(p);
-      p = fcbody_p;
-      let flag = "__forc_" + util.i32_to_string(cfl) + "_" + util.i32_to_string(cfc);
-      let noelse: ast.Stmt[] = [];
-      let wbody: ast.Stmt[] = [];
-      wbody = wbody.append(s_if(e_unary("!", e_ident(flag)), stepone, noelse));
-      wbody = wbody.append(s_assign(flag, e_bool(false)));
-      let breakone: ast.Stmt[] = [s_break()];
-      wbody = wbody.append(s_if(e_unary("!", condexpr), breakone, noelse));
-      let fbi = 0;
-      while (fbi < fcbody_body.len()) {
-        wbody = wbody.append(fcbody_body[fbi]);
-        fbi += 1;
-      }
-      let outer: ast.Stmt[] = [];
-      for ini in 0..initstmts.len() {
-        outer = outer.append(initstmts[ini]);
-      }
-      outer = outer.append(s_var(flag, "", e_bool(true)));
-      outer = outer.append(s_while(e_bool(true), wbody));
-      return (s_if(e_bool(true), outer, noelse), p);
+    if (!kv_open.paren_then_in()) {
+      return for_refused(kv_open, parse_fault(THREE_PART_FOR_MESSAGE));
     }
     let (kvdestr, kvcount, kvok, kvnames_p) = parse_destructure_names(kv_open);
     p = kvnames_p;
@@ -6186,7 +6118,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
   } else {
     fvar = p.peek_ident();
     if (fvar.len() == 0) {
-      return for_refused(p, missing_fault("for-let name"));
+      return for_refused(p, missing_fault("for name"));
     }
     p = p.advance();
   }

@@ -243,17 +243,6 @@ function (p: Point) sum(): i32 { return p.x + p.y; }`)
 	}
 }
 
-func TestFormatForLoop(t *testing.T) {
-	got := formatSrc(t, `function f(): i32 {
-		let sum = 0;
-		for (let i = 0; i < 3; i = i + 1) { sum = sum + i; }
-		return sum;
-	}`)
-	if !strings.Contains(got, "for (let i = 0; i < 3; i = i + 1) {") {
-		t.Errorf("for-header shape lost:\n%s", got)
-	}
-}
-
 func TestFormatForEachFormsKeepTheirSugar(t *testing.T) {
 	for _, tc := range []struct{ name, loop string }{
 		{"range", "for i in 0..4 {\n    t = t + i;\n  }"},
@@ -335,7 +324,7 @@ func TestFormatKeepsLoopLabels(t *testing.T) {
 	src := `function f(a: i32[]): i32 {
   let t: i32 = 0;
   outer: while (t < 10) {
-    inner: for (let i: i32 = 0; i < 3; i = i + 1) {
+    inner: for i in 0..3 {
       if (i == 2) {
         continue outer;
       }

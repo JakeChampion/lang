@@ -1,6 +1,6 @@
 # WebP files
 
-This module decodes WebP files to pixels, lossy or lossless, still or animated. It also makes an animated WebP file from still WebP files, one for each frame.
+This module decodes WebP files to pixels, lossy or lossless, still or animated. It encodes pixels to a lossless still WebP file. It also makes an animated WebP file from still WebP files, one for each frame.
 
 ## Model
 
@@ -24,6 +24,8 @@ This is the difference from libwebp, for a file that no encoder writes: a coeffi
 
 The last run of symbols of a lossless `ALPH` stream can read past the end of its chunk, as in libwebp. The section "the end of an alpha stream" gives the rule.
 
+`encode_lossless` writes an `Image` as a still file with one `VP8L` chunk. `decode` of that file gives the same pixels, also the red, green and blue of a pixel with an alpha of 0. A width or a height that is not from 1 to 16384 gives `ImageSize`. A count of bytes that is not four for each pixel gives `PixelCount`.
+
 `decode_animation` reads an animated file. It gives the canvas after each frame, as the animation decoder of libwebp gives it.
 
 The canvas is transparent at the start. A frame with the blend flag is blended over the canvas, with its alpha. A frame without the flag replaces its rectangle of the canvas. A frame with the dispose flag makes its rectangle transparent before the next frame. The background color of the `ANIM` chunk has no effect, as in libwebp. A loop count of 0 means that the animation loops for ever.
@@ -41,8 +43,8 @@ The canvas is transparent at the start. A frame with the blend flag is blended o
 | Part of the format | Status |
 | --- | --- |
 | RIFF container, `VP8X`, and `ICCP`, `EXIF`, `XMP ` and unknown chunks | Read. The metadata chunks are skipped. |
-| Lossless still image (`VP8L`) | Decoded by `decode`. |
-| Lossy still image (`VP8 `), key frames | Decoded by `decode`. |
+| Lossless still image (`VP8L`) | Decoded by `decode`. Written by `encode_lossless`, with the subtract-green transform and copies, and with no other transform and no color cache. |
+| Lossy still image (`VP8 `), key frames | Decoded by `decode`. Not written. |
 | Alpha of a lossy image (`ALPH`), raw or lossless, with each filter | Decoded by `decode`. |
 | Animation (`ANIM`, `ANMF` with `VP8L` frames or `VP8 ` frames with alpha) | Decoded by `decode_animation`. Written by `animate`. |
 | Metadata (ICC profile, Exif, XMP) | Not given to the caller. |
@@ -113,6 +115,8 @@ import "std/i32";
 <<alpha>>
 
 <<animated decoding>>
+
+<<lossless encoding>>
 ```
 
 ### `errors`
@@ -175,6 +179,27 @@ pub function (e: DecodeError) to_string(): string {
 impl error.Error for DecodeError {}
 
 impl cmp.Display for DecodeError {}
+
+pub enum EncodeError { ImageSize, PixelCount }
+
+pub function (e: EncodeError) message(): string {
+  match (e) {
+    ImageSize => {
+      return "webp: the width and the height must be from 1 to 16384";
+    },
+    PixelCount => {
+      return "webp: the image must have four bytes for each pixel";
+    }
+  }
+}
+
+pub function (e: EncodeError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for EncodeError {}
+
+impl cmp.Display for EncodeError {}
 
 // Red, green, blue and alpha bytes for each pixel, row by row.
 pub struct Image { width: i32, height: i32, pixels: u8[] }
@@ -3089,5 +3114,502 @@ pub function decode_animation(file: [u8]): Result[Animation, DecodeError] {
     return Err(BadHeader);
   }
   return Ok(Animation { width: r.canvas.width, height: r.canvas.height, loop_count: r.loop_count, frames: r.frames });
+}
+```
+
+### `lossless encoding`
+
+`encode_lossless` writes a still file with one `VP8L` chunk. It applies the subtract-green transform, and then it codes the pixels with one group of prefix codes and with no color cache. A copy takes the longest match of three candidates: the pixel to the left, the pixel above, and the last position whose two pixels have the same hash. A copy must have three pixels or more.
+
+Each prefix code is a Huffman code of the counts of its symbols, with no code longer than 15 bits. The code of code lengths has no code longer than 7 bits. When a Huffman code is too long, each count below a floor goes up to the floor. The floor doubles until the code is short enough. A code with one or two symbols below 256 is a simple code.
+
+```fern
+<<lossless encoding>>=
+// The writer packs fields from the low bit of each byte.
+struct Writer { out: u8[], word: i64, count: i32 }
+
+// `n` bits of `v` after the bits so far, with `n` from 0 to 24.
+function put(own w: Writer, v: i32, n: i32): Writer {
+  let word = w.word | (v as i64 & (1i64 << n as i64) - 1i64) << w.count as i64;
+  let count = w.count + n;
+  let out = w.out;
+  while (count >= 8) {
+    out = out.append((word & 255i64) as u8);
+    word >>= 8i64;
+    count -= 8;
+  }
+  return Writer { out: out, word: word, count: count };
+}
+
+function flushed(own w: Writer): u8[] {
+  if (w.count > 0) {
+    return w.out.append((w.word & 255i64) as u8);
+  }
+  return w.out;
+}
+
+// The indices in `live` of its two nodes of least weight.
+function two_least(live: [i32], weight: [i64]): (i32, i32) {
+  let a = if (weight[live[1]] < weight[live[0]]) { 1 } else { 0 };
+  let b = 1 - a;
+  for k in 2..live.len() {
+    let w = weight[live[k]];
+    if (w < weight[live[a]]) {
+      b = a;
+      a = k;
+    } else if (w < weight[live[b]]) {
+      b = k;
+    }
+  }
+  return (a, b);
+}
+
+function depth_of(parent: [i32], s: i32): i32 {
+  let d = 0;
+  let at = s;
+  while (parent[at] >= 0) {
+    at = parent[at];
+    d += 1;
+  }
+  return d;
+}
+
+// The depth of each symbol in a Huffman tree of `counts`. A count above 0
+// and below `floor` counts as `floor`. A count of 0 gives a depth of 0.
+function tree_depths(counts: [i32], floor: i32): i32[] {
+  let n = counts.len();
+  let weight: i64[] = [];
+  let parent: i32[] = [];
+  let live: i32[] = [];
+  for s in 0..n {
+    let c = counts[s];
+    weight = weight.append(c.max(floor) as i64);
+    parent = parent.append(-1);
+    if (c > 0) {
+      live = live.append(s);
+    }
+  }
+  if (live.len() == 1) {
+    return __alloc_i32(n).with(live[0], 1);
+  }
+  while (live.len() > 1) {
+    let (a, b) = two_least(live, weight);
+    let node = weight.len();
+    weight = weight.append(weight[live[a]] + weight[live[b]]);
+    parent = parent.append(-1).with(live[a], node).with(live[b], node);
+    let rest: i32[] = [];
+    for k in 0..live.len() {
+      if (k != a && k != b) {
+        rest = rest.append(live[k]);
+      }
+    }
+    live = rest.append(node);
+  }
+  let depths = __alloc_i32(n);
+  for s in 0..n {
+    if (counts[s] > 0) {
+      depths = depths.with(s, depth_of(parent, s));
+    }
+  }
+  return depths;
+}
+
+// The lengths of a Huffman code of `counts`, none longer than `limit`.
+function limited_lengths(counts: [i32], limit: i32): i32[] {
+  let floor = 1;
+  while (true) {
+    let lengths = tree_depths(counts, floor);
+    let longest = 0;
+    for n in lengths {
+      longest = longest.max(n);
+    }
+    if (longest <= limit) {
+      return lengths;
+    }
+    floor *= 2;
+  }
+}
+
+// The canonical code of each symbol, with its first bit as its low bit, and
+// the length of each code. A code with one symbol takes no bits.
+struct Prefix { bits: i32[], lengths: i32[] }
+
+function reversed(v: i32, n: i32): i32 {
+  let r = 0;
+  for k in 0..n {
+    r = r << 1 | v >> k & 1;
+  }
+  return r;
+}
+
+function prefix_of(lengths: [i32]): Prefix {
+  let n = lengths.len();
+  let counts = __alloc_i32(16);
+  let used = 0;
+  for len in lengths {
+    if (len > 0) {
+      counts = counts.with(len, counts[len] + 1);
+      used += 1;
+    }
+  }
+  if (used <= 1) {
+    return Prefix { bits: __alloc_i32(n), lengths: __alloc_i32(n) };
+  }
+  let next = __alloc_i32(16);
+  let code = 0;
+  for len in 1..16 {
+    code = code + counts[len - 1] << 1;
+    next = next.with(len, code);
+  }
+  let bits = __alloc_i32(n);
+  let kept = __alloc_i32(n);
+  for s in 0..n {
+    let len = lengths[s];
+    if (len > 0) {
+      bits = bits.with(s, reversed(next[len], len));
+      kept = kept.with(s, len);
+      next = next.with(len, next[len] + 1);
+    }
+  }
+  return Prefix { bits: bits, lengths: kept };
+}
+
+function put_symbol(own w: Writer, p: Prefix, s: i32): Writer {
+  return put(w, p.bits[s], p.lengths[s]);
+}
+
+// The code lengths as symbols from 0 to 18, and the extra bits of each.
+// Code 16 follows a literal length, so it always repeats that length.
+function length_tokens(lengths: [i32]): (i32[], i32[]) {
+  let syms: i32[] = [];
+  let extras: i32[] = [];
+  let i = 0;
+  let n = lengths.len();
+  while (i < n) {
+    let v = lengths[i];
+    let run = 1;
+    while (i + run < n && lengths[i + run] == v) {
+      run += 1;
+    }
+    i += run;
+    if (v == 0) {
+      while (run >= 11) {
+        let r = run.min(138);
+        syms = syms.append(18);
+        extras = extras.append(r - 11);
+        run -= r;
+      }
+      if (run >= 3) {
+        syms = syms.append(17);
+        extras = extras.append(run - 3);
+        run = 0;
+      }
+    } else {
+      syms = syms.append(v);
+      extras = extras.append(0);
+      run -= 1;
+      while (run >= 3) {
+        let r = run.min(6);
+        syms = syms.append(16);
+        extras = extras.append(r - 3);
+        run -= r;
+      }
+    }
+    while (run > 0) {
+      syms = syms.append(v);
+      extras = extras.append(0);
+      run -= 1;
+    }
+  }
+  return (syms, extras);
+}
+
+// The count of extra bits after the code-length symbol `s`.
+function length_extra(s: i32): i32 {
+  return if (s == 16) { 2 } else if (s == 17) { 3 } else if (s == 18) { 7 } else { 0 };
+}
+
+// A code that `read_code` reads with the code of code lengths.
+function put_long_code(own w: Writer, lengths: [i32]): Writer {
+  let (syms, extras) = length_tokens(lengths);
+  let counts = __alloc_i32(19);
+  for s in syms {
+    counts = counts.with(s, counts[s] + 1);
+  }
+  let cl = limited_lengths(counts, 7);
+  let order = length_order();
+  let num = 4;
+  for i in 0..19 {
+    if (cl[order[i]] > 0) {
+      num = num.max(i + 1);
+    }
+  }
+  let out = put(put(w, 0, 1), num - 4, 4);
+  for i in 0..num {
+    out = put(out, cl[order[i]], 3);
+  }
+  out = put(out, 0, 1);
+  let p = prefix_of(cl);
+  for k in 0..syms.len() {
+    out = put(put_symbol(out, p, syms[k]), extras[k], length_extra(syms[k]));
+  }
+  return out;
+}
+
+// A simple code of the symbol `s0`, and of `s1` when `used` is 2.
+function put_simple_code(own w: Writer, used: i32, s0: i32, s1: i32): Writer {
+  let head = put(put(w, 1, 1), used - 1, 1);
+  let first = if (s0 < 2) { put(put(head, 0, 1), s0, 1) } else { put(put(head, 1, 1), s0, 8) };
+  return if (used == 2) { put(first, s1, 8) } else { first };
+}
+
+// The count of symbols with a length, the first two of them, and whether
+// one of those two is 256 or more.
+function used_symbols(lengths: [i32]): (i32, i32, i32, boolean) {
+  let used = 0;
+  let s0 = 0;
+  let s1 = 0;
+  for s in 0..lengths.len() {
+    if (lengths[s] > 0) {
+      s1 = if (used == 1) { s } else { s1 };
+      s0 = if (used == 0) { s } else { s0 };
+      used += 1;
+    }
+  }
+  return (used, s0, s1, s0 >= 256 || s1 >= 256);
+}
+
+// The prefix code with the lengths `lengths`, as `read_code` reads it.
+function put_code(own w: Writer, lengths: [i32]): Writer {
+  let (used, s0, s1, wide) = used_symbols(lengths);
+  if (used == 0) {
+    return put(w, 1, 4);
+  }
+  if (used <= 2 && !wide) {
+    return put_simple_code(w, used, s0, s1);
+  }
+  return put_long_code(w, lengths);
+}
+
+// The symbol of the number `v` from 1, the count of its extra bits, and
+// their value. It is the inverse of `amount`.
+function prefix_value(v: i32): (i32, i32, i32) {
+  let x = v - 1;
+  if (x < 4) {
+    return (x, 0, 0);
+  }
+  let h = 2;
+  while (x >> h + 1 > 0) {
+    h += 1;
+  }
+  let extra = h - 1;
+  return (2 * h + (x >> extra & 1), extra, x & (1 << extra) - 1);
+}
+
+function put_value(own w: Writer, p: Prefix, v: i32): Writer {
+  let (sym, extra, bits) = prefix_value(v);
+  return put(put_symbol(w, p, sym), bits, extra);
+}
+
+// For each distance up to 7 rows and 8 pixels, the smallest code of the 120
+// nearest pixels that gives it, or 0.
+function plane_codes(width: i32): i32[] {
+  let near = near_codes();
+  let codes = __alloc_i32(7 * width + 9);
+  for k in 0..120 {
+    let c = near[k];
+    let d = (c >> 4) * width + 8 - (c & 15);
+    if (d >= 1 && codes[d] == 0) {
+      codes = codes.with(d, k + 1);
+    }
+  }
+  return codes;
+}
+
+// The code of the distance `dist`.
+function distance_code(dist: i32, plane: [i32]): i32 {
+  if (dist < plane.len() && plane[dist] > 0) {
+    return plane[dist];
+  }
+  return dist + 120;
+}
+
+// A literal pixel has a length of 0 and its pixel as its value. A copy has
+// its length, and the code of its distance as its value.
+struct Tokens { lengths: i32[], values: i32[] }
+
+function pair_hash(a: i32, b: i32): i32 {
+  let v = (a as i64 & 4294967295i64) * 506832829i64 + (b as i64 & 4294967295i64);
+  return ((v & 4294967295i64) >> 16i64) as i32;
+}
+
+// The count of pixels from `at` that equal the pixels `dist` before them,
+// up to `limit`.
+function run_length(px: [i32], at: i32, dist: i32, limit: i32): i32 {
+  let n = 0;
+  while (n < limit && px[at + n] == px[at + n - dist]) {
+    n += 1;
+  }
+  return n;
+}
+
+// The greatest distance that a distance code can give.
+function farthest(): i32 {
+  return 1048576 - 120;
+}
+
+// The longest copy at `i`, as its length and its distance: from the pixel to
+// the left, from the pixel above, or from the last position of the hash of
+// the two pixels at `i`.
+function longest(px: [i32], i: i32, width: i32, heads: [i32]): (i32, i32) {
+  let limit = (px.len() - i).min(4096);
+  let last = if (i + 1 < px.len()) { heads[pair_hash(px[i], px[i + 1])] - 1 } else { -1 };
+  let candidates = [1, width, if (last >= 0) { i - last } else { 0 }];
+  let best = 0;
+  let best_dist = 0;
+  for dist in candidates {
+    let n = if (dist >= 1 && dist <= i && dist <= farthest()) { run_length(px, i, dist, limit) } else { 0 };
+    if (n > best) {
+      best = n;
+      best_dist = dist;
+    }
+  }
+  return (best, best_dist);
+}
+
+// The hash table with the positions from `from` to `to`.
+function hashed(own heads: i32[], px: [i32], from: i32, to: i32): i32[] {
+  for k in from..to.min(px.len() - 1) {
+    heads = heads.with(pair_hash(px[k], px[k + 1]), k + 1);
+  }
+  return heads;
+}
+
+function matched(px: [i32], width: i32): Tokens {
+  let plane = plane_codes(width);
+  let heads = __alloc_i32(65536);
+  let lengths: i32[] = [];
+  let values: i32[] = [];
+  let i = 0;
+  while (i < px.len()) {
+    let (best, dist) = longest(px, i, width, heads);
+    let step = if (best >= 3) { best } else { 1 };
+    heads = hashed(heads, px, i, i + step);
+    lengths = lengths.append(if (step == 1) { 0 } else { best });
+    values = values.append(if (step == 1) { px[i] } else { distance_code(dist, plane) });
+    i += step;
+  }
+  return Tokens { lengths: lengths, values: values };
+}
+
+function counted(own counts: i32[], s: i32): i32[] {
+  return counts.with(s, counts[s] + 1);
+}
+
+// The lengths of the codes of green, red, blue, alpha and distance.
+function token_codes(t: Tokens): i32[][] {
+  let green = __alloc_i32(280);
+  let red = __alloc_i32(256);
+  let blue = __alloc_i32(256);
+  let alpha = __alloc_i32(256);
+  let dist = __alloc_i32(40);
+  for k in 0..t.lengths.len() {
+    let v = t.values[k];
+    if (t.lengths[k] == 0) {
+      green = counted(green, byte_of(v, 8));
+      red = counted(red, byte_of(v, 16));
+      blue = counted(blue, byte_of(v, 0));
+      alpha = counted(alpha, byte_of(v, 24));
+    } else {
+      let (ls, _, _) = prefix_value(t.lengths[k]);
+      let (ds, _, _) = prefix_value(v);
+      green = counted(green, 256 + ls);
+      dist = counted(dist, ds);
+    }
+  }
+  return [limited_lengths(green, 15), limited_lengths(red, 15), limited_lengths(blue, 15), limited_lengths(alpha, 15), limited_lengths(dist, 15)];
+}
+
+// The pixels of `image` as words, with green taken from red and from blue.
+function green_subtracted(image: Image): i32[] {
+  let total = image.width * image.height;
+  let px = __alloc_i32(total);
+  let p = image.pixels;
+  for i in 0..total {
+    let r = p[i * 4] as i32;
+    let g = p[i * 4 + 1] as i32;
+    let b = p[i * 4 + 2] as i32;
+    let a = p[i * 4 + 3] as i32;
+    px = px.with(i, a << 24 | (r - g & 255) << 16 | g << 8 | b - g & 255);
+  }
+  return px;
+}
+
+function has_alpha(image: Image): boolean {
+  for i in 0..image.width * image.height {
+    if (image.pixels[i * 4 + 3] != 255u8) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The bits of the pixels, as the codes `codes` give them.
+function put_tokens(own w: Writer, t: Tokens, codes: [Prefix]): Writer {
+  for k in 0..t.lengths.len() {
+    let v = t.values[k];
+    let n = t.lengths[k];
+    if (n == 0) {
+      w = put_symbol(w, codes[0], byte_of(v, 8));
+      w = put_symbol(w, codes[1], byte_of(v, 16));
+      w = put_symbol(w, codes[2], byte_of(v, 0));
+      w = put_symbol(w, codes[3], byte_of(v, 24));
+    } else {
+      let (ls, extra, bits) = prefix_value(n);
+      w = put(put_symbol(w, codes[0], 256 + ls), bits, extra);
+      w = put_value(w, codes[4], v);
+    }
+  }
+  return w;
+}
+
+function image_error(image: Image): Option[EncodeError] {
+  let width = image.width;
+  let height = image.height;
+  if (width < 1 || height < 1 || width > 16384 || height > 16384) {
+    return Some(ImageSize);
+  }
+  if (image.pixels.len() != width * height * 4) {
+    return Some(PixelCount);
+  }
+  return None;
+}
+
+// The lossless still WebP file of `image`. `decode` gives the same pixels
+// back.
+pub function encode_lossless(image: Image): Result[u8[], EncodeError] {
+  if let Some(e) = image_error(image) {
+    return Err(e);
+  }
+  let tokens = matched(green_subtracted(image), image.width);
+  let lengths = token_codes(tokens);
+  let w = Writer { out: [47u8], word: 0i64, count: 0 };
+  w = put(put(w, image.width - 1, 14), image.height - 1, 14);
+  w = put(put(w, if (has_alpha(image)) { 1 } else { 0 }, 1), 0, 3);
+  // The subtract-green transform, no other transform, no color cache, and
+  // no entropy image.
+  w = put(put(put(w, 1, 1), 2, 2), 0, 3);
+  let codes: Prefix[] = [];
+  for l in lengths {
+    w = put_code(w, l);
+    codes = codes.append(prefix_of(l));
+  }
+  w = put_tokens(w, tokens, codes);
+  let body = chunk([87u8, 69u8, 66u8, 80u8], "VP8L", flushed(w));
+  let out = le32([82u8, 73u8, 70u8, 70u8], body.len());
+  for b in body {
+    out = out.append(b);
+  }
+  return Ok(out);
 }
 ```

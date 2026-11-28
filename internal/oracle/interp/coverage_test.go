@@ -90,7 +90,7 @@ function main(): i32 { let p: P = P { x: 3, y: 4 }; return p.y; }`},
 }`},
 		{node: "For", src: `function main(): i32 {
     let sum: i32 = 0;
-    for (let i: i32 = 0; i < 3; i = i + 1) { sum = sum + i; }
+    for i in 0..3 { sum = sum + i; }
     return sum;
 }`},
 		{node: "Break", src: `function main(): i32 {

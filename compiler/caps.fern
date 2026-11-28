@@ -297,13 +297,32 @@ pub function pkg_of(pkgs: Pkg[], module: string): string {
   return "";
 }
 
-function pkg_index(pkgs: Pkg[], dir: string): i32 {
+function pkg_index(pkgs: Pkg[], dir: string): Option[i32] {
   for i in 0..pkgs.len() {
     if (pkgs[i].dir == dir) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
+}
+
+// The first entry of the package that holds `module`: the entry that
+// `pkg_index` finds for the directory that `pkg_of` gives.
+function pkg_head(pkgs: Pkg[], module: string): Option[i32] {
+  for i in 0..pkgs.len() {
+    if (pkgs[i].module == module) {
+      if (pkgs[i].dir.len() == 0) {
+        return None;
+      }
+      for j in 0..i {
+        if (pkgs[j].dir == pkgs[i].dir) {
+          return Some(j);
+        }
+      }
+      return Some(i);
+    }
+  }
+  return None;
 }
 
 pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
@@ -316,11 +335,9 @@ pub function enforceable(mod: parser.Module, pkgs: Pkg[]): boolean {
   if (!non_root) {
     return false;
   }
-  for i in 0..mod.funcs.len() {
-    let p = pkg_of(pkgs, mod.funcs[i].module);
-    if (p.len() > 0) {
-      let k = pkg_index(pkgs, p);
-      if (k >= 0 && !pkgs[k].root) {
+  for f in mod.funcs {
+    if let Some(k) = pkg_head(pkgs, f.module) {
+      if (!pkgs[k].root) {
         return true;
       }
     }
@@ -341,13 +358,13 @@ function has_i32(xs: i32[], v: i32): boolean {
   return false;
 }
 
-pub function func_index(mod: parser.Module, name: string): i32 {
+pub function func_index(mod: parser.Module, name: string): Option[i32] {
   for i in 0..mod.funcs.len() {
     if (mod.funcs[i].name == name) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function analysis_want(): string[] {
@@ -453,35 +470,35 @@ function sort_rows(rows: Row[]): Row[] {
 
 pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
   let want = util.name_index(analysis_want());
-  let names: string[] = [];
-  for fi in 0..mod.funcs.len() {
-    let p = pkg_of(pkgs, mod.funcs[fi].module);
-    if (p.len() > 0 && !util.has_str(names, p)) {
-      names = names.append(p);
+  let heads: i32[] = [];
+  for f in mod.funcs {
+    if let Some(k) = pkg_head(pkgs, f.module) {
+      if (!has_i32(heads, k)) {
+        heads = heads.append(k);
+      }
     }
   }
 
   let rows: Row[] = [];
-  for pi in 0..names.len() {
+  for k in heads {
+    let dir = pkgs[k].dir;
     let roots: i32[] = [];
     for fj in 0..mod.funcs.len() {
-      if (pkg_of(pkgs, mod.funcs[fj].module) == names[pi]) {
+      if (pkg_of(pkgs, mod.funcs[fj].module) == dir) {
         roots = roots.append(fj);
       }
     }
-    let k = pkg_index(pkgs, names[pi]);
     let label = pkgs[k].name;
     let duplicate = false;
-    for other in names {
-      let oi = pkg_index(pkgs, other);
-      if (other != names[pi] && pkgs[oi].name == label) {
+    for other in heads {
+      if (other != k && pkgs[other].name == label) {
         duplicate = true;
       }
     }
     if (duplicate) {
-      label = label + " (" + names[pi] + ")";
+      label = label + " (" + dir + ")";
     }
-    rows = rows.append(Row { key: names[pi], pkg: label, uses: walk(mod, pkgs, roots, want) });
+    rows = rows.append(Row { key: dir, pkg: label, uses: walk(mod, pkgs, roots, want) });
   }
   return sort_rows(rows);
 }
@@ -528,18 +545,18 @@ pub struct Violation {
 pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
   let out: Violation[] = [];
   for ri in 0..rows.len() {
-    let k = pkg_index(pkgs, rows[ri].key);
-    let is_root = k >= 0 && pkgs[k].root;
+    let entry = pkg_index(pkgs, rows[ri].key);
+    let is_root = false;
+    let governed = false;
+    let grants: string[] = [];
+    if let Some(k) = entry {
+      is_root = pkgs[k].root;
+      governed = pkgs[k].governed;
+      grants = pkgs[k].grants;
+    }
     if (!is_root) {
-      let governed = k >= 0 && pkgs[k].governed;
-      let ui = 0;
-      while (ui < rows[ri].uses.len()) {
-        let u = rows[ri].uses[ui];
-        let granted = false;
-        if (governed) {
-          granted = util.has_str(pkgs[k].grants, u.capability);
-        }
-        if (!granted) {
+      for u in rows[ri].uses {
+        if (!(governed && util.has_str(grants, u.capability))) {
           out = out.append(Violation {
             pkg: rows[ri].pkg,
             capability: u.capability,
@@ -547,7 +564,6 @@ pub function enforce(rows: Row[], pkgs: Pkg[]): Violation[] {
             governed: governed,
           });
         }
-        ui += 1;
       }
     }
   }
@@ -558,8 +574,7 @@ pub function source_chain(mod: parser.Module, chain: string[]): string[] {
   let out: string[] = [];
   for name in chain {
     let shown = name;
-    let fi = func_index(mod, name);
-    if (fi >= 0) {
+    if let Some(fi) = func_index(mod, name) {
       shown = util.unqualified(name, mod.funcs[fi].module);
     }
     out = out.append(shown);

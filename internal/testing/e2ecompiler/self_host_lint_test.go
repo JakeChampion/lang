@@ -70,7 +70,7 @@ func TestSelfHostLintScoreModel(t *testing.T) {
 		{"else-if chain", 3, `if (n > 0) { return 1; } else if (n < 0) { return 2; } else { return 3; }`},
 		{"if-expression", 2, `return if (n > 0) { 1 } else { 2 };`},
 		{"while", 2, `while (n > 0) { n = n - 1; } return n;`},
-		{"c-for", 2, `for (let i: i32 = 0; i < n; i = i + 1) { n = n; } return n;`},
+		{"for", 2, `for i in 0..n { n = n; } return n;`},
 		{"loop", 2, `loop { break; } return n;`},
 		{"and", 3, `if (n > 0 && n < 9) { return 1; } return 0;`},
 		{"or", 3, `if (n > 0 || n < 9) { return 1; } return 0;`},
