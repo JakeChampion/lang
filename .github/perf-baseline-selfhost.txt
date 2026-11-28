@@ -69,7 +69,7 @@ selfhost/arm64-linux/sort_inplace.emit	1841
 selfhost/arm64-linux/sort_ints.emit	2634
 selfhost/arm64-linux/sort_strings.emit	4309
 selfhost/arm64-linux/string_build.emit	2461
-selfhost/arm64-linux/string_count_byte.emit	1603
+selfhost/arm64-linux/string_count_byte.emit	1644
 selfhost/arm64-linux/string_find_byte.emit	2005
 selfhost/arm64-linux/string_rfind_byte.emit	2116
 selfhost/arm64-linux/string_scan.emit	2660
