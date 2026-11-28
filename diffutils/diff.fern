@@ -579,7 +579,7 @@ function diff_syntax(): bre.Syntax {
 
 // GNU records the filename case mode when each exclusion is added.
 function add_exclude(cfg: Cfg, pattern: string): Cfg {
-  let rule = Exclude { pattern: if (cfg.name_case) { lower(pattern) } else { pattern }, fold_case: cfg.name_case };
+  let rule = Exclude { pattern: pattern, fold_case: cfg.name_case };
   return Cfg { ...cfg, excludes: cfg.excludes.append(rule) };
 }
 
@@ -1440,7 +1440,7 @@ function compare_names(cfg: Cfg, a: string, b: string): i32 {
 
 function excluded(cfg: Cfg, name: string): boolean {
   for rule in cfg.excludes {
-    if (fnmatch.fnmatch(rule.pattern, if (rule.fold_case) { lower(name) } else { name })) {
+    if (fnmatch.fnmatch(rule.pattern, name, rule.fold_case)) {
       return true;
     }
   }

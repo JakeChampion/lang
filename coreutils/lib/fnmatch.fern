@@ -26,7 +26,7 @@ impl ByteInput for BytePattern {
 }
 
 pub function (pat: BytePattern) matches(text: string): boolean {
-  return fn_match(pat, 0, text, 0) > 0;
+  return fn_match(pat, 0, text, 0, false) > 0;
 }
 
 impl ByteInput for BytesInput {
@@ -105,6 +105,10 @@ function fn_class[P: ByteInput](p: P, lo: i32, hi: i32, c: i32): i32 {
   return -1;
 }
 
+function fn_fold(c: i32, fold_case: boolean): i32 {
+  return if (fold_case && c >= 65 && c <= 90) { c + 32 } else { c };
+}
+
 // Locate the end of [:name:], [.symbol.] or [=element=]. GNU fnmatch
 // treats an impossible class name as an ordinary '[' (-2). A class name
 // beyond CHARCLASS_NAME_MAX or an unfinished collating element fails (-1).
@@ -128,7 +132,7 @@ function fn_member_end[P: ByteInput](p: P, body: i32, kind: i32): i32 {
   return if (gnu_class) { -2 } else { -1 };
 }
 
-function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
+function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32, fold_case: boolean): i32 {
   let n = p.byte_count();
   let i = start + 1;
   let negate = false;
@@ -175,7 +179,11 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
         return -1;
       }
       let lo = p.byte_at(body) as i32;
-      let r: (i32, boolean) = fn_range(p, i, lo, ch, hit);
+      if (i + 1 >= n || p.byte_at(i) != b'-' || p.byte_at(i + 1) == b']') {
+        hit = hit || ch == lo;
+        continue;
+      }
+      let r: (i32, boolean) = fn_range(p, i, lo, fn_fold(ch, fold_case), hit, fold_case);
       i = r.0;
       hit = r.1;
       continue;
@@ -190,7 +198,7 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
     } else {
       i += 1;
     }
-    let r2: (i32, boolean) = fn_range(p, i, lo2, ch, hit);
+    let r2: (i32, boolean) = fn_range(p, i, fn_fold(lo2, fold_case), fn_fold(ch, fold_case), hit, fold_case);
     i = r2.0;
     hit = r2.1;
   }
@@ -203,7 +211,7 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
   return 0;
 }
 
-function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean): (i32, boolean) {
+function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean, fold_case: boolean): (i32, boolean) {
   let n = p.byte_count();
   let i = at;
   if (i + 1 < n && p.byte_at(i) as i32 == 45 && p.byte_at(i + 1) as i32 != 93) {
@@ -213,7 +221,7 @@ function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean): 
       hi = p.byte_at(i) as i32;
       i += 1;
     }
-    if (ch >= lo && ch <= hi) {
+    if (ch >= lo && ch <= fn_fold(hi, fold_case)) {
       return (i, true);
     }
     return (i, hit);
@@ -224,7 +232,7 @@ function fn_range[P: ByteInput](p: P, at: i32, lo: i32, ch: i32, hit: boolean): 
   return (i, hit);
 }
 
-function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i32 {
+function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32, fold_case: boolean): i32 {
   let pi = pi0;
   let si = si0;
   let pn = p.byte_count();
@@ -240,7 +248,7 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
       }
       let k = si;
       while (k <= sn) {
-        let r = fn_match(p, pi, s, k);
+        let r = fn_match(p, pi, s, k, fold_case);
         if (r != 0) {
           return r;
         }
@@ -260,7 +268,7 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
       if (pi + 1 >= pn) {
         return 0;
       }
-      if (si >= sn || s.byte_at(si) as i32 != p.byte_at(pi + 1) as i32) {
+      if (si >= sn || fn_fold(s.byte_at(si) as i32, fold_case) != fn_fold(p.byte_at(pi + 1) as i32, fold_case)) {
         return 0;
       }
       pi += 2;
@@ -271,7 +279,7 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
       if (si >= sn) {
         return 0;
       }
-      let b = fn_bracket(p, pi, s.byte_at(si) as i32);
+      let b = fn_bracket(p, pi, s.byte_at(si) as i32, fold_case);
       if (b == -1) {
         return -1;
       }
@@ -290,7 +298,7 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
       si += 1;
       continue;
     }
-    if (si >= sn || s.byte_at(si) as i32 != c) {
+    if (si >= sn || fn_fold(s.byte_at(si) as i32, fold_case) != fn_fold(c, fold_case)) {
       return 0;
     }
     pi += 1;
@@ -299,15 +307,15 @@ function fn_match[P: ByteInput, S: ByteInput](p: P, pi0: i32, s: S, si0: i32): i
   return fn_verdict(si == sn);
 }
 
-pub function fnmatch(pat: string, s: string): boolean {
-  return fn_match(pat, 0, s, 0) > 0;
+pub function fnmatch(pat: string, s: string, fold_case: boolean = false): boolean {
+  return fn_match(pat, 0, s, 0, fold_case) > 0;
 }
 
 pub function fnmatch_bytes(pat: [u8], s: [u8]): boolean {
-  let r = fn_match(BytesInput { data: pat }, 0, BytesInput { data: s }, 0);
+  let r = fn_match(BytesInput { data: pat }, 0, BytesInput { data: s }, 0, false);
   return r > 0;
 }
 
 pub function fnmatch_bytes_text(pat: [u8], s: string): boolean {
-  return fn_match(BytesInput { data: pat }, 0, s, 0) > 0;
+  return fn_match(BytesInput { data: pat }, 0, s, 0, false) > 0;
 }
