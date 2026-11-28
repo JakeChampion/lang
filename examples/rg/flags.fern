@@ -7,6 +7,7 @@ import "std/string";
 import "./colors";
 import "./encoding";
 import "./hyperlink";
+import "./logs";
 import "std/pcre";
 
 // What rg does: write the selected lines, count them, name the files with
@@ -203,7 +204,7 @@ const OTHER_SWITCHES: string[] = [
   "no-context-separator", "crlf", "no-crlf", "null-data", "no-encoding", "pretty",
   "pcre2", "no-pcre2", "auto-hybrid-regex", "no-auto-hybrid-regex", "no-pcre2-unicode", "pcre2-unicode",
   "line-buffered", "no-line-buffered", "block-buffered", "no-block-buffered", "debug", "trace",
-  "pcre2-version", "no-pre",
+  "help", "version", "pcre2-version", "no-pre",
 ];
 
 // The long names of the flags in the order of ripgrep, for the flags that
@@ -404,6 +405,7 @@ function set_late_switch(o: Options, name: string): Options {
     "no-pcre2" | "no-auto-hybrid-regex" => Options { ...o, engine: "default" },
     "no-pcre2-unicode" => with_bit(o, NO_UNICODE, true),
     "pcre2-unicode" => with_bit(o, NO_UNICODE, false),
+    "help" | "version" => Options { ...o, special: name + "-long" },
     "pcre2-version" => Options { ...o, special: "pcre2-version" },
     "no-pre" => Options { ...o, pre: "" },
     _ => set_buffer_switch(o, name),
@@ -611,8 +613,8 @@ function set_style_text(o: Options, name: string, flag: string, value: string): 
     "colors" => in_flag(flag, colors.apply(o.colors, value)).map((c: colors.Colors): Options => Options { ...o, colors: c }),
     "hyperlink-format" => in_flag(flag + ": invalid hyperlink format", hyperlink.parse(value)).map((f: hyperlink.Format): Options => Options { ...o, hyperlink: f }),
     "hostname-bin" => Ok(Options { ...o, hostname_bin: value }),
-    "field-context-separator" => separator(flag, value).map((v: string): Options => Options { ...o, field_context: v }),
-    "field-match-separator" => separator(flag, value).map((v: string): Options => Options { ...o, field_match: v }),
+    "field-context-separator" => Ok(Options { ...o, field_context: unescape(value) }),
+    "field-match-separator" => Ok(Options { ...o, field_match: unescape(value) }),
     _ => set_late_text(o, name, flag, value),
   };
 }
@@ -644,14 +646,6 @@ function set_engine(o: Options, flag: string, value: string): Result[Options, st
   return Ok(Options { ...o, engine: value });
 }
 
-// A field separator with its escapes made bytes.
-function separator(flag: string, value: string): Result[string, string] {
-  if (encoding.invalid_at(value) >= 0) {
-    return Err("error parsing flag " + flag + ": separator must be valid UTF-8 (use escape sequences to provide a separator that is not valid UTF-8)");
-  }
-  return Ok(unescape(value));
-}
-
 // The flags whose value is text for the search: -e, -f, -r and -E.
 function set_search_text(o: Options, name: string, flag: string, value: string): Result[Options, string] {
   return match (name) {
@@ -676,6 +670,15 @@ function set_encoding(o: Options, flag: string, value: string): Result[Options, 
 }
 
 function set_value(o: Options, name: string, flag: string, value: string): Result[Options, string] {
+  // Paths can contain arbitrary bytes. Other flag values must be UTF-8.
+  if (encoding.invalid_at(value) >= 0) {
+    if (name == "context-separator" || name == "field-context-separator" || name == "field-match-separator") {
+      return Err("error parsing flag " + flag + ": separator must be valid UTF-8 (use escape sequences to provide a separator that is not valid UTF-8)");
+    }
+    if (name != "file" && name != "ignore-file" && name != "hostname-bin" && name != "pre") {
+      return Err("error parsing flag " + flag + ": value is not valid UTF-8");
+    }
+  }
   if (name == "sort" || name == "sortr") {
     return set_sort(o, name, flag, value);
   }
@@ -732,9 +735,6 @@ function long_flag(o: Options, args: string[], at: i32): Result[Step, string] {
     name = slice_unchecked(arg, 2, eq).to_owned();
   }
   let flag = "--" + name;
-  if (name == "help" || name == "version") {
-    return Ok(Step { o: Options { ...o, special: name + "-long" }, next: at });
-  }
   name = alias(name);
   if (!takes_value(name)) {
     return long_switch(o, arg, name, flag, eq, at);
@@ -756,7 +756,8 @@ function long_switch(o: Options, arg: string, name: string, flag: string, eq: i3
     return Err(unknown_long(name));
   }
   if (eq >= 0) {
-    return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': \"" + slice_unchecked(arg, eq + 1, arg.len()) + "\"");
+    let value = slice_unchecked(arg, eq + 1, arg.len()).to_owned();
+    return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': " + logs.quoted(value));
   }
   return Ok(Step { o: set_switch(o, name, flag)?, next: at });
 }
@@ -913,6 +914,9 @@ function with_patterns(o: Options, positional: string[]): Result[Options, string
   }
   if (positional.len() == 0) {
     return Err("ripgrep requires at least one pattern to execute a search");
+  }
+  if (encoding.invalid_at(positional[0]) >= 0) {
+    return Err("pattern given is not valid UTF-8");
   }
   return Ok(Options { ...o, patterns: [positional[0]], paths: positional.drop(1) });
 }

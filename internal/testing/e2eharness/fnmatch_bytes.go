@@ -46,6 +46,12 @@ function main(): i32 {
     if (stored.matches(texts[i]) != wants[i]) { return 140 + i; }
     i = i + 1;
   }
+  if (target_os() == "linux") {
+    if (!fnmatch.fnmatch("[[:UPPER:]]", "P]")) { return 74; }
+    if (!fnmatch.fnmatch("[[:a1:]]", "1]")) { return 75; }
+    if (!fnmatch.fnmatch("[[:abc]", ":")) { return 76; }
+    if (fnmatch.fnmatch("[[:bogus:]]", "b]")) { return 77; }
+  }
   // A malformed UTF-8 class name is invalid even in a negated bracket.
   let bad: u8[] = [91 as u8, 33 as u8, 91 as u8, 58 as u8, 255 as u8, 58 as u8, 93 as u8, 93 as u8];
   if (fnmatch.fnmatch_bytes(bad, [97 as u8])) { return 70; }

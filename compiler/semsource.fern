@@ -1318,27 +1318,28 @@ function field(e: ast.Expr, fa: ast.ExprFieldAccess, s: State, expected: typeinf
   return define(s, ssasem.tuple_get(), [container.id], at, "", elem);
 }
 
-function record_schema(name: string, s: State): Option[checker.StructSig] {
+function record_declaration(name: string, s: State): Option[checker.StructSig] {
   let Some(sig) = checker.struct_sig(s.scope, name) else {
     return None;
   };
   if (sig.type_params.len() > 0 || sig.enum_owner.len() > 0) {
     return None;
   }
-  return Some(checker.StructSig { ...sig, field_types: resolved_types(sig.field_types, s.scope) });
+  return Some(sig);
 }
 
 function has_record_schema(name: string, s: State): boolean {
-  return match (record_schema(name, s)) { Some(_) => true, None => false };
+  return match (record_declaration(name, s)) { Some(_) => true, None => false };
 }
 
 function record_sig(t: typeinfo.Type, s: State): Option[checker.StructSig] {
   if let typeinfo.TypeStruct(r) = t {
-    let Some(sig) = record_schema(r.name, s) else {
+    let Some(sig) = record_declaration(r.name, s) else {
       return None;
     };
+    let fields = resolved_types(sig.field_types, s.scope);
     if (r.args.len() == 0) {
-      return Some(sig);
+      return Some(checker.StructSig { ...sig, field_types: fields });
     }
     let vars = record_variables(r.name, s.scope, []);
     if (vars.len() != r.args.len()) {
@@ -1346,7 +1347,7 @@ function record_sig(t: typeinfo.Type, s: State): Option[checker.StructSig] {
     }
     let b = ssasem.Binding { ok: true, why: "", names: vars, types: r.args };
     let fts: typeinfo.Type[] = [];
-    for ft in sig.field_types {
+    for ft in fields {
       fts = fts.append(resolved(ft, true, b, s.scope));
     }
     return Some(checker.StructSig { ...sig, field_types: fts });
@@ -1470,7 +1471,7 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State, expected: typeinfo
 }
 
 function record_type(name: string, s: State): Option[typeinfo.Type] {
-  let Some(sig) = record_schema(name, s) else {
+  let Some(sig) = record_declaration(name, s) else {
     return None;
   };
   return Some(resolved(typeinfo.TypeStruct { name: sig.name, args: [] }, s.template, s.binding, s.scope));
