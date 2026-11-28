@@ -225,6 +225,10 @@ func diffOptionCases(t *testing.T) []invocation {
 		w(d+"/same", "s\n")
 	}
 	w("dA/only", "only\n")
+	diffMkdir(t, dir, "variants", "exact")
+	w("variants/FILE", "other\n")
+	w("variants/File", "same\n")
+	w("exact/File", "same\n")
 	w("cA/Foo", "1\n")
 	w("cB/foo", "2\n")
 	w("cA/bar", "3\n")
@@ -424,6 +428,8 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("ignore file name case with directory on right", "-q", "--ignore-file-name-case", "cA/Foo", "cB"),
 		c("ignore file name case with directory on left", "-q", "--ignore-file-name-case", "cB", "cA/Foo"),
 		c("ignore file name case with excluded directory entry", "-q", "--ignore-file-name-case", "-x", "foo", "cA/Foo", "cB"),
+		c("prefer exact case in left directory", "-qs", "--ignore-file-name-case", "variants", "exact"),
+		c("prefer exact case in right directory", "-qs", "--ignore-file-name-case", "exact", "variants"),
 		c("ignore file name case and exclude", "-r", "--ignore-file-name-case", "-x", "f*", "cA", "cB"),
 		c("ignore file name case and exclude upper", "--ignore-file-name-case", "-x", "B*", "cA", "cB"),
 		c("ignore file name case and starting file", "--ignore-file-name-case", "-r", "-S", "MIXED", "dA", "dB"),
