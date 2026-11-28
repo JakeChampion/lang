@@ -13081,19 +13081,19 @@ function extern_niche_option_tail(heap: string): string {
   return o + "    (local.get $s))\n";
 }
 
-function extern_tuple_result_wrapper(f: parser.FuncDecl): string {
+function extern_tuple_result_wrapper(mod: parser.Module, f: parser.FuncDecl): string {
   let n = tuple_type_elem_count(f.ret_type);
   let parts: string[] = [];
   parts = parts.append("  (func $" + f.name);
-  let args = "";
-  for p in 0..f.params.len() {
-    parts = parts.append(" (param $ep" + util.i32_to_string(p) + " " + wat_extern_valtype(f.params[p].type_name) + ")");
-    args = args + " " + extern_core_arg(f.params[p].type_name, "$ep" + util.i32_to_string(p));
-  }
+  let buffers = bool_buffers(mod, f);
+  parts = parts.append(extern_param_decls(mod, f));
   parts = parts.append(" (result i32)\n");
   parts = parts.append("    (local $rbase i32) (local $rb i32) (local $s i32)\n");
+  parts = parts.append(extern_param_locals(buffers));
+  parts = parts.append(extern_param_prologue(buffers));
   parts = parts.append(extern_ret_area(n * 4));
-  parts = parts.append("    (call $" + f.name + "__import" + args + " (local.get $rb))\n");
+  parts = parts.append("    (call $" + f.name + "__import" + extern_marshal_args(mod, f) + " (local.get $rb))\n");
+  parts = parts.append(extern_param_cleanup(buffers));
   parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(n * 8) + ")))\n");
   for e in 0..n {
     parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(e * 8) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + util.i32_to_string(e * 4) + "))))\n");
@@ -13303,7 +13303,9 @@ pub function extern_wrappers(mod: parser.Module): string {
   let parts: string[] = [];
   for i in 0..mod.funcs.len() {
     let f = mod.funcs[i];
-    if (is_sync_extern(f) && extern_record_result_supported(mod, f.ret_type)) {
+    if (is_sync_extern(f) && extern_tuple_param_supported(f.ret_type)) {
+      parts = parts.append(extern_tuple_result_wrapper(mod, f));
+    } else if (is_sync_extern(f) && extern_record_result_supported(mod, f.ret_type)) {
       parts = parts.append(extern_record_wrapper(mod, f, stab));
     } else if (is_sync_extern(f) && extern_marshals(mod, f)) {
       let buffers = bool_buffers(mod, f);
@@ -13339,8 +13341,6 @@ pub function extern_wrappers(mod: parser.Module): string {
         }
         parts = parts.append(")\n");
       }
-    } else if (is_sync_extern(f) && extern_tuple_param_supported(f.ret_type)) {
-      parts = parts.append(extern_tuple_result_wrapper(f));
     } else if (is_sync_extern(f) && extern_sum_result_supported(f.ret_type)) {
       parts = parts.append("  (func $" + f.name);
       let sp2 = 0;
