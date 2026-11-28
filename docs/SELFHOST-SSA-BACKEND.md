@@ -592,6 +592,19 @@ across a whole loop body frees more by leaving than a temporary read on the
 next line, and taking that rule instead of the lowest raw weight made the
 `std/crypto` digests 1.3x to 4x faster (#10615).
 
+On x86-64 the weight gives no cost to an ALU right operand: add, subtract,
+and, or and xor read it from its frame slot (`SpillCosts.fold_alu_rhs`).
+That holds only when the left operand has a register. When both operands
+are in slots, the emitter loads the right operand into %r11 first.
+
+So when an allocation leaves 4 or more such reads, `ssa_allocate` allocates
+again with those reads counted (`SpillCosts.spilled`, `ssa.unfolded_reads`).
+It keeps the allocation with the lower spill cost. Each allocation counts
+the reads by its own slots. In the theta step of Keccak, each `d` value is the
+right operand of 5 reads beside lanes in slots. With the
+second allocation the `d` values keep registers. The round body goes from
+283 to 256 instructions, and SHA3-256 runs 9% fewer instructions.
+
 The live positions come from the block liveness (`ssalive.lives`), not from
 the interval. An interval runs from the first position to the last in block
 order. An exit block after a later loop can read a value. The interval of that
