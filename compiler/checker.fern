@@ -18561,7 +18561,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                 _ => {}
               }
               if (!foreign) {
-                armScope = bind_variant_payloads(armScope, cur, apv, check_expr(m.scrutinee, cur));
+                armScope = bind_variant_payloads(armScope, cur, apv, mst);
                 out = util.append_diags(out, generic_binder_diags(apv, cur, mst, elem.line, elem.col));
                 out = util.append_diags(out, nested_binder_diags(elem.pattern, mst, cur, elem.line, elem.col));
               }
@@ -18740,19 +18740,25 @@ function place_assign_diags(place: ast.Expr, value: ast.Expr, line: i32, col: i3
   }
 }
 
-function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): util.Diag[] {
-  if let ast.StmtMatch(m) = st {
-    let subject: ast.Stmt = ast.StmtExpr { value: m.scrutinee, line: m.line, op: "" };
-    let out = assign_stmt_own_lambdas(subject, cur, unions);
-    let whole = check_expr(m.scrutinee, cur);
-    for arm in m.arms {
-      if (arm.has_guard) {
-        let guard: ast.Stmt = ast.StmtExpr { value: arm.guard, line: arm.line, op: "" };
-        out = util.append_diags(out, assign_stmt_own_lambdas(guard, annotate_arm_scope(arm, cur, whole), unions));
-      }
-    }
-    return out;
+function assign_match_diags(m: ast.StmtMatch, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  let whole = check_expr(m.scrutinee, cur);
+  let out: util.Diag[] = [];
+  for arm in m.arms {
+    let arm_scope = annotate_arm_scope(arm, cur, whole);
+    out = util.append_diags(out, stmts_assign_diags(arm.body, arm_scope, unions));
   }
+  let subject: ast.Stmt = ast.StmtExpr { value: m.scrutinee, line: m.line, op: "" };
+  out = util.append_diags(out, assign_stmt_own_lambdas(subject, cur, unions));
+  for arm in m.arms {
+    if (arm.has_guard) {
+      let guard: ast.Stmt = ast.StmtExpr { value: arm.guard, line: arm.line, op: "" };
+      out = util.append_diags(out, assign_stmt_own_lambdas(guard, annotate_arm_scope(arm, cur, whole), unions));
+    }
+  }
+  return out;
+}
+
+function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): util.Diag[] {
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
@@ -18873,10 +18879,8 @@ function stmts_assign_diags_mode(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]
         out = util.append_diags(out, stmts_assign_diags(fr.body, for_body_scope(fr, cur), unions));
       },
       ast.StmtMatch(m) => {
-        for elem in m.arms {
-          let asc = annotate_arm_scope(elem, cur, check_expr(m.scrutinee, cur));
-          out = util.append_diags(out, stmts_assign_diags(elem.body, asc, unions));
-        }
+        out = util.append_diags(out, assign_match_diags(m, cur, unions));
+        continue;
       },
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];

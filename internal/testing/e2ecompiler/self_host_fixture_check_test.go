@@ -43,7 +43,7 @@ func selfHostFixtureSources(t *testing.T) []fixtureSource {
 	for i := range unitIdx {
 		unitIdx[i] = i
 	}
-	unitSrc, _ := unitSource(unitIdx)
+	unitSrc, _ := unitSource(unitIdx, false)
 	out = append(out, fixtureSource{"units", "unitSource in self_host_ssa_units_test.go", unitSrc})
 
 	semIdx := make([]int, len(semanticCases()))

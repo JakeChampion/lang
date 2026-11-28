@@ -151,7 +151,7 @@ aarch64/map_int.ir	21207193
 aarch64/map_probe_chain.text	8648
 aarch64/map_probe_chain.ir	196760976
 aarch64/map_string.text	9687
-aarch64/map_string.ir	45532760	2
+aarch64/map_string.ir	44485623	2
 aarch64/ordmap_insert.text	6552
 aarch64/ordmap_insert.ir	82216319
 aarch64/pmap_insert.text	4007
@@ -207,7 +207,7 @@ aarch64/perceus_rbtree.ir	21621553
 aarch64/perceus_rbtree_ck.text	3479
 aarch64/perceus_rbtree_ck.ir	27669017
 x86_64/video_qtrle.text 5351
-x86_64/video_qtrle.ir 1387169936
+x86_64/video_qtrle.ir 1347044936
 aarch64/video_qtrle.text 5908
 aarch64/video_qtrle.ir 1162714294
 x86_64/hex_encode.text	1972
@@ -255,7 +255,7 @@ aarch64/http_hello.dr	4160093
 aarch64/int_loop.dr	3
 aarch64/map_int.dr	4406513
 aarch64/map_probe_chain.dr	37272767
-aarch64/map_string.dr	10064990
+aarch64/map_string.dr	9933145
 aarch64/ordmap_insert.dr	18880357
 aarch64/perceus_cfold.dr	10672483
 aarch64/perceus_deriv.dr	14395316
@@ -354,7 +354,7 @@ aarch64/draw_rgba.text	2728
 aarch64/draw_rgba.ir	107200835
 aarch64/draw_rgba.dr	6867397
 aarch64/jpeg_decode.text	16958
-aarch64/jpeg_decode.ir	297956482
+aarch64/jpeg_decode.ir	293998206
 aarch64/jpeg_decode.dr	40830298
 aarch64/draw_image.text	2093
 aarch64/draw_image.ir	13214790

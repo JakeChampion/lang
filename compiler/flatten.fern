@@ -372,11 +372,13 @@ pub function resolve_imports(mod: parser.Module, dir: string, root: string): par
 }
 
 pub function handler_serve_diags(entry: parser.Module, target: string): util.Diag[] {
-  if (top_fn_index(entry, "main") >= 0 || platforms.for_target(target).environment == "wasi-http") {
+  if (top_fn_index(entry, "main").is_some() || platforms.for_target(target).environment == "wasi-http") {
     return [];
   }
-  let hi = top_fn_index(entry, "handle");
-  if (hi < 0 || parser.std_qualifier(entry, "serve").len() > 0 || top_fn_index(entry, "serve__config") >= 0) {
+  let Some(hi) = top_fn_index(entry, "handle") else {
+    return [];
+  };
+  if (parser.std_qualifier(entry, "serve").len() > 0 || top_fn_index(entry, "serve__config").is_some()) {
     return [];
   }
   return [util.Diag { code: "E001", message: "a top-level `handle` requires `std/serve`: add `import \"std/serve\";`", line: entry.funcs[hi].line, col: entry.funcs[hi].col, length: 0, related: [], fix: None }];
@@ -386,21 +388,20 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   if (handler_serve_diags(entry, target).len() > 0) {
     return entry;
   }
-  if (top_fn_index(entry, "main") >= 0) {
+  if (top_fn_index(entry, "main").is_some()) {
     return entry;
   }
   if (platforms.for_target(target).environment == "wasi-http") {
     return entry;
   }
-  let hi = top_fn_index(entry, "handle");
-  if (hi < 0) {
+  let Some(hi) = top_fn_index(entry, "handle") else {
     return entry;
-  }
-  let ii = top_fn_index(entry, "init");
+  };
+  let init_index = top_fn_index(entry, "init");
   let init_kind = 0;
   let init_args: ast.Expr[] = [];
   let qual = parser.std_qualifier(entry, "serve");
-  if (ii >= 0) {
+  if let Some(ii) = init_index {
     init_kind = parser.init_return_kind(entry.funcs[ii].ret_type, qual);
     if (entry.funcs[ii].params.len() > 1) {
       return entry;
@@ -418,9 +419,11 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   if (returns_state != takes_state) {
     return entry;
   }
-  let si = top_fn_index(entry, "shutdown");
-  if (si >= 0 && entry.funcs[si].params.len() != 1 + util.bool_i32(takes_state)) {
-    return entry;
+  let shutdown_index = top_fn_index(entry, "shutdown");
+  if let Some(si) = shutdown_index {
+    if (entry.funcs[si].params.len() != 1 + util.bool_i32(takes_state)) {
+      return entry;
+    }
   }
   let port: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, parser.e_number("8080", "", false)], line: 0, col: 0, type_args: [], ty: "" };
   let handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "", builtin: false };
@@ -435,7 +438,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     state = ast.ExprIdent { name: "__fern_state", line: 0, col: 0, ty: "", builtin: false };
   } else if (init_kind == 2) {
     opts = init_call;
-  } else if (ii >= 0 && init_kind == 0) {
+  } else if (init_index.is_some() && init_kind == 0) {
     body = body.append(ast.StmtExpr { value: init_call, line: 0, op: "" });
   }
   let supervised = target.len() == 0 || platforms.has_capability(target, "proc");
@@ -448,7 +451,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     entry_name += "_with";
     args = [port, opts, state, handle];
   }
-  if (si >= 0) {
+  if (shutdown_index.is_some()) {
     entry_name += "_shutdown";
     args = args.append(hook);
   }
@@ -467,20 +470,19 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   return parser.Module { ...entry, funcs: entry.funcs.append(main) };
 }
 
-function top_fn_index(mod: parser.Module, name: string): i32 {
+function top_fn_index(mod: parser.Module, name: string): Option[i32] {
   for i in 0..mod.funcs.len() {
     if (mod.funcs[i].name == name && mod.funcs[i].receiver_type.len() == 0) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 pub function with_result_handler(entry: parser.Module, error_pfx: string, http_pfx: string): parser.Module {
-  let hi = top_fn_index(entry, "handle");
-  if (hi < 0) {
+  let Some(hi) = top_fn_index(entry, "handle") else {
     return entry;
-  }
+  };
   let handle = entry.funcs[hi];
   let ret = "";
   let with_state = "";
