@@ -597,8 +597,37 @@ func TestSelfHostSSAProductHalvesGoToTheirHomes(t *testing.T) {
 		t.Errorf("wide_xy copies a half out of %%rax or %%rdx:\n%s", fn)
 	}
 	spilled := functionListing(string(asm), "__fn_wide_spilled")
-	if !regexp.MustCompile(`(?m)^\s+mulxq [^\n]+, %rax, [^\n]+\n\s+movq %rax, -\d+\(%rbp\)$`).MatchString(spilled) {
-		t.Errorf("wide_spilled writes no spilled low half through %%rax:\n%s", spilled)
+	if !regexp.MustCompile(`(?m)^\s+mulxq [^\n]+, %r11, [^\n]+\n\s+movq %r11, -\d+\(%rbp\)$`).MatchString(spilled) {
+		t.Errorf("wide_spilled writes no spilled low half through %%r11:\n%s", spilled)
+	}
+	if regexp.MustCompile(`(?m)^\s+mulq `).MatchString(spilled) {
+		t.Errorf("wide_spilled has a mulq:\n%s", spilled)
+	}
+}
+
+// mulxq leaves %rax as it was, so each argument of mul_rows stays in the
+// register that it arrives in.
+func TestSelfHostSSAProductKeepsArgumentRegisters(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := functionListing(string(asm), "__fn_mul_rows")
+	if fn == "" {
+		t.Fatal("no __fn_mul_rows in the listing")
+	}
+	if m := regexp.MustCompile(`(?m)^\s+movq %(rax|rsi|rdi|r8|r9|r10), %(rax|rsi|rdi|r8|r9|r10)$`).FindString(fn); m != "" {
+		t.Errorf("mul_rows moves an argument to the register of another argument (%s):\n%s", strings.TrimSpace(m), fn)
 	}
 }
 
