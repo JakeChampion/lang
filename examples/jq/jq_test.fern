@@ -105,6 +105,10 @@ function test_deep_calls(): test.TestOutcome {
     ("def f($n): if $n == 0 then . else f($n-1),empty end; path(f(2000))", "null", "[]"),
     ("def f: if . == 0 then 0 else (. - 1 | f), . end; [f] | [length, first, last]", "2000", "[2001,0,2000]"),
     ("def f: if . == 0 then error(\"stop\") else (. - 1 | f), error(\"wrong\") end; try f catch .", "2000", "\"stop\""),
+    ("def f: if . == 0 then false, 2, 3 else (. - 1 | f) // 7 end; [f]", "25000", "[2,3]"),
+    ("def f: if . == 0 then 17, 18, error(\"extra\") else limit(2; .-1|f) end; [f]", "25000", "[17,18]"),
+    ("def f: if . == 0 then 17 else nth(0; .-1|f) end; f", "25000", "17"),
+    ("def f($n): if $n == 0 then .a else f($n-1) // .b end; path(f(25000))", "{\"a\":false,\"b\":1}", "[\"b\"]"),
     ("def f: if type == \"object\" then .a | f else . end; reduce range(300) as $i (1; {a: .}) | [path(f)] | .[0] | length", "null", "300"),
   ]);
 }
