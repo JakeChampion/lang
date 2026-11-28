@@ -769,6 +769,7 @@ nested_pattern_tuple_in_payload                      0
 nested_pattern_tuple_in_payload_irrefutable_with_fallthrough 0
 nested_pattern_wildcard_fallthrough                  0
 nested_payloadless_constructor                       0
+nested_struct_field_patterns                         0
 nested_value_expr_width                              0
 nested_workers_keep_private_heaps                    0
 none_branch                                          0
@@ -1502,6 +1503,7 @@ variant_pattern_shared_name_field_order              0
 variant_payload_expected_type                        0
 variant_payload_from_array_field                     0
 vec_generic_impls                                    0
+vec_integer_elements                                 0
 vec_lane_kernels                                     0
 view_beside_its_array_in_a_call                      0
 view_of_branch_value                                 0

@@ -1,6 +1,7 @@
 // spec: MC-10
 // A match on a struct pattern consumes its subject.
 
+import "./pass";
 import "std/i32";
 
 @must_consume
@@ -16,7 +17,18 @@ function total(t: Ticket): i32 {
     return n;
 }
 
+function imported(p: pass.Pass): i32 {
+    let n = 0;
+    match (p) {
+        pass.Pass { gate, row } => {
+            n = gate * row;
+        }
+    }
+    return n;
+}
+
 function main(): i32 {
     print(total(Ticket { id: 7, seat: 4 }).to_string());
+    print(imported(pass.Pass { gate: 3, row: 5 }).to_string());
     return 0;
 }

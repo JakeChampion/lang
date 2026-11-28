@@ -1,3 +1,4 @@
+import "std/string";
 import "../lib/locale";
 
 // The rules of setlocale in the libc of Darwin, on each target: what each
@@ -85,6 +86,25 @@ function check_dirs(): i32 {
   return 0;
 }
 
+function check_ctype(): i32 {
+  let padding = "abcdefghijklmnopqrstuvwxyz012345";
+  for magic in ["RuneMagA", "RuneMagB"] {
+    if (!locale.darwin_ctype_utf8((magic + "UTF-8\x00" + padding).bytes())) {
+      return 51;
+    }
+    if (locale.darwin_ctype_utf8((magic + "NONE:US-ASCII\x00" + padding).bytes())) {
+      return 52;
+    }
+    if (locale.darwin_ctype_utf8((magic + "UTF-80\x00" + padding).bytes())) {
+      return 53;
+    }
+  }
+  if (locale.darwin_ctype_utf8("RuneMagBUTF-8".bytes()) || locale.darwin_ctype_utf8(("RuneMagXUTF-8\x00" + padding).bytes())) {
+    return 54;
+  }
+  return 0;
+}
+
 function main(): i32 {
   let r = check_c_dot();
   if (r != 0) {
@@ -98,5 +118,9 @@ function main(): i32 {
   if (r != 0) {
     return r;
   }
-  return check_dirs();
+  r = check_dirs();
+  if (r != 0) {
+    return r;
+  }
+  return check_ctype();
 }

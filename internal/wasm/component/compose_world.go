@@ -322,15 +322,24 @@ func ComposeExportsFromWorld(core []byte, w *componenttype.World) ([]byte, error
 		}
 	}
 	for _, wi := range w.ExportedInterfaces() {
+		var exports []packagedFunc
 		for _, f := range wi.FuncSigs {
 			coreName := wi.Name + "#" + f.Name
 			if !coreExports[coreName] {
 				continue
 			}
-			if err := g.liftExport(userInst, wi, f.Name, coreName, f.Sig, memIdx, reallocIdx, resourceInst, coreExports["cabi_post_"+coreName]); err != nil {
+			idx, err := g.liftExport(userInst, wi, f.Name, coreName, f.Sig, memIdx, reallocIdx, resourceInst, coreExports["cabi_post_"+coreName])
+			if err != nil {
 				return nil, err
 			}
+			exports = append(exports, packagedFunc{name: f.Name, index: idx})
 			emitted++
+		}
+		if len(exports) > 0 {
+			c := g.c
+			c.buf = putInstanceSectionPackagedFuncs(c.buf, exports)
+			c.buf = PutExportSectionOneInstance(c.buf, wi.Name, c.nInst)
+			c.nInst += 2 // The packaged instance and its export each introduce an instance.
 		}
 	}
 	if emitted == 0 {
@@ -386,10 +395,10 @@ func isStringOrList(wi componenttype.WorldInterface, v componenttype.Valtype) bo
 	return isList
 }
 
-func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32, resourceInst map[string]uint32, hasPostReturn bool) error {
+func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface, witName, coreName string, sig *componenttype.FuncType, memIdx, reallocIdx uint32, resourceInst map[string]uint32, hasPostReturn bool) (uint32, error) {
 	iface := wi.Name
 	if sig == nil {
-		return fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
+		return 0, fmt.Errorf("component: export %s#%s has no resolved signature", iface, witName)
 	}
 	c := g.c
 	coreF := c.aliasCoreFunc(userInst, coreName)
@@ -411,12 +420,12 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	}
 	for i := range sig.Params {
 		if err := surfaceHandle(sig.Params[i].Ty); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if !sig.NamedResults {
 		if err := surfaceHandle(sig.Result); err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -476,7 +485,7 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 		p := sig.Params[i]
 		enc, isMem, err := encodeSlot(p.Ty, "parameter", false)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		if isMem {
 			hasMemParam = true
@@ -490,7 +499,7 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	}
 	isVoid := sig.NamedResults && len(sig.Results) == 0
 	if sig.NamedResults && !isVoid {
-		return fmt.Errorf("component: export %s#%s: multi result (unsupported in this slice)", iface, witName)
+		return 0, fmt.Errorf("component: export %s#%s: multi result (unsupported in this slice)", iface, witName)
 	}
 	var rval []byte
 	hasMemResult := false
@@ -498,7 +507,7 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 		var err error
 		rval, hasMemResult, err = encodeSlot(sig.Result, "result", true)
 		if err != nil {
-			return err
+			return 0, err
 		}
 	}
 
@@ -531,11 +540,7 @@ func (g *gComposer) liftExport(userInst uint32, wi componenttype.WorldInterface,
 	}
 	lifted := c.nCFunc
 	c.nCFunc++
-	c.buf = PutInstanceSectionOnePackagedFunc(c.buf, witName, lifted)
-	inst := c.nInst
-	c.nInst++
-	c.buf = PutExportSectionOneInstance(c.buf, iface, inst)
-	return nil
+	return lifted, nil
 }
 
 func coreFuncExportNames(bin []byte) map[string]bool {

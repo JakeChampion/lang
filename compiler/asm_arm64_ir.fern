@@ -4443,11 +4443,11 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 
 // frameless says the block runs before the function makes its frame
 // (ssa.frame_split), so its return takes no frame down.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lits: ssa.Literals, lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32, frameless: boolean, compact: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lits: ssa.Literals, lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32, frameless: boolean, compact: i32, emit_at: i32[] }
 
 // `shape` names the shape whose tag `b` is, when the fused test covers the
 // instruction that makes `b`.
-struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, narrow: boolean, shape: string }
+struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean, narrow: boolean, shape: string, sign: boolean }
 
 // What deciding a fusion reads: the use counts and the immediates. The
 // allocator decides with it before a frame exists.
@@ -4458,7 +4458,7 @@ function ssa_fuse_view(fr: SsaFrame): FuseView {
 }
 
 function ssa_no_fuse(): SsaFuse {
-  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, narrow: false, shape: "" };
+  return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false, narrow: false, shape: "", sign: false };
 }
 
 function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boolean): ssaprepare.Fusion[] {
@@ -4481,7 +4481,7 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
   let n = 1;
   let inverted = false;
   if (last.kind_tag == ssa.UNARY && last.ir_kind == ir.K_NOT) {
-    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, narrow: false, shape: "" };
+    let value_test = SsaFuse { n: 1, tag: 0, inverted: true, a: last.args[0], b: 0, unique: false, aligned: false, narrow: false, shape: "", sign: false };
     if (blk.insts.len() < 2) {
       return value_test;
     }
@@ -4496,18 +4496,18 @@ function ssa_fuse(fv: FuseView, blk: ssa.SBlock): SsaFuse {
     inverted = true;
   }
   if (ssa.unique_test(cmp)) {
-    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: ssa.aligned_count(cmp), narrow: false, shape: "" };
+    return SsaFuse { n: n, tag: ir.K_EQ, inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: ssa.aligned_count(cmp), narrow: false, shape: "", sign: false };
   }
   if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
   }
   if (ssa.float_cmp(cmp.ir_kind)) {
-    return SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
+    return SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "", sign: false };
   }
   if (fv.imm.is_imm[cmp.args[0]]) {
-    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" });
+    return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "", sign: false });
   }
-  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" });
+  return ssa_narrow_fuse(fv, blk, cmp, SsaFuse { n: n, tag: cmp.ir_kind, inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "", sign: false });
 }
 
 function ssa_narrow_fuse(fv: FuseView, blk: ssa.SBlock, cmp: ssa.SInst, fu: SsaFuse): SsaFuse {
@@ -4711,9 +4711,9 @@ function ssa_shape_feeds_select(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean
 
 function ssa_cmp_flags(fv: FuseView, cmp: ssa.SInst): SsaFuse {
   if (!ssa.float_cmp(cmp.ir_kind) && fv.imm.is_imm[cmp.args[0]]) {
-    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "" };
+    return SsaFuse { n: 1, tag: ircore.flip_int_cmp_kind(cmp.ir_kind), inverted: false, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false, narrow: false, shape: "", sign: false };
   }
-  return SsaFuse { n: 1, tag: cmp.ir_kind, inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "" };
+  return SsaFuse { n: 1, tag: cmp.ir_kind, inverted: false, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false, narrow: false, shape: "", sign: false };
 }
 
 function ssa_select(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, sc: SelectCond, s: asmcore.EmitState): asmcore.EmitState {
@@ -5382,17 +5382,65 @@ function ssa_fuse_zero(fr: SsaFrame, fu: SsaFuse): boolean {
     && !fr.imm.is_imm[fu.a] && fr.imm.is_imm[fu.b] && fr.imm.sym_at[fu.b] == 0 && fr.imm.value[fu.b] == 0i64;
 }
 
+// The count of instructions that go before each block, in emit order.
+function ssa_emit_starts(f: ssa.SFunc, order: i32[]): i32[] {
+  let at = __alloc_i32(f.blocks.len());
+  let n = 0;
+  for bi in order {
+    at = at.with(bi, n);
+    n += f.blocks[bi].insts.len() + 1;
+  }
+  return at;
+}
+
+// The most instructions between a branch on a bit and its target. A tbz
+// reaches 8,191 machine instructions, and an assembler that does not relax
+// branches refuses a longer one.
+function ssa_tbz_reach(): i32 {
+  return 24;
+}
+
+function ssa_tbz_reaches(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], from: i32, id: i32): boolean {
+  let ti = ssa.block_index(fr.blk_pos, ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, id));
+  if (ti < 0 || from < 0) {
+    return false;
+  }
+  let d = fr.emit_at[ti] - fr.emit_at[from];
+  if (d < 0) {
+    d = 0 - d;
+  }
+  return d + f.blocks[from].insts.len() + 1 <= ssa_tbz_reach();
+}
+
+// The fused test of the branch that ends `h`, for a branch that the block
+// at index `from` emits. `a < 0` and `a >= 0` for a signed integer test the
+// sign bit when both targets are near, and then the test sets no flags.
+function ssa_sign_fuse(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], from: i32, h: ssa.SBlock, fu: SsaFuse): SsaFuse {
+  let sign = fu.n > 0 && (fu.tag == ir.K_LT_S || fu.tag == ir.K_GE_S) && !fu.unique && fu.shape == "" && fu.b >= 0
+    && !fr.imm.is_imm[fu.a] && fr.imm.is_imm[fu.b] && fr.imm.sym_at[fu.b] == 0 && fr.imm.value[fu.b] == 0i64;
+  if (!sign || h.term.kind_tag != ssa.TERM_BRIF) {
+    return fu;
+  }
+  if (!ssa_tbz_reaches(f, fr, reg_of, from, h.term.t) || !ssa_tbz_reaches(f, fr, reg_of, from, h.term.f)) {
+    return fu;
+  }
+  return SsaFuse { ...fu, sign: true };
+}
+
 // The branch to l when the fused test is `taken`. `a` holds the left operand.
 function ssa_fuse_branch(s: asmcore.EmitState, fr: SsaFrame, fu: SsaFuse, a: string, taken: boolean, l: asmcore.Lab): asmcore.EmitState {
+  let reg = if (fu.narrow) { ssa_wreg(a) } else { a };
+  if (fu.sign) {
+    return ssa_tbz(s, ir_cmp_cc(fu.tag, taken) == CC_LT, reg, if (fu.narrow) { 31 } else { 63 }, l);
+  }
   if (!ssa_fuse_zero(fr, fu)) {
     return ssa_bcond(s, ssa_fuse_cc(fu, taken), l);
   }
-  let reg = if (fu.narrow) { ssa_wreg(a) } else { a };
   return ssa_cbz(s, ir_cmp_cc(fu.tag, taken) == CC_NE, reg, l);
 }
 
 function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (ssa_fuse_zero(fr, fu)) {
+  if (ssa_fuse_zero(fr, fu) || fu.sign) {
     return ssa_read(reg_of, fu.a, "x4", s);
   }
   if (!s.retain_sites || !fu.unique) {
@@ -5569,7 +5617,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     let head = ssa.forward_target(f, fr.blk_pos, fr.imm, reg_of, t.target);
     if (ssa_rotates(f, fr, ssa.block_index(fr.blk_pos, blk.id), head)) {
       let h = f.blocks[ssa.block_index(fr.blk_pos, head)];
-      let hfu = ssa_fuse(ssa_fuse_view(fr), h);
+      let hfu = ssa_sign_fuse(f, fr, reg_of, ssa.block_index(fr.blk_pos, blk.id), h, ssa_fuse(ssa_fuse_view(fr), h));
       s = ssa_latch_constants(fr, h, reg_of, s);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
     }
@@ -5850,7 +5898,7 @@ function ssa_allocated(f: ssa.SFunc, r: irtables.Lowered, s: asmcore.EmitState):
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let floats = ssa.float_values(f, ssa_float_calls(f, s), true);
-  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), floats, ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] });
+  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), floats, ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 });
   return Allocated { imm: imm, call_kinds: call_kinds, alloc: alloc, floats: floats };
 }
 
@@ -5866,7 +5914,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let tried = ssa.split_spilled(f, picked.alloc.reg_of, picked.floats);
   if (tried.cost > 0) {
     let again = ssa_allocated(tried.f, r, s);
-    if ((ssa.spill_cost(tried.f, again.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] }) + tried.cost) * 10 < ssa.spill_cost(f, picked.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] }) * 9) {
+    if ((ssa.spill_cost(tried.f, again.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 }) + tried.cost) * 10 < ssa.spill_cost(f, picked.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 }) * 9) {
       f = tried.f;
       picked = again;
     }
@@ -5875,7 +5923,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   match (util.debug_env("FERN_DEBUG_SSA_ALLOC", "FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
-        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, picked.alloc, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] }));
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, picked.alloc, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 }));
       }
     },
     None => {}
@@ -5914,7 +5962,9 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let lanes = ssa.lane_values(f);
   let cold = ssa_cold_saves(f, alloc);
   let uses = ssa.use_counts(f);
-  let fr = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, imm: imm, lits: ssa.literals(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary, frameless: false, compact: 0 };
+  let fr_plain = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, imm: imm, lits: ssa.literals(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary, frameless: false, compact: 0, emit_at: [] };
+  let order = ssa_emit_order(f, fr_plain, reg_of);
+  let fr = SsaFrame { ...fr_plain, emit_at: ssa_emit_starts(f, order) };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa.view_count(views)) * 8;
   if (cold.any) {
@@ -5955,7 +6005,6 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), ssa_konst: imm.konst, ssa_konst_value: imm.value };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr, s);
   let frame_homes = reg_of;
-  let order = ssa_emit_order(f, fr, reg_of);
   let starts: i32[] = [];
   let end = 0;
   for blk in f.blocks {
@@ -5989,7 +6038,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
       s = if (early) { ssa_cfi_no_frame(s) } else { ssa_cfi_frame_record(s, if (fr.compact > 0) { fr.compact } else { 16 }) };
       cfi_framed = !early;
     }
-    let fu = ssa_fuse(ssa_fuse_view(fr), blk);
+    let fu = ssa_sign_fuse(f, fr, reg_of, bi, blk, ssa_fuse(ssa_fuse_view(fr), blk));
     fusions = ssa_retain_fusion(fusions, fu, s.retain_prepared);
     let ii = 0;
     let tailed = false;
@@ -6329,11 +6378,7 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     return s;
   }
 
-  if (o.kind_tag == ir.K_PTR_WIDTH) {
-    s = s.write("    mov x0, #8\n    str x0, [sp, #-16]!\n");
-  } else if (ir.is_sha_hw_op(o.kind_tag)) {
-    s = s.write("    mov x0, #1\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_MEMCPY) {
+  if (o.kind_tag == ir.K_MEMCPY) {
     s = emit_arm64_op_memcpy(s);
   } else if (o.kind_tag == ir.K_MEMSET) {
     s = emit_arm64_op_memset(s);
@@ -6349,10 +6394,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     }
     s = s.write("    mov x0, #0\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
-  } else if (o.kind_tag == ir.K_STORAGE_BYTES) {
-    s = s.write("    ldr x0, [sp], #16\n    ldur x0, [x0, #-16]\n    lsl x0, x0, #3\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_ARR_RC) {
-    s = s.write("    ldr x0, [sp], #16\n    ldursw x0, [x0, #-8]\n    str x0, [sp, #-16]!\n");
   } else if (ir.is_str_op_kind(o.kind_tag)) {
     s = emit_str_op(o, s);
   } else if (o.kind_tag == ir.K_RANDOM_BYTES) {
@@ -6901,6 +6942,24 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): 
 
 function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind = r.ops[ins.imm].kind_tag;
+  if (kind == ir.K_PTR_WIDTH || ir.is_sha_hw_op(kind)) {
+    if (reg_of[ins.result] == -1) {
+      return s;
+    }
+    let value = if (kind == ir.K_PTR_WIDTH) { 8i64 } else { 1i64 };
+    return ssa_imm_to(value, reg_of[ins.result], asmcore.ssa_x0_forget(s));
+  }
+  if (kind == ir.K_STORAGE_BYTES || kind == ir.K_ARR_RC) {
+    let d = ssa_dst(reg_of, ins.result);
+    let a = ssa_src(reg_of, ins.args[0], d);
+    s = ssa_load(reg_of, ins.args[0], a, s);
+    if (kind == ir.K_STORAGE_BYTES) {
+      s = ssa_lsl(ssa_unscaled(s, true, d, a, -16), d, d, 3);
+    } else {
+      s = s.write("    ldursw " + d + ", [" + a + ", #-8]\n");
+    }
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (kind == ir.K_TCP_POLLABLE) {
     s = asmcore.ssa_x0_forget(s);
     let d = ssa_dst(reg_of, ins.result);

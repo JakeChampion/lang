@@ -114,7 +114,19 @@ pub function wasm_component(full: parser.Module, sub: ircore.Sub, world: World):
     return wit_compose.Composed { bytes: framed_component(stamped_core(watbin.wat_to_binary(core.wat), sub.switches), shape), refused: "" };
   }
   let tbody = wit_decode.wit_section_body(world.payload, 7);
-  let c = wit_compose.compose_run(tbody, stamped_core(watbin.wat_to_binary(core.wat), sub.switches), ap.asy);
+  let exports: wit_compose.ExportDecl[] = [];
+  if (!world.embedded) {
+    for x in full.exports {
+      if (!x.c_abi && !x.jni && x.iface.len() > 0 && !(x.iface == "wasi:cli/run@0.2.0" && x.wit == "run")) {
+        let params: string[] = [];
+        for p in wasm_ir.export_func_params(full, x.func_name) {
+          params = params.append(p.type_name);
+        }
+        exports = exports.append(wit_compose.ExportDecl { iface: x.iface, name: x.wit, params: params, result: wasm_ir.export_func_ret(full, x.func_name) });
+      }
+    }
+  }
+  let c = wit_compose.compose_run_exports(tbody, stamped_core(watbin.wat_to_binary(core.wat), sub.switches), ap.asy, exports);
   if (c.bytes.len() == 0) {
     return wit_compose.Composed { bytes: [], refused: "fern: -target wasm32-wasi: " + world.name + " cannot take this program: " + c.refused };
   }

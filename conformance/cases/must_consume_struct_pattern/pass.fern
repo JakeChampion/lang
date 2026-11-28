@@ -1,0 +1,2 @@
+@must_consume
+pub struct Pass { gate: i32, row: i32 }

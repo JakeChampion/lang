@@ -418,12 +418,6 @@ function put(f: Frame, x: i32, y: i32, color: i32, a: i32): void {
   }
 }
 
-function dist(x: i32, y: i32, cx: f64, cy: f64): f64 {
-  let dx = x as f64 + 0.5 - cx;
-  let dy = y as f64 + 0.5 - cy;
-  return (dx * dx + dy * dy).sqrt();
-}
-
 // Fills the disc of radius `r` around cx and cy. Each pixel of the edge
 // takes the part of `color` that the disc covers.
 pub function (f: Frame) disc(cx: i32, cy: i32, r: i32, color: i32): void {
@@ -474,6 +468,9 @@ pub function (f: Frame) ring(cx: i32, cy: i32, r: i32, width: i32, color: i32): 
 // rounded to radius `r` and smooth edges. A radius of half the height makes
 // a pill.
 pub function (f: Frame) round_rect(x: i32, y: i32, w: i32, h: i32, r0: i32, color: i32): void {
+  if (alpha_of(color) == 0) {
+    return;
+  }
   let r = r0;
   if (r > w / 2) {
     r = w / 2;
@@ -484,18 +481,44 @@ pub function (f: Frame) round_rect(x: i32, y: i32, w: i32, h: i32, r0: i32, colo
   f.fill(x + r, y, w - 2 * r, h, color);
   f.fill(x, y + r, r, h - 2 * r, color);
   f.fill(x + w - r, y + r, r, h - 2 * r, color);
-  corner(f, x + r, y + r, x, y, r, color);
-  corner(f, x + w - r, y + r, x + w - r, y, r, color);
-  corner(f, x + r, y + h - r, x, y + h - r, r, color);
-  corner(f, x + w - r, y + h - r, x + w - r, y + h - r, r, color);
+  corner(f, x + r, y + r, x, y, r, color, false);
+  corner(f, x + w - r, y + r, x + w - r, y, r, color, false);
+  corner(f, x + r, y + h - r, x, y + h - r, r, color, false);
+  corner(f, x + w - r, y + h - r, x + w - r, y + h - r, r, color, false);
 }
 
-// The square of side `r` at x0 and y0, covered by the circle of radius `r`
-// around cx and cy.
-function corner(f: Frame, cx: i32, cy: i32, x0: i32, y0: i32, r: i32, color: i32): void {
-  for y in y0..y0 + r {
-    for x in x0..x0 + r {
-      put(f, x, y, color, cover(dist(x, y, cx as f64, cy as f64), r as f64));
+// Paints the part inside a quarter circle, or its complement for clipping
+// an image. Each row has at most one solid span and one antialiased edge.
+function corner(f: Frame, cx: i32, cy: i32, x0: i32, y0: i32, r: i32, color: i32, outside: boolean): void {
+  let x1 = (x0 as i64 + r as i64).clamp(0i64, f.width as i64) as i32;
+  let y1 = (y0 as i64 + r as i64).clamp(0i64, f.height as i64) as i32;
+  let left = clamp(x0, 0, f.width);
+  if (left >= x1) {
+    return;
+  }
+  let radius = r as f64;
+  let inner = (radius - 0.5) * (radius - 0.5);
+  let outer = (radius + 0.5) * (radius + 0.5);
+  for y in clamp(y0, 0, f.height)..y1 {
+    let dy = y as f64 + 0.5 - cy as f64;
+    let start = left;
+    for x in left..x1 {
+      let dx = x as f64 + 0.5 - cx as f64;
+      let squared = dx * dx + dy * dy;
+      let solid = if (outside) { squared >= outer } else { squared <= inner };
+      if (!solid) {
+        if (start < x) {
+          f.fill(start, y, x - start, 1, color);
+        }
+        if (squared > inner && squared < outer) {
+          let a = cover(squared.sqrt(), radius);
+          put(f, x, y, color, if (outside) { 15 - a } else { a });
+        }
+        start = x + 1;
+      }
+    }
+    if (start < x1) {
+      f.fill(start, y, x1 - start, 1, color);
     }
   }
 }
@@ -627,18 +650,13 @@ pub function (f: Frame) image(x: i32, y: i32, w: i32, h: i32, img: Image): void 
 // h, outside the quarter circles of radius `r`, with smooth edges. Over an
 // opaque image it gives the image rounded corners.
 pub function (f: Frame) clip_corners(x: i32, y: i32, w: i32, h: i32, r: i32, bg: i32): void {
-  outside(f, x + r, y + r, x, y, r, bg);
-  outside(f, x + w - r, y + r, x + w - r, y, r, bg);
-  outside(f, x + r, y + h - r, x, y + h - r, r, bg);
-  outside(f, x + w - r, y + h - r, x + w - r, y + h - r, r, bg);
-}
-
-function outside(f: Frame, cx: i32, cy: i32, x0: i32, y0: i32, r: i32, color: i32): void {
-  for y in y0..y0 + r {
-    for x in x0..x0 + r {
-      put(f, x, y, color, 15 - cover(dist(x, y, cx as f64, cy as f64), r as f64));
-    }
+  if (alpha_of(bg) == 0) {
+    return;
   }
+  corner(f, x + r, y + r, x, y, r, bg, true);
+  corner(f, x + w - r, y + r, x + w - r, y, r, bg, true);
+  corner(f, x + r, y + h - r, x, y + h - r, r, bg, true);
+  corner(f, x + w - r, y + h - r, x + w - r, y + h - r, r, bg, true);
 }
 ```
 
@@ -838,9 +856,18 @@ function dot(f: Frame, x: i32, y: i32, scale: i32, color: i32, a: i32): void {
 }
 
 function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
+  let right = x as i64 + font.CELL_W as i64 * (scale as i64);
+  let bottom = y as i64 + font.CELL_H as i64 * (scale as i64);
+  if (scale <= 0 || right <= 0 || bottom <= 0 || x >= f.width || y >= f.height) {
+    return;
+  }
+  let x0 = if (x < 0) { (-(x as i64) / (scale as i64)) as i32 } else { 0 };
+  let y0 = if (y < 0) { (-(y as i64) / (scale as i64)) as i32 } else { 0 };
+  let x1 = if (right > f.width as i64) { ((f.width as i64 - x as i64 - 1i64) / (scale as i64) + 1i64) as i32 } else { font.CELL_W };
+  let y1 = if (bottom > f.height as i64) { ((f.height as i64 - y as i64 - 1i64) / (scale as i64) + 1i64) as i32 } else { font.CELL_H };
   let g = font.glyph_index(c);
-  for gy in 0..font.CELL_H {
-    for gx in 0..font.CELL_W {
+  for gy in y0..y1 {
+    for gx in x0..x1 {
       let a = font.glyph_coverage(g, gx, gy);
       if (a > 0) {
         let px = x + gx * scale;

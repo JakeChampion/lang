@@ -33,7 +33,7 @@ func TestSelfHostExportTupleResultRunsViaConsumer(t *testing.T) {
 	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/pairs@0.1.0", "make-pair")
-function make_pair(a: i32, b: i32): (i32, i32) { return (a + 1, b * 2); }
+function make_pair(a: string, b: i32): (i32, i32) { return (a.len() + 1, b * 2); }
 
 function main(): i32 { return 0; }`
 	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
@@ -51,7 +51,7 @@ function main(): i32 { return 0; }`
 		t.Fatalf("read exporter core: %v", err)
 	}
 
-	const iface = "interface pairs { make-pair: func(a: s32, b: s32) -> tuple<s32, s32>; }"
+	const iface = "interface pairs { make-pair: func(a: string, b: s32) -> tuple<s32, s32>; }"
 	expWit := filepath.Join(dir, "expwit")
 	if err := os.MkdirAll(expWit, 0o755); err != nil {
 		t.Fatalf("mkdir expwit: %v", err)
@@ -116,10 +116,10 @@ function main(): i32 { return 0; }`
 	}
 	const want = "tup-ok"
 	userSrc := `@import("local:test/pairs@0.1.0", "make-pair")
-function make_pair(a: i32, b: i32): (i32, i32);
+function make_pair(a: string, b: i32): (i32, i32);
 
 function main(): i32 {
-	let p: (i32, i32) = make_pair(10, 21);
+	let p: (i32, i32) = make_pair("0123456789", 21);
 	if (p.0 == 11 && p.1 == 42) { write("` + want + `"); } else { write("tup-bad"); }
 	return 0;
 }`

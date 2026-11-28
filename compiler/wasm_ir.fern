@@ -1503,7 +1503,7 @@ pub function wasm_unsupported_import(mod: parser.Module): string {
     let f = mod.funcs[i];
     if (is_sync_extern(f)) {
       if (is_struct_type(stab, f.ret_type) && !extern_record_result_supported(mod, f.ret_type)) {
-        return "fern: error: @import " + f.name + " returns record " + f.ret_type + ", which wasm cannot lower: its fields must be integers, floats, booleans, strings, byte lists or records of them, at most 16 flat values";
+        return "fern: error: @import " + f.name + " returns record " + f.ret_type + ", which wasm cannot lower: its fields must be integers, floats, booleans, strings, byte or numeric lists or records of them, at most 16 flat values";
       }
       let has_record = false;
       for p in 0..f.params.len() {
@@ -1513,7 +1513,7 @@ pub function wasm_unsupported_import(mod: parser.Module): string {
         }
         has_record = true;
         if (!extern_record_param_supported(mod, pt)) {
-          return "fern: error: @import " + f.name + " takes record " + pt + ", which wasm cannot lower: its fields must be integers, floats, booleans, strings, byte lists or records of them, at most 16 flat parameters";
+          return "fern: error: @import " + f.name + " takes record " + pt + ", which wasm cannot lower: its fields must be integers, floats, booleans, strings, byte or numeric lists or records of them, at most 16 flat parameters";
         }
       }
       if (has_record) {
@@ -11238,8 +11238,9 @@ pub function extern_byte_array_param(t: string): boolean {
   return t == "u8[]" || t == "boolean[]";
 }
 
-function extern_param_repacks(t: string): boolean {
-  return extern_array_param_supported(t) || t == "boolean[]";
+// A canonical string or list field consists of a pointer and a length.
+function extern_span_type(t: string): boolean {
+  return t == "string" || extern_export_list(t) || t == "boolean[]";
 }
 
 pub function extern_field_is_scalar(ft: string): boolean {
@@ -11266,7 +11267,7 @@ function extern_record_leaf_valtypes(mod: parser.Module, t: string): string[] {
       let j = 0;
       while (j < mod.structs[i].fields.len()) {
         let ft = mod.structs[i].fields[j].type_name;
-        if (ft == "string" || ft == "u8[]") {
+        if (extern_span_type(ft)) {
           out = out.append("i32").append("i32");
         } else if (extern_field_is_scalar(ft)) {
           out = out.append(extern_core_valtype(ft));
@@ -11288,7 +11289,7 @@ pub function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
       let leaves = 0;
       for j in 0..n {
         let ft = mod.structs[i].fields[j].type_name;
-        if (ft == "string" || ft == "u8[]") {
+        if (extern_span_type(ft)) {
           leaves += 2;
         } else if (extern_field_is_scalar(ft)) {
           leaves += 1;
@@ -11311,7 +11312,7 @@ pub function extern_record_nestable(mod: parser.Module, t: string): boolean {
       }
       for j in 0..n {
         let ft = mod.structs[i].fields[j].type_name;
-        if (ft == "string" || ft == "u8[]") {
+        if (extern_span_type(ft)) {
           continue;
         }
         if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) {
@@ -11331,7 +11332,7 @@ pub function extern_record_depth(mod: parser.Module, t: string): i32 {
       let maxd = 0;
       for j in 0..n {
         let ft = mod.structs[i].fields[j].type_name;
-        if (!extern_field_is_scalar(ft) && ft != "string" && ft != "u8[]") {
+        if (!extern_field_is_scalar(ft) && !extern_span_type(ft)) {
           let d = 1 + extern_record_depth(mod, ft);
           if (d > maxd) {
             maxd = d;
@@ -11929,7 +11930,7 @@ function extern_slot_store(ft: string, addr: string, v: string): string {
 }
 
 pub function extern_canon_field_align(mod: parser.Module, ft: string): i32 {
-  if (ft == "string" || ft == "u8[]") {
+  if (extern_span_type(ft)) {
     return 4;
   }
   let stab = irtables.struct_tab(mod.structs);
@@ -11948,7 +11949,7 @@ pub function extern_canon_field_align(mod: parser.Module, ft: string): i32 {
 }
 
 pub function extern_canon_field_csize(mod: parser.Module, ft: string): i32 {
-  if (ft == "string" || ft == "u8[]") {
+  if (extern_span_type(ft)) {
     return 8;
   }
   if (extern_field_is_scalar(ft)) {
@@ -12011,15 +12012,17 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
     if (extern_field_is_scalar(rcft)) {
       let canon = extern_canon_load(rcft, "(i32.add (local.get $rb) (i32.const " + util.i32_to_string(coff) + "))");
       parts = parts.append("    " + extern_slot_store(rcft, "(i32.add (local.get " + dst + ") (i32.const " + foff + "))", canon) + "\n");
-    } else if (rcft == "string" || rcft == "u8[]") {
+    } else if (extern_span_type(rcft)) {
       parts = parts.append("    (local.set $dp (i32.load offset=" + util.i32_to_string(coff) + " (local.get $rb)))\n");
       parts = parts.append("    (local.set $ln (i32.load offset=" + util.i32_to_string(coff + 4) + " (local.get $rb)))\n");
       if (rcft == "string") {
         parts = parts.append(extern_copy_string("$hp", "$dp", "$ln", "$i", "field"));
-      } else {
+      } else if (extern_byte_array_param(rcft)) {
         parts = parts.append(extern_copy_bytes(rcft, "$hp", "$dp", "$ln", "$i", "field"));
+      } else {
+        parts = parts.append(extern_copy_numeric_list(rcft, "$hp"));
       }
-      parts = parts.append(extern_host_free("$dp", "(local.get $ln)"));
+      parts = parts.append(extern_host_free("$dp", extern_composite_host_bytes(rcft)));
       parts = parts.append("    (i32.store offset=" + foff + " (local.get " + dst + ") (local.get $hp))\n");
     } else {
       let inner_local = "$inner" + util.i32_to_string(depth);
@@ -12033,19 +12036,20 @@ pub function extern_emit_record_fill(mod: parser.Module, dst: string, tn: string
   return util.str_join_chunks(parts);
 }
 
-pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string): string {
+pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: string, tn: string, path: string = ""): string {
   let stab = irtables.struct_tab(mod.structs);
   let parts: string[] = [];
   let n = struct_field_count(stab, tn);
   for fi in 0..n {
     let ft = struct_field_type_at(stab, tn, fi);
     let field_expr = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(fi)) + "))";
-    if (ft == "string" || ft == "u8[]") {
-      parts = parts.append(extern_byte_span(ft, "(i32.load " + field_expr + ")"));
+    let field_path = path + "_" + util.i32_to_string(fi);
+    if (extern_span_type(ft)) {
+      parts = parts.append(extern_canon_span(ft, "(i32.load " + field_expr + ")", field_path));
     } else if (extern_field_is_scalar(ft)) {
       parts = parts.append(" " + extern_param_field_load(ft, field_expr));
     } else {
-      parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft));
+      parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft, field_path));
     }
   }
   return util.str_join_chunks(parts);
@@ -12308,9 +12312,9 @@ pub function export_func_params(mod: parser.Module, name: string): ast.ParamDecl
   return none;
 }
 
-pub function export_has_string_param(params: ast.ParamDecl[]): boolean {
+pub function export_has_param(params: ast.ParamDecl[], ty: string): boolean {
   for i in 0..params.len() {
-    if (params[i].type_name == "string") {
+    if (params[i].type_name == ty) {
       return true;
     }
   }
@@ -12368,14 +12372,14 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     if (params[j].type_name == "string" || extern_export_list(params[j].type_name)) {
       head += " (param i32) (param i32)";
     } else {
-      head = head + " (param " + wat_extern_valtype(params[j].type_name) + ")";
+      head = head + " (param " + extern_core_valtype(params[j].type_name) + ")";
     }
     j += 1;
   }
   if (str_result || arr_result || sum_result || tup_result) {
     head += " (result i32)";
   } else if (returns_value(ret)) {
-    head = head + " (result " + wat_extern_valtype(ret) + ")";
+    head = head + " (result " + extern_core_valtype(ret) + ")";
   }
   head += "\n";
 
@@ -12402,7 +12406,21 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
   let wp = 0;
   let blk = w_slots;
   let callargs = "";
+  let cleanup = "";
   for j in 0..params.len() {
+    let t = params[j].type_name;
+    if (t == "string" || extern_export_list(t)) {
+      let len = "(local.get " + util.i32_to_string(wp + 1) + ")";
+      let bytes = len;
+      if (extern_array_param_supported(t)) {
+        let stride = elem_slot_size(slice_unchecked(t, 0, t.len() - 2));
+        bytes = "(i32.mul " + len + " (i32.const " + util.i32_to_string(stride) + "))";
+      }
+      cleanup += extern_host_free(util.i32_to_string(wp), bytes);
+      if (!params[j].own) {
+        cleanup += "    (drop (call $__fern_arr_dec (local.get " + util.i32_to_string(blk) + ")))\n";
+      }
+    }
     if (params[j].type_name == "string") {
       let lenI = wp + 1;
       let blkS = util.i32_to_string(blk);
@@ -12453,7 +12471,8 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       blk += 1;
       wp += 2;
     } else {
-      callargs = callargs + " (local.get " + util.i32_to_string(wp) + ")";
+      let arg = "(local.get " + util.i32_to_string(wp) + ")";
+      callargs += " " + (if (t == "f32") { "(f64.promote_f32 " + arg + ")" } else { arg });
       wp += 1;
     }
   }
@@ -12479,7 +12498,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     body = body + "    (i32.store " + result_ptr + " " + data + ")\n";
     body = body + "    (i32.store offset=4 " + result_ptr + " " + len + ")\n";
     body = body + "    (i32.store offset=8 " + result_ptr + " " + value + ")\n";
-    body = body + "    " + result_ptr + ")\n";
+    body = body + "    " + result_ptr + "\n";
   } else if (sum_result) {
     let svS = util.i32_to_string(sum_v);
     let srbS = util.i32_to_string(sum_rb);
@@ -12491,7 +12510,7 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       body = body + "    (i32.store8 (local.get " + srbS + ") (i32.load (local.get " + svS + ")))\n";
     }
     body = body + "    (i32.store offset=4 (local.get " + srbS + ") (i32.load offset=4 (local.get " + svS + ")))\n";
-    body = body + "    (local.get " + srbS + "))\n";
+    body = body + "    (local.get " + srbS + ")\n";
   } else if (tup_result) {
     let tvS = util.i32_to_string(tup_v);
     let trbS = util.i32_to_string(tup_rb);
@@ -12503,20 +12522,22 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       let fern_off = util.i32_to_string(ti * 8);
       body = body + "    (i32.store (i32.add (local.get " + trbS + ") (i32.const " + canon_off + ")) (i32.load (i32.add (local.get " + tvS + ") (i32.const " + fern_off + "))))\n";
     }
-    body = body + "    (local.get " + trbS + "))\n";
+    body = body + "    (local.get " + trbS + ")\n";
   } else if (!returns_value(ret)) {
-    body = body + "    (drop (call $" + fname + callargs + ")))\n";
+    body = body + "    (drop (call $" + fname + callargs + "))\n";
+  } else if (ret == "f32") {
+    body += "    (f32.demote_f64 (call $" + fname + callargs + "))\n";
   } else {
-    body = body + "    (call $" + fname + callargs + "))\n";
+    body = body + "    (call $" + fname + callargs + ")\n";
   }
-  return head + locals + body;
+  return head + locals + body + cleanup + "  )\n";
 }
 
 pub function export_needs_heap(mod: parser.Module): boolean {
   for i in 0..mod.exports.len() {
     let nm = mod.exports[i].func_name;
     let params = export_func_params(mod, nm);
-    if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_export_list(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
+    if (export_func_ret(mod, nm) == "string" || export_has_param(params, "string") || extern_export_list(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
       return true;
     }
   }
@@ -12526,7 +12547,7 @@ pub function export_needs_heap(mod: parser.Module): boolean {
 pub function export_needs_realloc(mod: parser.Module): boolean {
   for i in 0..mod.exports.len() {
     let params = export_func_params(mod, mod.exports[i].func_name);
-    if (export_has_string_param(params) || export_has_numeric_array_param(params)) {
+    if (export_has_param(params, "string") || export_has_numeric_array_param(params)) {
       return true;
     }
   }
@@ -12539,7 +12560,7 @@ pub function extern_exports(mod: parser.Module): string {
     let x = mod.exports[i];
     let ret = export_func_ret(mod, x.func_name);
     let params = export_func_params(mod, x.func_name);
-    if (ret == "string" || export_has_string_param(params) || extern_export_list(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
+    if (ret == "f32" || export_has_param(params, "f32") || ret == "string" || export_has_param(params, "string") || extern_export_list(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
       parts = parts.append(build_export_wrapper(x.func_name, params, ret));
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n");
       if (ret == "string" || extern_export_list(ret)) {
@@ -12680,6 +12701,7 @@ function async_lower_wrappers(mod: parser.Module): string {
 }
 
 function async_lower_wrapper(mod: parser.Module, f: parser.FuncDecl): string {
+  let buffers = bool_buffers(mod, f);
   let streamed = is_stream_slot(f, -1);
   let composite = is_extern_composite_ret(mod, f.ret_type);
   let rvt = "i32";
@@ -12690,13 +12712,13 @@ function async_lower_wrapper(mod: parser.Module, f: parser.FuncDecl): string {
       rvt = wat_extern_valtype(f.ret_type);
     }
   }
-  let o = "  (func $" + f.name + extern_param_decls(mod, f) + " (result " + rvt + ")\n" + extern_param_locals(f);
+  let o = "  (func $" + f.name + extern_param_decls(mod, f) + " (result " + rvt + ")\n" + extern_param_locals(buffers);
   o = o + "    (local $rb i32) (local $st i32) (local $task i32) (local $ws i32) (local $r " + rvt + ")\n";
   if (composite) {
     o += "    (local $dp i32) (local $ln i32) (local $s i32) (local $i i32)\n";
   }
   o += stream_locals(f);
-  o += extern_param_prologue(f);
+  o += extern_param_prologue(buffers);
   o += "    (local.set $rb (call $__fern_alloc (i32.const 16)))\n";
   o += stream_param_opens(f);
   o = o + "    (local.set $st (call $" + f.name + "__async" + args + "))\n";
@@ -12708,6 +12730,7 @@ function async_lower_wrapper(mod: parser.Module, f: parser.FuncDecl): string {
   o += "      (drop (call $__fern_ws_wait (local.get $ws) (i32.add (local.get $rb) (i32.const 8))))\n";
   o += "      (call $__fern_subtask_drop (local.get $task))\n";
   o += "      (call $__fern_ws_drop (local.get $ws))))\n";
+  o += extern_param_cleanup(buffers);
   if (streamed) {
     o = o + stream_result_collect(f) + "    (local.set $r (local.get $s))\n";
   } else if (composite) {
@@ -12778,7 +12801,7 @@ function stream_param_writes(f: parser.FuncDecl): string {
       let e = stream_wit_elem(stream_elem_of(f, k));
       let len = "(i32.load (local.get $ep" + n + "))";
       let ptr = "(local.get $ab" + n + ")";
-      if (!extern_param_repacks(f.params[k].type_name)) {
+      if (f.params[k].type_name != "boolean[]") {
         ptr = "(i32.add (local.get $ep" + n + ") (i32.const 8))";
       }
       o += "    (local.set $sw (call $__fern_ws_new))\n";
@@ -12993,13 +13016,14 @@ function extern_composite_host_bytes(ret: string): string {
   return "(i32.mul (local.get $ln) (i32.const " + util.i32_to_string(elem_slot_size(rk)) + "))";
 }
 
-function extern_sum_result_tail(fname: string, ret: string, callargs: string): string {
+function extern_sum_result_tail(fname: string, ret: string, callargs: string, cleanup: string = ""): string {
   let heap = extern_sum_heap_payload(ret);
   let opt = extern_sum_param_is_option(ret);
   let wide = extern_sum_wide_payload(ret);
   let o = "";
   o += extern_ret_area(64);
   o = o + "    (call $" + fname + "__import" + callargs + " (local.get $rb))\n";
+  o += cleanup;
   if (opt && heap.len() > 0) {
     return o + extern_niche_option_tail(heap);
   }
@@ -13060,19 +13084,19 @@ function extern_niche_option_tail(heap: string): string {
   return o + "    (local.get $s))\n";
 }
 
-function extern_tuple_result_wrapper(f: parser.FuncDecl): string {
+function extern_tuple_result_wrapper(mod: parser.Module, f: parser.FuncDecl): string {
   let n = tuple_type_elem_count(f.ret_type);
   let parts: string[] = [];
   parts = parts.append("  (func $" + f.name);
-  let args = "";
-  for p in 0..f.params.len() {
-    parts = parts.append(" (param $ep" + util.i32_to_string(p) + " " + wat_extern_valtype(f.params[p].type_name) + ")");
-    args = args + " " + extern_core_arg(f.params[p].type_name, "$ep" + util.i32_to_string(p));
-  }
+  let buffers = bool_buffers(mod, f);
+  parts = parts.append(extern_param_decls(mod, f));
   parts = parts.append(" (result i32)\n");
   parts = parts.append("    (local $rbase i32) (local $rb i32) (local $s i32)\n");
+  parts = parts.append(extern_param_locals(buffers));
+  parts = parts.append(extern_param_prologue(buffers));
   parts = parts.append(extern_ret_area(n * 4));
-  parts = parts.append("    (call $" + f.name + "__import" + args + " (local.get $rb))\n");
+  parts = parts.append("    (call $" + f.name + "__import" + extern_marshal_args(mod, f) + " (local.get $rb))\n");
+  parts = parts.append(extern_param_cleanup(buffers));
   parts = parts.append("    (local.set $s (call $__fern_str_box (i32.const " + util.i32_to_string(n * 8) + ")))\n");
   for e in 0..n {
     parts = parts.append("    (i32.store (i32.add (local.get $s) (i32.const " + util.i32_to_string(e * 8) + ")) (i32.load (i32.add (local.get $rb) (i32.const " + util.i32_to_string(e * 4) + "))))\n");
@@ -13095,57 +13119,71 @@ function extern_param_decls(mod: parser.Module, f: parser.FuncDecl): string {
   return util.str_join_chunks(parts);
 }
 
-function extern_param_locals(f: parser.FuncDecl): string {
-  let parts: string[] = [];
-  let na = 0;
-  for qi in 0..f.params.len() {
-    if (extern_param_repacks(f.params[qi].type_name)) {
-      parts = parts.append("    (local $ab" + util.i32_to_string(qi) + " i32)\n");
-      na += 1;
+// Each boolean-list parameter or field needs a packed byte buffer until
+// the imported call (and any stream writes) finishes.
+struct BoolBuffer { path: string, array: string }
+
+function bool_buffers(mod: parser.Module, f: parser.FuncDecl): BoolBuffer[] {
+  let out: BoolBuffer[] = [];
+  for i in 0..f.params.len() {
+    let path = util.i32_to_string(i);
+    let t = f.params[i].type_name;
+    if (t == "boolean[]" || extern_record_param_supported(mod, t)) {
+      out = record_bool_buffers(mod, t, path, "(local.get $ep" + path + ")", out);
     }
   }
-  if (na > 0) {
-    parts = parts.append("    (local $ai i32) (local $an i32)\n");
+  return out;
+}
+
+function record_bool_buffers(mod: parser.Module, t: string, path: string, array: string, own out: BoolBuffer[]): own BoolBuffer[] {
+  if (t == "boolean[]") {
+    return out.append(BoolBuffer { path: path, array: array });
+  }
+  for decl in mod.structs {
+    if (decl.name == t) {
+      for j in 0..decl.fields.len() {
+        let field = "(i32.load (i32.add " + array + " (i32.const " + util.i32_to_string(xbox_field_off(j)) + ")))";
+        out = record_bool_buffers(mod, decl.fields[j].type_name, path + "_" + util.i32_to_string(j), field, out);
+      }
+      return out;
+    }
+  }
+  return out;
+}
+
+function extern_param_locals(buffers: BoolBuffer[]): string {
+  if (buffers.len() == 0) {
+    return "";
+  }
+  let out = "    (local $ai i32) (local $an i32)\n";
+  for b in buffers {
+    out += "    (local $ab" + b.path + " i32)\n";
+  }
+  return out;
+}
+
+function extern_param_prologue(buffers: BoolBuffer[]): string {
+  let parts: string[] = [];
+  for b in buffers {
+    let packed = "$ab" + b.path;
+    parts = parts.append("    (local.set $an (i32.load " + b.array + "))\n");
+    parts = parts.append("    (if (local.get $an) (then (local.set " + packed + " (call $__fern_alloc (local.get $an)))))\n");
+    parts = parts.append("    (local.set $ai (i32.const 0))\n");
+    parts = parts.append("    (block $d" + b.path + " (loop $c" + b.path + "\n");
+    parts = parts.append("      (br_if $d" + b.path + " (i32.ge_u (local.get $ai) (local.get $an)))\n");
+    parts = parts.append("      (i32.store8 (i32.add (local.get " + packed + ") (local.get $ai)) (i32.load (i32.add (i32.add " + b.array + " (i32.const 8)) (i32.mul (local.get $ai) (i32.const 4)))))\n");
+    parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
+    parts = parts.append("      (br $c" + b.path + ")))\n");
   }
   return util.str_join_chunks(parts);
 }
 
-function extern_param_prologue(f: parser.FuncDecl): string {
-  let parts: string[] = [];
-  for ci in 0..f.params.len() {
-    if (extern_array_param_supported(f.params[ci].type_name)) {
-      let cppn = "$ep" + util.i32_to_string(ci);
-      let bn = "$ab" + util.i32_to_string(ci);
-      let tn = f.params[ci].type_name;
-      let k = slice_unchecked(tn, 0, tn.len() - 2);
-      let ss = util.i32_to_string(elem_slot_size(k));
-      let cs = util.i32_to_string(elem_slot_size(k));
-      let lbl = util.i32_to_string(ci);
-      let src = "(i32.add (i32.add (local.get " + cppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const " + ss + ")))";
-      let dst = "(i32.add (local.get " + bn + ") (i32.mul (local.get $ai) (i32.const " + cs + ")))";
-      parts = parts.append("    (local.set $an (i32.load (local.get " + cppn + ")))\n");
-      parts = parts.append("    (local.set " + bn + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get $an) (i32.const " + cs + "))) (i32.const 7)) (i32.const -8)))\n");
-      parts = parts.append("    (local.set $ai (i32.const 0))\n");
-      parts = parts.append("    (block $d" + lbl + " (loop $c" + lbl + "\n");
-      parts = parts.append("      (br_if $d" + lbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n");
-      parts = parts.append("      " + elem_copy(k, dst, src) + "\n");
-      parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
-      parts = parts.append("      (br $c" + lbl + ")))\n");
-    } else if (extern_param_repacks(f.params[ci].type_name)) {
-      let ucppn = "$ep" + util.i32_to_string(ci);
-      let ubn = "$ab" + util.i32_to_string(ci);
-      let ulbl = util.i32_to_string(ci);
-      parts = parts.append("    (local.set $an (i32.load (local.get " + ucppn + ")))\n");
-      parts = parts.append("    (local.set " + ubn + " (call $__fern_alloc (local.get $an)))\n");
-      parts = parts.append("    (local.set $ai (i32.const 0))\n");
-      parts = parts.append("    (block $d" + ulbl + " (loop $c" + ulbl + "\n");
-      parts = parts.append("      (br_if $d" + ulbl + " (i32.ge_u (local.get $ai) (local.get $an)))\n");
-      parts = parts.append("      (i32.store8 (i32.add (local.get " + ubn + ") (local.get $ai)) (i32.load (i32.add (i32.add (local.get " + ucppn + ") (i32.const 8)) (i32.mul (local.get $ai) (i32.const 4)))))\n");
-      parts = parts.append("      (local.set $ai (i32.add (local.get $ai) (i32.const 1)))\n");
-      parts = parts.append("      (br $c" + ulbl + ")))\n");
-    }
+function extern_param_cleanup(buffers: BoolBuffer[]): string {
+  let out = "";
+  for b in buffers {
+    out += extern_host_free("$ab" + b.path, "(i32.load " + b.array + ")");
   }
-  return util.str_join_chunks(parts);
+  return out;
 }
 
 function extern_marshal_args(mod: parser.Module, f: parser.FuncDecl): string {
@@ -13156,8 +13194,11 @@ function extern_marshal_args(mod: parser.Module, f: parser.FuncDecl): string {
   return margs;
 }
 
-// Strings and packed bytes already have canonical element storage.
-function extern_byte_span(t: string, ptr: string): string {
+// A boolean list uses the packed buffer for this parameter or field.
+function extern_canon_span(t: string, ptr: string, path: string): string {
+  if (t == "boolean[]") {
+    return " (local.get $ab" + path + ") (i32.load " + ptr + ")";
+  }
   if (t == "string") {
     return " " + str_data_wat(ptr) + " " + str_len_wat(ptr);
   }
@@ -13167,12 +13208,10 @@ function extern_byte_span(t: string, ptr: string): string {
 function extern_marshal_arg(mod: parser.Module, t: string, fi: i32): string {
   let fppn = "$ep" + util.i32_to_string(fi);
   let margs = "";
-  if (t == "string" || t == "u8[]") {
-    margs += extern_byte_span(t, "(local.get " + fppn + ")");
-  } else if (extern_param_repacks(t)) {
-    margs += " (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
+  if (extern_span_type(t)) {
+    margs += extern_canon_span(t, "(local.get " + fppn + ")", util.i32_to_string(fi));
   } else if (extern_record_param_supported(mod, t)) {
-    margs += extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", t);
+    margs += extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", t, util.i32_to_string(fi));
   } else if (extern_sum_param_supported(t)) {
     if (extern_sum_param_is_option(t)) {
       margs += " (i32.sub (i32.const 1) (i32.load (local.get " + fppn + ")))";
@@ -13210,23 +13249,23 @@ function extern_marshal_arg(mod: parser.Module, t: string, fi: i32): string {
   return margs;
 }
 
+// The canonical elements and Fern slots have the same width for numeric lists.
+function extern_copy_numeric_list(t: string, dst: string): string {
+  let kind = slice_unchecked(t, 0, t.len() - 2);
+  let size = util.i32_to_string(elem_slot_size(kind));
+  let ptr = "(local.get " + dst + ")";
+  return "    (local.set " + dst + " (call $__fern_arr_elems (local.get $ln) (i32.const " + size + ")))\n"
+    + "    (i32.store " + ptr + " (local.get $ln))\n"
+    + "    (i32.store offset=4 " + ptr + " (local.get $ln))\n"
+    + "    (memory.copy (i32.add " + ptr + " (i32.const 8)) (local.get $dp) " + extern_composite_host_bytes(t) + ")\n";
+}
+
 function extern_composite_lift(ret: string): string {
   let parts: string[] = [];
   if (ret == "u8[]" || ret == "boolean[]") {
     parts = parts.append(extern_copy_bytes(ret, "$s", "$dp", "$ln", "$i", ""));
   } else if (extern_array_param_supported(ret)) {
-    let rk = slice_unchecked(ret, 0, ret.len() - 2);
-    let rss = util.i32_to_string(elem_slot_size(rk));
-    let rcs = util.i32_to_string(elem_slot_size(rk));
-    parts = parts.append("    (local.set $s (call $__fern_arr_elems (local.get $ln) (i32.const " + rss + ")))\n");
-    parts = parts.append("    (i32.store (local.get $s) (local.get $ln))\n");
-    parts = parts.append("    (i32.store offset=4 (local.get $s) (local.get $ln))\n");
-    parts = parts.append("    (local.set $i (i32.const 0))\n");
-    parts = parts.append("    (block $d (loop $c\n");
-    parts = parts.append("      (br_if $d (i32.ge_u (local.get $i) (local.get $ln)))\n");
-    parts = parts.append("      " + elem_copy(rk, "(i32.add (i32.add (local.get $s) (i32.const 8)) (i32.mul (local.get $i) (i32.const " + rss + ")))", "(i32.add (local.get $dp) (i32.mul (local.get $i) (i32.const " + rcs + ")))") + "\n");
-    parts = parts.append("      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n");
-    parts = parts.append("      (br $c)))\n");
+    parts = parts.append(extern_copy_numeric_list(ret, "$s"));
   } else {
     parts = parts.append("    (local.set $s " + str_alloc_wat("(local.get $ln)") + ")\n");
     parts = parts.append("    " + str_set_len_wat("(local.get $s)", "(local.get $ln)") + "\n");
@@ -13241,24 +13280,25 @@ function extern_composite_lift(ret: string): string {
 }
 
 function extern_record_wrapper(mod: parser.Module, f: parser.FuncDecl, stab: irtables.StructTab): string {
+  let buffers = bool_buffers(mod, f);
   let t = f.ret_type;
   let nf = struct_field_count(stab, t);
-  let head = "  (func $" + f.name + extern_param_decls(mod, f) + " (result i32)\n" + extern_param_locals(f);
+  let head = "  (func $" + f.name + extern_param_decls(mod, f) + " (result i32)\n" + extern_param_locals(buffers);
   let call = "(call $" + f.name + "__import" + extern_marshal_args(mod, f);
   let box = "    (local.set $s " + xbox_new(xbox_bytes(nf)) + ")\n"
     + "    (i32.store (local.get $s) (i32.const " + util.i32_to_string(struct_id(stab, t)) + "))\n";
   if (extern_record_ret_direct(mod, t)) {
     let slot = "(i32.add (local.get $s) (i32.const " + util.i32_to_string(xbox_field_off(0)) + "))";
-    return head + "    (local $s i32)\n" + extern_param_prologue(f) + box
-      + "    " + extern_slot_store(struct_field_type_at(stab, t, 0), slot, call + ")") + "\n    (local.get $s))\n";
+    return head + "    (local $s i32)\n" + extern_param_prologue(buffers) + box
+      + "    " + extern_slot_store(struct_field_type_at(stab, t, 0), slot, call + ")") + "\n" + extern_param_cleanup(buffers) + "    (local.get $s))\n";
   }
   let locals = extern_sum_result_locals();
   for depth in 0..extern_record_depth(mod, t) {
     locals += "    (local $inner" + util.i32_to_string(depth) + " i32)\n";
   }
   let size = extern_canon_record_size_nested(mod, t);
-  return head + locals + extern_param_prologue(f) + extern_ret_area(size) + "    " + call + " (local.get $rb))\n"
-    + box + extern_emit_record_fill(mod, "$s", t, 0, 0) + extern_ret_area_free(size) + "    (local.get $s))\n";
+  return head + locals + extern_param_prologue(buffers) + extern_ret_area(size) + "    " + call + " (local.get $rb))\n"
+    + extern_param_cleanup(buffers) + box + extern_emit_record_fill(mod, "$s", t, 0, 0) + extern_ret_area_free(size) + "    (local.get $s))\n";
 }
 
 pub function extern_wrappers(mod: parser.Module): string {
@@ -13266,9 +13306,12 @@ pub function extern_wrappers(mod: parser.Module): string {
   let parts: string[] = [];
   for i in 0..mod.funcs.len() {
     let f = mod.funcs[i];
-    if (is_sync_extern(f) && extern_record_result_supported(mod, f.ret_type)) {
+    if (is_sync_extern(f) && extern_tuple_param_supported(f.ret_type)) {
+      parts = parts.append(extern_tuple_result_wrapper(mod, f));
+    } else if (is_sync_extern(f) && extern_record_result_supported(mod, f.ret_type)) {
       parts = parts.append(extern_record_wrapper(mod, f, stab));
     } else if (is_sync_extern(f) && extern_marshals(mod, f)) {
+      let buffers = bool_buffers(mod, f);
       let sum_ret = extern_sum_result_supported(f.ret_type);
       parts = parts.append("  (func $" + f.name);
       parts = parts.append(extern_param_decls(mod, f));
@@ -13281,27 +13324,26 @@ pub function extern_wrappers(mod: parser.Module): string {
         parts = parts.append(" (result i32)");
       }
       parts = parts.append("\n");
-      parts = parts.append(extern_param_locals(f));
+      parts = parts.append(extern_param_locals(buffers));
       if (sum_ret) {
         parts = parts.append(extern_sum_result_locals());
       }
-      parts = parts.append(extern_param_prologue(f));
+      parts = parts.append(extern_param_prologue(buffers));
       let margs = extern_marshal_args(mod, f);
       if (sum_ret) {
-        parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, margs));
+        parts = parts.append(extern_sum_result_tail(f.name, f.ret_type, margs, extern_param_cleanup(buffers)));
       } else {
         if (f.ret_type == "f32") {
           parts = parts.append("    (f64.promote_f32 (call $" + f.name + "__import" + margs + "))");
         } else {
           parts = parts.append("    (call $" + f.name + "__import" + margs + ")");
         }
+        parts = parts.append(extern_param_cleanup(buffers));
         if (void_shim) {
           parts = parts.append("\n    (i32.const 0)");
         }
         parts = parts.append(")\n");
       }
-    } else if (is_sync_extern(f) && extern_tuple_param_supported(f.ret_type)) {
-      parts = parts.append(extern_tuple_result_wrapper(f));
     } else if (is_sync_extern(f) && extern_sum_result_supported(f.ret_type)) {
       parts = parts.append("  (func $" + f.name);
       let sp2 = 0;

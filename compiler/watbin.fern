@@ -2230,7 +2230,7 @@ function suffix_group_find(order: string[], iface: string): i32 {
   return -1;
 }
 
-struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_inst: i32 }
+struct SuffixWired { o: i32[], n_cfunc: i32, n_corefunc: i32, n_inst: i32, user_inst: i32, memory: boolean, realloc: i32 }
 
 function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_inst0: i32, user_mod: i32): SuffixWired {
   let n = imp_iface.len();
@@ -2241,14 +2241,12 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   let tramp_inst: i32[] = [];
   let tbl: i32[] = [];
   let coref: i32[] = [];
-  let i = 0;
-  while (i < n) {
+  for i in 0..n {
     tramp_mod = tramp_mod.append(0);
     fixup_mod = fixup_mod.append(0);
     tramp_inst = tramp_inst.append(0);
     tbl = tbl.append(0);
     coref = coref.append(0);
-    i += 1;
   }
   let n_mod = user_mod + 1;
   let n_cfunc = 0;
@@ -2256,8 +2254,7 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   let n_coreinst = 0;
   let n_coretab = 0;
   let n_inst = n_inst0;
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (trampolined(imp_kind[i])) {
       tramp_mod = tramp_mod.with(i, n_mod);
       n_mod += 1;
@@ -2266,22 +2263,18 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       n_mod += 1;
       o = util.append_all(o, comp_core_module_section(shim_tablefill_core(imp_params[i], imp_results[i])));
     }
-    i += 1;
   }
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (trampolined(imp_kind[i])) {
       tramp_inst = tramp_inst.with(i, n_coreinst);
       n_coreinst += 1;
       o = util.append_all(o, comp_core_instance_instantiate(tramp_mod[i]));
     }
-    i += 1;
   }
   let order: string[] = [];
   let group_names: string[][] = [];
   let group_idxs: i32[][] = [];
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     let k = imp_kind[i];
     let idx = 0;
     if (k == 0) {
@@ -2309,7 +2302,6 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       group_names = group_names.with(gi, group_names[gi].append(imp_name[i]));
       group_idxs = group_idxs.with(gi, group_idxs[gi].append(idx));
     }
-    i += 1;
   }
   let arg_insts: i32[] = [];
   for g in 0..order.len() {
@@ -2328,11 +2320,9 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
   n_coreinst += 1;
   let need_mem = false;
   let need_realloc = false;
-  i = 0;
-  while (i < n) {
-    need_mem = need_mem || trampolined(imp_kind[i]);
-    need_realloc = need_realloc || lowers_realloc(imp_kind[i]);
-    i += 1;
+  for k in imp_kind {
+    need_mem = need_mem || trampolined(k);
+    need_realloc = need_realloc || lowers_realloc(k);
   }
   if (need_mem) {
     o = util.append_all(o, comp_alias_core_export(2, user_inst, "memory"));
@@ -2343,17 +2333,14 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
     o = util.append_all(o, comp_alias_core_export(0, user_inst, "cabi_realloc"));
     n_corefunc += 1;
   }
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (trampolined(imp_kind[i])) {
       tbl = tbl.with(i, n_coretab);
       n_coretab += 1;
       o = util.append_all(o, comp_alias_core_export(1, tramp_inst[i], "$imports"));
     }
-    i += 1;
   }
-  i = 0;
-  while (i < n) {
+  for i in 0..n {
     if (trampolined(imp_kind[i])) {
       let (o2, nc) = suffix_memory_canon(o, imp_kind[i], imp_inst[i], imp_name[i], imp_typeop[i], n_cfunc, realloc_f);
       o = o2;
@@ -2361,7 +2348,6 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       coref = coref.with(i, n_corefunc);
       n_corefunc += 1;
     }
-    i += 1;
   }
   for i in 0..n {
     if (trampolined(imp_kind[i])) {
@@ -2372,10 +2358,75 @@ function component_suffix_wired(imp_iface: string[], imp_name: string[], imp_kin
       n_coreinst += 1;
     }
   }
-  return SuffixWired { o: o, n_cfunc: n_cfunc, n_corefunc: n_corefunc, n_inst: n_inst, user_inst: user_inst };
+  return SuffixWired { o: o, n_cfunc: n_cfunc, n_corefunc: n_corefunc, n_inst: n_inst, user_inst: user_inst, memory: need_mem, realloc: if (need_realloc) { realloc_f } else { -1 } };
+}
+
+pub struct SyncLift { iface: string, name: string, ty: i32, heap_arg: boolean, heap_result: boolean }
+
+function sync_exports(w: SuffixWired, own o: i32[], lifts: SyncLift[], async_count: i32): i32[] {
+  let core_idx = w.n_corefunc + 1 + async_count;
+  let func_idx = w.n_cfunc + 1 + 2 * async_count;
+  let inst_idx = w.n_inst + 2;
+  let ifaces: string[] = [];
+  let realloc = w.realloc;
+  let memory = w.memory;
+  for l in lifts {
+    if (!util.has_str(ifaces, l.iface)) {
+      ifaces = ifaces.append(l.iface);
+    }
+    if ((l.heap_arg || l.heap_result) && !memory) {
+      o = util.append_all(o, comp_alias_core_export(2, w.user_inst, "memory"));
+      memory = true;
+    }
+    if (l.heap_arg && realloc < 0) {
+      realloc = core_idx;
+      o = util.append_all(o, comp_alias_core_func(w.user_inst, "cabi_realloc"));
+      core_idx += 1;
+    }
+    let name = l.iface + "#" + l.name;
+    let idx = core_idx;
+    o = util.append_all(o, comp_alias_core_func(w.user_inst, name));
+    core_idx += 1;
+    let opts: i32[] = [];
+    let count = 0;
+    if (l.heap_arg || l.heap_result) {
+      opts = [3, 0];
+      count += 1;
+    }
+    if (l.heap_arg) {
+      opts = leb_u32(opts.append(4), realloc);
+      count += 1;
+    }
+    if (l.heap_result) {
+      o = util.append_all(o, comp_alias_core_func(w.user_inst, "cabi_post_" + name));
+      opts = leb_u32(opts.append(5), core_idx);
+      core_idx += 1;
+      count += 1;
+    }
+    let lift = util.append_all(leb_u32(leb_u32([1, 0, 0], idx), count), opts);
+    o = util.append_all(o, wsection(8, leb_u32(lift, l.ty)));
+  }
+  for iface in ifaces {
+    let exports: i32[] = [];
+    let count = 0;
+    for i in 0..lifts.len() {
+      if (lifts[i].iface == iface) {
+        exports = leb_u32(wname(exports.append(0), lifts[i].name).append(1), func_idx + i);
+        count += 1;
+      }
+    }
+    o = util.append_all(o, wsection(5, util.append_all(leb_u32([1, 1], count), exports)));
+    o = util.append_all(o, comp_export_one_instance(iface, inst_idx));
+    inst_idx += 2;
+  }
+  return o;
 }
 
 pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string, lifts: AsyncLift[]): i32[] {
+  return component_suffix_exports(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_type0, n_inst0, user_mod, core_export, lifts, []);
+}
+
+pub function component_suffix_exports(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, core_export: string, lifts: AsyncLift[], sync: SyncLift[]): i32[] {
   let w = component_suffix_wired(imp_iface, imp_name, imp_kind, imp_inst, imp_params, imp_results, imp_typeop, n_inst0, user_mod);
   let o = w.o;
   let run_core_f = w.n_corefunc;
@@ -2392,7 +2443,7 @@ pub function component_suffix(imp_iface: string[], imp_name: string[], imp_kind:
     o = util.append_all(o, comp_canon_lift_async(run_core_f + 1 + i, n_type0 + 2 + i));
     o = util.append_all(o, comp_export_one_func(lifts[i].name, lifted + 1 + 2 * i));
   }
-  return o;
+  return if (sync.len() == 0) { o } else { sync_exports(w, o, sync, lifts.len()) };
 }
 
 pub function component_suffix_http(imp_iface: string[], imp_name: string[], imp_kind: i32[], imp_inst: i32[], imp_params: i32[][], imp_results: i32[][], imp_typeop: i32[], n_type0: i32, n_inst0: i32, user_mod: i32, req_t: i32, out_t: i32): i32[] {

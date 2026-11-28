@@ -228,13 +228,22 @@ Fern program needs `wasi:cli/stdout`, `wasi:cli/stderr` and `wasi:cli/exit`, so
 the world must import them. `TestSelfHostCLIWitWorld` runs such a component
 with a provider of the world's own interface.
 
+For a provider, declare the interface as an export in the WIT world and mark
+each Fern function with `@export("package/interface@version", "function-name")`.
+The CLI groups the marked functions into their interface. It checks parameter
+and result types against WIT before emitting a lift. Synchronous exports
+support scalars, strings, and lists of booleans, bytes, 32- or 64-bit integers
+and floats. The host can release returned strings and lists through canonical
+post-return.
+
 A self-hosted synchronous import can take a record containing `string`
-and `u8[]` fields, including inside nested records. Each contributes an
+and list fields of `u8`, `i32`, `u32`, `i64`, `u64`, `f32` or `f64`, including
+inside nested records. Each contributes an
 `i32` pointer and an `i32` length to the canonical parameter list. Imports
 with record parameters support up to 16 flat parameters across the call.
 A record result can contain the same fields. The wrapper reads each pointer
 and length from the canonical result area, copies the contents into a Fern
-string or packed byte array, and releases the transferred storage. Nested
+string or packed array, and releases the transferred storage. Nested
 records use canonical field alignment, including padding around wide scalars.
 
 ## P4 design: `extern` import declarations

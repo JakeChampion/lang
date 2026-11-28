@@ -1,0 +1,147 @@
+import "./geo";
+
+struct Point { x: i32, y: i32 }
+
+struct Holder { p: Point, n: i32 }
+
+struct Wrap { q: Point }
+
+struct Deep { w: Wrap, n: i32 }
+
+struct Named { p: Point, name: string }
+
+enum Shape { Pin { at: Point, n: i32 }, Empty }
+
+function nested(h: Holder): i32 {
+  match (h) {
+    Holder { p: Point { x, y: 1 }, n } => {
+      return x + n;
+    },
+    Holder { p, .. } => {
+      return p.x;
+    }
+  }
+}
+
+function nested_value(h: Holder): i32 {
+  return match (h) {
+    Holder { p: Point { x: 0, y }, .. } => y,
+    Holder { p: Point { x, .. }, n } when n > 10 => x * n,
+    _ => -1,
+  };
+}
+
+function bound(h: Holder): i32 {
+  match (h) {
+    Holder { p: q @ Point { x, .. }, n } => {
+      return q.y + x + n;
+    }
+  }
+}
+
+function variant(s: Shape): i32 {
+  match (s) {
+    Pin { at: Point { x, y: 1 }, n } => {
+      return x + n;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function if_let(h: Holder): i32 {
+  if let Holder { p: Point { x: 3, y }, n } = h {
+    return y + n;
+  }
+  if (deep(Deep { w: Wrap { q: Point { x: 3, y: 5 } }, n: 2 }) != 7 || deep(Deep { w: Wrap { q: Point { x: 4, y: 5 } }, n: 2 }) != 0) {
+    return 20;
+  }
+  if (named(Named { p: Point { x: 1, y: 0 }, name: grow(3) }) != 30 || named(Named { p: Point { x: 2, y: 0 }, name: grow(2) }) != 22) {
+    return 21;
+  }
+  return 0;
+}
+
+function deep(d: Deep): i32 {
+  match (d) {
+    Deep { w: Wrap { q: Point { x: 3, y } }, n } => {
+      return y + n;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function named(v: Named): i32 {
+  match (v) {
+    Named { p: Point { x: 1, .. }, name } => {
+      return name.len();
+    },
+    Named { p: q @ Point { .. }, name } => {
+      return name.len() + q.x;
+    }
+  }
+}
+
+function grow(n: i32): string {
+  let text: string = "";
+  for i in 0..n {
+    text = text + "0123456789";
+  }
+  return text;
+}
+
+function imported(l: geo.Line): i32 {
+  match (l) {
+    geo.Line { from: geo.Point { x: 0, y }, to } => {
+      return y + to.x;
+    },
+    geo.Line { from, .. } => {
+      return from.x;
+    }
+  }
+}
+
+function main(): i32 {
+  if (nested(Holder { p: Point { x: 4, y: 1 }, n: 3 }) != 7) {
+    return 10;
+  }
+  if (nested(Holder { p: Point { x: 4, y: 2 }, n: 3 }) != 4) {
+    return 11;
+  }
+  if (nested_value(Holder { p: Point { x: 0, y: 9 }, n: 1 }) != 9) {
+    return 12;
+  }
+  if (nested_value(Holder { p: Point { x: 2, y: 9 }, n: 20 }) != 40) {
+    return 13;
+  }
+  if (nested_value(Holder { p: Point { x: 2, y: 9 }, n: 1 }) != -1) {
+    return 14;
+  }
+  if (bound(Holder { p: Point { x: 1, y: 10 }, n: 100 }) != 111) {
+    return 15;
+  }
+  if (variant(Pin { at: Point { x: 4, y: 1 }, n: 3 }) != 7) {
+    return 16;
+  }
+  if (variant(Pin { at: Point { x: 4, y: 2 }, n: 3 }) != 0 || variant(Empty) != 0) {
+    return 17;
+  }
+  if (if_let(Holder { p: Point { x: 3, y: 5 }, n: 2 }) != 7 || if_let(Holder { p: Point { x: 4, y: 5 }, n: 2 }) != 0) {
+    return 18;
+  }
+  let a = geo.Line { from: geo.Point { x: 0, y: 6 }, to: geo.Point { x: 2, y: 0 } };
+  let b = geo.Line { from: geo.Point { x: 5, y: 6 }, to: geo.Point { x: 2, y: 0 } };
+  if (imported(a) != 8 || imported(b) != 5) {
+    return 19;
+  }
+  if (deep(Deep { w: Wrap { q: Point { x: 3, y: 5 } }, n: 2 }) != 7 || deep(Deep { w: Wrap { q: Point { x: 4, y: 5 } }, n: 2 }) != 0) {
+    return 20;
+  }
+  if (named(Named { p: Point { x: 1, y: 0 }, name: grow(3) }) != 30 || named(Named { p: Point { x: 2, y: 0 }, name: grow(2) }) != 22) {
+    return 21;
+  }
+  return 0;
+}

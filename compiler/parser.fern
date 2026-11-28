@@ -1361,34 +1361,9 @@ const TAIL_LAMBDA_VOID_BRANCHES: i32 = 3;
 // of that body.
 // These tables belong to one token stream. The cursor can advance without
 // copying each table into its next state.
-struct ParseTables { structnames: string[], constnames: string[], closers: i32[] }
+struct ParseTables { constnames: string[], closers: i32[] }
 
 struct Par { decl_count: i32, toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, tables: ParseTables, verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[], strict_semi: boolean, tail_close: i32, tail_kind: i32 }
-
-function scan_struct_names(toks: lexer.Token[]): string[] {
-  let out: string[] = [];
-  let i = 0;
-  while (i < toks.len()) {
-    match (toks[i]) {
-      lexer.TokEof(_) => {
-        return out;
-      },
-      lexer.TokKeyword(k) => {
-        if (k.name == "struct" && i + 1 < toks.len()) {
-          if let lexer.TokIdent(id) = toks[i + 1] {
-            if (id.name.len() > 0) {
-              out = out.append(id.name);
-              i += 1;
-            }
-          }
-        }
-      },
-      _ => {}
-    }
-    i += 1;
-  }
-  return out;
-}
 
 // The change of nesting depth at a bracket. A `const` inside brackets is a
 // const type parameter, not a top-level const.
@@ -2762,7 +2737,7 @@ function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i3
   if let Some(le) = stream_lex_error(toks) {
     return (e_unknown_at(lex_fault(le), le.line, le.col), p, true);
   }
-  let sub = Par { decl_count: p.decl_count, toks: toks, pos: 0, no_struct: false, map_kind: -1, tables: ParseTables { structnames: scan_struct_names(toks), constnames: p.tables.constnames, closers: closers(toks) }, verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false, tail_close: -1, tail_kind: TAIL_NONE };
+  let sub = Par { decl_count: p.decl_count, toks: toks, pos: 0, no_struct: false, map_kind: -1, tables: ParseTables { constnames: p.tables.constnames, closers: closers(toks) }, verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false, tail_close: -1, tail_kind: TAIL_NONE };
   let (r_expr, r_p) = parse_expr(sub);
   let outer = Par { ...p, decl_count: r_p.decl_count, type_errs: r_p.type_errs, todos: r_p.todos };
   if (!r_p.at_end()) {
@@ -3557,44 +3532,48 @@ function wrap_tuple_elems(path: ast.Stmt[], kinds: i32[], pats: ast.Pattern[], p
     if (kinds[wi] == 3) {
       cur = match_sub_pattern(cur, en, pats[wi], line, col);
     } else if (kinds[wi] == 4) {
-      let (nk, nb, nl, np) = pv_tup(pats[wi]);
-      let sub = wrap_tuple_elems(cur, nk, np, en, line, col);
-      let body: ast.Stmt[] = [];
-      for bk in 0..nk.len() {
-        if (nk[bk] == 0) {
-          body = body.append(as_header(s_var_at(nb[bk], "", e_ident_at(en + "_e" + util.i32_to_string(bk), line, col), line, col)));
-        }
-      }
-      for si in 0..sub.len() {
-        body = body.append(sub[si]);
-      }
-      let ncond = e_bool(true);
-      let has_ncond = false;
-      for lk in 0..nk.len() {
-        if (nk[lk] == 2) {
-          let one = e_binary("==", e_ident(en + "_e" + util.i32_to_string(lk)), nl[lk]);
-          if (has_ncond) {
-            ncond = e_binary("&&", ncond, one);
-          } else {
-            ncond = one;
-          }
-          has_ncond = true;
-        }
-      }
-      let nwrap: ast.Stmt[] = [];
-      nwrap = nwrap.append(s_destr_at(tuple_elem_pattern(en, nk.len()), e_ident_at(en, line, col), line, col));
-      if (has_ncond) {
-        nwrap = nwrap.append(s_if(ncond, body, []));
-      } else {
-        for ci in 0..body.len() {
-          nwrap = nwrap.append(body[ci]);
-        }
-      }
-      cur = nwrap;
+      cur = wrap_tuple_pattern(cur, en, pats[wi], line, col);
     }
     wi -= 1;
   }
   return cur;
+}
+
+function wrap_tuple_pattern(path: ast.Stmt[], en: string, pat: ast.Pattern, line: i32, col: i32): ast.Stmt[] {
+  let (nk, nb, nl, np) = pv_tup(pat);
+  let sub = wrap_tuple_elems(path, nk, np, en, line, col);
+  let body: ast.Stmt[] = [];
+  for bk in 0..nk.len() {
+    if (nk[bk] == 0) {
+      body = body.append(as_header(s_var_at(nb[bk], "", e_ident_at(en + "_e" + util.i32_to_string(bk), line, col), line, col)));
+    }
+  }
+  for si in 0..sub.len() {
+    body = body.append(sub[si]);
+  }
+  let ncond = e_bool(true);
+  let has_ncond = false;
+  for lk in 0..nk.len() {
+    if (nk[lk] == 2) {
+      let one = e_binary("==", e_ident(en + "_e" + util.i32_to_string(lk)), nl[lk]);
+      if (has_ncond) {
+        ncond = e_binary("&&", ncond, one);
+      } else {
+        ncond = one;
+      }
+      has_ncond = true;
+    }
+  }
+  let nwrap: ast.Stmt[] = [];
+  nwrap = nwrap.append(s_destr_at(tuple_elem_pattern(en, nk.len()), e_ident_at(en, line, col), line, col));
+  if (has_ncond) {
+    nwrap = nwrap.append(s_if(ncond, body, []));
+  } else {
+    for ci in 0..body.len() {
+      nwrap = nwrap.append(body[ci]);
+    }
+  }
+  return nwrap;
 }
 
 // A tuple match takes only tuple patterns and `_`, as the oracle's checker requires.
@@ -3761,7 +3740,16 @@ function parse_struct_arm_pattern(p: Par): (StructArmPattern, Par) {
         fkind = 2;
         flit = le_expr;
         bind = "";
-      } else if (struct_field_variant_start(p)) {
+      } else if (p.peek_punct() == "(") {
+        let (tk, tb, tl, tp, next) = parse_tuple_arm_pattern(p);
+        if (tk.len() == 0) {
+          next = next.refused_at(parse_fault("expected a tuple pattern"), p.peek_line(), p.peek_col());
+        }
+        p = next;
+        fkind = 3;
+        fpat = p_tuple_carrier(tk, tb, tl, tp);
+        bind = "";
+      } else if (nested_pattern_start(p)) {
         let (fp, fpp) = parse_pattern(p);
         p = fpp;
         fkind = 3;
@@ -3790,19 +3778,15 @@ function parse_struct_arm_pattern(p: Par): (StructArmPattern, Par) {
   return (StructArmPattern { binds: binds, fields: fields, kinds: kinds, lits: lits, pats: pats, rest_written: rest_written, ok: ok }, p);
 }
 
-function struct_field_variant_start(p: Par): boolean {
+function nested_pattern_start(p: Par): boolean {
   let n = p.peek_ident();
   if (n.len() > 0 && n != "_") {
     let nx = p.peek_punct_at(1);
-    if (nx == "(" || nx == ".") {
+    if (nx == "(" || nx == "{" || nx == "." || nx == "@") {
       return true;
     }
   }
   return false;
-}
-
-function build_struct_match(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32, mkcol: i32): ast.Stmt {
-  return build_struct_match_fields(scrut, arms, mkline, mkcol, false);
 }
 
 function struct_match_literal_cond(cond: ast.Expr, a: ast.StructArm, tmp: string): ast.Expr {
@@ -3814,31 +3798,22 @@ function struct_match_literal_cond(cond: ast.Expr, a: ast.StructArm, tmp: string
   return cond;
 }
 
-function struct_match_bindings(a: ast.StructArm, tmp: string, record: boolean): ast.Stmt[] {
+function struct_match_bindings(a: ast.StructArm, tmp: string): ast.Stmt[] {
   let binds: ast.Stmt[] = [];
   if (a.at_binding.len() > 0) {
     binds = binds.append(as_header(s_var_at(a.at_binding, "", e_ident(tmp), a.line, a.col)));
   }
-  let bk = 0;
-  if (record && a.fields.len() > 0) {
+  if (a.fields.len() > 0) {
     let pattern = record_pattern(a.type_name, record_binding_list(a.binds, a.line, a.col), a.fields, "", a.rest_written);
     binds = binds.append(as_header(s_destr_at(ast.Destr { ...pattern, struct_match: true }, e_ident(tmp), a.line, a.col)));
-    bk = a.binds.len();
-  }
-  while (bk < a.binds.len()) {
-    if (a.binds[bk].len() > 0) {
-      binds = binds.append(as_header(s_var_at(a.binds[bk], "", e_field_access_at(e_ident(tmp), a.fields[bk], a.line, a.col), a.line, a.col)));
-    }
-    bk += 1;
   }
   return binds;
 }
 
-function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], mkline: i32, mkcol: i32, record: boolean): ast.Stmt {
+function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], base: string, mkline: i32, mkcol: i32): ast.Stmt {
   if (arms.len() == 0) {
     return s_unknown_at(parse_fault("empty struct match"), mkline, mkcol);
   }
-  let base = "__sm" + util.i32_to_string(mkline) + "_" + util.i32_to_string(mkcol);
   let tmp = base + "_v";
   let done = base + "_d";
   let outer: ast.Stmt[] = [];
@@ -3862,7 +3837,7 @@ function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], mklin
       continue;
     }
     cond = struct_match_literal_cond(cond, a, tmp);
-    let binds = struct_match_bindings(a, tmp, record);
+    let binds = struct_match_bindings(a, tmp);
     if (a.has_guard) {
       let guarded: ast.Stmt[] = [];
       guarded = guarded.append(s_assign(done, e_bool(true)));
@@ -3886,7 +3861,6 @@ function build_struct_match_fields(scrut: ast.Expr, arms: ast.StructArm[], mklin
     outer = outer.append(s_if(cond, inner, []));
     ai += 1;
   }
-  let no_tup: ast.TupArm[] = [];
   return s_if_match(outer, ast.MatchSugar { ...no_match_sugar(), scrut: scrut, strct: arms, line: mkline, col: mkcol });
 }
 
@@ -3895,119 +3869,13 @@ function wrap_struct_fields(path: ast.Stmt[], a: ast.StructArm, tmp: string): as
   let wi = a.field_kinds.len() - 1;
   while (wi >= 0) {
     if (a.field_kinds[wi] == 3) {
-      let mk_arms: ast.MatchArm[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: a.field_pats[wi], body: cur, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
-      let mk_skip: ast.Stmt[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: p_wildcard(), body: mk_skip, line: a.line, col: a.col, guard: e_bool(true), has_guard: false, alt_cont: false });
       let fv = tmp + "_f" + util.i32_to_string(wi);
-      let mk_wrap: ast.Stmt[] = [];
-      mk_wrap = mk_wrap.append(as_header(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col)));
-      mk_wrap = mk_wrap.append(s_match_origin(e_ident_at(fv, a.line, a.col), mk_arms, a.line, a.col, ORIGIN_PATTERN_PROBE));
-      cur = mk_wrap;
+      let bind = as_header(s_var_at(fv, "", e_field_access_at(e_ident(tmp), a.fields[wi], a.line, a.col), a.line, a.col));
+      cur = [bind].concat(match_sub_pattern(cur, fv, a.field_pats[wi], a.line, a.col));
     }
     wi -= 1;
   }
   return cur;
-}
-
-function is_struct_pattern_arm(p: Par): boolean {
-  let head = p.peek_ident();
-  if (head.len() > 0 && p.peek_punct_at(1) == "@") {
-    head = p.peek_ident_at(2);
-  }
-  if (head.len() == 0) {
-    return false;
-  }
-  return util.has_str(p.tables.structnames, head);
-}
-
-function parse_struct_match_arms(p: Par, expr_form: boolean): (ast.StructArm[], string, boolean, Par) {
-  let arms: ast.StructArm[] = [];
-  let rt = "i32";
-  let first = true;
-  let all_ok = true;
-  while (p.peek_punct() != "}" && !p.at_end()) {
-    let sline = p.peek_line();
-    let scol = p.peek_col();
-    let s_wild = false;
-    let s_binds: string[] = [];
-    let s_fields: string[] = [];
-    let s_rest = false;
-    let s_field_kinds: i32[] = [];
-    let s_field_lits: ast.Expr[] = [];
-    let s_field_pats: ast.Pattern[] = [];
-    let s_at = "";
-    let s_type = "";
-    if (p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek2_punct() == "@") {
-      s_at = p.peek_ident();
-      p = p.advance();
-      p = p.advance();
-    }
-    if (p.peek_ident() == "_" && p.peek2_punct() != "{") {
-      p = p.advance();
-      s_wild = true;
-    } else {
-      s_type = p.peek_ident();
-      let (sap, spp) = parse_struct_arm_pattern(p);
-      let spb = sap.binds;
-      let spf = sap.fields;
-      let spkinds = sap.kinds;
-      let splits = sap.lits;
-      let sppats = sap.pats;
-      let spok = sap.ok;
-      p = spp;
-      s_binds = spb;
-      s_fields = spf;
-      s_rest = sap.rest_written;
-      s_field_kinds = spkinds;
-      s_field_lits = splits;
-      s_field_pats = sppats;
-      if (!spok) {
-        all_ok = false;
-      }
-    }
-    let s_guard = e_bool(true);
-    let s_has_guard = false;
-    if (p.peek_keyword() == "when") {
-      p = p.advance();
-      let (sgr_expr, sgr_p) = parse_expr(p);
-      p = sgr_p;
-      s_guard = sgr_expr;
-      s_has_guard = true;
-    }
-    p = p.expect("=>");
-    let sbody: ast.Stmt[] = [];
-    let sbrt = "i32";
-    if (expr_form) {
-      if (p.peek_punct() == "{") {
-        let (sbb_body, sbb_rt, sbb_p) = parse_branch_body(p);
-        p = sbb_p;
-        sbody = sbb_body;
-        sbrt = sbb_rt;
-      } else {
-        let (ser_expr, ser_p) = parse_expr(p);
-        p = ser_p;
-        sbody = [s_return(ser_expr)];
-        sbrt = if_expr_rt(ser_expr);
-      }
-    } else {
-      let (sblk_body, sblk_p) = parse_match_stmt_body(p);
-      p = sblk_p;
-      sbody = sblk_body;
-    }
-    if (first) {
-      rt = sbrt;
-      first = false;
-    }
-    arms = arms.append(ast.StructArm { is_wild: s_wild, type_name: s_type, binds: s_binds, fields: s_fields, field_kinds: s_field_kinds, field_lits: s_field_lits, field_pats: s_field_pats, at_binding: s_at, rest_written: s_rest, guard: s_guard, has_guard: s_has_guard, body: sbody, line: sline, col: scol });
-    if (p.peek_punct() == ",") {
-      p = p.advance();
-      continue;
-    }
-    break;
-  }
-  p = p.expect("}");
-  return (arms, rt, all_ok, p);
 }
 
 function is_compound_assign_op(op: string): boolean {
@@ -4612,20 +4480,6 @@ function parse_match_expr_arms(p: Par, sr_expr: ast.Expr, mkline: i32, mkcol: i3
     }
     return IfChain { par: p, stmt: build_tuple_match(sr_expr, etvarms, mkline, mkcol), rt: rt, needs_default_return: false, value_local: etval, scrut_bind: [] };
   }
-  if (at_local_struct_pattern(p)) {
-    let (smarms, smrt, smok, smp) = parse_struct_match_arms(p, true);
-    p = smp;
-    if (!smok) {
-      return IfChain { par: p, stmt: s_unknown(p, parse_fault("a struct pattern binds field names")), rt: smrt, needs_default_return: false, value_local: "", scrut_bind: [] };
-    }
-    let smval = "__sm" + dl_itoa(mkline) + "_" + dl_itoa(mkcol) + "_r";
-    let smvarms: ast.StructArm[] = [];
-    for smvi in 0..smarms.len() {
-      let smva = smarms[smvi];
-      smvarms = smvarms.append(ast.StructArm { ...smva, body: value_arm_body(smva.body, smval) });
-    }
-    return IfChain { par: p, stmt: build_struct_match(sr_expr, smvarms, mkline, mkcol), rt: smrt, needs_default_return: false, value_local: smval, scrut_bind: [] };
-  }
   if (p.peek_is_pat_literal() || p.peek_at_literal()) {
     return parse_literal_match_expr(p, sr_expr, mkline, mkcol);
   }
@@ -5153,8 +5007,7 @@ function parse_pattern_nested(p: Par): (ast.Pattern, Par) {
     p = p.advance();
     let bn = 0;
     while (p.peek_punct() != ")" && !p.at_end()) {
-      if (p.peek_ident().len() > 0
-        && (p.peek2_punct() == "(" || p.peek2_punct() == "{" || p.peek2_punct() == "." || p.peek2_punct() == "@")) {
+      if (nested_pattern_start(p)) {
         let sub_line = p.peek_line();
         let sub_col = p.peek_col();
         let (sub_pat, sub_p) = parse_pattern(p);
@@ -5343,11 +5196,14 @@ function pattern_is_wildcard(pat: ast.Pattern): boolean {
   return false;
 }
 
-function pattern_needs_probe(pat: ast.Pattern): boolean {
+pub function pattern_needs_probe(pat: ast.Pattern): boolean {
   if let ast.PatLiteral(_) = pat {
     return true;
   }
-  return pv_name(pat).len() > 0;
+  if let ast.PatVariant(pv) = pat {
+    return pv.type_name.len() > 0 || pv.tup_kinds.len() > 0;
+  }
+  return false;
 }
 
 function arm_is_nested(arm: ast.MatchArm): boolean {
@@ -5458,7 +5314,19 @@ pub function lower_struct_record_match(m: ast.StmtMatch, value: string): ast.Stm
     }
     arms = arms.append(ast.StructArm { is_wild: wild, type_name: name, binds: binds, fields: fields, field_kinds: kinds, field_lits: lits, field_pats: pats, at_binding: at, rest_written: rest, guard: arm.guard, has_guard: arm.has_guard, body: body, line: arm.line, col: arm.col });
   }
-  return with_sugar_origin(build_struct_match_fields(m.scrutinee, arms, m.line, m.col, true), m.origin, m.else_chained);
+  return with_sugar_origin(build_struct_match_fields(m.scrutinee, arms, struct_match_base(m), m.line, m.col), m.origin, m.else_chained);
+}
+
+// A probe match has the position of its parent arm, so a name from the
+// position would shadow the temporaries of the parent. Its scrutinee is a
+// fresh temporary, so that name is unique.
+function struct_match_base(m: ast.StmtMatch): string {
+  if (m.origin == ORIGIN_PATTERN_PROBE) {
+    if let ast.ExprIdent(id) = m.scrutinee {
+      return id.name;
+    }
+  }
+  return "__sm" + util.i32_to_string(m.line) + "_" + util.i32_to_string(m.col);
 }
 
 function record_slot_literal(cond: ast.Expr, slot: string): Option[ast.Expr] {
@@ -5516,6 +5384,9 @@ function match_sub_pattern(path: ast.Stmt[], scrut: string, pat: ast.Pattern, li
   match (pat) {
     ast.PatVariant(pv) => {
       if (pv.tup_kinds.len() > 0) {
+        if (pv.type_name.len() == 0) {
+          return wrap_tuple_pattern(path, scrut, pat, line, col);
+        }
         tuple_slot = true;
       } else {
         body = wrap_payload_pats(path, pv, line, col);
@@ -5941,14 +5812,6 @@ function parse_match_stmt(p: Par): (ast.Stmt, Par) {
     p = p.expect("}");
     return (build_tuple_match(sr_expr, tarms, mkline, mkcol), p);
   }
-  if (at_local_struct_pattern(p)) {
-    let (smarms, smrt, smok, smp) = parse_struct_match_arms(p, false);
-    p = smp;
-    if (!smok) {
-      return (s_unknown(p, parse_fault("a struct pattern binds field names")), p);
-    }
-    return (build_struct_match(sr_expr, smarms, mkline, mkcol), p);
-  }
   if (p.peek_is_pat_literal() || p.peek_at_literal()) {
     return parse_literal_match_stmt(p, sr_expr, mkline, mkcol);
   }
@@ -6334,10 +6197,6 @@ function parse_let_stmt(p: Par): (ast.Stmt, Par) {
   return parse_let_value(p, name, vline, vcol);
 }
 
-function at_local_struct_pattern(p: Par): boolean {
-  return is_struct_pattern_arm(p) && (p.peek_ident().len() > 0 && p.peek2_punct() == "{" || p.peek_ident().len() > 0 && p.peek_punct_at(1) == "@" && p.peek_ident_at(2).len() > 0 && p.peek_punct_at(3) == "{");
-}
-
 struct PatternIfBranches { par: Par, yes: ast.Stmt[], no: ast.Stmt[], rt: string, else_chained: boolean }
 
 function parse_pattern_if_branches(p: Par, value_form: boolean, value_local: string): PatternIfBranches {
@@ -6449,47 +6308,6 @@ function parse_pattern_if(p: Par, value_form: boolean): IfChain {
   let rt = "i32";
   let value_local = "__il" + dl_itoa(p.peek_line()) + "_" + dl_itoa(p.peek_col()) + "_r";
   p = p.advance();
-  // Local records use the field-pattern builder.
-  if (at_local_struct_pattern(p)) {
-    let ils_line = p.peek_line();
-    let ils_col = p.peek_col();
-    let ils_at = "";
-    if (p.peek_ident().len() > 0 && p.peek2_punct() == "@") {
-      ils_at = p.peek_ident();
-      p = p.advance();
-      p = p.advance();
-    }
-    let ils_type = p.peek_ident();
-    let (ils_sap, ils_pp) = parse_struct_arm_pattern(p);
-    let ils_binds = ils_sap.binds;
-    let ils_fields = ils_sap.fields;
-    let ils_field_kinds = ils_sap.kinds;
-    let ils_field_lits = ils_sap.lits;
-    let ils_field_pats = ils_sap.pats;
-    let ils_ok = ils_sap.ok;
-    p = ils_pp;
-    if (!ils_ok) {
-      return pattern_if_chain(s_unknown(p, parse_fault("a struct pattern binds field names")), p, rt, value_form, value_local);
-    }
-    p = p.expect("=");
-    let ils_saved = p.no_struct;
-    let (ils_scrut, ils_sp) = parse_expr(p.with_no_struct(true));
-    p = ils_sp.with_no_struct(ils_saved);
-    let branches = parse_pattern_if_branches(p, value_form, value_local);
-    p = branches.par;
-    rt = branches.rt;
-    let ils_then = branches.yes;
-    let ils_else = branches.no;
-    let ils_arms: ast.StructArm[] = [];
-    ils_arms = ils_arms.append(ast.StructArm { is_wild: false, type_name: ils_type, binds: ils_binds, fields: ils_fields, field_kinds: ils_field_kinds, field_lits: ils_field_lits, field_pats: ils_field_pats, at_binding: ils_at, rest_written: ils_sap.rest_written, guard: e_bool(true), has_guard: false, body: ils_then, line: ils_line, col: ils_col });
-    let ils_nb: string[] = [];
-    let ils_no_pats: ast.Pattern[] = [];
-    let ils_no_kinds: i32[] = [];
-    let ils_no_lits: ast.Expr[] = [];
-    let ils_nf: string[] = [];
-    ils_arms = ils_arms.append(ast.StructArm { is_wild: true, type_name: "", binds: ils_nb, fields: ils_nf, field_kinds: ils_no_kinds, field_lits: ils_no_lits, field_pats: ils_no_pats, at_binding: "", rest_written: false, guard: e_bool(true), has_guard: false, body: ils_else, line: ils_line, col: ils_col });
-    return pattern_if_chain(with_sugar_origin(build_struct_match(ils_scrut, ils_arms, ils_line, ils_col), "if_let", branches.else_chained), p, rt, value_form, value_local);
-  }
   if (p.peek_punct() == "(" || p.peek_ident().len() > 0 && p.peek_ident() != "_" && p.peek_punct_at(1) == "@" && p.peek_punct_at(2) == "(") {
     let ilt_line = p.peek_line();
     let ilt_col = p.peek_col();
@@ -6938,7 +6756,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
   if let Some(le) = stream_lex_error(toks) {
     return [s_unknown_at(lex_fault(le), le.line, le.col)];
   }
-  let p = Par { decl_count: 0, toks: toks, pos: 0, no_struct: false, map_kind: -1, tables: ParseTables { structnames: scan_struct_names(toks), constnames: scan_const_names(toks), closers: closers(toks) }, verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, tail_close: -1, tail_kind: TAIL_NONE };
+  let p = Par { decl_count: 0, toks: toks, pos: 0, no_struct: false, map_kind: -1, tables: ParseTables { constnames: scan_const_names(toks), closers: closers(toks) }, verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, tail_close: -1, tail_kind: TAIL_NONE };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -13427,11 +13245,7 @@ function rvf_sugar(sg: ast.MatchSugar, structs: StructDecl[]): ast.MatchSugar {
   for t in sg.tup {
     tup = tup.append(ast.TupArm { ...t, elem_pats: rvf_patterns(t.elem_pats, structs) });
   }
-  let strct: ast.StructArm[] = [];
-  for st in sg.strct {
-    strct = strct.append(ast.StructArm { ...st, field_pats: rvf_patterns(st.field_pats, structs) });
-  }
-  return ast.MatchSugar { ...sg, arms: arms, tup: tup, strct: strct };
+  return ast.MatchSugar { ...sg, arms: arms, tup: tup };
 }
 
 function rvf_expr(e: ast.Expr, structs: StructDecl[]): ast.Expr {
@@ -18167,7 +17981,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   if let Some(le) = stream_lex_error(toks) {
     return lex_error_module(le);
   }
-  let p = Par { decl_count: 0, toks: toks, pos: 0, no_struct: false, map_kind: -1, tables: ParseTables { structnames: scan_struct_names(toks), constnames: scan_const_names(toks), closers: closers(toks) }, verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, tail_close: -1, tail_kind: TAIL_NONE };
+  let p = Par { decl_count: 0, toks: toks, pos: 0, no_struct: false, map_kind: -1, tables: ParseTables { constnames: scan_const_names(toks), closers: closers(toks) }, verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false, tail_close: -1, tail_kind: TAIL_NONE };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];

@@ -302,13 +302,17 @@ func unitReplayCases() []unitCase {
 	return base
 }
 
-func unitSource(indices []int) (string, string) {
+func unitSource(indices []int, named bool) (string, string) {
 	var source, main, want strings.Builder
 	source.WriteString("import \"./ssa\";\nimport \"./ssasem\";\nimport \"./sourcepos\";\nimport \"./semtypes\";\nimport \"./semrecords\";\nimport \"./typeinfo\";\nimport \"./ssaunits\";\n")
 	source.WriteString(semanticHelpers + unitHelpers)
 	main.WriteString("function main(): i32 {\n")
+	if named {
+		main.WriteString("let name = args()[1];\n")
+	}
+	cases := unitCases()
 	for _, i := range indices {
-		tc := unitCases()[i]
+		tc := cases[i]
 		fmt.Fprintf(&source, "function unit_case_%d(): i32 {\n%s\nlet modes: i32[] = [3, 1];\n%s\n", i, semanticFixture, tc.setup)
 		source.WriteString(`
 let f = ssasem.Func { shape_slot: false, schema_checked: false, source_positions: sourcepos.no_source(),  envs: [], anchors: anchors, dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: params, result: result, records: semrecords.records_of(records), enums: enums, calls: calls };
@@ -343,26 +347,40 @@ for opaque in opaque_types {
 			fmt.Fprintf(&source, "if (ssaunits.verify(f, modes, p) != %q) { return 92; }\n", tc.want)
 		}
 		source.WriteString("print(ssaunits.verify(f, modes, p)); return 0; }\n")
-		fmt.Fprintf(&main, "if (unit_case_%d() != 0) { return %d; }\n", i, i+1)
+		if named {
+			fmt.Fprintf(&main, "if (name == %q) { return unit_case_%d(); }\n", tc.name, i)
+		} else {
+			fmt.Fprintf(&main, "if (unit_case_%d() != 0) { return %d; }\n", i, i+1)
+		}
 		want.WriteString(tc.want + "\n")
 	}
-	main.WriteString("return 0; }\n")
+	if named {
+		main.WriteString("return 1; }\n")
+	} else {
+		main.WriteString("return 0; }\n")
+	}
 	source.WriteString(main.String())
 	return source.String(), want.String()
 }
 
 func TestSelfHostSSAUnits(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	for i, tc := range unitCases() {
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "ssaunits.fern")
+	cases := unitCases()
+	indices := make([]int, len(cases))
+	for i := range cases {
+		indices[i] = i
+	}
+	source, _ := unitSource(indices, true)
+	if err := os.WriteFile(filepath.Join(dir, "units.fern"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := buildSelfHostBin(t, gcc, dir, "units.fern", "units")
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			dir := t.TempDir()
-			copySelfHostDriver(t, dir, "ssaunits.fern")
-			source, want := unitSource([]int{i})
-			if err := os.WriteFile(filepath.Join(dir, "units.fern"), []byte(source), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			bin := buildSelfHostBin(t, gcc, dir, "units.fern", "units")
-			got, err := runX86_64Bin(runner, bin).CombinedOutput()
+			want := tc.want + "\n"
+			got, err := runX86_64Bin(runner, bin, tc.name).CombinedOutput()
 			if err != nil || string(got) != want {
 				t.Fatalf("unit verification: %v\ngot %q\nwant %q", err, got, want)
 			}
@@ -383,7 +401,7 @@ func TestSelfHostSSAUnitsIndexedReplay(t *testing.T) {
 			indices = append(indices, i)
 		}
 	}
-	source, _ := unitSource(indices)
+	source, _ := unitSource(indices, false)
 	path := filepath.Join(dir, "indexed.fern")
 	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
 		t.Fatal(err)
@@ -425,7 +443,7 @@ func testUnitsIR(t *testing.T, target string) {
 	for i := range unitCases() {
 		indices = append(indices, i)
 	}
-	source, want := unitSource(indices)
+	source, want := unitSource(indices, false)
 	entry := filepath.Join(dir, "units.fern")
 	if err := os.WriteFile(entry, []byte(source), 0o644); err != nil {
 		t.Fatal(err)

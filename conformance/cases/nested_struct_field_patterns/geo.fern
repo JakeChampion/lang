@@ -1,0 +1,3 @@
+pub struct Point { x: i32, y: i32 }
+
+pub struct Line { from: Point, to: Point }
