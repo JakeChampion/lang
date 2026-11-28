@@ -4,6 +4,8 @@
 // Debian, which /usr/bin/rg is.
 import "std/i32";
 import "std/string";
+import "std/utf8";
+import "./encoding";
 
 pub const DEBUG: i32 = 1;
 
@@ -30,11 +32,17 @@ pub function source(name: string, file: string): string {
   return REGISTRY + name + "/src/" + file;
 }
 
-// `s` in quotes, as Rust writes a str with {:?}.
+// Quote a command-line byte string, including invalid bytes in Unix arguments.
 pub function quoted(s: string): string {
   let out = "\"";
-  for k in 0..s.len() {
-    let c = s[k] as i32;
+  let k = 0;
+  while (k < s.len()) {
+    let Some(cp) = utf8.decode_at(s, k) else {
+      out += encoding.escaped(slice_unchecked(s, k, k + 1).to_owned());
+      k += 1;
+      continue;
+    };
+    let c = cp.0;
     out += match (c) {
       34 => "\\\"",
       92 => "\\\\",
@@ -42,8 +50,9 @@ pub function quoted(s: string): string {
       13 => "\\r",
       9 => "\\t",
       0 => "\\0",
-      _ => if (c < 32 || c == 127) { "\\u{" + c.to_string_radix(16) + "}" } else { slice_unchecked(s, k, k + 1).to_owned() },
+      _ => if (c < 32 || c >= 127 && c <= 159) { "\\u{" + c.to_string_radix(16) + "}" } else { slice_unchecked(s, k, k + cp.1).to_owned() },
     };
+    k += cp.1;
   }
   return out + "\"";
 }
