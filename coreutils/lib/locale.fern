@@ -29,15 +29,15 @@ pub function category_name(category: string): string {
 // for a locale, so there the codeset decides.
 pub function utf8(): boolean {
   let ctype = category_name("LC_CTYPE");
+  if (target_os() == "darwin") {
+    return ctype != "C" && ctype != "POSIX" && all_load_darwin();
+  }
   let parts = explode(ctype);
   if (target_os() == "linux" && !parts.has_codeset) {
     return ctype != "C" && ctype != "POSIX" && all_load_glibc();
   }
   if (!parts.has_codeset || !utf8_codeset(parts.codeset)) {
     return false;
-  }
-  if (target_os() == "darwin") {
-    return all_load_darwin();
   }
   if (target_os() == "linux") {
     return all_load_glibc();
@@ -389,10 +389,38 @@ pub function darwin_dirs(path_locale: Option[string]): string[] {
   return [first, "/usr/share/locale", "/usr/local/share/locale"];
 }
 
-function darwin_file(dirs: string[], file: string): boolean {
+// Apple's RuneMagA and RuneMagB formats start with eight magic bytes and
+// a 32-byte encoding field. setrunelocale compares the encoding with UTF-8.
+pub function darwin_ctype_utf8(head: u8[]): boolean {
+  if (head.len() < 40 || head[7] != b'A' && head[7] != b'B' || head[13] != 0u8) {
+    return false;
+  }
+  for i in 0..7 {
+    if (head[i] != "RuneMag"[i]) {
+      return false;
+    }
+  }
+  for i in 0..5 {
+    if (head[8 + i] != "UTF-8"[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function darwin_file(dirs: string[], file: string, ctype: boolean): boolean {
   for d in dirs {
-    if let Ok(st) = stat(d + "/" + file) {
+    let path = d + "/" + file;
+    if let Ok(st) = stat(path) {
       if (!st.is_dir) {
+        if (ctype) {
+          let Ok(rd) = open_reader(path) else {
+            continue;
+          };
+          let head = read_at(rd, 0i64, 40i64);
+          let _ = rd.close();
+          return darwin_ctype_utf8(head);
+        }
         return true;
       }
     }
@@ -407,7 +435,7 @@ function all_load_darwin(): boolean {
     if (need.refused || dirs.len() == 0) {
       return false;
     }
-    if (need.file.len() > 0 && !darwin_file(dirs, need.file)) {
+    if (need.file.len() > 0 && !darwin_file(dirs, need.file, category == "LC_CTYPE")) {
       return false;
     }
   }

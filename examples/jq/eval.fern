@@ -167,6 +167,11 @@ function bounce(own st: St, step: (own St) => own St): own St {
   return St { ...st, sig: BOUNCE, next: [step] };
 }
 
+// Keep the bounced step with its suspended continuations. When an error
+// produces no output the sink can still own a chain of enclosing sinks.
+// Releasing one frame at a time bounds the depth of their destructors.
+struct Resume { steps: ((own St) => own St)[], at: i32 }
+
 // The state after each bounce of `st` is done. A caller that reads the state
 // of a filter or of a sink, and does not only return it, gets it from here.
 // The frames of the caller stay, so the caller gets its count of calls back.
@@ -176,21 +181,23 @@ function drive(own st: St): own St {
   }
   let calls = st.calls;
   let s = st;
-  // The innermost continuation runs first, including on errors and breaks.
-  let pending: ((own St) => own St)[] = [];
+  let pending: Resume[] = [];
   while (s.sig == BOUNCE || pending.len() > 0) {
     if (s.sig == BOUNCE) {
-      let i = s.next.len();
-      while (i > 1) {
-        i = i - 1;
-        pending = pending.append(s.next[i]);
+      if (s.next.len() > 1) {
+        pending = pending.append(Resume { steps: s.next, at: 1 });
       }
       let step = s.next[0];
       s = step(St { ...s, sig: OK, calls: 0, next: [] });
     } else {
       let last = pending.len() - 1;
-      let finish = pending[last];
-      pending = pending.truncate(last);
+      let frame = pending[last];
+      let finish = frame.steps[frame.at];
+      if (frame.at + 1 == frame.steps.len()) {
+        pending = pending.truncate(last);
+      } else {
+        pending = pending.with(last, Resume { ...frame, at: frame.at + 1 });
+      }
       s = finish(s);
     }
   }
@@ -302,10 +309,13 @@ function collected(f: filter.Ast, input: json.JsonValue, e: Env, own st: St): ow
 // A sink that gives the outputs of a `try` body to `k`. An error of `k` is
 // not an error of the body.
 function escaping(k: (json.JsonValue, own St) => own St): (json.JsonValue, own St) => own St {
-  return (v: json.JsonValue, own s: St): own St => escape_signal(drive(k(v, s)));
+  return (v: json.JsonValue, own s: St): own St => escape_signal(k(v, s));
 }
 
 function escape_signal(own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append(escape_signal) };
+  }
   if (s.sig == ERROR || s.sig == BREAK) {
     return St { ...s, sig: ESCAPED, esc: 1, inner: s.sig };
   }
@@ -313,6 +323,27 @@ function escape_signal(own s: St): own St {
     return St { ...s, esc: s.esc + 1 };
   }
   return s;
+}
+
+function finish_try(own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append(finish_try) };
+  }
+  if (caught(s)) {
+    return St { ...s, sig: OK, err: json.JNull };
+  }
+  return unescaped(s);
+}
+
+function finish_catch(own s: St, handler: (json.JsonValue, own St) => own St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => finish_catch(t, handler)) };
+  }
+  if (caught(s)) {
+    let err = caught_value(s);
+    return handler(err, St { ...s, sig: OK, err: json.JNull });
+  }
+  return unescaped(s);
 }
 
 // Whether a `try` body stopped on its own error or `break`. jq raises a
@@ -373,11 +404,7 @@ function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, o
       return run_guarded(step, input, e, k, st);
     },
     filter.Try(inner) => {
-      let s = drive(run(inner, input, e, escaping(k), st));
-      if (caught(s)) {
-        return St { ...s, sig: OK, err: json.JNull };
-      }
-      return unescaped(s);
+      return finish_try(run(inner, input, e, escaping(k), st));
     },
     filter.Pipe(a, b) => {
       return each_of(a, input, e, (v: json.JsonValue, own s: St): own St => run(b, v, e, k, s), st);
@@ -426,12 +453,7 @@ function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, o
       return run(rest, input, e.define(defined(name, params, body, e)), k, st);
     },
     filter.Catch(body, handler) => {
-      let s = drive(run(body, input, e, escaping(k), st));
-      if (caught(s)) {
-        let err = caught_value(s);
-        return run(handler, err, e, k, St { ...s, sig: OK, err: json.JNull });
-      }
-      return unescaped(s);
+      return finish_catch(run(body, input, e, escaping(k), st), (err: json.JsonValue, own t: St): own St => run(handler, err, e, k, t));
     },
     filter.Format(name) => {
       return give(format(name, input), k, st);
@@ -735,11 +757,7 @@ function run_guarded(step: filter.Ast, input: json.JsonValue, e: Env, k: (json.J
       return run(target, input, e, (v: json.JsonValue, own s: St): own St => iterate_to(v, true, k, s), st);
     },
     _ => {
-      let s = drive(run(step, input, e, escaping(k), st));
-      if (caught(s)) {
-        return St { ...s, sig: OK, err: json.JNull };
-      }
-      return unescaped(s);
+      return finish_try(run(step, input, e, escaping(k), st));
     }
   }
 }
@@ -1902,7 +1920,7 @@ function paths_found(f: filter.Ast, input: json.JsonValue, e: Env, own st: St): 
 }
 
 function pescaping(k: (PathItem, own St) => own St): (PathItem, own St) => own St {
-  return (it: PathItem, own s: St): own St => escape_signal(drive(k(it, s)));
+  return (it: PathItem, own s: St): own St => escape_signal(k(it, s));
 }
 
 function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
@@ -1923,11 +1941,7 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
       return paths_guarded(step, it, e, k, st);
     },
     filter.Try(inner) => {
-      let s = drive(run_paths(inner, it, e, pescaping(k), st));
-      if (caught(s)) {
-        return St { ...s, sig: OK, err: json.JNull };
-      }
-      return unescaped(s);
+      return finish_try(run_paths(inner, it, e, pescaping(k), st));
     },
     filter.Pipe(a, b) => {
       return run_paths(a, it, e, (x: PathItem, own s: St): own St => run_paths(b, x, e, k, s), st);
@@ -1964,12 +1978,7 @@ function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =
       return run(init, it.value, e, (first: json.JsonValue, own s: St): own St => paths_foreach(source, name, update, extract, first, it, e, k, s), st);
     },
     filter.Catch(body, handler) => {
-      let s = drive(run_paths(body, it, e, pescaping(k), st));
-      if (caught(s)) {
-        let err = caught_value(s);
-        return run_paths(handler, off_path(it, err, false), e, k, St { ...s, sig: OK, err: json.JNull });
-      }
-      return unescaped(s);
+      return finish_catch(run_paths(body, it, e, pescaping(k), st), (err: json.JsonValue, own t: St): own St => run_paths(handler, off_path(it, err, false), e, k, t));
     },
     filter.Call(name, args, last) => {
       let found = e.find(name, args.len());
@@ -2015,11 +2024,7 @@ function paths_guarded(step: filter.Ast, it: PathItem, e: Env, k: (PathItem, own
       return run_paths(target, it, e, (t: PathItem, own s: St): own St => path_iterate(t, true, k, s), st);
     },
     _ => {
-      let s = drive(run_paths(step, it, e, pescaping(k), st));
-      if (caught(s)) {
-        return St { ...s, sig: OK, err: json.JNull };
-      }
-      return unescaped(s);
+      return finish_try(run_paths(step, it, e, pescaping(k), st));
     }
   }
 }
@@ -2319,6 +2324,25 @@ function callee_scope(f: Func): Env {
   return scope.define(Func { ...f, name: f.own_name });
 }
 
+// A simple argument like $n-1 only reads variables and the current input.
+// Keeping its caller's functions would link every recursive call to the last.
+function needs_functions(arg: filter.Ast): boolean {
+  return match (arg) {
+    filter.Identity => false,
+    filter.Literal(_) => false,
+    filter.Var(_) => false,
+    filter.Negate(a) => needs_functions(a),
+    filter.Arith(_, a, b) => needs_functions(a) || needs_functions(b),
+    filter.Compare(_, a, b) => needs_functions(a) || needs_functions(b),
+    _ => true,
+  };
+}
+
+function argument(name: string, body: filter.Ast, e: Env): Func {
+  let scope = if (needs_functions(body)) { e } else { Env { ...e, funcs: [] } };
+  return Func { name: name, own_name: name, params: [], body: body, scope: [scope], argument: true, single: false };
+}
+
 // The outputs of the body of `f` with its parameters from `at` bound in
 // `scope`. A parameter is the argument as a filter of the caller. A `$`
 // parameter is a variable for each output of the argument also, and jq takes
@@ -2331,7 +2355,7 @@ function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValu
     return run(f.body, input, scope, k, St { ...st, calls: st.calls + 1 });
   }
   let name = filter.param_name(f.params[at]);
-  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
+  let bound = scope.define(argument(name, args[at], e));
   if (name == f.params[at]) {
     return call_defined(f, args, at + 1, input, e, bound, k, st);
   }
@@ -2346,7 +2370,7 @@ function paths_defined(f: Func, args: filter.Ast[], at: i32, it: PathItem, e: En
     return run_paths(f.body, it, scope, k, St { ...st, calls: st.calls + 1 });
   }
   let name = filter.param_name(f.params[at]);
-  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
+  let bound = scope.define(argument(name, args[at], e));
   if (name == f.params[at]) {
     return paths_defined(f, args, at + 1, it, e, bound, k, st);
   }
