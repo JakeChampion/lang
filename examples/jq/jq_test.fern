@@ -96,6 +96,11 @@ function test_last_calls(): test.TestOutcome {
 // A function that calls itself goes deeper than a call of the evaluator can.
 function test_deep_calls(): test.TestOutcome {
   return checks([
+    ("def f: if . == 0 then 1 else reduce (.-1|f) as $x (1; .+$x) end; f", "2000", "2001"),
+    ("def f: if . == 0 then 2,3 else foreach (.-1|f) as $x (0; $x) end; [f]", "2000", "[2,3]"),
+    ("def f: if . == 0 then 2 else foreach (.-1|f) as $x (1; .+$x) end; f", "2000", "2002"),
+    ("def f($n): if $n == 0 then . else foreach f($n-1) as $x (.; .; .) end; path(f(2000))", "null", "[]"),
+    ("def f: if . == 0 then 1,2 else last(.-1|f) end; f", "2000", "2"),
     ("def f: if . == 0 then 0 else (. - 1 | f) end; f", "100000", "0"),
     ("def f: if . == 0 then 0 else (. - 1 | f) + 1 end; f", "100000", "100000"),
     ("def f: ., (. + 1 | f); first(f | select(. >= 100000))", "0", "100000"),
