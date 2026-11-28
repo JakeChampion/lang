@@ -221,6 +221,8 @@ func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
 	bin := buildJq(t)
 	for _, c := range []struct{ program, want string }{
 		{"def f: if . == 0 then 0 else (. - 1 | f) end; 3000000 | f", "0"},
+		{`def f: if . == 0 then true else until((. - 1 | f); .) | true end; 25001 | f`, "true"},
+		{`def f: if . <= 0 then 0 else until(. <= 0; . - 1 | f) end; 25001 | f`, "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) + 1 end; 3000000 | f", "3000000"},
 		{"def f($n): if $n == 0 then . else f($n - 1) end; 7 | f(1000000)", "7"},
 		{"def f: ., (. + 1 | f); first(0 | f | select(. >= 3000000))", "3000000"},
