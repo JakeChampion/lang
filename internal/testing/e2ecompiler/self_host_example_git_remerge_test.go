@@ -1084,5 +1084,39 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("file.txt text\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
+	g.write(".git/info/attributes", "file.txt text ident\n")
 	refuse("merge.renormalize", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
+}
+
+func TestSelfHostExampleGitRemergeText(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, run := range gitRuns() {
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			port := gitPort(t, cli, run.target)
+			dir := t.TempDir()
+			gitInit(t, oracle, dir, run)
+			g := &gitRemergeRepo{t: t, oracle: oracle, dir: dir, when: 1700000000}
+			g.write("content.txt", "a\r\nb\r\nc\r\n")
+			g.write("deleted.txt", "x\r\ny\r")
+			g.commit("base")
+			g.git("tag", "base")
+			g.scenario("mixed", "base", func() {
+				g.write("content.txt", "left\nb\nc\n")
+				g.write("deleted.txt", "x\ny\r")
+			}, func() {
+				g.write("content.txt", "a\r\nb\r\nright\r\n")
+				g.git("rm", "deleted.txt")
+			}, func() {
+				g.write("content.txt", "left\nb\nright\n")
+				g.git("rm", "-f", "--ignore-unmatch", "deleted.txt")
+			})
+			g.git("config", "merge.renormalize", "true")
+			for _, attrs := range []string{"text", "eol=crlf", "crlf=input", "-text eol=lf"} {
+				g.write(".git/info/attributes", "*.txt "+attrs+"\n")
+				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "mixed-1")
+			}
+		})
+	}
 }
