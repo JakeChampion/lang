@@ -4782,6 +4782,11 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     s = s.write("    ldr " + d + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
+  if (k == ssa.LD_SUM && ins.ir_kind == ssa.SUM_SCALED) {
+    let shift = if (ins.str == "u16") { "1" } else { "2" };
+    s = s.write("    " + ssa_sum_load(ins.str, d) + ", [" + a + ", " + ssa_src(reg_of, ins.args[1], "x5") + ", lsl #" + shift + "]\n");
+    return ssa_store(reg_of, ins.result, d, s);
+  }
   if (k == ssa.LD_SUM) {
     // No load has two registers and an offset in its address, and the
     // assembler has no load with the sign from two registers.

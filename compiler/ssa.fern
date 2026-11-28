@@ -7993,6 +7993,42 @@ pub function shared_lengths(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
 }
 
+// The `ir_kind` of an LD_SUM whose index counts elements of the size of its
+// mark. With no such mark, the index counts bytes.
+pub const SUM_SCALED: i32 = 1;
+
+// The element marks that a load with a scaled register index takes on arm64:
+// 4 bytes, and 2 bytes with no sign.
+function scaled_sum_mark(mark: string): boolean {
+  return mark == "i32" || mark == "u32" || mark == "u16";
+}
+
+// A read of an element of 2 or 4 bytes with an index in a register. With or
+// without its bounds check, a load with a scaled index can take it. A read
+// with a constant index is one instruction already.
+function scaled_read(ins: SInst, defs: SInst[], nvals: i32): boolean {
+  if (ins.kind_tag != ARR_AT || ins.result < 0 || ins.imm > 1 || !scaled_sum_mark(ins.str) || ins.args.len() < 2) {
+    return false;
+  }
+  let i = ins.args[1];
+  return i >= 0 && i < nvals && !is_constant(defs[i], nvals);
+}
+
+// The arrays that the loop from `h` to `last` reads two times or more with a
+// scaled index. The address of the elements holds a register for the loop,
+// and each read gains one instruction, so one read does not pay for it.
+function read_twice(blocks: SBlock[], defs: SInst[], h: i32, last: i32, nvals: i32): boolean[] {
+  let reads = __alloc_i32(nvals);
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      if (scaled_read(ins, defs, nvals) && ins.args[0] >= 0 && ins.args[0] < nvals) {
+        reads = reads.with(ins.args[0], reads[ins.args[0]] + 1);
+      }
+    }
+  }
+  return reads.map((n: i32): boolean => n > 1);
+}
+
 // A checked read or write of an array or a string in a loop compares its
 // index with the length in memory on each trip. When the loop has one way
 // in, and nothing in it can change a length, one load of the length in the
@@ -8006,6 +8042,7 @@ pub function hoisted_lengths(f: SFunc): SFunc {
   let latch = furthest_latches(f, at);
   let used = used_values(f);
   let def_pos = def_positions(f);
+  let defs = inst_defs(f);
   let preds = position_preds(f, at);
   let blocks = f.blocks;
   let made: i32[] = [];
@@ -8020,14 +8057,42 @@ pub function hoisted_lengths(f: SFunc): SFunc {
     }
     let bases: i32[] = [];
     let lens: i32[] = [];
-    let datas = util.minus_ones(0);
+    let addressed: i32[] = [];
+    let datas: i32[] = [];
     let loads: SInst[] = [];
+    let twice = read_twice(blocks, defs, h, last, f.nvals);
     for bi in h..=last {
       let insts: SInst[] = [];
       let changed = false;
       for ins in blocks[bi].insts {
         let b = if (ins.args.len() > 0) { ins.args[0] } else { -1 };
-        if (!length_checked(ins, used) || !defined_before(f, def_pos, b, h, last)) {
+        let invariant = defined_before(f, def_pos, b, h, last);
+        let checked = length_checked(ins, used) && invariant;
+        // A read of a byte, or of an element of 2 or 4 bytes that the loop
+        // reads two times or more, loads from the address of the elements,
+        // which the block before the loop forms one time.
+        let scaled = b >= 0 && b < f.nvals && invariant && scaled_read(ins, defs, f.nvals) && twice[b] && (ins.imm == 1 || checked);
+        let data = -1;
+        if (scaled || checked && ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
+          let dk = util.index_of_i32(addressed, b);
+          if (dk < 0) {
+            dk = addressed.len();
+            let eight = f.nvals + made.len();
+            made = made.append(b).append(b);
+            addressed = addressed.append(b);
+            datas = datas.append(eight + 1);
+            loads = loads.append(SInst { ir_kind: 0, kind_tag: CONST_INT, result: eight, args: [], imm: 8, str: "" });
+            loads = loads.append(binary_inst(eight + 1, [b, eight], 64, ir.K_ADD));
+          }
+          data = datas[dk];
+        }
+        let read = SInst { ir_kind: if (scaled) { SUM_SCALED } else { 0 }, kind_tag: LD_SUM, result: ins.result, args: [data, if (ins.args.len() > 1) { ins.args[1] } else { -1 }], imm: 0, str: if (scaled) { ins.str } else { "" } };
+        if (scaled && ins.imm == 1) {
+          insts = insts.append(read);
+          changed = true;
+          continue;
+        }
+        if (!checked) {
           insts = insts.append(ins);
           continue;
         }
@@ -8038,21 +8103,11 @@ pub function hoisted_lengths(f: SFunc): SFunc {
           let id = f.nvals + made.len();
           made = made.append(b);
           lens = lens.append(id);
-          datas = datas.append(-1);
           loads = loads.append(SInst { ir_kind: 0, kind_tag: LD_AT, result: id, args: [b], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
         }
         insts = insts.append(SInst { ir_kind: 0, kind_tag: BOUND, result: -1, args: [ins.args[1], lens[k]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
-        // A byte read loads from the address of the elements, which the
-        // block before the loop forms one time.
-        if (ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
-          if (datas[k] < 0) {
-            let eight = f.nvals + made.len();
-            made = made.append(b).append(b);
-            datas = datas.with(k, eight + 1);
-            loads = loads.append(SInst { ir_kind: 0, kind_tag: CONST_INT, result: eight, args: [], imm: 8, str: "" });
-            loads = loads.append(binary_inst(eight + 1, [b, eight], 64, ir.K_ADD));
-          }
-          insts = insts.append(SInst { ir_kind: 0, kind_tag: LD_SUM, result: ins.result, args: [datas[k], ins.args[1]], imm: 0, str: "" });
+        if (data >= 0) {
+          insts = insts.append(read);
         } else if (ins.kind_tag == ARR_ST || ins.imm == 0) {
           insts = insts.append(SInst { ...ins, imm: 1 });
         }
