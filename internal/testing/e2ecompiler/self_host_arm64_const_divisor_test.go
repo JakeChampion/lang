@@ -46,10 +46,10 @@ function main(): i32 { return d7(50) + dn7(50) + m4093(9000) + (d7w(50i64) as i3
 			fn          string
 			want, avoid []string
 		}{
-			{"d7", []string{"=2454267027", "mul x5, x4, x5", "asr x5, x5, #34", "add x5, x5, x5, lsr #63"}, []string{"smulh", "sdiv", "add x5, x5, x4"}},
-			{"dn7", []string{"=-2454267027", "mul x5, x4, x5", "asr x5, x5, #34", "add x5, x5, x5, lsr #63"}, []string{"smulh", "sdiv", "sub x5, x5, x4"}},
-			{"m4093", []string{"=2149057665", "asr x5, x5, #43", "msub x4, x5, x6, x4"}, []string{"smulh", "sdiv"}},
-			{"d7w", []string{"smulh x5, x4, x5", "asr x5, x5, #1"}, []string{"sdiv", "mul x5, x4, x5"}},
+			{"d7", []string{"=2454267027", "mul x5, x0, x5", "asr x5, x5, #34", "add x5, x5, x5, lsr #63"}, []string{"smulh", "sdiv", "add x5, x5, x0", "x4"}},
+			{"dn7", []string{"=-2454267027", "mul x5, x0, x5", "asr x5, x5, #34", "add x5, x5, x5, lsr #63"}, []string{"smulh", "sdiv", "sub x5, x5, x0", "x4"}},
+			{"m4093", []string{"=2149057665", "asr x5, x5, #43", "msub x9, x5, x6, x0"}, []string{"smulh", "sdiv", "x4"}},
+			{"d7w", []string{"smulh x5, x0, x5", "asr x5, x5, #1"}, []string{"sdiv", "mul x5, x0, x5", "x4"}},
 		}
 		for _, c := range cases {
 			body := selfHostFnBody(t, asm, c.fn)

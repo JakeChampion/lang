@@ -55,95 +55,97 @@ function arm64_copy_words(s: asmcore.EmitState, src: string, dst: string, n: i32
 // is left in x4, and x5 and x6 are scratch. A 32-bit dividend is held sign- or
 // zero-extended, so it divides as a 64-bit value. The sdiv/udiv semantics stay:
 // k == 0 gives 0 for a quotient and the dividend for a remainder.
-function ssa_div_const(tag: i32, width: i32, k: i64, s: asmcore.EmitState): asmcore.EmitState {
+// The quotient or the remainder of the register `a` by the constant k, in
+// the register `d`. `a` keeps its value unless it is `d`. x5 and x6 are
+// scratch.
+function ssa_div_const(tag: i32, width: i32, k: i64, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
   let uns = tag == ir.K_DIV_U || tag == ir.K_REM_U;
   let is_rem = tag == ir.K_REM_S || tag == ir.K_REM_U;
   if (width == 64) {
-    return ssa_div_const_body(uns, is_rem, k, 0, s);
+    return ssa_div_const_body(uns, is_rem, k, 0, a, d, s);
   }
   if (uns) {
-    return ssa_div_const_body(true, is_rem, (k as i32) as i64 & 4294967295i64, 32, s);
+    return ssa_div_const_body(true, is_rem, (k as i32) as i64 & 4294967295i64, 32, a, d, s);
   }
-  let d = (k as i32) as i64;
-  return ssa_div_const_body(false, is_rem, d, 32, s);
+  return ssa_div_const_body(false, is_rem, (k as i32) as i64, 32, a, d, s);
 }
 
 // ext is the count of high bits that only extend the dividend: zeros when it
 // is unsigned, copies of the sign bit when it is signed.
-function ssa_div_const_body(uns: boolean, is_rem: boolean, d: i64, ext: i32, s: asmcore.EmitState): asmcore.EmitState {
-  match (ir.const_div_plan(d, 64, uns, is_rem)) {
+function ssa_div_const_body(uns: boolean, is_rem: boolean, k: i64, ext: i32, a: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  match (ir.const_div_plan(k, 64, uns, is_rem)) {
     ir.DivIdentity => {
-      return s;
+      return if (a == d) { s } else { s.write("    mov " + d + ", " + a + "\n") };
     },
     ir.DivZero => {
-      return s.write("    mov x4, #0\n");
+      return s.write("    mov " + d + ", #0\n");
     },
     ir.DivNegate => {
       if (ext == 32) {
-        return s.write("    neg w4, w4\n    sxtw x4, w4\n");
+        return s.write("    neg " + ssa_wreg(d) + ", " + ssa_wreg(a) + "\n    sxtw " + d + ", " + ssa_wreg(d) + "\n");
       }
-      return s.write("    neg x4, x4\n");
+      return s.write("    neg " + d + ", " + a + "\n");
     },
     ir.DivShift(sh) => {
-      return s.write(ssa_div_const_pow2(uns, is_rem, !uns && d < 0i64, sh));
+      return s.write(ssa_div_const_pow2(uns, is_rem, !uns && k < 0i64, sh, a, d));
     },
     ir.DivHardware => {
-      s = ssa_const_reg(util.i64_to_string(d), "x6", s);
-      return s.write(ssa_div_by(is_rem));
+      s = ssa_const_reg(util.i64_to_string(k), "x6", s);
+      return s.write(ssa_div_by(is_rem, a, d));
     },
     ir.DivReciprocal => {}
   }
   if (uns) {
-    s = ssa_div_magic_u(d as u64, ext, s);
+    s = ssa_div_magic_u(k as u64, ext, a, s);
   } else if (ext == 32) {
-    s = ssa_div_magic_s32(d, s);
+    s = ssa_div_magic_s32(k, a, s);
   } else {
-    s = ssa_div_magic_s(d, s);
+    s = ssa_div_magic_s(k, a, s);
   }
   if (!is_rem) {
-    return s.write("    mov x4, x5\n");
+    return s.write("    mov " + d + ", x5\n");
   }
-  s = ssa_const_reg(util.i64_to_string(d), "x6", s);
-  return s.write("    msub x4, x5, x6, x4\n");
+  s = ssa_const_reg(util.i64_to_string(k), "x6", s);
+  return s.write("    msub " + d + ", x5, x6, " + a + "\n");
 }
 
-function ssa_div_by(is_rem: boolean): string {
+function ssa_div_by(is_rem: boolean, a: string, d: string): string {
   if (is_rem) {
-    return "    sdiv x5, x4, x6\n    msub x4, x5, x6, x4\n";
+    return "    sdiv x5, " + a + ", x6\n    msub " + d + ", x5, x6, " + a + "\n";
   }
-  return "    sdiv x4, x4, x6\n";
+  return "    sdiv " + d + ", " + a + ", x6\n";
 }
 
-function ssa_div_const_pow2(uns: boolean, is_rem: boolean, neg: boolean, sh: i32): string {
+function ssa_div_const_pow2(uns: boolean, is_rem: boolean, neg: boolean, sh: i32, a: string, d: string): string {
   let shs = util.i32_to_string(sh);
   let back = util.i32_to_string(64 - sh);
   if (uns && is_rem) {
-    return "    lsl x4, x4, #" + back + "\n    lsr x4, x4, #" + back + "\n";
+    return "    lsl " + d + ", " + a + ", #" + back + "\n    lsr " + d + ", " + d + ", #" + back + "\n";
   }
   if (uns) {
-    return "    lsr x4, x4, #" + shs + "\n";
+    return "    lsr " + d + ", " + a + ", #" + shs + "\n";
   }
-  let s = "    asr x5, x4, #63\n    add x5, x4, x5, lsr #" + back + "\n";
+  let s = "    asr x5, " + a + ", #63\n    add x5, " + a + ", x5, lsr #" + back + "\n";
   if (is_rem) {
-    return s + "    asr x5, x5, #" + shs + "\n    sub x4, x4, x5, lsl #" + shs + "\n";
+    return s + "    asr x5, x5, #" + shs + "\n    sub " + d + ", " + a + ", x5, lsl #" + shs + "\n";
   }
-  s = s + "    asr x4, x5, #" + shs + "\n";
+  s = s + "    asr " + d + ", x5, #" + shs + "\n";
   if (neg) {
-    s += "    neg x4, x4\n";
+    s += "    neg " + d + ", " + d + "\n";
   }
   return s;
 }
 
-// The quotient of x4 by a signed divisor that is not a power of two, left in x5.
-function ssa_div_magic_s(d: i64, s: asmcore.EmitState): asmcore.EmitState {
-  let ms = ir.derive_magic_s(d);
+// The quotient of `a` by a signed divisor that is not a power of two, left in x5.
+function ssa_div_magic_s(k: i64, a: string, s: asmcore.EmitState): asmcore.EmitState {
+  let ms = ir.derive_magic_s(k);
   s = ssa_const_reg(util.i64_to_string(ms.m), "x5", s);
-  s = s.write("    smulh x5, x4, x5\n");
+  s = s.write("    smulh x5, " + a + ", x5\n");
   if (ms.add) {
-    s = s.write("    add x5, x5, x4\n");
+    s = s.write("    add x5, x5, " + a + "\n");
   }
   if (ms.sub) {
-    s = s.write("    sub x5, x5, x4\n");
+    s = s.write("    sub x5, x5, " + a + "\n");
   }
   if (ms.s != 0) {
     s = s.write("    asr x5, x5, #" + util.i32_to_string(ms.s) + "\n");
@@ -151,29 +153,29 @@ function ssa_div_magic_s(d: i64, s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    add x5, x5, x5, lsr #63\n");
 }
 
-// The quotient of the sign-extended i32 in x4 by a signed divisor that is not
-// a power of two, left in x5. The product cannot overflow 64 bits.
-function ssa_div_magic_s32(d: i64, s: asmcore.EmitState): asmcore.EmitState {
-  let mg = ir.derive_magic_s32(d);
+// The quotient of the sign-extended i32 in `a` by a signed divisor that is
+// not a power of two, left in x5. The product cannot overflow 64 bits.
+function ssa_div_magic_s32(k: i64, a: string, s: asmcore.EmitState): asmcore.EmitState {
+  let mg = ir.derive_magic_s32(k);
   s = ssa_const_reg(util.i64_to_string(mg.m), "x5", s);
-  s = s.write("    mul x5, x4, x5\n    asr x5, x5, #" + util.i32_to_string(mg.s) + "\n");
+  s = s.write("    mul x5, " + a + ", x5\n    asr x5, x5, #" + util.i32_to_string(mg.s) + "\n");
   return s.write("    add x5, x5, x5, lsr #63\n");
 }
 
-// The quotient of x4 by an unsigned divisor that is not a power of two, left in x5.
-function ssa_div_magic_u(d: u64, lz: i32, s: asmcore.EmitState): asmcore.EmitState {
-  let mu = ir.derive_magic_u_below(d, 64, lz);
+// The quotient of `a` by an unsigned divisor that is not a power of two, left in x5.
+function ssa_div_magic_u(k: u64, lz: i32, a: string, s: asmcore.EmitState): asmcore.EmitState {
+  let mu = ir.derive_magic_u_below(k, 64, lz);
   let pre = 0;
-  if (mu.add && (d & 1u64) == 0u64) {
-    while ((d >> pre as u64 & 1u64) == 0u64) {
+  if (mu.add && (k & 1u64) == 0u64) {
+    while ((k >> pre as u64 & 1u64) == 0u64) {
       pre += 1;
     }
-    mu = ir.derive_magic_u_below(d >> pre as u64, 64, lz + pre);
+    mu = ir.derive_magic_u_below(k >> pre as u64, 64, lz + pre);
   }
   s = ssa_const_reg(util.i64_to_string(mu.m as i64), "x5", s);
-  let src = "x4";
+  let src = a;
   if (pre > 0) {
-    s = s.write("    lsr x6, x4, #" + util.i32_to_string(pre) + "\n");
+    s = s.write("    lsr x6, " + a + ", #" + util.i32_to_string(pre) + "\n");
     src = "x6";
   }
   s = s.write("    umulh x5, " + src + ", x5\n");
@@ -183,7 +185,7 @@ function ssa_div_magic_u(d: u64, lz: i32, s: asmcore.EmitState): asmcore.EmitSta
     }
     return s;
   }
-  s = s.write("    sub x6, x4, x5\n    add x5, x5, x6, lsr #1\n");
+  s = s.write("    sub x6, " + a + ", x5\n    add x5, x5, x6, lsr #1\n");
   if (mu.s > 1) {
     s = s.write("    lsr x5, x5, #" + util.i32_to_string(mu.s - 1) + "\n");
   }
@@ -5164,9 +5166,8 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   } else if (k == ssa.BINARY && asmcore.ssa_shift_tag(ins.ir_kind) && (fr.imm.is_imm[ins.args[1]] || ins.imm == 64)) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
   } else if (k == ssa.BINARY && ssa_div_tag(ins.ir_kind) && fr.imm.konst[ins.args[1]]) {
-    d = "x4";
-    s = ssa_load(reg_of, ins.args[0], "x4", s);
-    s = ssa_div_const(ins.ir_kind, ins.imm, fr.imm.value[ins.args[1]], s);
+    s = ssa_read(reg_of, ins.args[0], "x4", s);
+    s = ssa_div_const(ins.ir_kind, ins.imm, fr.imm.value[ins.args[1]], ssa_src(reg_of, ins.args[0], "x4"), d, s);
   } else if (k == ssa.BINARY) {
     d = "x4";
     s = ssa_load(reg_of, ins.args[0], "x4", s);
