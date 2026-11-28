@@ -355,7 +355,10 @@ With git 2.43, these settings, messages and merges are also different:
   `merge.renormalize` for a three-way blob merge or a modify/delete
   comparison that may convert content. With no root attribute file in the
   merge, no active conversion attributes for the path, and automatic CRLF
-  conversion disabled, the port uses the original blob bytes. Gitlink
+  conversion disabled, the port uses the original blob bytes. Explicit
+  text conversion (`text`, legacy `crlf` or `eol=lf/crlf`) normalizes CRLF to LF for blob merges and modify/delete
+  comparisons. An explicit `-text` keeps the bytes even with automatic
+  CRLF conversion enabled. Gitlink
   merges and one-sided changes need no conversion.
   For a merge that needs one of them, the port stops with a message
   that names the part. It also stops at a state of the renames that

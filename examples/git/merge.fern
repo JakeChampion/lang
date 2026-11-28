@@ -709,28 +709,68 @@ function driver_of(st: State, path: string): (State, string) {
   return (st, if (name == "binary" || name == "union") { name } else { "text" });
 }
 
+@derive(cmp.Eq)
+enum Conversion { Unchanged, Text, Unsupported }
+
 // Git builds a temporary attribute index from the merge's root
-// .gitattributes. Without it, conversion comes from configuration and
-// attributes visible in the checkout. Only skip conversion when it is inert.
-function may_convert(st: State, path: string): boolean {
-  if (st.o.autocrlf || st.paths.contains(".gitattributes")) {
-    return true;
+// .gitattributes. Otherwise the path uses checkout and config attributes.
+function conversion(st: State, path: string): Conversion {
+  if (!st.o.renormalize) {
+    return Unchanged;
+  }
+  if (st.paths.contains(".gitattributes")) {
+    return Unsupported;
   }
   for a in st.o.attrs {
-    for name in ["text", "crlf", "eol", "ident", "filter", "working-tree-encoding"] {
+    for name in ["ident", "filter", "working-tree-encoding"] {
       let value = attr.value_of(a, path, name);
       if (value != attr.UNSPECIFIED && value != attr.UNSET) {
-        return true;
+        return Unsupported;
       }
     }
+    let text = attr.value_of(a, path, "text");
+    if (text == attr.UNSPECIFIED) {
+      text = attr.value_of(a, path, "crlf");
+    }
+    if (text == attr.UNSET) {
+      return Unchanged;
+    }
+    if (text == attr.SET || text == "input") {
+      return Text;
+    }
+    if (text != attr.UNSPECIFIED) {
+      return Unsupported;
+    }
+    let eol = attr.value_of(a, path, "eol");
+    if (eol == "lf" || eol == "crlf") {
+      return Text;
+    }
+    if (eol != attr.UNSPECIFIED && eol != attr.UNSET) {
+      return Unsupported;
+    }
   }
-  return false;
+  return if (st.o.autocrlf) { Unsupported } else { Unchanged };
+}
+
+// Forced text conversion removes one CR immediately before each LF.
+function normalized(bytes: u8[], how: Conversion): u8[] {
+  if (how != Text) {
+    return bytes;
+  }
+  let out: u8[] = [];
+  for i in 0..bytes.len() {
+    if (bytes[i] != 13u8 || i + 1 == bytes.len() || bytes[i + 1] != 10u8) {
+      out = out.append(bytes[i]);
+    }
+  }
+  return out;
 }
 
 // The merge of the blobs `o`, `a` and `b` for `path`, and the name of its
 // blob (`merge_3way` of git). The names of the three sides are `names`.
 function merge_3way(st_in: State, path: string, o: string, a: string, b: string, names: string[], extra_marker: i32): (State, i32, string) {
-  if (st_in.o.renormalize && may_convert(st_in, path)) {
+  let how = conversion(st_in, path);
+  if (how == Unsupported) {
     return (State { ...st_in, fatal: gap("merge.renormalize") }, CLEAN, "");
   }
   let plain = names[0] == names[1] && names[1] == names[2];
@@ -749,7 +789,7 @@ function merge_3way(st_in: State, path: string, o: string, a: string, b: string,
     let shown = if (value == attr.SET) { "(builtin)true" } else if (value == attr.UNSET) { "" } else { value };
     st = State { ...st, warnings: st.warnings.append("warning: invalid marker-size '" + shown + "', expecting an integer") };
   }
-  let text = merge_text(st.o, driver, marker + extra_marker, st.depth > 0, base, ours, theirs, l);
+  let text = merge_text(st.o, driver, marker + extra_marker, st.depth > 0, normalized(base, how), normalized(ours, how), normalized(theirs, how), l);
   if (text.status == BINARY_CONFLICT) {
     st = message(st, path, "warning: Cannot merge binary files: " + path + " (" + l.ours + " vs. " + l.theirs + ")");
   }
@@ -1670,8 +1710,17 @@ function process_entry(st_in: State, d_in: Dirs, path_in: string, ci_in: Info): 
     // Matching object IDs already establish equality without converting the blob.
     if (st.o.renormalize && ci.stages[0].mode == ci.stages[side].mode) {
       let unchanged = ci.stages[0].hash == ci.stages[side].hash;
-      if (!unchanged && may_convert(st, path)) {
-        return (State { ...st, fatal: gap("merge.renormalize") }, d);
+      if (!unchanged) {
+        let how = conversion(st, path);
+        if (how == Unsupported) {
+          return (State { ...st, fatal: gap("merge.renormalize") }, d);
+        }
+        if (how == Text) {
+          let (s1, base) = blob_of(st, ci.stages[0].hash);
+          let (s2, changed) = blob_of(s1, ci.stages[side].hash);
+          st = s2;
+          unchanged = normalized(base, how) == normalized(changed, how);
+        }
       }
       if (unchanged && !ci.path_conflict) {
         ci = Info { ...ci, is_null: true, clean: true, df_conflict: false, result: none };
