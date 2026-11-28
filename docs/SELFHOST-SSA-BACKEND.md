@@ -614,6 +614,20 @@ right operand of 5 reads beside lanes in slots. With the
 second allocation the `d` values keep registers. The round body goes from
 283 to 256 instructions, and SHA3-256 runs 9% fewer instructions.
 
+The weight also gives no cost to the factors of a product and its high
+half. `mulxq` moves one factor into `%rdx` from a register or a slot, and
+reads the other factor from memory. In `__fp_mul` of std/crypto/p256, the
+factors of the second operand then go to slots. The sums of the rows keep
+registers, and the frame reads go from 32 to 15.
+
+The arguments after the sixth arrive in the frame of the caller
+(`SpillCosts.stack_params`). The definition of such an argument costs
+nothing, because its slot is that place. An argument with no other cost
+keeps no register. Each such argument takes a slot of its own after the
+other slots (`ssa.assign_spill_slots`). The emitter reads the argument
+where the caller put it, and the entry does not copy it
+(`ssa_arg_homes`). The frame does not hold these slots.
+
 The live positions come from the block liveness (`ssalive.lives`), not from
 the interval. An interval runs from the first position to the last in block
 order. An exit block after a later loop can read a value. The interval of that

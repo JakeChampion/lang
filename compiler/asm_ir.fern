@@ -7623,7 +7623,7 @@ function ssa_cold_save(s: asmcore.EmitState, mask: i32, base: i32, save: i32, lo
   let j = 0;
   for k in 0..ssa_nregs() {
     if ((mask & 1 << k) != 0) {
-      s = ssa_mov_rm(s, 64, load, ssa_caller_reg(k), "%rbp", ssa_slot_disp(base + j, save));
+      s = ssa_mov_rm(s, 64, load, ssa_caller_reg(k), "%rbp", ssa_frame_disp(base + j, save));
       j += 1;
     }
   }
@@ -7701,6 +7701,12 @@ function ssa_imms(f: ssa.SFunc, s: asmcore.EmitState): ssa.Imms {
   return imm;
 }
 
+// The costs of a home in a frame slot on x86-64. The arguments after the
+// first ssa_nargs() arrive in the frame of the caller.
+function ssa_spill_costs(spilled: boolean[]): ssa.SpillCosts {
+  return ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: spilled, stack_params: ssa_nargs() };
+}
+
 function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, floats: boolean[], ops: ir.Op[], s: asmcore.EmitState): ssa.Alloc {
   let words = ssa.result_word_masks(f, ops);
   let homeless = ssa_homeless(f, imm);
@@ -7709,26 +7715,26 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, floats: boolean[], ops: ir.Op
   let cold = ssa.with_kernels(ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), direct_boxes(s)), kernels);
   let clobbers = ssa_cold_clobbers(cold, kernels);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] });
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa_spill_costs([]));
   // A folded read is free only beside a left operand in a register. When
   // the first allocation left both operands of such reads in slots, count
   // those reads and allocate again, and keep the allocation that costs less.
   let first = ssa.slotted_values(kept.reg_of);
   if (ssa.unfolded_reads(f, first) >= 4) {
-    let again = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: first });
+    let again = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa_spill_costs(first));
     let after = ssa.slotted_values(again.reg_of);
-    if (ssa.spill_cost(f, again.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: after }) < ssa.spill_cost(f, kept.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: first })) {
+    if (ssa.spill_cost(f, again.reg_of, ssa_spill_costs(after)) < ssa.spill_cost(f, kept.reg_of, ssa_spill_costs(first))) {
       kept = again;
     }
   }
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] });
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa_spill_costs([]));
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] });
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa_spill_costs([]));
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }
@@ -7784,12 +7790,55 @@ function ssa_in_x(reg_of: i32[], v: i32): boolean {
   return reg_of[v] >= 0 && reg_of[v] < ssa_fbase();
 }
 
-function ssa_slot(v: i32, save: i32): string {
-  return util.i32_to_string(ssa_slot_disp(v, save)) + "(%rbp)";
+function ssa_slot(v: i32, s: asmcore.EmitState): string {
+  return util.i32_to_string(ssa_slot_disp(v, s)) + "(%rbp)";
 }
 
-function ssa_slot_disp(v: i32, save: i32): i32 {
+function ssa_slot_disp(v: i32, s: asmcore.EmitState): i32 {
+  if (v < s.ssa_arg_homes.len() && s.ssa_arg_homes[v] != 0) {
+    return s.ssa_arg_homes[v];
+  }
+  return ssa_frame_disp(v, s.ssa_save);
+}
+
+function ssa_frame_disp(v: i32, save: i32): i32 {
   return 0 - 8 * (v + 1) - save;
+}
+
+// A stack argument with a frame slot of its own reads the place where the
+// caller put it, so the entry does not copy it.
+function ssa_arg_homes(f: ssa.SFunc, reg_of: i32[], nspill: i32): i32[] {
+  if (f.nparams <= ssa_nargs()) {
+    return [];
+  }
+  let holders = __alloc_i32(nspill);
+  for h in reg_of {
+    if (h < -1 && ssa.spill_slot(h) < nspill) {
+      holders = holders.with(ssa.spill_slot(h), holders[ssa.spill_slot(h)] + 1);
+    }
+  }
+  let homes = __alloc_i32(nspill);
+  for p in ssa_nargs()..f.nparams {
+    if (reg_of[p] < -1 && ssa.spill_slot(reg_of[p]) < nspill && holders[ssa.spill_slot(reg_of[p])] == 1) {
+      homes = homes.with(ssa.spill_slot(reg_of[p]), 16 + p * 8);
+    }
+  }
+  return homes;
+}
+
+// The slots that the frame holds: the slots of stack arguments at the end
+// are in the frame of the caller.
+function ssa_frame_slots(homes: i32[], nslots: i32): i32 {
+  let n = nslots;
+  while (n > 0 && n <= homes.len() && homes[n - 1] != 0) {
+    n -= 1;
+  }
+  return n;
+}
+
+function ssa_arg_at_home(reg_of: i32[], p: i32, s: asmcore.EmitState): boolean {
+  let slot = ssa.spill_slot(reg_of[p]);
+  return reg_of[p] < -1 && slot < s.ssa_arg_homes.len() && s.ssa_arg_homes[slot] != 0;
 }
 
 function ssa_saved_regs(reg_of: i32[]): i32[] {
@@ -7891,7 +7940,7 @@ function ssa_load(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): asm
     if (v < s.ssa_konst.len() && s.ssa_konst[v] && !ssa_is_xmm(reg)) {
       return ssa_konst_reg(s.ssa_konst_value[v], reg, s);
     }
-    return ssa_mov_slot(s, true, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
+    return ssa_mov_slot(s, true, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s));
   }
   let home = ssa_reg(reg_of[v]);
   if (home == "%r11") {
@@ -8486,7 +8535,7 @@ function ssa_alu_rhs(s: asmcore.EmitState, ext: i32, size: i32, fr: SsaFrame, re
   if (s.ssa_x0 == v) {
     return ssa_alu_rr(s, ext, size, "%r11", dst);
   }
-  return ssa_alu_rm(s, ext, size, true, dst, "%rbp", ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
+  return ssa_alu_rm(s, ext, size, true, dst, "%rbp", ssa_slot_disp(ssa.spill_slot(reg_of[v]), s));
 }
 
 function ssa_cmp_floor(s: asmcore.EmitState, reg: string): asmcore.EmitState {
@@ -8541,7 +8590,7 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
     return s;
   }
   if (reg_of[v] < 0) {
-    return ssa_mov_slot(s, false, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
+    return ssa_mov_slot(s, false, reg, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s));
   }
   let home = ssa_reg(reg_of[v]);
   if (home == reg) {
@@ -8626,7 +8675,7 @@ function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, s: asmcore.EmitState): str
   if (s.ssa_x0 == v) {
     return "%r11";
   }
-  return ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save);
+  return ssa_slot(ssa.spill_slot(reg_of[v]), s);
 }
 
 function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
@@ -8660,7 +8709,7 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     dh = ssa_spilled_dst(fr, reg_of, a, v);
   }
   if (size == 64 && ssa_alu_ext(tag) >= 0 && reg_of[a] <= -2 && reg_of[v] == reg_of[a]) {
-    return ssa_bin_in_slot(ssa_alu_ext(tag), b, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save), reg_of, fr, s);
+    return ssa_bin_in_slot(ssa_alu_ext(tag), b, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s), reg_of, fr, s);
   }
   let sfx: string = if (size == 32) { "l " } else { "q " };
   if (tag == ir.K_MUL && fr.imm.is_imm[b]) {
@@ -9544,7 +9593,7 @@ function ssa_vbin_avx(ins: ssa.SInst, reg_of: i32[], form: VBinForm, s: asmcore.
   let b = a;
   if (right != left) {
     if (reg_of[right] < 0) {
-      b = ssa_mem("%rbp", ssa_slot_disp(ssa.spill_slot(reg_of[right]), s.ssa_save) - 8, false);
+      b = ssa_mem("%rbp", ssa_slot_disp(ssa.spill_slot(reg_of[right]), s) - 8, false);
     } else {
       s = ssa_fread(reg_of, right, "%xmm2", s);
       b = ssa_fsrc(reg_of, right, "%xmm2");
@@ -9818,7 +9867,7 @@ function ssa_shiftx(ins: ssa.SInst, reg_of: i32[], mode: i32, s: asmcore.EmitSta
   s = asmcore.ssa_x0_forget(s);
   let src = ssa_src(reg_of, ins.args[0], "");
   if (src == "") {
-    src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
+    src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s);
   }
   let d = ssa_dst(reg_of, ins.result);
   if (mode != 0) {
@@ -9886,7 +9935,7 @@ function ssa_load_abi_args(reg_of: i32[], args: i32[], regs: string[], s: asmcor
 
 function ssa_push_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (reg_of[v] < 0) {
-    return ssa_push_slot(s, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save));
+    return ssa_push_slot(s, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s));
   }
   return ssa_push_r(s, ssa_reg(reg_of[v]));
 }
@@ -10765,7 +10814,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): 
       }
       args = args.append(asmcore.DynArg { reg: home, off: 0 });
     } else {
-      args = args.append(asmcore.DynArg { reg: "", off: 0 - 8 * (ssa.spill_slot(reg_of[v]) + 1) - s.ssa_save });
+      args = args.append(asmcore.DynArg { reg: "", off: ssa_slot_disp(ssa.spill_slot(reg_of[v]), s) });
     }
   }
   s = emit_dyn_dispatch_chain(ins.str, args, s);
@@ -10903,7 +10952,7 @@ function ssa_arg_moves(ins: ssa.SInst, reg_of: i32[], pops: string[], s: asmcore
     let v = ins.args[ins.args.len() - 1 - k];
     let src = ssa_home_name(reg_of, v);
     if (src == "") {
-      src = ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save);
+      src = ssa_slot(ssa.spill_slot(reg_of[v]), s);
     }
     if (src != pops[k]) {
       srcs = srcs.append(src);
@@ -11753,7 +11802,7 @@ function ssa_operand(reg_of: i32[], v: i32, s: asmcore.EmitState): string {
   if (s.ssa_x0 == v) {
     return "%r11";
   }
-  return ssa_slot(ssa.spill_slot(reg_of[v]), s.ssa_save);
+  return ssa_slot(ssa.spill_slot(reg_of[v]), s);
 }
 
 function ssa_cc_text(cc: i32): string {
@@ -12023,7 +12072,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     if (ssa_in_x(reg_of, ins.args[0]) && ssa_reg(reg_of[ins.args[0]]) != d) {
       src = ssa_reg(reg_of[ins.args[0]]);
     } else if (reg_of[ins.args[0]] < 0 && ins.ir_kind == ir.K_ROTR) {
-      src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s.ssa_save);
+      src = ssa_slot(ssa.spill_slot(reg_of[ins.args[0]]), s);
     }
     let from = "";
     if (src != "") {
@@ -12074,7 +12123,7 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
   s = ssa_parallel_moves(srcs, dsts, s);
   let zeroed: i32[] = [];
   for i in 0..imm_dsts.len() {
-    if (imm_vals[i] == 0 as i64 && imm_dsts[i] < 0 && !ssa_lane_disp(ssa_slot_disp(ssa.spill_slot(imm_dsts[i]), s.ssa_save), s)) {
+    if (imm_vals[i] == 0 as i64 && imm_dsts[i] < 0 && !ssa_lane_disp(ssa_slot_disp(ssa.spill_slot(imm_dsts[i]), s), s)) {
       zeroed = zeroed.append(ssa.spill_slot(imm_dsts[i]));
     } else {
       s = ssa_imm_to(imm_vals[i], imm_dsts[i], s);
@@ -12088,7 +12137,7 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
 function ssa_zero_slots(slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
   if (slots.len() < 2) {
     for v in slots {
-      s = ssa_mov_im(s, 64, 0 as i64, "%rbp", ssa_slot_disp(v, s.ssa_save));
+      s = ssa_mov_im(s, 64, 0 as i64, "%rbp", ssa_slot_disp(v, s));
     }
     return s;
   }
@@ -12111,10 +12160,10 @@ function ssa_zero_slots(slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
         s = s.write("    xorps %xmm2, %xmm2\n");
         cleared = true;
       }
-      s = s.write("    movups %xmm2, " + ssa_mem("%rbp", ssa_slot_disp(v + 1, s.ssa_save), false) + "\n");
+      s = s.write("    movups %xmm2, " + ssa_mem("%rbp", ssa_slot_disp(v + 1, s), false) + "\n");
       step = 2;
     } else if (want[v]) {
-      s = ssa_mov_im(s, 64, 0 as i64, "%rbp", ssa_slot_disp(v, s.ssa_save));
+      s = ssa_mov_im(s, 64, 0 as i64, "%rbp", ssa_slot_disp(v, s));
     }
     v += step;
   }
@@ -12129,7 +12178,7 @@ function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (loc >= 0) {
     return ssa_const_reg(util.i64_to_string(c), false, ssa_reg(loc), s);
   }
-  return ssa_mov_im(s, 64, c, "%rbp", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
+  return ssa_mov_im(s, 64, c, "%rbp", ssa_slot_disp(ssa.spill_slot(loc), s));
 }
 
 function ssa_parallel_moves(srcs: i32[], dsts: i32[], s: asmcore.EmitState): asmcore.EmitState {
@@ -12170,7 +12219,7 @@ function ssa_vec_loc(loc: i32, s: asmcore.EmitState): boolean {
   if (loc >= 0) {
     return loc >= ssa_fbase();
   }
-  return ssa_lane_disp(ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save), s);
+  return ssa_lane_disp(ssa_slot_disp(ssa.spill_slot(loc), s), s);
 }
 
 function ssa_park(loc: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -12180,7 +12229,7 @@ function ssa_park(loc: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (loc >= 0) {
     return ssa_mov_rr(s, "%xmm2", ssa_reg(loc));
   }
-  return ssa_mov_slot(s, true, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
+  return ssa_mov_slot(s, true, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s));
 }
 
 function ssa_unpark(loc: i32, vec: boolean, s: asmcore.EmitState): asmcore.EmitState {
@@ -12190,7 +12239,7 @@ function ssa_unpark(loc: i32, vec: boolean, s: asmcore.EmitState): asmcore.EmitS
   if (loc >= 0) {
     return ssa_mov_rr(s, ssa_reg(loc), "%xmm2");
   }
-  return ssa_mov_slot(s, false, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s.ssa_save));
+  return ssa_mov_slot(s, false, "%xmm2", ssa_slot_disp(ssa.spill_slot(loc), s));
 }
 
 function ssa_move(src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
@@ -12201,20 +12250,20 @@ function ssa_move(src: i32, dst: i32, s: asmcore.EmitState): asmcore.EmitState {
     return ssa_mov_rr(s, ssa_reg(dst), ssa_reg(src));
   }
   if (src >= 0) {
-    return ssa_mov_slot(s, false, ssa_reg(src), ssa_slot_disp(ssa.spill_slot(dst), s.ssa_save));
+    return ssa_mov_slot(s, false, ssa_reg(src), ssa_slot_disp(ssa.spill_slot(dst), s));
   }
   if (dst >= 0) {
-    return ssa_mov_slot(s, true, ssa_reg(dst), ssa_slot_disp(ssa.spill_slot(src), s.ssa_save));
+    return ssa_mov_slot(s, true, ssa_reg(dst), ssa_slot_disp(ssa.spill_slot(src), s));
   }
-  s = ssa_mov_slot(s, true, "%rcx", ssa_slot_disp(ssa.spill_slot(src), s.ssa_save));
-  return ssa_mov_slot(s, false, "%rcx", ssa_slot_disp(ssa.spill_slot(dst), s.ssa_save));
+  s = ssa_mov_slot(s, true, "%rcx", ssa_slot_disp(ssa.spill_slot(src), s));
+  return ssa_mov_slot(s, false, "%rcx", ssa_slot_disp(ssa.spill_slot(dst), s));
 }
 
 function ssa_loc(loc: i32, s: asmcore.EmitState): string {
   if (loc >= 0) {
     return ssa_reg(loc);
   }
-  return ssa_slot(ssa.spill_slot(loc), s.ssa_save);
+  return ssa_slot(ssa.spill_slot(loc), s);
 }
 
 function ssa_epilogue(): string {
@@ -12350,7 +12399,7 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   let size = ssa_compare_bits(fu);
   let b_in_slot = !fr.imm.is_imm[fu.b] && reg_of[fu.b] < 0;
   if (reg_of[fu.a] < 0 && s.ssa_x0 != fu.a && !b_in_slot) {
-    let disp = ssa_slot_disp(ssa.spill_slot(reg_of[fu.a]), s.ssa_save);
+    let disp = ssa_slot_disp(ssa.spill_slot(reg_of[fu.a]), s);
     if (fr.imm.is_imm[fu.b]) {
       let sym = ssa.imm_sym(fr.imm, fu.b);
       if (sym != "") {
@@ -12360,7 +12409,7 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
       if (v >= -2147483648i64 && v <= 2147483647i64) {
         return ssa_alu_im(s, 7, size, v as i32, "%rbp", disp);
       }
-      return s.write("    cmpq $" + util.i64_to_string(v) + ", " + ssa_slot(ssa.spill_slot(reg_of[fu.a]), s.ssa_save) + "\n");
+      return s.write("    cmpq $" + util.i64_to_string(v) + ", " + ssa_slot(ssa.spill_slot(reg_of[fu.a]), s) + "\n");
     }
     return ssa_alu_rm(s, 7, size, false, ssa_reg(reg_of[fu.b]), "%rbp", disp);
   }
@@ -12496,23 +12545,22 @@ function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asm
   let k = ssa_reg_params(f);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
-  let p = 0;
-  while (p < k) {
+  for p in 0..k {
     if (reg_of[p] != -1) {
       srcs = srcs.append(ssa_param_loc(f, p));
       dsts = dsts.append(reg_of[p]);
     }
-    p += 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  while (p < f.nparams) {
+  for p in k..f.nparams {
     if (ssa.lane_param(f, p)) {
       ssa_lane_refuse(f.name + ": parameter " + util.i32_to_string(p));
     }
-    let d = ssa_dst(reg_of, p);
-    s = s.write("    movq " + util.i32_to_string(16 + p * 8) + "(%rbp), " + d + "\n");
-    s = ssa_store(reg_of, p, d, s);
-    p += 1;
+    if (!ssa_arg_at_home(reg_of, p, s)) {
+      let d = ssa_dst(reg_of, p);
+      s = s.write("    movq " + util.i32_to_string(16 + p * 8) + "(%rbp), " + d + "\n");
+      s = ssa_store(reg_of, p, d, s);
+    }
   }
   return s;
 }
@@ -12707,7 +12755,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     let imm2 = ssa_imms(tried.f, s);
     let s2 = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(tried.f), ssa_even: ssadeps.even_values(tried.f) };
     let again = ssa_allocate(tried.f, imm2, ssa.float_values(tried.f, [], false), prepared.lowered.ops, s2);
-    if ((ssa.spill_cost(tried.f, again.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] }) + tried.cost) * 10 < ssa.spill_cost(f, alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] }) * 9) {
+    if ((ssa.spill_cost(tried.f, again.reg_of, ssa_spill_costs([])) + tried.cost) * 10 < ssa.spill_cost(f, alloc.reg_of, ssa_spill_costs([])) * 9) {
       f = tried.f;
       imm = imm2;
       alloc = again;
@@ -12736,7 +12784,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   match (util.debug_env("FERN_DEBUG_SSA_ALLOC", "FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
-        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] }));
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa_spill_costs([])));
       }
     },
     None => {}
@@ -12748,7 +12796,8 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   s = ssa_release_entry(entry, lp, s);
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
   let views = ssa.view_slots(f);
-  let nspill = asmcore.ssa_lane_spill(f, spilled_slots);
+  let homes = ssa_arg_homes(f, reg_of, spilled_slots);
+  let nspill = asmcore.ssa_lane_spill(f, ssa_frame_slots(homes, spilled_slots));
   let tails = ssa.tails_of(f, s.profile == 0);
   let leaf = s.profile == 0 && nspill == 0 && ssa.view_count(views) == 0 && !hev_on(s) && !ssa_calls_besides_tails(f, s, tails);
   let cold = ssa_cold_saves(f, alloc);
@@ -12761,7 +12810,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   if (canary > 0) {
     save = canary;
   }
-  let dbg = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
+  let dbg = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, asmcore.EmitState { ...s, ssa_save: save, ssa_arg_homes: homes }, seen_vals.len() > 0), ssa.position_count(f));
   let pad = 0;
   if (saved.len() % 2 == 0) {
     pad = 8;
@@ -12805,7 +12854,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   } else {
     s = ssa_frame(s, saved, frame, canary);
   }
-  s = asmcore.EmitState { ...s, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1, ssa_konst: imm.konst, ssa_konst_value: imm.value };
+  s = asmcore.EmitState { ...s, ssa_save: save, ssa_arg_homes: homes, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), slot_load_at: -1, ssa_konst: imm.konst, ssa_konst_value: imm.value };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, s);
   let frame_homes = reg_of;
   let tops = if (s.size) { __alloc_bool(f.blocks.len()) } else { ssa_loop_tops(f, fr, reg_of) };
@@ -12897,7 +12946,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
       s = s.write(ssa_resolve_tails(ssa_replace_all(leaf_text, ssa_epilogue_mark(), ssa_leaf_epilogue(saved)), ssa_leaf_epilogue(saved)));
     }
   }
-  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_trap_suffix: "", ssa_lane_slots: [], ssa_konst: [], ssa_konst_value: [] };
+  s = asmcore.EmitState { ...s, ssa_save: 0, ssa_arg_homes: [], ssa_trap_suffix: "", ssa_lane_slots: [], ssa_konst: [], ssa_konst_value: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
@@ -12910,7 +12959,7 @@ function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, 
   return s;
 }
 
-function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
+function ssa_dbg_locs(reg_of: i32[], s: asmcore.EmitState, want: boolean): string[] {
   let out: string[] = [];
   if (!want) {
     return out;
@@ -12919,7 +12968,7 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
     if (h >= 0) {
       out = out.append(asmcore.dbg_hex([80 + ssa_dwarf(ssa_reg(h))]));
     } else if (h < -1) {
-      out = out.append(asmcore.dbg_hex(asmcore.dbg_sleb([118], ssa_slot_disp(ssa.spill_slot(h), save))));
+      out = out.append(asmcore.dbg_hex(asmcore.dbg_sleb([118], ssa_slot_disp(ssa.spill_slot(h), s))));
     } else {
       out = out.append("");
     }
