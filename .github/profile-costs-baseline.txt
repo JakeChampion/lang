@@ -55,7 +55,7 @@ profile/arm64-linux/http_hello.diagnostic.emit	22192
 profile/arm64-linux/http_hello.hardened.bytes	81416
 profile/arm64-linux/http_hello.hardened.emit	18347
 profile/arm64-linux/http_hello.minimal.bytes	64680
-profile/arm64-linux/http_hello.minimal.emit	14159
+profile/arm64-linux/http_hello.minimal.emit	14003
 profile/arm64-linux/http_hello.safe.bytes	77080
 profile/arm64-linux/http_hello.safe.emit	17271
 profile/arm64-linux/int_loop.diagnostic.bytes	7656
