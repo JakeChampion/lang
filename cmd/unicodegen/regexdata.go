@@ -182,17 +182,31 @@ func gcPred(name string) func(rune) bool {
 	return func(r rune) bool { return unicode.Is(t, r) }
 }
 
+// UAX #31 derives the identifier classes from general categories and the
+// Other_ID properties, excluding pattern syntax and pattern whitespace.
+func idStart(r rune) bool {
+	return unicode.In(r, unicode.L, unicode.Nl, unicode.Other_ID_Start) &&
+		!unicode.In(r, unicode.Pattern_Syntax, unicode.Pattern_White_Space)
+}
+
+func idContinue(r rune) bool {
+	return idStart(r) || (unicode.In(r, unicode.Mn, unicode.Mc, unicode.Nd, unicode.Pc, unicode.Other_ID_Continue) &&
+		!unicode.In(r, unicode.Pattern_Syntax, unicode.Pattern_White_Space))
+}
+
 // binaryProps are the binary properties of \p{...}: those of Go's unicode
-// package that UTS #18 names, and four that UCD derives from them.
+// package that UTS #18 names, and properties that UCD derives from them.
 func binaryProps() map[string]func(rune) bool {
 	props := map[string]func(rune) bool{
-		"Alphabetic": isAlphabetic,
-		"Lowercase":  func(r rune) bool { return unicode.In(r, unicode.Ll, unicode.Other_Lowercase) },
-		"Uppercase":  func(r rune) bool { return unicode.In(r, unicode.Lu, unicode.Other_Uppercase) },
-		"Math":       func(r rune) bool { return unicode.In(r, unicode.Sm, unicode.Other_Math) },
-		"Any":        func(r rune) bool { return true },
-		"ASCII":      func(r rune) bool { return r < 128 },
-		"Assigned":   isAssigned,
+		"Alphabetic":  isAlphabetic,
+		"ID_Start":    idStart,
+		"ID_Continue": idContinue,
+		"Lowercase":   func(r rune) bool { return unicode.In(r, unicode.Ll, unicode.Other_Lowercase) },
+		"Uppercase":   func(r rune) bool { return unicode.In(r, unicode.Lu, unicode.Other_Uppercase) },
+		"Math":        func(r rune) bool { return unicode.In(r, unicode.Sm, unicode.Other_Math) },
+		"Any":         func(r rune) bool { return true },
+		"ASCII":       func(r rune) bool { return r < 128 },
+		"Assigned":    isAssigned,
 	}
 	for name, t := range unicode.Properties {
 		if name == "STerm" {

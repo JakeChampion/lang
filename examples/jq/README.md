@@ -144,20 +144,18 @@ first and the third program use 9 MB at each depth. The second program uses
 165 MB at a depth of 3000000. At a depth of 30000000, jq gives an error that
 it cannot allocate memory, and the port gives the result with 1.6 GB.
 
-One difference stays. Some constructs read the end of their filter: `[...]`,
-`{...}`, `try`, `?`, `//`, `reduce`, `foreach`, `label`, `first`, `limit`,
-`path` and the left side of a comma. The evaluator calls itself for each of
-them. Thus a function that calls itself in one of these constructs uses the
-machine stack for each call:
+Array collection also resumes on the heap when its filter suspends. For
+example, this program gives 3000000 on x86-64:
 
 ```
 def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; 3000000 | f
 ```
 
-jq gives 3000000. The port is good to a depth of 500000 on x86-64 and of
-200 on wasm32-wasi. A deeper recursion stops with a stack overflow and exit
-134. On wasm32-wasi, the option `-W max-wasm-stack` of wasmtime makes the
-stack larger.
+Some constructs still read the end of their filter on the machine stack: `{...}`, `try`, `?`, `//`, `reduce`, `foreach`, `label`, `first`, `limit`,
+`path` and the left side of a comma. The evaluator calls itself for each of
+them. Thus a function that calls itself in one of these constructs uses the
+machine stack for each call. On wasm32-wasi, the option
+`-W max-wasm-stack` of wasmtime makes the stack larger.
 
 ## Numbers
 

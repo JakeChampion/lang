@@ -2165,7 +2165,7 @@ function remerge_diff(g_in: walk.Graph, bases: walk.Graph[], c: log.Commit, pare
   }
   let history = if (bases.len() > 0) { walk.Graph { ...bases[0], store: g.store } } else { g };
   let (g2, found_bases) = walk.merge_bases(history, parents[0], [parents[1]]);
-  let merged = merge.merge_commits(g2, merge.Options { ...read.o, abbrev: least, attrs: o.patch.attrs }, found_bases, parents[0], parents[1], labels[0], labels[1]);
+  let merged = merge.merge_commits(g2, merge.Options { ...read.o, abbrev: least, attrs: o.patch.attrs, patch_headers: o.patch.patch }, found_bases, parents[0], parents[1], labels[0], labels[1]);
   g = walk.Graph { ...g, store: merged.store };
   for w in merged.warnings {
     eprint(w);

@@ -100,7 +100,8 @@ function test_deep_calls(): test.TestOutcome {
     ("def f: if . == 0 then 0 else (. - 1 | f) + 1 end; f", "100000", "100000"),
     ("def f: ., (. + 1 | f); first(f | select(. >= 100000))", "0", "100000"),
     ("def f: if . == 0 then error(\"x\") else (. - 1 | f) end; try f catch .", "5000", "\"x\""),
-    ("def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; f", "200", "200"),
+    ("def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; f", "2000", "2000"),
+    ("def f: if . == 0 then error(\"stop\") else [. - 1 | f] end; [1, (try f catch .), 2]", "2000", "[1,\"stop\",2]"),
     ("def f: if type == \"object\" then .a | f else . end; reduce range(300) as $i (1; {a: .}) | [path(f)] | .[0] | length", "null", "300"),
   ]);
 }

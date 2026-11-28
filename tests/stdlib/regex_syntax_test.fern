@@ -113,8 +113,9 @@ function test_property_aliases(): test.TestOutcome {
     all("\\p{Grek}+", "aαβb"), all("\\p{sc=Cyrl}", "dд"), all("\\p{IsGreek}", "aα"), all("\\p{Emoji_Presentation}", "a😀b"),
     all("\\p{EPres}", "😀"), all("\\p{Extended_Pictographic}", "x©"), all("\\p{wspace}", "a b"), all("\\p{Zyyy}", "1a"),
     all("\\p{scx=Grek}", "α"),
+    all("\\p{IDS}+", "ⸯα℘1"), all("\\p{ID_Continue}+", "ⸯ_9·α"),
   ];
-  return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / error");
+  return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / error / α℘ / _9·α");
 }
 
 // A class of Grapheme_Cluster_Break or Word_Break needs the name of its
