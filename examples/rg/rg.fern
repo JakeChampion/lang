@@ -1232,16 +1232,30 @@ function search_serial(ctx: Ctx, re: matcher.Matcher, items: walk.Item[]): Part 
 // The options with the patterns of the -f files in their place among the
 // -e patterns. A line terminator, and a CR before it, end each pattern.
 function with_pattern_files(o: flags.Options): Result[flags.Options, string] {
+  if (!o.searches()) {
+    return Ok(o);
+  }
+  let stdin_used = false;
   let patterns: string[] = [];
   let k = 0;
   for i in 0..o.patterns.len() + 1 {
     while (k < o.pattern_files.len() && o.pattern_file_at[k] == i) {
-      patterns = patterns.concat(read_patterns(o.pattern_files[k])?);
+      let path = o.pattern_files[k];
+      if (path == "-") {
+        if (stdin_used) {
+          return Err("error reading -f/--file from stdin: stdin has already been consumed");
+        }
+        stdin_used = true;
+      }
+      patterns = patterns.concat(read_patterns(path)?);
       k += 1;
     }
     if (i < o.patterns.len()) {
       patterns = patterns.append(o.patterns[i]);
     }
+  }
+  if (stdin_used && o.paths.contains("-")) {
+    return Err("error: attempted to read patterns from stdin while also searching stdin");
   }
   return Ok(flags.Options { ...o, patterns: patterns });
 }
@@ -1260,12 +1274,13 @@ function read_patterns(path: string): Result[string[], string] {
   while (start < text.len()) {
     let nl = __memchr(text, 10, start);
     let end = if (nl < 0) { text.len() } else { nl };
-    let stop = if (end > start && text[end - 1] == 13u8) { end - 1 } else { end };
+    let stop = if (nl >= 0 && end > start && text[end - 1] == 13u8) { end - 1 } else { end };
     let line = slice_unchecked(text, start, stop).to_owned();
     let bad = encoding.invalid_at(line);
     if (bad >= 0) {
       let hex = encoding.escaped(slice_unchecked(line, bad, bad + 1).to_owned());
-      return Err(f"{path}:{n}: found invalid UTF-8 in pattern at byte offset {bad}: {encoding.escaped(line)} (disable Unicode mode and use hex escape sequences to match arbitrary bytes in a pattern, e.g., '(?-u){hex}')");
+      let source = if (path == "-") { "<stdin>" } else { path };
+      return Err(f"{source}:{n}: found invalid UTF-8 in pattern at byte offset {bad}: {encoding.escaped(line)} (disable Unicode mode and use hex escape sequences to match arbitrary bytes in a pattern, e.g., '(?-u){hex}')");
     }
     out = out.append(line);
     start = end + 1;
