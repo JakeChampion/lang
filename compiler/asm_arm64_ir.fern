@@ -6381,7 +6381,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
+  if (ir.native_word_identity(o.kind_tag)) {
     return s;
   }
 
@@ -6967,7 +6967,10 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmc
     }
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (kind == ir.K_TCP_POLLABLE) {
+  if (ir.native_word_identity(kind)) {
+    if (reg_of[ins.result] == -1) {
+      return s;
+    }
     s = asmcore.ssa_x0_forget(s);
     let d = ssa_dst(reg_of, ins.result);
     s = ssa_load(reg_of, ins.args[0], d, s);

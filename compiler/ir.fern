@@ -1573,6 +1573,12 @@ pub function op_send_root(): Op {
   return op0(K_SEND_ROOT);
 }
 
+// These operations give the native result the same word as their input.
+// Their IR tags keep their separate ownership and type meanings.
+pub function native_word_identity(t: i32): boolean {
+  return t == K_TCP_POLLABLE || t == K_SEND_ADOPT || t == K_SEND_ROOT;
+}
+
 function worker_pops1(t: i32): boolean {
   return t == K_WORKER_REGION || t == K_WORKER_REAP || t == K_SEND_ADOPT || t == K_SEND_ROOT;
 }
