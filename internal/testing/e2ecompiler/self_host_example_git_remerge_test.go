@@ -1011,7 +1011,20 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	diverged := g.git("commit-tree", "-p", "module-1", "-p", otherSide, "-m", "diverged", otherTree)
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
 	g.git("-C", "module", "update-ref", "--no-deref", "HEAD", solution)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-1", diverged)
 	refuse("the merge of a submodule (module)", "log", "--remerge-diff", "--raw", "-p", "-1", diverged)
+	for _, format := range []string{"--stat", "--name-status", "--name-only", "--numstat"} {
+		gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", format, "-1", diverged)
+	}
+	// A later merge that contains the solution is not a second possibility.
+	later := g.git("-C", "module", "commit-tree", subTree, "-p", solution, "-p", links[2], "-m", "later merge")
+	g.git("-C", "module", "update-ref", "refs/heads/later", later)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-1", diverged)
+	second := g.git("-C", "module", "commit-tree", subTree, "-p", other, "-p", links[1], "-m", "independent resolution")
+	g.git("-C", "module", "update-ref", "refs/heads/resolution", second)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-1", diverged)
+	g.git("-C", "module", "update-ref", "-d", "refs/heads/later")
+	g.git("-C", "module", "update-ref", "-d", "refs/heads/resolution")
 	// Only the checked-out submodule worktree's detached HEAD participates.
 	// The primary worktree holds a resolution that the linked one cannot see.
 	primary := filepath.Join(t.TempDir(), "module-primary")
