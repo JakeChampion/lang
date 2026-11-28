@@ -362,8 +362,9 @@ With git 2.43, these settings, messages and merges are also different:
   git takes for an internal error.
 
 - The other parts of a driver of the attribute `diff`: `-diff` and
-  `diff.NAME.binary` for a binary file, the regex of words of a driver
-  for `--word-diff`, and `textconv`.
+  `diff.NAME.binary` for a binary file, the built-in word regexes for `--word-diff`, and `textconv`.
+  A configured `diff.NAME.wordRegex` takes precedence over `diff.wordRegex`.
+  An explicit `--word-diff-regex` takes precedence over both.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.

@@ -17,7 +17,7 @@ import "./config";
 pub struct Funcname { given: boolean, pattern: string, extended: boolean, icase: boolean }
 
 // The drivers that the configuration names, with each `diff.NAME.KEY`.
-pub struct Drivers { user: Map[string, Funcname] }
+pub struct Drivers { user: Map[string, Funcname], words: Map[string, string] }
 
 struct Builtin { name: string, icase: boolean, pattern: string }
 
@@ -95,7 +95,7 @@ pub function bad_entry(c: config.Config): Option[config.Entry] {
 }
 
 pub function none(): Drivers {
-  return Drivers { user: Map { } };
+  return Drivers { user: Map { }, words: Map { } };
 }
 
 // The drivers of the configuration `c` (`userdiff_config`). Each key
@@ -103,6 +103,7 @@ pub function none(): Drivers {
 // its regex, and the last one of the file is the regex of the driver.
 pub function from_config(c: config.Config): Drivers {
   let user: Map[string, Funcname] = Map { };
+  let words: Map[string, string] = Map { };
   for e in c.entries {
     if (!e.name.starts_with("diff.")) {
       continue;
@@ -124,9 +125,32 @@ pub function from_config(c: config.Config): Drivers {
     } else if (key == "xfuncname") {
       known = Funcname { given: true, pattern: e.value, extended: true, icase: false };
     }
+    if (key == "wordregex") {
+      words = words.insert(name, e.value);
+    }
     user = user.insert(name, known);
   }
-  return Drivers { user: user };
+  return Drivers { user: user, words: words };
+}
+
+// A configured word regex for this side of a file pair.
+pub function (d: Drivers) word_pattern(attrs: attr.Attrs[], path: string): Option[string] {
+  if (d.words.len() == 0) {
+    return None;
+  }
+  if (attrs.len() > 0) {
+    let name = attr.value_of(attrs[0], path, "diff");
+    if (name == attr.SET || name == attr.UNSET) {
+      return None;
+    }
+    if (name != attr.UNSPECIFIED) {
+      return match (d.by_name(name)) {
+        Some(_) => d.words.get(name),
+        None => d.words.get("default"),
+      };
+    }
+  }
+  return d.words.get("default");
 }
 
 // The driver with the name `name`, or None: `userdiff_find_by_name`.
