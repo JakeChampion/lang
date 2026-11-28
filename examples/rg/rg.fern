@@ -16,6 +16,8 @@ import "std/io";
 import "std/pcre";
 import "std/process";
 import "std/regex";
+import "std/unicode";
+import "std/utf8";
 import "std/worker";
 import "./decompress";
 import "./encoding";
@@ -1314,6 +1316,33 @@ function generate(kind: string): i32 {
   return 0;
 }
 
+// Config arguments are byte strings. Trim Unicode whitespace at the edges
+// and keep undecodable bytes as part of the argument.
+function trim_config_line(line: string): string {
+  let start = 0;
+  let end = line.len();
+  while (start < end) {
+    let Some(cp) = utf8.decode_at(line, start) else {
+      break;
+    };
+    if (!(cp.0 as char).is_whitespace()) {
+      break;
+    }
+    start += cp.1;
+  }
+  while (end > start) {
+    let pos = utf8.floor_char_boundary(line, end - 1);
+    let Some(cp) = utf8.decode_at(line, pos) else {
+      break;
+    };
+    if (pos + cp.1 != end || !(cp.0 as char).is_whitespace()) {
+      break;
+    }
+    end = pos;
+  }
+  return slice_unchecked(line, start, end).to_owned();
+}
+
 // The arguments of the file that RIPGREP_CONFIG_PATH names: each line that
 // is not empty and does not start with `#`, without the white space around
 // it.
@@ -1336,7 +1365,7 @@ function config_args(messages: boolean, log: i32): string[] {
   };
   let out: string[] = [];
   for raw in text.split("\n") {
-    let line = raw.trim();
+    let line = trim_config_line(raw);
     if (line != "" && line[0] != b'#') {
       out = out.append(line);
     }
