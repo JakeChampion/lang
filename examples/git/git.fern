@@ -337,11 +337,12 @@ function cat_batch(r: refs.Repo, contents: boolean): i32 {
   return 0;
 }
 
-// The status of git when the configuration has a key of a driver of the
-// attribute `diff` with no value, after its two lines. 0 for a sound
-// configuration.
+// Report a missing driver value or an invalid binary setting.
 function driver_config_status(r: refs.Repo): i32 {
   if let Some(e) = userdiff.bad_entry(r.config) {
+    if (!e.bare) {
+      return fatal("bad boolean config value '" + e.value + "' for '" + e.name + "'");
+    }
     eprint("error: " + config.missing_value(e));
     return fatal(r.config.bad(e));
   }
@@ -3312,7 +3313,7 @@ function log_command(argv: string[]): i32 {
   if (o.merges == "remerge") {
     o = LogOpts { ...o, remerge: [merge.configured(r.config, merge.Options { ...merge.defaults(), repo: Some(r) }, env("GIT_MERGE_VERBOSITY").unwrap_or(""))] };
   }
-  if (o.patch.patch || o.patch.color || o.diff == "check" || o.lines.len() > 0 || o.merges == "remerge") {
+  if (o.patch.patch || o.patch.stat || o.patch.numstat || o.patch.shortstat || o.pick.kind == 2 || o.walk.cherry_pick || o.walk.cherry_mark || o.patch.color || o.diff == "check" || o.lines.len() > 0 || o.merges == "remerge") {
     o = LogOpts { ...o, patch: patch.Opts { ...o.patch, attrs: [attr.load(r)], drivers: userdiff.from_config(r.config) } };
   }
   o = LogOpts { ...o, patch: patch.Opts { ...o.patch, abbrev: o.patch.abbrev.min(2 * st0.width) } };
@@ -3386,7 +3387,7 @@ function log_command(argv: string[]): i32 {
     }
     o = LogOpts { ...o, walk: revwalk.Opts { ...o.walk, ancestry_of: o.walk.ancestry_of.append(at) } };
   }
-  w = revwalk.Walk { ...w, opts: o.walk };
+  w = revwalk.Walk { ...w, opts: o.walk, patch_opts: o.patch };
   if (o.walk_reflogs) {
     if (o.reverse) {
       return fatal("options '--reverse' and '--walk-reflogs' cannot be used together");

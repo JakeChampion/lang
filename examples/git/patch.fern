@@ -198,6 +198,15 @@ function is_regular(mode: string): boolean {
   return mode == "100644" || mode == "100755";
 }
 
+pub function binary_mode(o: Opts, path: u8[], regular: boolean): i32 {
+  return o.drivers.binary_mode(o.attrs, text(path), regular);
+}
+
+function side_is_binary(o: Opts, side: Side, data: u8[]): boolean {
+  let mode = binary_mode(o, side.path, is_regular(side.mode));
+  return if (mode < 0) { is_binary(data) } else { mode == 1 };
+}
+
 function kind_of(mode: string): i32 {
   if (mode == "120000") {
     return 1;
@@ -735,7 +744,7 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   let (s3, a) = content(s, one);
   let (s4, b) = content(s3, two);
   s = s4;
-  if (!o.text && (is_binary(a) || is_binary(b))) {
+  if (!o.text && (side_is_binary(o, one, a) || side_is_binary(o, two, b))) {
     if (one.hash == two.hash && one.valid && two.valid) {
       return (s, t);
     }
@@ -1128,7 +1137,7 @@ function stat_of(s_in: store.Store, o: Opts, p: Pair): (store.Store, Stat) {
   let name = if (renamed) { pprint_rename(p.one.path, p.two.path) } else { quoted(p.two.path) };
   let st = Stat { name: quoted(p.two.path), print_name: name, added: 0, deleted: 0, binary: false, renamed: renamed };
   let same = p.one.valid && p.two.valid && p.one.hash == p.two.hash;
-  if (!o.text && (is_binary(a) || is_binary(b))) {
+  if (side_is_binary(o, p.one, a) || side_is_binary(o, p.two, b)) {
     if (same) {
       return (s2, Stat { ...st, binary: true });
     }
@@ -1360,7 +1369,7 @@ pub function check(s_in: store.Store, changes: treediff.Change[], o: Opts): (sto
     let (s1, a) = content(s, p.one);
     let (s2, b) = content(s1, p.two);
     s = s2;
-    if (is_binary(b)) {
+    if (side_is_binary(o, p.two, b)) {
       continue;
     }
     let rule = link_rule(rule_of(o, if (p.one.path != p.two.path) { p.two.path } else { p.one.path }), p.two.mode);
@@ -1526,7 +1535,7 @@ function without_space(b: u8[]): u8[] {
 // modes, and the lines of the patch with three lines of context and no
 // white space, or the names of the objects of a binary file. Two commits
 // with the same text have the same patch id.
-pub function patch_id_text(s_in: store.Store, changes: treediff.Change[]): (store.Store, u8[]) {
+pub function patch_id_text(s_in: store.Store, changes: treediff.Change[], o: Opts): (store.Store, u8[]) {
   let s = s_in;
   let out = buf_new(1024);
   for c in changes {
@@ -1547,7 +1556,7 @@ pub function patch_id_text(s_in: store.Store, changes: treediff.Change[]): (stor
     let (s1, a) = content(s, p.one);
     let (s2, b) = content(s1, p.two);
     s = s2;
-    if (is_binary(a) || is_binary(b)) {
+    if (side_is_binary(o, p.one, a) || side_is_binary(o, p.two, b)) {
       buf_push(out, p.one.hash + p.two.hash);
       continue;
     }
@@ -1685,7 +1694,7 @@ function pickaxe_match(s_in: store.Store, p: Pickaxe, o: Opts, c: treediff.Chang
   let (s1, a) = content(s_in, pair.one);
   let (s2, b) = content(s1, pair.two);
   if (p.kind == 2) {
-    if (!o.text && (is_binary(a) || is_binary(b))) {
+    if (!o.text && (side_is_binary(o, pair.one, a) || side_is_binary(o, pair.two, b))) {
       return (s2, false);
     }
     return (s2, grep_lines(p, o, a, b));

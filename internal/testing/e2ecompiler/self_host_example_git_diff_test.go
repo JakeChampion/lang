@@ -253,6 +253,30 @@ func TestSelfHostExampleGitDiff(t *testing.T) {
 	}
 }
 
+func TestSelfHostExampleGitBinaryDrivers(t *testing.T) {
+	oracle := gitOracle(t)
+	cli := buildSelfHostCLI(t)
+	for _, run := range gitRuns() {
+		port := gitPort(t, cli, run.target)
+		t.Run(run.target+"-"+run.format, func(t *testing.T) {
+			dir := t.TempDir()
+			gitDiffFixture(t, oracle, dir, run)
+			attrs := filepath.Join(dir, ".git", "info", "attributes")
+			if err := os.WriteFile(attrs, []byte("*.txt -diff\nbin.dat diff=custom\nlink diff\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, setting := range []string{"false", "true", "auto", "invalid"} {
+				if _, stderr, code := oracle.run(t, dir, "", "config", "diff.custom.binary", setting); code != 0 {
+					t.Fatal(stderr)
+				}
+				for _, args := range []string{"log -p", "log -p -a", "log --stat", "log --numstat -a", "log --check", "log --oneline -G ary"} {
+					gitCompare(t, oracle, port, dir, "", strings.Fields(args)...)
+				}
+			}
+		})
+	}
+}
+
 // gitRandomMerges makes merges of two and three branches whose files of
 // lines change at random on each branch. A merge with conflicts takes
 // lines of each side and lines of its own, and a clean merge sometimes
@@ -915,6 +939,12 @@ func TestSelfHostExampleGitForms(t *testing.T) {
 			gitMergeFixture(t, oracle, fixed, run)
 			for _, c := range gitMergeCases {
 				gitCompare(t, oracle, port, fixed, "", strings.Fields(c)...)
+			}
+			if err := os.WriteFile(filepath.Join(fixed, ".git", "info", "attributes"), []byte("b.bin diff\nn.txt -diff\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, mode := range []string{"-c", "--cc"} {
+				gitCompare(t, oracle, port, fixed, "", "log", "-1", mode, "HEAD~1")
 			}
 			signedDir := t.TempDir()
 			keys := gitSignedFixture(t, oracle, signedDir, run)

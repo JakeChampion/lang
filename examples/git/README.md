@@ -163,7 +163,8 @@ git index-pack [-v] [-o FILE.idx] [--stdin] [--fix-thin] [--keep[=WHY]]
   `diff.colorMoved` and `diff.colorMovedWS` give the moved lines the
   colors of git. The patch
   has the header lines of git, the renames with their similarity, the
-  changes of mode, and the line for a binary file. The hunks come from
+  changes of mode, and the line for a binary file. The `diff` attribute and
+  `diff.NAME.binary` determine whether to treat a file as text or binary. The hunks come from
   `std/linediff`. It has the Myers diff of xdiff with its heuristics and
   the indent heuristic, `--minimal`, `--patience`, `--histogram` and
   `--diff-algorithm=`. The other options are `-U<n>`,
@@ -364,9 +365,8 @@ With git 2.43, these settings, messages and merges are also different:
   that names the part. It also stops at a state of the renames that
   git takes for an internal error.
 
-- The other parts of a driver of the attribute `diff`: `-diff` and
-  `diff.NAME.binary` for a binary file, the regex of words of a driver
-  for `--word-diff`, and `textconv`.
+- The other parts of a driver of the attribute `diff`:
+  the regex of words of a driver for `--word-diff`, and `textconv`.
 
 - The pager. `--color=auto` and `color.ui=auto` give colors only to a
   terminal, as git does without a pager.
