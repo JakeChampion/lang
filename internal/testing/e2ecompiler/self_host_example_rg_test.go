@@ -410,7 +410,7 @@ func rgLateCases() []rgCase {
 		"--field-match-separator @@ -c -H foo a.txt", "--field-match-separator @@ --vimgrep foo a.txt",
 		"--field-match-separator @@ --heading -n -H foo a.txt", "--color always --field-match-separator @@ -n -H --column foo a.txt",
 		"--field-match-separator \\x41\\t -n foo a.txt", "--field-context-separator \\xff -n -C1 foo a.txt",
-		"-h", "--help", "-V", "-hV foo", "--help --bogus", "--generate man",
+		"--help=", "--version=yes", "--help=abc\"def", "--hidden=bad\xff", "-h", "--help", "-V", "-hV foo", "--help --bogus", "--generate man",
 		"--generate complete-bash", "--generate complete-zsh", "--generate complete-fish", "--generate complete-powershell",
 		"--generate bogus", "--generate man -c",
 		"--engine bogus foo a.txt", "--engine default foo a.txt", "--engine auto foo a.txt", "--dfa-size-limit 10 foo a.txt",
