@@ -12355,10 +12355,8 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
   let i_local = w_slots + nblk;
   let s_local = w_slots + nblk + 1;
   let ra_local = w_slots + nblk + 2;
-  let arr_arr = w_slots + nblk + 1;
-  let arr_alen = w_slots + nblk + 2;
-  let arr_buf = w_slots + nblk + 3;
-  let arr_ra = w_slots + nblk + 4;
+  let arr_alen = w_slots + nblk + 3;
+  let arr_buf = w_slots + nblk + 4;
   let sum_v = w_slots + nblk + 1;
   let sum_rb = w_slots + nblk + 2;
   let tup_v = w_slots + nblk + 1;
@@ -12382,11 +12380,11 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
   head += "\n";
 
   let nlocals = nblk + 1;
-  if (str_result) {
+  if (str_result || arr_result) {
     nlocals += 2;
   }
-  if (arr_result) {
-    nlocals += 4;
+  if (ret == "u8[]") {
+    nlocals += 2;
   }
   if (sum_result) {
     nlocals += 2;
@@ -12459,45 +12457,29 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       wp += 1;
     }
   }
-  if (str_result) {
-    let sS = util.i32_to_string(s_local);
-    let raS = util.i32_to_string(ra_local);
-    body = body + "    (local.set " + sS + " (call $" + fname + callargs + "))\n";
-    body = body + "    (local.set " + raS + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
-    body = body + "    (i32.store (local.get " + raS + ") " + str_data_wat("(local.get " + sS + ")") + ")\n";
-    body = body + "    (i32.store (i32.add (local.get " + raS + ") (i32.const 4)) " + str_len_wat("(local.get " + sS + ")") + ")\n";
-    body = body + "    (local.get " + raS + "))\n";
-  } else if (ret == "u8[]") {
-    let aS = util.i32_to_string(arr_arr);
-    let raS2 = util.i32_to_string(arr_ra);
-    body = body + "    (local.set " + aS + " (call $" + fname + callargs + "))\n";
-    body += byte_view_decode(aS, util.i32_to_string(arr_buf), util.i32_to_string(arr_alen));
-    body = body + "    (local.set " + raS2 + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
-    body = body + "    (i32.store (local.get " + raS2 + ") (local.get " + util.i32_to_string(arr_buf) + "))\n";
-    body = body + "    (i32.store (i32.add (local.get " + raS2 + ") (i32.const 4)) (local.get " + util.i32_to_string(arr_alen) + "))\n";
-    body = body + "    (local.get " + raS2 + "))\n";
-  } else if (arr_result) {
-    let rk = slice_unchecked(ret, 0, ret.len() - 2);
-    let ss = util.i32_to_string(elem_slot_size(rk));
-    let cs = util.i32_to_string(elem_slot_size(rk));
-    let aS = util.i32_to_string(arr_arr);
-    let lnS = util.i32_to_string(arr_alen);
-    let bfS = util.i32_to_string(arr_buf);
-    let raS2 = util.i32_to_string(arr_ra);
-    let iS2 = util.i32_to_string(i_local);
-    body = body + "    (local.set " + aS + " (call $" + fname + callargs + "))\n";
-    body = body + "    (local.set " + lnS + " (i32.load (local.get " + aS + ")))\n";
-    body = body + "    (local.set " + bfS + " (i32.and (i32.add (call $__fern_alloc (i32.mul (local.get " + lnS + ") (i32.const " + cs + "))) (i32.const 7)) (i32.const -8)))\n";
-    body = body + "    (local.set " + iS2 + " (i32.const 0))\n";
-    body += "    (block $da (loop $ca\n";
-    body = body + "      (br_if $da (i32.ge_u (local.get " + iS2 + ") (local.get " + lnS + ")))\n";
-    body = body + "      " + elem_copy(rk, "(i32.add (local.get " + bfS + ") (i32.mul (local.get " + iS2 + ") (i32.const " + cs + ")))", "(i32.add (i32.add (local.get " + aS + ") (i32.const 8)) (i32.mul (local.get " + iS2 + ") (i32.const " + ss + ")))") + "\n";
-    body = body + "      (local.set " + iS2 + " (i32.add (local.get " + iS2 + ") (i32.const 1)))\n";
-    body += "      (br $ca)))\n";
-    body = body + "    (local.set " + raS2 + " (i32.and (i32.add (call $__fern_alloc (i32.const 12)) (i32.const 3)) (i32.const -4)))\n";
-    body = body + "    (i32.store (local.get " + raS2 + ") (local.get " + bfS + "))\n";
-    body = body + "    (i32.store (i32.add (local.get " + raS2 + ") (i32.const 4)) (local.get " + lnS + "))\n";
-    body = body + "    (local.get " + raS2 + "))\n";
+  if (str_result || arr_result) {
+    let owner = util.i32_to_string(s_local);
+    let result_area = util.i32_to_string(ra_local);
+    let value = "(local.get " + owner + ")";
+    body = body + "    (local.set " + owner + " (call $" + fname + callargs + "))\n";
+    let data = "(i32.add " + value + " (i32.const 8))";
+    let len = "(i32.load " + value + ")";
+    if (str_result) {
+      data = str_data_wat(value);
+      len = str_len_wat(value);
+    } else if (ret == "u8[]") {
+      body += byte_view_decode(owner, util.i32_to_string(arr_buf), util.i32_to_string(arr_alen));
+      data = "(local.get " + util.i32_to_string(arr_buf) + ")";
+      len = "(local.get " + util.i32_to_string(arr_alen) + ")";
+    }
+    // The host reads the first two words. The third keeps the Fern owner
+    // until post-return, including when data points inside a string.
+    let result_ptr = "(local.get " + result_area + ")";
+    body = body + "    (local.set " + result_area + " (call $__fern_alloc (i32.const 12)))\n";
+    body = body + "    (i32.store " + result_ptr + " " + data + ")\n";
+    body = body + "    (i32.store offset=4 " + result_ptr + " " + len + ")\n";
+    body = body + "    (i32.store offset=8 " + result_ptr + " " + value + ")\n";
+    body = body + "    " + result_ptr + ")\n";
   } else if (sum_result) {
     let svS = util.i32_to_string(sum_v);
     let srbS = util.i32_to_string(sum_rb);
@@ -12560,6 +12542,14 @@ pub function extern_exports(mod: parser.Module): string {
     if (ret == "string" || export_has_string_param(params) || extern_export_list(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
       parts = parts.append(build_export_wrapper(x.func_name, params, ret));
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n");
+      if (ret == "string" || extern_export_list(ret)) {
+        let owner = "(i32.load offset=8 (local.get 0))";
+        if (ret == "u8[]") {
+          owner = "(i32.and " + owner + " (i32.const -3))";
+        }
+        parts = parts.append("  (func $__xpost_" + x.func_name + " (param i32)\n    (drop (call $__fern_arr_dec " + owner + "))\n    (call $__fern_raw_free (local.get 0) (i32.const 12)))\n");
+        parts = parts.append("  (export \"cabi_post_" + x.iface + "#" + x.wit + "\" (func $__xpost_" + x.func_name + "))\n");
+      }
     } else {
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $" + x.func_name + "))\n");
     }

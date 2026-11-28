@@ -1136,14 +1136,14 @@ world-driven composer (P2) wires it.
      string { return "hi"; }` reactor composes and a Fern consumer reads `"hi"`
      under wasmtime — the whole Fern→component→consumer string-export path.
    - **Slice 5c self-host port — string-result export. ✅ Done.** `wasm.fern`'s
-     `extern_exports` now emits the string-result wrapper: the self-host string
-     is a pointer to a `[len][bytes]` block, so the wrapper reads `len=[s]`,
-     `data=s+4`, and writes the 4-byte-aligned `[ptr,len]` canonical return area
-     the Go composer's memory lift reads (no SSO normalize — the self-host
-     string is always heap). Gated by
-     `TestSelfHostExportStringResultRunsViaConsumer`: the self-host emits the
-     wrapper, the Go composer lifts it, and a Fern consumer reads `"hi"` under
-     wasmtime. **P6 string-result exports are now complete in both compilers.**
+     The self-host wrapper exposes the string's data pointer and byte length in
+     the first two words of an indirect return area. A third word keeps the
+     Fern string alive until the component host finishes lifting it.
+     The composer's canonical lift uses the core export
+     `cabi_post_<interface>#<function>` to release the owner and return area.
+     Direct core callers can invoke that export with the return-area pointer
+     once they have copied the bytes. The Wasmtime consumer test is
+     `TestSelfHostExportStringResultRunsViaConsumer`.
    - **Slice 5d — string parameter exports (Go). ✅ Done.** `liftExport` now
      accepts a string parameter and lifts with the realloc lift
      (`PutCanonSectionLiftWithMemoryRealloc`): the canonical ABI materialises the
@@ -1192,23 +1192,13 @@ world-driven composer (P2) wires it.
      `[10,20,30,40]`, a Fern consumer `@import`s `iota() -> list<s32>` and reads
      it back, linked + run under wasmtime).
    - **Slice 5e self-host — numeric-array (`list<T>`) result export. ✅ Done.**
-     `wasm.fern`'s `build_export_wrapper` now emits the array-result branch. A
-     self-host array value is the block base (`[len@0]`, elements at +8 in
-     native slots), and the self-host heap isn't aligned, so — like the import
-     array *param* wrapper, not the zero-copy Go side — the wrapper **copies**
-     the elements into a fresh 8-aligned buffer (`extern_array_param_supported`
-     element kinds: i32/u32/f32 slot 4, i64/u64/f64 slot 8) before writing the
-     4-byte-aligned `[buf,len]` canonical return area the Go composer's memory
-     lift reads. `extern_exports` surfaces the wrapper and `export_needs_heap`
-     pins `__fern_alloc` for an array-result export (no `cabi_realloc` — the
-     memory lift needs no realloc). u8/i16 arrays (slot ≠ canonical size) stay
-     deferred, as on the import side. Gated by
-     `TestSelfHostExportListResultRunsViaConsumer` (the self-host emits the
-     `iota(): i32[]` exporter core, the Go composer lifts it, and a Fern consumer
-     reads `[10,20,30,40]` back under wasmtime); the self-compile + printer +
-     checker oracles stay green (the self-host source has no array `@export`, so
-     the shared paths are unchanged). **P6 numeric-array result exports are now
-     complete in both compilers.**
+     Numeric arrays expose their elements directly at the canonical stride,
+     four bytes for i32/u32/f32 and eight for i64/u64/f64. A byte-list
+     result can also expose a byte view. The return area retains the owner
+     until the same post-return callback used for strings releases it.
+     `TestSelfHostExportListResultRunsViaConsumer` checks the component
+     result with Wasmtime. `TestSelfHostExportByteList` repeatedly lifts
+     and releases strings, byte lists, and 64-bit lists in one core instance.
    - **Slice 5f — numeric-array (`list<T>`) parameter export from Fern (Go). ✅
      Done.** The inverse of the list-result export: a Fern reactor
      `@export sum(xs: i32[]): i32` takes a WIT `list<T>` parameter. The composer
