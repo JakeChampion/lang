@@ -2319,6 +2319,25 @@ function callee_scope(f: Func): Env {
   return scope.define(Func { ...f, name: f.own_name });
 }
 
+// A simple argument like $n-1 only reads variables and the current input.
+// Keeping its caller's functions would link every recursive call to the last.
+function needs_functions(arg: filter.Ast): boolean {
+  return match (arg) {
+    filter.Identity => false,
+    filter.Literal(_) => false,
+    filter.Var(_) => false,
+    filter.Negate(a) => needs_functions(a),
+    filter.Arith(_, a, b) => needs_functions(a) || needs_functions(b),
+    filter.Compare(_, a, b) => needs_functions(a) || needs_functions(b),
+    _ => true,
+  };
+}
+
+function argument(name: string, body: filter.Ast, e: Env): Func {
+  let scope = if (needs_functions(body)) { e } else { Env { ...e, funcs: [] } };
+  return Func { name: name, own_name: name, params: [], body: body, scope: [scope], argument: true, single: false };
+}
+
 // The outputs of the body of `f` with its parameters from `at` bound in
 // `scope`. A parameter is the argument as a filter of the caller. A `$`
 // parameter is a variable for each output of the argument also, and jq takes
@@ -2331,7 +2350,7 @@ function call_defined(f: Func, args: filter.Ast[], at: i32, input: json.JsonValu
     return run(f.body, input, scope, k, St { ...st, calls: st.calls + 1 });
   }
   let name = filter.param_name(f.params[at]);
-  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
+  let bound = scope.define(argument(name, args[at], e));
   if (name == f.params[at]) {
     return call_defined(f, args, at + 1, input, e, bound, k, st);
   }
@@ -2346,7 +2365,7 @@ function paths_defined(f: Func, args: filter.Ast[], at: i32, it: PathItem, e: En
     return run_paths(f.body, it, scope, k, St { ...st, calls: st.calls + 1 });
   }
   let name = filter.param_name(f.params[at]);
-  let bound = scope.define(Func { name: name, own_name: name, params: [], body: args[at], scope: [e], argument: true, single: false });
+  let bound = scope.define(argument(name, args[at], e));
   if (name == f.params[at]) {
     return paths_defined(f, args, at + 1, it, e, bound, k, st);
   }
