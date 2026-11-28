@@ -1,0 +1,43 @@
+// A write accepts samples, with every channel of a frame kept together.
+pub function block(samples: [i32], channels: i32, send: ([i32], i32) => i32): i32 {
+  let deadline = monotonic_ns() + 200000000i64;
+  let at = 0;
+  let stalled = false;
+  while (at < samples.len()) {
+    let left = deadline - monotonic_ns();
+    if (left <= 0i64) {
+      return at;
+    }
+    let n = send(samples[at:], ((left + 999999i64) / 1000000i64) as i32);
+    if (n < 0 || n > samples.len() - at || n % channels != 0 || n == 0 && stalled) {
+      return at;
+    }
+    stalled = n == 0;
+    at += n;
+  }
+  return at;
+}
+
+// One extra period lets each block start at the correct phase without
+// allocating another tone. Stereo leaves the right channel silent.
+pub function play(frames: i32, channels: i32, half_period: i32, send: ([i32], i32) => i32): i32 {
+  let period = 2 * half_period;
+  let samples: i32[] = [];
+  for i in 0..frames + period - 1 {
+    samples = samples.append(if (i % period < half_period) { 8000 } else { -8000 });
+    if (channels == 2) {
+      samples = samples.append(0);
+    }
+  }
+  let wrote = 0;
+  for k in 0..25 {
+    let start = k * frames % period * channels;
+    let size = frames * channels;
+    let n = block(samples[start:start + size], channels, send);
+    wrote += n;
+    if (n < size) {
+      return wrote;
+    }
+  }
+  return wrote;
+}

@@ -344,6 +344,26 @@ function test_image_every_pixel(): test.TestOutcome {
   return test.assert_eq(bad.join(" "), "");
 }
 
+function test_image_full_width(): test.TestOutcome {
+  let img = ramp(8, 11);
+  let f = draw.offscreen(8, 6);
+  defer draw.release(f);
+  let background = draw.rgb(73, 64, 55);
+  for offset in [-2, 0, 3] {
+    f.store(0, 0, 8, 6, background);
+    f.image(0, offset, 8, 5, img);
+    for y in 0..6 {
+      for x in 0..8 {
+        let want = if (y >= offset && y < offset + 5) { img.pixel(x, y - offset + 3) } else { background };
+        if (f.pixel(x, y) != want) {
+          return test.fail("full-width image crop or clip");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
 function test_clip_corners(): test.TestOutcome {
   let f = frame(30, 30);
   defer free_frame(f);
@@ -702,6 +722,7 @@ function main(): i32 {
   r = r.it("cover_size keeps the shape of an image", test_cover_size_keeps_the_shape);
   r = r.it("an image shows its middle in its box", test_image_copies_the_middle);
   r = r.it("an image copies each pixel of its box", test_image_every_pixel);
+  r = r.it("full-width image copies keep the vertical crop and clip", test_image_full_width);
   r = r.it("clip_corners rounds the corners of a box", test_clip_corners);
   r = r.it("cover blends a colour by the part of a pixel it covers", test_cover);
   r = r.it("scaled blends the four nearest pixels", test_scaled);

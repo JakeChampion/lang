@@ -220,7 +220,11 @@ func jqSuiteCase(t *testing.T, bin, ref, modules string, c jqCase) bool {
 func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
 	bin := buildJq(t)
 	for _, c := range []struct{ program, want string }{
+		{`[0 | while(. < 25000; . + 1)] | length`, "25000"},
+		{`def f: if . == 0 then . else .-1 | f end; first(0 | while(true; error("unused")) | 25001 | f)`, "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) end; 3000000 | f", "0"},
+		{`def f: if . == 0 then true else until((. - 1 | f); .) | true end; 25001 | f`, "true"},
+		{`def f: if . <= 0 then 0 else until(. <= 0; . - 1 | f) end; 25001 | f`, "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) + 1 end; 3000000 | f", "3000000"},
 		{"def f($n): if $n == 0 then . else f($n - 1) end; 7 | f(1000000)", "7"},
 		{"def f: ., (. + 1 | f); first(0 | f | select(. >= 3000000))", "3000000"},
@@ -232,8 +236,12 @@ func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
 		{`def f($n): if $n == 0 then .a else try f($n-1) catch empty end; path(f(25000))`, `["a"]`},
 		{`def f: if . == 0 then error("consumer") else . - 1 | f end; try (try 1 catch "body" | 25000 | f) catch .`, `"consumer"`},
 		{"def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; 5000 | f", "5000"},
+		{`def f: if .==0 then 0 else [.-1] | walk(if type=="number" then f else . end) | .[0] end; 5000|f`, `0`},
+		{`def f: if .==0 then 0 else {a:(.-1)} | walk(if type=="number" then f else . end) | .a end; 5000|f`, `0`},
 		{"def f: if . == 0 then 0 else {a: (. - 1 | f)} | .a + 1 end; 5000 | f", "5000"},
 		{"def f: if . == 0 then null else (. - 1 | f) // 1 end; 5000 | f", "1"},
+		{"def f: if . == 0 then 0 else range(.-1;.) | f end; 5000 | f", "0"},
+		{"def f: if . == 0 then 0 else range(.-1;.-2;-1) | f end; 5000 | f", "0"},
 		{"def f: if . == 0 then 0 else reduce (. - 1 | f) as $x (1; . + $x) end; 5000 | f", "5000"},
 		{"def f: if . == 0 then 0 else foreach (. - 1 | f) as $x (1; . + $x) end; 5000 | f", "5000"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) as $x | $x + 1 end; 5000 | f", "5000"},
@@ -252,6 +260,8 @@ func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
 		{"def g: if . == 0 then 0 else (. - 1 | g) end; def f: if . == 0 then 0 else (2000 | g | empty), (. - 1 | f) end; 3000 | f", "0"},
 		{"def f(g): g; def h: if . >= 5000 then . else ., (. + 1 | f(h)) end; [0 | h] | length", "5001"},
 		{"def loop(f): if . >= 3000 then . else f | loop(f) end; 0 | loop(. + 1)", "3000"},
+		{`def f: if .==0 then error("done") else repeat(.-1|f) end; try (25000|f) catch .`, `"done"`},
+		{`def f: if .==0 then . else first(repeat(.-1|f)) end; 25000|f`, `0`},
 		{"def f($x): $x; def g: if . == 0 then 0 else f(. - 1 | g) + 1 end; 5000 | g", "5000"},
 		{"def f: def g: if . == 0 then 0 else (. - 1 | f) end; g; 5000 | f", "0"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) end; reduce range(3000) as $i (0; . + ($i | f))", "0"},
@@ -277,6 +287,9 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		args  []string
 		input string
 	}{
+		{[]string{"-nc", `try until((true, error("late")); .) catch .`}, ""},
+		{[]string{"-nc", `first(until((true, error("late")); .))`}, ""},
+		{[]string{"-nc", `try until(. > 0; (1, error("later"))) catch .`}, ""},
 		{[]string{"."}, "{\"b\":[1,{}],\"a\":[],\"c\":\"x\\u0001\\u007f\u00e9/\"}"},
 		{[]string{"-c", "."}, "1 2 {\"a\":1}[3]"},
 		{[]string{"-c", ".[]"}, "1\n2\n"},
@@ -300,6 +313,8 @@ func TestSelfHostExampleJqAgainstJq(t *testing.T) {
 		{[]string{"-cn", "1 % 0"}, ""},
 		{[]string{"-c", "keys, has(\"a\"), (.a | has(0)), has(0)"}, "{\"b\":1,\"a\":[2]}"},
 		{[]string{"-r", "map(tostring) | add"}, "[1,\"a\",[1.0],null]"},
+		{[]string{"-c", `try walk(if type=="number" then (.,error("late")) else . end) catch .`}, "{\"a\":1}\n[1]\n"},
+		{[]string{"-c", `walk(if type=="number" then (.+1,.+2) else . end)`}, "{\"a\":[1],\"b\":2}\n"},
 		{[]string{"-c", "if . == 1 then error({\"a\": .}) elif . == 2 then error(\"two\") else try error(\"x\") catch . end"}, "1\n2\n3\n"},
 		{[]string{"-c", "reduce .[] as $x (0; . + $x), [foreach .[] as $x (0; . + $x; [$x, .])]"}, "[1,2,3]\n"},
 		{[]string{"-c", "[.. | numbers] | sort, unique, min, max, (map(tostring) | join(\",\")), [limit(2; .[])]"}, "{\"a\":[3,{\"b\":[1,3.0]}],\"c\":2}\n"},

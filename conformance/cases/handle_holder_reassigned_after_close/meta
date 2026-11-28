@@ -1,0 +1,4 @@
+waiver: harness-limit
+reason: the case needs a directory it may write in. The wasm runner grants
+  the module no preopened directory, so temp_dir and open_writer have
+  nowhere to land there.

@@ -1,0 +1,64 @@
+import "../packages/codecs/icc/matrix_eval";
+import "../packages/codecs/icc/matrix_solve";
+import "../packages/codecs/icc/srgb_destination";
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function bits(input: [u8], at: i32): i64 {
+  let result = 0i64;
+  for index in 0..8 {
+    result |= input[at + index] as i64 << (index * 8) as i64;
+  }
+  return result;
+}
+
+function solve_name(error: matrix_solve.SolveError): string {
+  return match (error) { matrix_solve.SolveError.Shape => "Shape", matrix_solve.SolveError.Input => "Input", matrix_solve.SolveError.Numeric => "Numeric", matrix_solve.SolveError.Unsupported => "Unsupported", matrix_solve.SolveError.Singular => "Singular", matrix_solve.SolveError.Cancelled => "SolveCancelled" };
+}
+
+function emit(path: string): i32 {
+  let Ok(input) = read_file_bytes(path) else {
+    return 2;
+  };
+  if (input.len() != 32 || input[0] != b'F' || input[1] != b'S' || input[2] != b'D' || input[3] != b'1') {
+    return 3;
+  }
+  let stop = signed(input, 4);
+  if (stop < 0) {
+    return 4;
+  }
+  let polls = cell_new(0);
+  let result = srgb_destination.encode(matrix_eval.XYZ { x: f64_from_bits(bits(input, 8)), y: f64_from_bits(bits(input, 16)), z: f64_from_bits(bits(input, 24)) }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(v) => {
+      print(f"encode {path} ok {polls.get()} {v.r as i32} {v.g as i32} {v.b as i32}");
+    },
+    Err(srgb_destination.DestinationError.Cancelled) => {
+      print(f"encode {path} error Cancelled {polls.get()}");
+    },
+    Err(srgb_destination.DestinationError.Solve(error)) => {
+      print(f"encode {path} error {solve_name(error)} {polls.get()}");
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let code = emit(paths[index]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

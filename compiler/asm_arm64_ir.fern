@@ -1332,7 +1332,7 @@ function ssa_save_runs(saved: i32[]): i32[][] {
   return [ints, fls];
 }
 
-// A save-only frame can reserve its register slots with the frame record.
+// A compact frame reserves all its slots with the frame record.
 function ssa_saved_frame(saved: i32[], s: asmcore.EmitState, compact: i32): asmcore.EmitState {
   if (compact > 0) {
     return ssa_saved_slots(saved, false, ssa_frame_record(s, compact), compact);
@@ -1757,7 +1757,7 @@ function ssa_fr_ldr(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): a
   if (ssa_lane_off(off, s)) {
     return ssa_fr_q(s, true, ssa_vq(ssa_lane_reg(reg)), off, pushed);
   }
-  let pos = ssa_fr_pos(s, off - s.ssa_save, pushed);
+  let pos = ssa_fr_pos(s, off, pushed);
   if (pos >= 0) {
     return ssa_ldst(s, true, reg, "sp", pos);
   }
@@ -1768,7 +1768,7 @@ function ssa_fr_str(s: asmcore.EmitState, reg: string, off: i32, pushed: i32): a
   if (ssa_lane_off(off, s)) {
     return ssa_fr_q(s, false, ssa_vq(ssa_lane_reg(reg)), off, pushed);
   }
-  let pos = ssa_fr_pos(s, off - s.ssa_save, pushed);
+  let pos = ssa_fr_pos(s, off, pushed);
   if (pos >= 0) {
     return ssa_ldst(s, false, reg, "sp", pos);
   }
@@ -2568,14 +2568,15 @@ function ssa_fr_q(s: asmcore.EmitState, load: boolean, q: string, first: i32, pu
   if (load) {
     m = "    ldr ";
   }
-  let pos = ssa_fr_pos(s, off - s.ssa_save, pushed);
+  let pos = ssa_fr_pos(s, off, pushed);
   if (pos >= 0 && pos % 16 == 0 && pos <= 65520) {
     return s.write(m + q + ", [sp, #" + util.i32_to_string(pos) + "]\n");
   }
   if (pos >= 0) {
     s = ssa_addsub_imm(s, false, "x16", "sp", pos);
   } else {
-    s = fr_sub_imm(s, "x16", "x29", 0 - (off - s.ssa_save));
+    let disp = off - s.ssa_save;
+    s = if (disp > 0) { ssa_addsub_imm(s, false, "x16", "x29", disp) } else { fr_sub_imm(s, "x16", "x29", -disp) };
   }
   return s.write(m + q + ", [x16]\n");
 }
@@ -5264,7 +5265,7 @@ function ssa_zero_slots(slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
   let v = 0;
   while (v <= top) {
     let step = 1;
-    let pos = ssa_fr_pos(s, ssa_slot_off(v + 1) - s.ssa_save, 0);
+    let pos = ssa_fr_pos(s, ssa_slot_off(v + 1), 0);
     if (want[v] && want[v + 1] && pos >= 0 && pos <= 504) {
       s = s.write("    stp xzr, xzr, [sp, #" + util.i32_to_string(pos) + "]\n");
       step = 2;
@@ -5998,7 +5999,6 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = asmcore.EmitState { ...s, capture: body };
   }
   let fn_label = "__fn_" + asmcore.sanitize_label(label_name);
-  let dbg = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
   let bp = ssa.block_positions(f);
   let lbase = s.nlab;
   s = s.lab_take(bp.len());
@@ -6020,17 +6020,24 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   if (canary > 0) {
     drop = frame + 16;
   }
-  // No spill, view or canary needs the old x29.
-  // A paired post-index must encode the whole (16-byte aligned) frame.
-  if (drop == 0 && save > 0 && save + 16 <= 504 && s.profile == 0) {
-    fr = SsaFrame { ...fr, compact: save + 16 };
+  // Keep the frame record below spill slots and saved registers when the
+  // paired post-index can release them together. Views and cold saves
+  // still address their frame through the original x29.
+  let total = frame + save + 16;
+  if (total > 16 && total <= 504 && canary == 0 && s.profile == 0 && !cold.any && ssa.view_count(views) == 0) {
+    fr = SsaFrame { ...fr, compact: total };
   }
+  let fp_save = save - fr.compact;
+  let dbg = asmcore.dbg_vars(fn_label, alloc, r, formed.repl, if (s.var_rows) { seen_vals } else { [] }, seen_slots, ssa_dbg_locs(reg_of, fp_save, seen_vals.len() > 0), ssa.position_count(f));
   let early_homes = ssa_early_homes(f, fr, reg_of, s);
   let split = if (!leaf && drop == 0 && s.profile == 0) { ssa_frame_split(f, fr, reg_of, early_homes) } else { ssa.FrameSplit { early: [], sites: [] } };
   let fr_early = SsaFrame { ...fr, frameless: true };
   let cfi_framed = false;
   if (split.early.len() > 0) {
     s = ssa_cfi(s, 7, "", 0);
+  } else if (fr.compact > 0) {
+    s = ssa_saved_frame(saved, s, fr.compact);
+    drop = 0;
   } else if (!leaf && saved.len() > 0 && drop > 0 && ssa_save_bytes(saved) + drop <= 4095) {
     // One step of sp makes room for the saved registers and the frame.
     s = ssa_saved_slots(saved, false, ssa_addsub_imm(ssa_frame_record(s), true, "sp", "sp", ssa_save_bytes(saved) + drop));
@@ -6045,7 +6052,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = s.write("    adrp x17, __fern_canary\n    ldr x17, [x17, :lo12:__fern_canary]\n");
     s = fr_str(s, "x17", -canary);
   }
-  s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), ssa_konst: imm.konst, ssa_konst_value: imm.value };
+  s = asmcore.EmitState { ...s, ssa_frame: if (fr.compact > 0) { frame + 16 } else { frame }, ssa_save: fp_save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), ssa_konst: imm.konst, ssa_konst_value: imm.value };
   s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr, s);
   let frame_homes = reg_of;
   let starts: i32[] = [];
@@ -6318,7 +6325,7 @@ function ssa_frame_record(s: asmcore.EmitState, size: i32 = 16): asmcore.EmitSta
 
 function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, alloc: ssa.Alloc, fr: SsaFrame, frame: i32, framed: boolean, fusions: ssaprepare.Fusion[]): asmcore.EmitState {
   if (s.retain_prepared) {
-    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: frame, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
+    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: frame, arg_homes: [], frame_record_bytes: if (!framed) { 0 } else if (fr.compact > 0) { fr.compact } else { 16 }, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
     s = asmcore.retain_body(s, prepared, label_name, context, entry, allocation);
   }
   return s;
@@ -6417,7 +6424,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 // fern-lint: allow cyclomatic-complexity
 function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
-  if (o.kind_tag == ir.K_TCP_POLLABLE || o.kind_tag == ir.K_SEND_ADOPT || o.kind_tag == ir.K_SEND_ROOT) {
+  if (ir.native_word_identity(o.kind_tag)) {
     return s;
   }
 
@@ -6444,9 +6451,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("heap");
     s = s.need(rb);
     s = s.write("    bl __fn___fern_" + rb + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_RANDOM_I32) {
-    s = s.need("random_i32");
-    s = s.write("    bl __fn___fern_random_i32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_PROC_FORK) {
     s = s.need("proc_fork").need("heap");
     s = s.write("    bl __fn___fern_proc_fork\n");
@@ -6500,9 +6504,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = emit_arm64_op_heap_release_to(o, s);
   } else if (o.kind_tag == ir.K_HEAP_ADOPT) {
     s = emit_arm64_op_heap_adopt(o, s);
-  } else if (o.kind_tag == ir.K_NOW_NS) {
-    s = s.need("now_ns");
-    s = s.write("    bl __fn___fern_now_ns\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_POLL) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_poll\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
@@ -6532,10 +6533,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_set_window_size\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_PIPE) {
-    s = s.need("heap");
-    s = s.need("pipe");
-    s = s.write("    bl __fn___fern_pipe\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag >= ir.K_OPEN_DIR && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     s = emit_dir_op(o, s);
   } else if (o.kind_tag == ir.K_WINDOW_SIZE) {
@@ -6556,9 +6553,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_set_process_group\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("set_process_group");
-  } else if (o.kind_tag == ir.K_PRIORITY) {
-    s = s.write("    bl __fn___fern_priority\n    str x0, [sp, #-16]!\n");
-    s = s.need("priority");
   } else if (o.kind_tag == ir.K_SET_PRIORITY) {
     s = s.write("    bl __fn___fern_set_priority\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
@@ -7003,7 +6997,10 @@ function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], r: irtables.Lowered, s: asmc
     }
     return ssa_store(reg_of, ins.result, d, s);
   }
-  if (kind == ir.K_TCP_POLLABLE) {
+  if (ir.native_word_identity(kind)) {
+    if (reg_of[ins.result] == -1) {
+      return s;
+    }
     s = asmcore.ssa_x0_forget(s);
     let d = ssa_dst(reg_of, ins.result);
     s = ssa_load(reg_of, ins.args[0], d, s);

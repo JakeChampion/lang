@@ -20,7 +20,7 @@ pub function initial(b: Boundary): State {
 }
 
 function slot_value(s: State, name: string, b: Boundary, width: i32): i32 {
-  if (width == 64 && isa.frame_slot(name, b.arm)) {
+  if (width == 64 && isa.frame_slot(name, b.arm, true)) {
     if (name == b.result && s.slot > 0) {
       return s.slot;
     }

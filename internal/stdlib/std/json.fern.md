@@ -778,11 +778,21 @@ const JSON_NOT_WS: u8[] = [
 
 ```fern
 <<17 function __json_ws(s: string, i: i32): i32>>=
+// Tokens start above the space byte. Check them before testing the four
+// whitespace characters allowed by JSON.
+@inline
+function __json_is_ws(b: i32): boolean {
+  if (b > 32) {
+    return false;
+  }
+  return b == 32 || b == 9 || b == 10 || b == 13;
+}
+
 @inline
 function __json_ws(s: string, i: i32): i32 {
   if (i < s.len()) {
     let b = s[i] as i32;
-    if (b == 32 || b == 9 || b == 10 || b == 13) {
+    if (__json_is_ws(b)) {
       return __json_ws_run(s, i + 1);
     }
   }
@@ -794,7 +804,7 @@ function __json_ws_run(s: string, i: i32): i32 {
   // Most runs are one space, after a colon or a comma.
   if (i < s.len()) {
     let c = s[i] as i32;
-    if (c != 32 && c != 9 && c != 10 && c != 13) {
+    if (!__json_is_ws(c)) {
       return i;
     }
   }

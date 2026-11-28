@@ -22,6 +22,21 @@ function transfer(): test.TestOutcome {
   return test.assert_true(good);
 }
 
+function encoded_bytes(): test.TestOutcome {
+  for i in 0..256 {
+    if (color.linear_to_srgb_byte(color.srgb_to_linear(i as f64 / 255.0)) as i32 != i) {
+      return test.fail(f"byte {i} round trip");
+    }
+  }
+  let infinity = f64_from_bits(0x7ff0000000000000);
+  for (linear, expected) in [(-1.0, 0), (-0.0, 0), (f64_from_bits(0x7ff8000000000000), 0), (1.5, 255), (infinity, 255), (-infinity, 0)] {
+    if (color.linear_to_srgb_byte(linear) as i32 != expected) {
+      return test.fail("clip before the encoding");
+    }
+  }
+  return test.pass();
+}
+
 function alpha(): test.TestOutcome {
   let p = color.rgba(200, 100, 50, 128);
   let premul = color.premultiply(p);
@@ -110,6 +125,7 @@ function image_errors(): test.TestOutcome {
 function main(): i32 {
   let r = test.new("color M1");
   r = r.it("sRGB thresholds and exhaustive byte round trips", transfer);
+  r = r.it("encoded bytes clip linear light and round trip every byte", encoded_bytes);
   r = r.it("premultiply, unpremultiply, zero alpha and saturation", alpha);
   r = r.it("linear source over and transparent pixels", composite);
   r = r.it("linear luminance and channel operations", gray);

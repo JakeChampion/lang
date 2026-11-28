@@ -180,6 +180,7 @@ The [ICC matrix kernel](docs/icc-matrix-evaluation.md) applies signed fixed-poin
 The [restricted forward model selector](docs/icc-matrix-model.md) returns owned columns and qualified curve data without LUT fallback or transform eligibility.
 The [scalar matrix/TRC composition](docs/icc-matrix-trc.md) returns a linear RGB trace and explicit unclipped relative D50 XYZ.
 The [bounded inverse matrix kernel](docs/icc-matrix-solve.md) returns explicit unclipped linear RGB with independent Gaussian reference observations.
+The [scalar sRGB destination kernel](docs/icc-srgb-destination.md) converts relative D50 XYZ to clipped, encoded sRGB bytes under decision 0003.
 The [standalone curve inverses](docs/icc-curve-inverses.md) apply explicit monotonic curve policies with independent mathematical observations.
 The [function-zero power inverses](docs/icc-power-inverses.md) qualify the full positive fixed-point exponent domain separately from affine and piecewise inverses.
 The [bounded affine inverses](docs/icc-affine-inverses.md) preserve continuous curve policies and the exact range phase within their declared subset.

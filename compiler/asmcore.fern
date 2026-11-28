@@ -6209,7 +6209,7 @@ pub function ssa_fused_loc(source: ssaprepare.SourceLines, blk: ssa.SBlock, begi
 }
 
 pub function ssa_host_bare(op: string): boolean {
-  return op == "putchar" || op == "monotonic_ns" || op == "now_unix_ms";
+  return op == "putchar" || op == "monotonic_ns" || op == "now_unix_ms" || op == "now_ns" || op == "random_i32" || op == "priority";
 }
 
 pub function ssa_host_kind(op: string): boolean {
@@ -6221,7 +6221,7 @@ pub function ssa_host_need(op: string): string {
     return op;
   }
   let fs: string[] = [
-    "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
+    "pipe", "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "remove_file",
     "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "read_dir_ino_bytes", "env", "stat", "lstat", "subprocess", "writer_write",
   ];
   for x in fs {

@@ -1632,17 +1632,6 @@ function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym
   return util.append_all(out, body);
 }
 
-function dw_last_slash(path: string): i32 {
-  let i = path.len() - 1;
-  while (i >= 0) {
-    if (path[i] == b'/') {
-      return i;
-    }
-    i -= 1;
-  }
-  return -1;
-}
-
 function dw_dir_index(dirs: string[], dir: string): i32 {
   for i in 0..dirs.len() {
     if (dirs[i] == dir) {
@@ -1657,27 +1646,23 @@ function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_off
   let dirs: string[] = [];
   let file_dir: i32[] = [];
   let file_name: string[] = [];
-  let fi = 0;
-  while (fi < files.len()) {
-    let path = files[fi];
-    let slash = dw_last_slash(path);
+  for path in files {
     let d = 0;
     let name = path;
-    if (slash > 0) {
-      let dir = slice_unchecked(path, 0, slash).to_owned();
-      if (dir != ".") {
-        d = dw_dir_index(dirs, dir);
-        if (d > dirs.len()) {
-          dirs = dirs.append(dir);
+    if let Some(slash) = path.last_index_of("/") {
+      if (slash > 0) {
+        let dir = slice_unchecked(path, 0, slash).to_owned();
+        if (dir != ".") {
+          d = dw_dir_index(dirs, dir);
+          if (d > dirs.len()) {
+            dirs = dirs.append(dir);
+          }
         }
       }
-    }
-    if (slash >= 0) {
       name = slice_unchecked(path, slash + 1, path.len()).to_owned();
     }
     file_dir = file_dir.append(d);
     file_name = file_name.append(name);
-    fi += 1;
   }
   for di in 0..dirs.len() {
     hdr = elf_str_bytes(hdr, dirs[di]);

@@ -140,6 +140,8 @@ jobs:
           ./bin/fern -apk build/android-stopwatch/fern-native-compressed.apk -apk-compress -apk-package dev.fern.nativez -apk-label "Fern Native Z" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-native-hardened.apk -harden -apk-package dev.fern.nativeh -apk-label "Fern Native H" examples/android/native/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-dextest.apk -apk-package dev.fern.dextest tests/android/dex/app.fern
+          ./bin/fern -o build/android-stopwatch/audio-tone-test tests/android/audio/tone_test.fern
+          build/android-stopwatch/audio-tone-test
           ./bin/fern -apk build/android-stopwatch/fern-audiotest.apk -apk-package dev.fern.audiotest -apk-min-sdk 28 -apk-permission RECORD_AUDIO tests/android/audio/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-videotest.apk -apk-package dev.fern.videotest -apk-label "Fern Video Test" -apk-min-sdk 29 -apk-permission READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE -apk-debuggable tests/android/video/app.fern
           ./bin/fern -apk build/android-stopwatch/fern-playertest.apk -apk-package dev.fern.playertest -apk-min-sdk 26 -apk-permission INTERNET,READ_MEDIA_VIDEO,READ_EXTERNAL_STORAGE -apk-cleartext tests/android/player/app.fern

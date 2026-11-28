@@ -106,10 +106,10 @@ struct Item { hash: string, time: i64 }
 // parent. `lines` holds the ranges of `-L` of each commit that has them.
 // `names` holds the name of each commit of `pending` as the command line
 // gives it, or "".
-pub struct Walk { g: walk.Graph, flags: Map[string, i32], parents: Map[string, string[]], list: Item[], head: i32, pending: string[], names: string[], opts: Opts, limited: boolean, failed: string, topo: Topo[], treesame: Map[string, boolean[]], lines: Map[string, linelog.Entry[]] }
+pub struct Walk { patch_opts: patch.Opts, g: walk.Graph, flags: Map[string, i32], parents: Map[string, string[]], list: Item[], head: i32, pending: string[], names: string[], opts: Opts, limited: boolean, failed: string, topo: Topo[], treesame: Map[string, boolean[]], lines: Map[string, linelog.Entry[]] }
 
 pub function walk_of(g: walk.Graph, o: Opts): Walk {
-  return Walk { g: g, flags: Map { }, parents: Map { }, list: [], head: 0, pending: [], names: [], opts: o, limited: false, failed: "", topo: [], treesame: Map { }, lines: Map { } };
+  return Walk { patch_opts: patch.defaults(), g: g, flags: Map { }, parents: Map { }, list: [], head: 0, pending: [], names: [], opts: o, limited: false, failed: "", topo: [], treesame: Map { }, lines: Map { } };
 }
 
 pub function flag(w: Walk, h: string): i32 {
@@ -673,7 +673,7 @@ function patch_id(w_in: Walk, c: string): (Walk, string) {
     base = pn.tree;
   }
   let (s1, changes) = treediff.changes(w.g.store, base, n.tree, w.opts.items);
-  let (s2, text) = patch.patch_id_text(s1, changes);
+  let (s2, text) = patch.patch_id_text(s1, changes, w.patch_opts);
   return (Walk { ...w, g: walk.Graph { ...w.g, store: s2 } }, objects.hash_of(w.g.store.width, "blob", text));
 }
 

@@ -1,0 +1,19 @@
+// spec: RH-51
+// An assignment on one branch replaces the holder on that branch only. The
+// other branch still holds the closed handle.
+function check_branch(path: string, replace: boolean): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  let ws: Writer[] = [w];
+  w.close()?;
+  if (replace) {
+    ws = [];
+  }
+  if (ws.len() > 0) {
+    ws[0].write("x")?;
+  }
+  return Ok(());
+}
+
+function main(): i32 {
+  return 0;
+}

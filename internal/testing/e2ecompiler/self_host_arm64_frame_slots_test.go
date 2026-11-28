@@ -38,7 +38,18 @@ const arm64FrameSlotsProgram = `enum List { Nil, Cons(i64, List) }
     return noise((a + b + c + d + e + f + g + h) as i64) as i32 + 3 * i + 5 * j;
 }
 
+// More parameters survive the call than fit in saved registers.
+@noinline function pressure(a0: i64, a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64, a7: i64,
+    a8: i64, a9: i64, a10: i64, a11: i64, a12: i64, a13: i64, a14: i64,
+    a15: i64, a16: i64, a17: i64, a18: i64, a19: i64, a20: i64, a21: i64): i64 {
+    let z = noise(a0);
+    return z + 2i64 * a1 + 3i64 * a2 + 4i64 * a3 + 5i64 * a4 + 6i64 * a5 + 7i64 * a6
+        + 8i64 * a7 + 9i64 * a8 + 10i64 * a9 + 11i64 * a10 + 12i64 * a11 + 13i64 * a12 + 14i64 * a13
+        + 15i64 * a14 + 16i64 * a15 + 17i64 * a16 + 18i64 * a17 + 19i64 * a18 + 20i64 * a19 + 21i64 * a20 + 22i64 * a21;
+}
+
 function main(): i32 {
+    if (pressure(-9i64, -8i64, -7i64, -6i64, -5i64, -4i64, -3i64, -2i64, -1i64, 0i64, 1i64, 2i64, 3i64, 4i64, 5i64, 6i64, 7i64, 8i64, 9i64, 10i64, 11i64, 12i64) != 1247i64) { return 2; }
     if (weighted(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) != 185) { return 1; }
     return (total(count_up(1i64, 40i64)) % 200i64) as i32;
 }
@@ -62,6 +73,13 @@ func TestSelfHostArm64FrameSlotsAndHoistedBox(t *testing.T) {
 			asm, err := os.ReadFile(asmPath)
 			if err != nil {
 				t.Fatal(err)
+			}
+			pressure := functionListing(string(asm), "__fn_pressure")
+			frame := regexp.MustCompile(`stp x29, x30, \[sp, #-([0-9]+)\]!`).FindStringSubmatch(pressure)
+			if len(frame) != 2 || !strings.Contains(pressure, "ldp x29, x30, [sp], #"+frame[1]+"\n") ||
+				strings.Contains(pressure, "sub sp, sp") || strings.Contains(pressure, "mov sp, x29") ||
+				!regexp.MustCompile(`str x[0-9]+, \[sp, #[0-9]+\]`).MatchString(pressure) {
+				t.Errorf("%s: expected spill stores inside a single frame allocation:\n%s", tg.target, pressure)
 			}
 			weighted := functionListing(string(asm), "__fn_weighted")
 			for _, want := range []string{"[sp, #-32]!", "[x29, #160]", "[x29, #176]", "[sp], #32"} {

@@ -239,29 +239,23 @@ pub function evaluate(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.Jso
 // Each value of `o` to `k`, and then the error of `o`. The last value is the
 // last call when there is no error.
 function give(o: Outputs, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let n = o.values.len();
-  if (n > 0 && o.error.len() == 0) {
-    let t = give_some(o.values, n - 1, k, st);
-    if (t.sig != OK) {
-      return t;
-    }
-    return k(o.values[n - 1], t);
-  }
-  let s = give_some(o.values, n, k, st);
-  if (s.sig != OK || o.error.len() == 0) {
-    return s;
-  }
-  return raised(s, o.error[0]);
+  return give_from(o, 0, k, st);
 }
 
-// The first `n` values of `vs` to `k`.
-function give_some(vs: json.JsonValue[], n: i32, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let s = st;
-  for i in 0..n {
-    s = drive(k(vs[i], s));
-    if (s.sig != OK) {
-      return s;
+function give_from(o: Outputs, at: i32, k: (json.JsonValue, own St) => own St, own s: St): own St {
+  while (s.sig == OK && at < o.values.len()) {
+    let v = o.values[at];
+    at += 1;
+    if (at == o.values.len() && o.error.len() == 0) {
+      return k(v, s);
     }
+    s = k(v, s);
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => give_from(o, at, k, t)) };
+    }
+  }
+  if (s.sig == OK && o.error.len() > 0) {
+    return raised(s, o.error[0]);
   }
   return s;
 }
@@ -595,15 +589,7 @@ function defined(name: string, params: string[], body: filter.Ast, e: Env): Func
 
 // Each value of `vs` to `k`. The last value is the last call.
 function give_all(vs: json.JsonValue[], k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let n = vs.len();
-  if (n == 0) {
-    return st;
-  }
-  let s = give_some(vs, n - 1, k, st);
-  if (s.sig != OK) {
-    return s;
-  }
-  return k(vs[n - 1], s);
+  return give(ok(vs), k, st);
 }
 
 // The outputs of `f` to `k`. When `f` is single, its outputs come first in
@@ -727,24 +713,10 @@ function lookup(e: Env, name: string): Outputs {
 function iterate_to(v: json.JsonValue, guard: boolean, k: (json.JsonValue, own St) => own St, own st: St): own St {
   match (v) {
     json.JArray(items) => {
-      let s = st;
-      for x in items {
-        s = drive(k(x, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
+      return give_all(items, k, st);
     },
     json.JObject(o) => {
-      let s = st;
-      for x in o.values() {
-        s = drive(k(x, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
+      return give_all(o.values(), k, st);
     },
     _ => {
       if (guard) {
@@ -1293,71 +1265,49 @@ function paths_select(p: json.JsonValue, input: json.JsonValue, f: filter.Ast, e
 function repeat_to(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let s = st;
   while (s.sig == OK) {
-    s = drive(run(f, v, e, k, s));
+    s = run(f, v, e, k, s);
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => repeat_to(v, f, e, k, t)) };
+    }
   }
   return s;
 }
 
 // jq 1.7: `def _while: if cond then ., (update | _while) else empty end`.
 function while_to(v: json.JsonValue, cond: filter.Ast, update: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  return run(cond, v, e, (c: json.JsonValue, own s: St): own St => while_body(v, c, cond, update, e, k, s), st);
+  if (st.calls >= BOUNCE_EVERY) {
+    return bounce(st, (own s: St): own St => while_to(v, cond, update, e, k, s));
+  }
+  return run(cond, v, e, (c: json.JsonValue, own s: St): own St => while_body(v, c, cond, update, e, k, s), St { ...st, calls: st.calls + 1 });
 }
 
 function while_body(v: json.JsonValue, c: json.JsonValue, cond: filter.Ast, update: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   if (!truthy(c)) {
     return st;
   }
-  let s = drive(k(v, st));
+  return while_update(v, cond, update, e, k, k(v, st));
+}
+
+// Yield the current value before evaluating its update. A downstream
+// break or error can stop the update after the sink resumes.
+function while_update(v: json.JsonValue, cond: filter.Ast, update: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => while_update(v, cond, update, e, k, t)) };
+  }
   if (s.sig != OK) {
     return s;
   }
   return run(update, v, e, (n: json.JsonValue, own s1: St): own St => while_to(n, cond, update, e, k, s1), s);
 }
 
-// jq 1.7: `def _until: if cond then . else (next | _until) end`. A single
-// output of the condition and of `next` goes on in a loop.
+// jq 1.7: `def _until: if cond then . else (next | _until) end`.
+// Consume each condition or update as it arrives, so a later error cannot
+// discard earlier outputs and a downstream break can stop the generator.
 function until_to(v: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let cur = v;
-  let s = st;
-  while (true) {
-    let saved = s.items;
-    s = drive(collected(cond, cur, e, s));
-    let conds = s.items;
-    s = St { ...s, items: saved };
-    if (s.sig != OK) {
-      return s;
-    }
-    if (conds.len() != 1) {
-      for x in conds {
-        s = drive(until_branch(cur, x, cond, next, e, k, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
-    }
-    if (truthy(conds[0])) {
-      return k(cur, s);
-    }
-    let saved2 = s.items;
-    s = drive(collected(next, cur, e, s));
-    let nexts = s.items;
-    s = St { ...s, items: saved2 };
-    if (s.sig != OK) {
-      return s;
-    }
-    if (nexts.len() != 1) {
-      for n in nexts {
-        s = drive(until_to(n, cond, next, e, k, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
-    }
-    cur = nexts[0];
+  if (st.calls >= BOUNCE_EVERY) {
+    return bounce(st, (own s: St): own St => until_to(v, cond, next, e, k, s));
   }
-  return s;
+  return run(cond, v, e, (c: json.JsonValue, own s: St): own St => until_branch(v, c, cond, next, e, k, s), St { ...st, calls: st.calls + 1 });
 }
 
 function until_branch(v: json.JsonValue, c: json.JsonValue, cond: filter.Ast, next: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
@@ -1382,15 +1332,19 @@ function count_to(from: json.JsonValue, upto: json.JsonValue, k: (json.JsonValue
   let json.JNumber(t) = upto else {
     return failed_with(st, "Range bounds must be numeric");
   };
-  let x = number.value(f);
-  let end = number.value(t);
+  return count_from(number.value(f), number.value(t), k, st);
+}
+
+function count_from(start: f64, end: f64, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  let x = start;
   let s = st;
-  while (x < end) {
-    s = drive(k(computed(x), s));
-    if (s.sig != OK) {
-      return s;
-    }
+  while (s.sig == OK && x < end) {
+    s = k(computed(x), s);
     x += 1.0;
+    if (s.sig == BOUNCE) {
+      let next = x;
+      return St { ...s, next: s.next.append((own t: St): own St => count_from(next, end, k, t)) };
+    }
   }
   return s;
 }
@@ -1402,18 +1356,31 @@ function steps_to(from: json.JsonValue, upto: json.JsonValue, by: json.JsonValue
   if (direction == 0) {
     return st;
   }
+  return step_from(from, upto, by, direction, false, k, st);
+}
+
+// A suspended sink resumes after its value. Add the step only when the
+// sink finishes normally, since addition itself can raise an error.
+function step_from(from: json.JsonValue, upto: json.JsonValue, by: json.JsonValue, direction: i32, advance: boolean, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let x = from;
   let s = st;
-  while (order(x, upto) * direction < 0) {
-    s = drive(k(x, s));
-    if (s.sig != OK) {
+  while (s.sig == OK) {
+    if (advance) {
+      let next = add(x, by);
+      if (next.failed()) {
+        return raised(s, next.error[0]);
+      }
+      x = next.values[0];
+    }
+    if (order(x, upto) * direction >= 0) {
       return s;
     }
-    let next = add(x, by);
-    if (next.failed()) {
-      return raised(s, next.error[0]);
+    s = k(x, s);
+    if (s.sig == BOUNCE) {
+      let last = x;
+      return St { ...s, next: s.next.append((own t: St): own St => step_from(last, upto, by, direction, true, k, t)) };
     }
-    x = next.values[0];
+    advance = true;
   }
   return s;
 }
@@ -1523,53 +1490,76 @@ function keyed(what: string, f: filter.Ast, input: json.JsonValue, e: Env, k: (j
     return raised(st, items.error[0]);
   }
   let saved = st.items;
-  let s = St { ...st, items: [] };
-  let ks: json.JsonValue[] = [];
-  for x in items.values {
-    s = drive(collected(f, x, e, s));
-    if (s.sig != OK) {
-      return St { ...s, items: saved };
+  return keyed_items(what, f, input, items.values, 0, [], e, k, saved, st);
+}
+
+function keyed_items(what: string, f: filter.Ast, input: json.JsonValue, items: json.JsonValue[], at: i32, ks: json.JsonValue[], e: Env, k: (json.JsonValue, own St) => own St, saved: json.JsonValue[], own s: St): own St {
+  while (s.sig == OK) {
+    if (at > 0) {
+      ks = ks.append(json.JArray(s.items));
     }
-    ks = ks.append(json.JArray(s.items));
+    if (at == items.len()) {
+      return give(by(what, input, items, ks), k, St { ...s, items: saved });
+    }
+    s = collected(f, items[at], e, s);
+    at += 1;
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => keyed_items(what, f, input, items, at, ks, e, k, saved, t)) };
+    }
   }
-  return give(by(what, input, items.values, ks), k, St { ...s, items: saved });
+  return St { ...s, items: saved };
 }
 
 function walk(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  if (st.calls >= BOUNCE_EVERY) {
+    return bounce(st, (own s: St): own St => walk(v, f, e, k, s));
+  }
+  let s = St { ...st, calls: st.calls + 1 };
   match (v) {
     json.JObject(o) => {
-      let names = o.keys();
-      let values = o.values();
-      let fields = json.object();
-      let saved = st.items;
-      let s = St { ...st, items: [] };
-      for i in 0..names.len() {
-        s = drive(walk(values[i], f, e, append_item, St { ...s, items: [], labels: s.labels + 1 }));
-        if (s.sig != OK) {
-          return St { ...s, items: saved };
-        }
-        if (s.items.len() > 0) {
-          fields = fields.insert(names[i], s.items[0]);
-        }
-      }
-      return run(f, json.JObject(fields), e, k, St { ...s, items: saved });
+      return walk_fields(o.keys(), o.values(), 0, json.object(), f, e, k, s.items, St { ...s, items: [] });
     },
     json.JArray(items) => {
-      let saved = st.items;
-      let s = St { ...st, items: [] };
-      for x in items {
-        s = drive(walk(x, f, e, append_item, s));
-        if (s.sig != OK) {
-          return St { ...s, items: saved };
-        }
-      }
-      let out = s.items;
-      return run(f, json.JArray(out), e, k, St { ...s, items: saved });
+      return walk_items(items, 0, f, e, k, s.items, St { ...s, items: [] });
     },
     _ => {
-      return run(f, v, e, k, st);
+      return run(f, v, e, k, s);
     }
   }
+}
+
+function walk_items(values: json.JsonValue[], at: i32, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, saved: json.JsonValue[], own s: St): own St {
+  while (at < values.len() && s.sig == OK) {
+    s = walk(values[at], f, e, append_item, s);
+    at += 1;
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => walk_items(values, at, f, e, k, saved, t)) };
+    }
+  }
+  if (s.sig != OK) {
+    return St { ...s, items: saved };
+  }
+  return run(f, json.JArray(s.items), e, k, St { ...s, items: saved });
+}
+
+// An object update takes the first output for each field, deleting the field
+// when the filter gives no output. Stop its generator as soon as it yields.
+function walk_fields(names: string[], values: json.JsonValue[], at: i32, fields: json.JsonObject, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, saved: json.JsonValue[], own s: St): own St {
+  while (s.sig == OK) {
+    if (at > 0 && s.items.len() > 0) {
+      fields = fields.insert(names[at - 1], s.items[0]);
+    }
+    if (at == names.len()) {
+      return run(f, json.JObject(fields), e, k, St { ...s, items: saved });
+    }
+    let (id, local) = new_label(s);
+    s = ended(id, walk(values[at], f, e, (v: json.JsonValue, own t: St): own St => broken(St { ...t, items: [v] }, id), St { ...local, items: [] }));
+    at += 1;
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => walk_fields(names, values, at, fields, f, e, k, saved, t)) };
+    }
+  }
+  return St { ...s, items: saved };
 }
 
 // `halt_error` writes a string as it is and any other value as JSON with a
