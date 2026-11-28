@@ -162,7 +162,7 @@ function x86_op(name: string, args: string[]): Op {
 }
 
 function source(name: string, width: i32): boolean {
-  return reg(name, false, width) >= 0 || name == "$0" || name == "$1" || width == 64 && frame_slot(name, false);
+  return reg(name, false, width) >= 0 || name == "$0" || name == "$1" || width == 64 && frame_slot(name, false, true);
 }
 
 function header_address(address: string, arm: boolean): boolean {
@@ -222,8 +222,11 @@ function slot_prefix(name: string, prefix: string, suffix: string, arm: boolean)
   return !(name[prefix.len()] == b'0' && (digits > 1 || !arm));
 }
 
-pub function frame_slot(name: string, arm: boolean): boolean {
-  let prefix = if (arm) { "[sp, #" } else { "-" };
+pub function frame_slot(name: string, arm: boolean, input: boolean = false): boolean {
+  // The first six x86-64 arguments use registers. A later argument can
+  // be read in the caller's frame after the return address and saved rbp.
+  let incoming = input && !arm && !name.starts_with("-");
+  let prefix = if (arm) { "[sp, #" } else if (incoming) { "" } else { "-" };
   let suffix = if (arm) { "]" } else { "(%rbp)" };
   if (!slot_prefix(name, prefix, suffix, arm)) {
     return false;
@@ -244,5 +247,5 @@ pub function frame_slot(name: string, arm: boolean): boolean {
     remainder = (remainder * 10 + (c - b'0') as i32) % 8;
     i += 1;
   }
-  return remainder == 0 && (!arm || offset <= 32760);
+  return remainder == 0 && (!arm || offset <= 32760) && (!incoming || offset >= 64);
 }

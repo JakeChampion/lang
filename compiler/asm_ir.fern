@@ -12948,12 +12948,12 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   }
   s = asmcore.EmitState { ...s, ssa_save: 0, ssa_arg_homes: [], ssa_trap_suffix: "", ssa_lane_slots: [], ssa_konst: [], ssa_konst_value: [] };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
-  return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
+  return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, homes, fusions);
 }
 
-function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, alloc: ssa.Alloc, fr: SsaFrame, frame: i32, framed: boolean, fusions: ssaprepare.Fusion[]): asmcore.EmitState {
+function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, alloc: ssa.Alloc, fr: SsaFrame, frame: i32, framed: boolean, homes: i32[], fusions: ssaprepare.Fusion[]): asmcore.EmitState {
   if (s.retain_prepared) {
-    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: if (framed) { frame } else { 0 }, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
+    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: if (framed) { frame } else { 0 }, arg_homes: homes, frame_record_bytes: 0, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
     s = asmcore.retain_body(s, prepared, label_name, context, entry, allocation);
   }
   return s;

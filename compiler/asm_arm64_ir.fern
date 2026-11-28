@@ -6282,7 +6282,7 @@ function ssa_frame_record(s: asmcore.EmitState, size: i32 = 16): asmcore.EmitSta
 
 function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, alloc: ssa.Alloc, fr: SsaFrame, frame: i32, framed: boolean, fusions: ssaprepare.Fusion[]): asmcore.EmitState {
   if (s.retain_prepared) {
-    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: frame, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
+    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: frame, arg_homes: [], frame_record_bytes: if (!framed) { 0 } else if (fr.compact > 0) { fr.compact } else { 16 }, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
     s = asmcore.retain_body(s, prepared, label_name, context, entry, allocation);
   }
   return s;

@@ -1,7 +1,6 @@
 import "./ssaretainedsites" as sites;
 import "../ssainlineunique" as unique;
 import "../ssaprepare";
-import "../ssa";
 import "../util";
 import "std/string";
 
@@ -19,9 +18,7 @@ function home(row: ssaprepare.Emitted, h: i32): string {
     return names[h];
   }
   require(h < -1, 171);
-  let a = row.allocation;
-  let offset = 0 - 8 * (ssa.spill_slot(h) + 1) - a.save_bytes;
-  return if (arm) { "[sp, #" + (a.frame_bytes + a.save_bytes + offset).to_string() + "]" } else { offset.to_string() + "(%rbp)" };
+  return sites.spill_address(row, h);
 }
 
 function check(text: string, arch: string, input: string, result: string, flags: boolean, expected: boolean): void {
@@ -132,6 +129,12 @@ function slot_controls(site: ssaprepare.UniqueSite, arch: string, input: string,
   check(site.text, arch, if (arm) { "[sp, #00]" } else { "-08(%rbp)" }, result, false, false);
   check(site.text, arch, if (arm) { "[sp, #1]" } else { "-1(%rbp)" }, result, false, false);
   check(site.text, arch, if (arm) { "[sp, #32768]" } else { "-2147483648(%rbp)" }, result, false, false);
+  if (!arm) {
+    for invalid in ["8(%rbp)", "56(%rbp)", "65(%rbp)", "064(%rbp)"] {
+      check(change(site.text, input, invalid), arch, invalid, result, false, false);
+    }
+    check(change(site.text, result, "64(%rbp)"), arch, input, "64(%rbp)", false, false);
+  }
   let load = if (arm) { "    ldr x4, " + input + "\n" } else { "    movq " + input + ", %r11\n" };
   check(change(site.text, load, ""), arch, input, result, false, false);
 }
