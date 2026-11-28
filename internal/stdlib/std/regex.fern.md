@@ -5514,7 +5514,6 @@ function __sx_property(text: string): string {
 // not find.
 function __sx_known_value(canon: string, value: string): boolean {
   return match (canon) {
-    "Age" => __sx_has(SX_AGES, value),
     "Sentence_Break" => __sx_has(SX_SB, value),
     "Script_Extensions" => unicode.property_ranges("sc=" + value) != None,
     _ => false,
@@ -5711,9 +5710,6 @@ const SX_PROPERTIES: string = "age=Age;ahex=ASCII_Hex_Digit;alpha=Alphabetic;alp
 
 // The canonical names of the binary properties of regex-syntax 0.8.2.
 const SX_BOOLS: string = "ASCII_Hex_Digit Alphabetic Bidi_Control Bidi_Mirrored Case_Ignorable Cased Changes_When_Casefolded Changes_When_Casemapped Changes_When_Lowercased Changes_When_Titlecased Changes_When_Uppercased Dash Default_Ignorable_Code_Point Deprecated Diacritic Emoji Emoji_Component Emoji_Modifier Emoji_Modifier_Base Emoji_Presentation Extended_Pictographic Extender Grapheme_Base Grapheme_Extend Grapheme_Link Hex_Digit Hyphen IDS_Binary_Operator IDS_Trinary_Operator ID_Continue ID_Start Ideographic Join_Control Logical_Order_Exception Lowercase Math Noncharacter_Code_Point Other_Alphabetic Other_Default_Ignorable_Code_Point Other_Grapheme_Extend Other_ID_Continue Other_ID_Start Other_Lowercase Other_Math Other_Uppercase Pattern_Syntax Pattern_White_Space Prepended_Concatenation_Mark Quotation_Mark Radical Regional_Indicator Sentence_Terminal Soft_Dotted Terminal_Punctuation Unified_Ideograph Uppercase Variation_Selector White_Space XID_Continue XID_Start";
-
-// The loose values of Age in regex-syntax 0.8.2 that select code points.
-const SX_AGES: string = "1.1 10.0 11.0 12.0 12.1 13.0 14.0 15.0 2.0 2.1 3.0 3.1 3.2 4.0 4.1 5.0 5.1 5.2 6.0 6.1 6.2 6.3 7.0 8.0 9.0 v100 v11 v110 v120 v121 v130 v140 v150 v20 v21 v30 v31 v32 v40 v41 v50 v51 v52 v60 v61 v62 v63 v70 v80 v90";
 
 // The loose values of Sentence_Break in regex-syntax 0.8.2 other than Other.
 const SX_SB: string = "at aterm cl close cr ex extend fo format le lf lo lower nu numeric oletter sc scontinue se sep sp st sterm up upper";

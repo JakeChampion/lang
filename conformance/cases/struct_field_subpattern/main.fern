@@ -97,6 +97,23 @@ function guarded(w: W): i32 {
     }
 }
 
+struct Pair { t: (i32, i32), n: i32 }
+struct Grid { cell: ((i32, i32), i32) }
+
+function pair_score(v: Pair): i32 {
+    match (v) {
+        Pair { t: (1, b), n } when b > n => { return b + n; },
+        _ => { return 0; },
+    }
+}
+
+function grid_score(v: Grid): i32 {
+    match (v) {
+        Grid { cell: ((x, 2), y) } => { return x * y; },
+        _ => { return 0; },
+    }
+}
+
 function main(): i32 {
     print(lit(P { x: 0, y: 5 }).to_string());
     print(lit(P { x: 3, y: 4 }).to_string());
@@ -122,5 +139,10 @@ function main(): i32 {
     print(guarded(W { e: E.A(9), n: 1 }).to_string());
     print(guarded(W { e: E.A(1), n: 9 }).to_string());
     print(guarded(W { e: E.B, n: 9 }).to_string());
+    print(pair_score(Pair { t: (1, 5), n: 2 }).to_string());
+    print(pair_score(Pair { t: (2, 5), n: 2 }).to_string());
+    print(pair_score(Pair { t: (1, 1), n: 2 }).to_string());
+    print(grid_score(Grid { cell: ((3, 2), 4) }).to_string());
+    print(grid_score(Grid { cell: ((3, 1), 4) }).to_string());
     return 0;
 }

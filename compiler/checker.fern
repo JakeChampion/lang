@@ -12924,6 +12924,9 @@ function nested_binder_diags(p: ast.Pattern, t: typeinfo.Type, s: Scope, line: i
   let ast.PatVariant(pv) = p else {
     return out;
   };
+  if (pv.type_name.len() == 0 && pv.tup_kinds.len() > 0) {
+    return tuple_binder_diags(pv.tup_kinds, pv.tup_binds, pv.tup_pats, s, t, line, col);
+  }
   if let typeinfo.TypeStruct(st) = t {
     if (parser.is_record_pattern(pv) && pv.type_name == st.name) {
       return record_binder_diags(pv, st, s, line, col);

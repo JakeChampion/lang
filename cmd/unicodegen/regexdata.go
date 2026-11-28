@@ -274,7 +274,7 @@ func breakClasses(each func(yield func(lo, hi rune, class int))) []uint8 {
 }
 
 // propTables gives each table of ranges and the keys that name it. A key is
-// "gc:", "sc:", "bp:", "gcb:", "wb:" or "sb:" and the loose name, or "pw:word" for
+// "gc:", "sc:", "bp:", "gcb:", "wb:", "sb:" or "scx:" and the loose name, or "pw:word" for
 // \w.
 func propTables() []propTable {
 	var out []propTable
@@ -307,6 +307,17 @@ func propTables() []propTable {
 	for _, name := range scripts {
 		t := unicode.Scripts[name]
 		add("sc", name, scriptAliases[name], func(r rune) bool { return unicode.Is(t, r) })
+		// Scripts without overrides share their encoded ranges with scx.
+		base := &out[len(out)-1]
+		var keys []string
+		for _, key := range base.keys {
+			keys = append(keys, "scx:"+strings.TrimPrefix(key, "sc:"))
+		}
+		if ranges, ok := scriptExtensionRanges[name]; ok {
+			out = append(out, propTable{keys: keys, rs: ranges})
+		} else {
+			base.keys = append(base.keys, keys...)
+		}
 	}
 	addBreak := func(kind string, values map[string][]string, classes map[string]int, of []uint8) {
 		if len(values) != len(classes) {
@@ -473,6 +484,24 @@ func encodePropNames(index map[string][2]int) string {
 	return b.String()
 }
 
+// Each interval records its first release once. A query includes every
+// interval up to the requested release, in code point order.
+func emitAge(b *strings.Builder) int {
+	var table strings.Builder
+	for _, span := range ageRanges {
+		encField(&table, span[0])
+		encField(&table, span[1])
+		table.WriteByte(enc6(span[2]))
+	}
+	emitTable(b, "_age_table", table.String())
+	b.WriteString("function _age_rank(value: string): i32 {\n    return match (value) {\n")
+	for rank, names := range ageVersions {
+		fmt.Fprintf(b, "        %q => %d,\n        %q => %d,\n", names[0], enc6(rank), names[1], enc6(rank))
+	}
+	b.WriteString("        _ => -1,\n    };\n}\n\n")
+	return table.Len()
+}
+
 // regexData writes the tables and the functions of std/unicode that
 // std/regex uses.
 func regexData(b *strings.Builder) int {
@@ -485,7 +514,8 @@ func regexData(b *strings.Builder) int {
 	namesT := encodePropNames(index)
 	emitTable(b, "_prop_names_table", namesT)
 	b.WriteString(regexFunctions)
-	return len(propT) + len(foldT) + len(namesT)
+	ageBytes := emitAge(b)
+	return len(propT) + len(foldT) + len(namesT) + ageBytes
 }
 
 const regexFunctions = `// _prop_kept says whether a byte of a name counts: not a space, an
@@ -554,6 +584,28 @@ function _prop_decode(span: (i32, i32)): Option[i32[]] {
     return Some(out);
 }
 
+// Age matches characters first assigned in the named release or earlier.
+function _age_ranges(value: string): Option[i32[]] {
+    let rank = _age_rank(value);
+    if (rank < 0) { return None; }
+    let t = _age_table();
+    let out: i32[] = [];
+    for j in 0..t.len() / 9 {
+        let at = j * 9;
+        if (t[at + 8] as i32 <= rank) {
+            let lo = _fld(t, at);
+            let hi = _fld(t, at + 4);
+            let n = out.len();
+            if (n > 0 && out[n - 1] + 1 == lo) {
+                out = out.with(n - 1, hi);
+            } else {
+                out = out.append(lo).append(hi);
+            }
+        }
+    }
+    return Some(out);
+}
+
 // property_ranges gives the code points of a general category, a script, a
 // binary property or a break class, as pairs of the first and the last code
 // point of each range in order. The name is that of ` + "`\\p{...}`" + ` in a regular
@@ -561,7 +613,8 @@ function _prop_decode(span: (i32, i32)): Option[i32[]] {
 // and an "is" at the start do not count. ` + "`gc=`" + `, ` + "`sc=`" + `, ` + "`gcb=`" + ` and ` + "`wb=`" + `, their long
 // names ` + "`General_Category=`" + `, ` + "`Script=`" + `, ` + "`Grapheme_Cluster_Break=`" + ` and
 // ` + "`Word_Break=`" + `, or the same names with ` + "`:`" + ` or ` + "`!=`" + `, select the kind of
-// property. Sentence_Break takes the same operators and the short name sb.
+// property. Script_Extensions (scx) selects the scripts a character is used with.
+// Sentence_Break takes the same operators and the short name sb.
 // A break class always needs its kind. Without a kind, a binary
 // property comes first, then a general category, then a script. An unknown
 // name gives None.
@@ -569,7 +622,9 @@ pub function property_ranges(name: string): Option[i32[]] {
     let (op, width) = _prop_op(name);
     if (op >= 0) {
         let kind = _prop_key(slice_unchecked(name, 0, op) + "");
-        return _prop_decode(_prop_valued(kind, _prop_key(slice_unchecked(name, op + width, name.len()) + "")));
+        let value = _prop_key(slice_unchecked(name, op + width, name.len()) + "");
+        if (kind == "age") { return _age_ranges(value); }
+        return _prop_decode(_prop_valued(kind, value));
     }
     let key = _prop_key(name);
     let span = if (key != "cf" && key != "sc" && key != "lc") { _prop_index("bp:" + key) } else { (-1, 0) };
@@ -582,6 +637,7 @@ pub function property_ranges(name: string): Option[i32[]] {
 // kind: a general category, Any, Assigned and ASCII for gc, a script, or a
 // class of Grapheme_Cluster_Break, Word_Break or Sentence_Break other than Other.
 function _prop_valued(kind: string, value: string): (i32, i32) {
+    if (kind == "scx" || kind == "scriptextensions") { return _prop_index("scx:" + value); }
     if (kind == "sc" || kind == "script") { return _prop_index("sc:" + value); }
     if (kind == "gcb" || kind == "graphemeclusterbreak") { return _prop_index("gcb:" + value); }
     if (kind == "sb" || kind == "sentencebreak") { return _prop_index("sb:" + value); }
