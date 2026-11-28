@@ -6708,7 +6708,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 	case ast.StructType:
 		if c.isBuiltinVec(x.Name, x.Args) {
 			if len(vecLaneTypes(x.Args)) == 0 {
-				c.errfCode(pos, "E096", "%s names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", x)
+				c.errfCode(pos, "E096", "%s names no lane type: supported pairs are Vec[2, f64], Vec[4, f32], Vec[16, u8], Vec[4, i32] and Vec[4, u32]", x)
 				return
 			}
 			for _, a := range x.Args {

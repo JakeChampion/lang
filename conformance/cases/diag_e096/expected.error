@@ -1,2 +1,2 @@
-Vec[3, f64] names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]
-Vec[8, T] names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]
+Vec[3, f64] names no lane type: supported pairs are Vec[2, f64], Vec[4, f32], Vec[16, u8], Vec[4, i32] and Vec[4, u32]
+Vec[8, T] names no lane type: supported pairs are Vec[2, f64], Vec[4, f32], Vec[16, u8], Vec[4, i32] and Vec[4, u32]
