@@ -7,6 +7,7 @@ import "./platforms";
 import "./builtinsigs";
 import "./caps";
 import "std/string";
+import "core/map";
 
 pub struct ImportedEnum { name: string, prefix: string }
 
@@ -1651,19 +1652,22 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
   return MethodDedup { mod: deduped, keys: keys };
 }
 
-function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): string[] {
-  let ids = module_ids(imports);
+struct TraitModules { ids: Map[string, i32], names: Map[string, i32] }
+
+function (index: TraitModules) lookup(im: parser.Import): Option[i32] {
+  if (im.resolved.len() > 0) {
+    if let Some(i) = index.ids.get(im.resolved) {
+      return Some(i);
+    }
+  }
+  return index.names.get(util.path_base(im.path));
+}
+
+function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[], index: TraitModules): string[] {
   let quals = mod_names(mod);
   let out: string[] = [];
   for i in 0..mod.imports.len() {
-    let k: i32 = -1;
-    if (mod.imports[i].resolved.len() > 0) {
-      k = util.index_of_str(ids, mod.imports[i].resolved);
-    }
-    if (k < 0) {
-      k = loaded_index_by_name(imports, util.path_base(mod.imports[i].path));
-    }
-    if (k >= 0) {
+    if let Some(k) = index.lookup(mod.imports[i]) {
       for t in imports[k].mod.trait_decls {
         out = out.append(quals[i] + "." + t.name);
       }
@@ -1672,21 +1676,22 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[]): 
   return out;
 }
 
-function loaded_index_by_name(imports: LoadedModule[], name: string): i32 {
-  for i in 0..imports.len() {
-    if (imports[i].name == name) {
-      return i;
-    }
+function desugar_imported_trait_params(entry: parser.Module, imports: LoadedModule[]): (parser.Module, LoadedModule[]) {
+  let ids: Map[string, i32] = map_new(imports.len());
+  let names: Map[string, i32] = map_new(imports.len());
+  // Insert backwards so both lookups select the first loaded match.
+  let i = imports.len();
+  while (i > 0) {
+    i -= 1;
+    ids = ids.insert(imports[i].ident, i);
+    names = names.insert(imports[i].name, i);
   }
-  return -1;
-}
-
-function desugar_imported_trait_params(imports: LoadedModule[]): LoadedModule[] {
+  let index = TraitModules { ids: ids, names: names };
   let out: LoadedModule[] = [];
   for lm in imports {
-    out = out.append(LoadedModule { ...lm, mod: parser.desugar_trait_params(lm.mod, imported_trait_spellings(lm.mod, imports), true) });
+    out = out.append(LoadedModule { ...lm, mod: parser.desugar_trait_params(lm.mod, imported_trait_spellings(lm.mod, imports, index), true) });
   }
-  return out;
+  return (parser.desugar_trait_params(entry, imported_trait_spellings(entry, imports, index), true), out);
 }
 
 pub struct Qualifiers { aliases: string[], prefixes: string[], own: string, reexport_keys: string[], reexport_targets: string[] }
@@ -1716,8 +1721,7 @@ pub function bundle(entry0: parser.Module, imports0: LoadedModule[], target: str
 }
 
 pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[], target: string, pfxs: string[]): parser.Module {
-  let imports = desugar_imported_trait_params(imports0);
-  let entry = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
+  let (entry, imports) = desugar_imported_trait_params(with_handler_main(entry0, target), imports0);
   let funcs: parser.FuncDecl[] = [];
   let structs: parser.StructDecl[] = [];
   let aliases: parser.TypeAlias[] = [];
@@ -1961,8 +1965,7 @@ function mangled_tail(mangled: string): string {
 pub struct PerModule { ns: string, ident: string, mod: parser.Module, is_entry: boolean }
 
 pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], target: string): PerModule[] {
-  let imports = desugar_imported_trait_params(imports0);
-  let entry = parser.desugar_trait_params(with_handler_main(entry0, target), imported_trait_spellings(entry0, imports0), true);
+  let (entry, imports) = desugar_imported_trait_params(with_handler_main(entry0, target), imports0);
   let ids = module_ids(imports);
   let pfxs = assign_prefixes(imports);
   let ivar_names: string[] = [];
