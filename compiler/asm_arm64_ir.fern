@@ -1034,12 +1034,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(a_clamped + ":\n");
     s = s.write("    cmp x2, x3\n    b.ge " + a_none + "\n");
     s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n");
+    // The first 16 bytes go alone, so a short run does not pay for a 64-byte
+    // block. The 16-byte loop finds the byte in a 64-byte block that has one.
+    s = s.write("    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + a_tail + "\n");
+    s = s.write("    ld1 {v0.16b}, [x5]\n    cmlt v0.16b, v0.16b, #0\n");
+    s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+    s = s.write("    cbnz x7, " + a_vec + "_h\n    add x5, x5, #16\n");
+    s = s.write(a_vec + "_w:\n");
+    s = s.write("    sub x7, x6, x5\n    cmp x7, #64\n    b.lt " + a_vec + "\n");
+    s = s.write("    ldp q0, q1, [x5]\n    ldp q2, q3, [x5, #32]\n");
+    s = s.write("    orr v0.16b, v0.16b, v1.16b\n    orr v2.16b, v2.16b, v3.16b\n    orr v0.16b, v0.16b, v2.16b\n");
+    s = s.write("    cmlt v0.16b, v0.16b, #0\n    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+    s = s.write("    cbnz x7, " + a_vec + "\n    add x5, x5, #64\n    b " + a_vec + "_w\n");
     s = s.write(a_vec + ":\n");
     s = s.write("    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + a_tail + "\n");
     s = s.write("    ld1 {v0.16b}, [x5]\n    cmlt v0.16b, v0.16b, #0\n");
     s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
     s = s.write("    cbz x7, " + a_next + "\n");
-    s = s.write("    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
+    s = s.write(a_vec + "_h:\n    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
     s = s.write("    add x5, x5, x4\n    sub x2, x5, x0\n    b " + a_done + "\n");
     s = s.write(a_next + ":\n    add x5, x5, #16\n    b " + a_vec + "\n");
     s = s.write(a_tail + ":\n");
