@@ -75,11 +75,11 @@ pub function interesting(items: string[], path: u8[], is_tree: boolean): i32 {
     let n = item.len();
     let dir_item = n > 0 && item[n - 1] == b'/';
     let bare = if (dir_item) { objects.part(item, 0, n - 1) } else { item };
+    // Git tries the literal path before interpreting its wildcard bytes.
+    if (starts(path, bare) && (path.len() == bare.len() && (is_tree || !dir_item) || path.len() > bare.len() && path[bare.len()] == b'/')) {
+      return 2;
+    }
     if (!has_wildcard(item)) {
-      // The path is the item, or is below it.
-      if (starts(path, bare) && (path.len() == bare.len() && (is_tree || !dir_item) || path.len() > bare.len() && path[bare.len()] == b'/')) {
-        return 2;
-      }
       // The path is a directory on the way to the item.
       if (is_tree && path.len() < bare.len() && text_starts(bare, path) && bare[path.len()] == b'/') {
         best = 1;
