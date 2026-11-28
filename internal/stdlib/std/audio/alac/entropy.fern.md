@@ -3,6 +3,7 @@
 This module decodes bounded Rice residuals and zero runs.
 Every zero run must fit the current frame.
 The predictor uses the valid output prefix and retains scratch capacity.
+Coefficients go into a tap buffer that the caller keeps, so a packet makes no allocation for them.
 This module is available under MPL-2.0. See `licenses/alac/NOTICE.txt`.
 
 ```fern
@@ -18,9 +19,9 @@ import "std/audio/pcm";
 import "std/u32";
 import "std/u64";
 
-pub struct Parameters { depth: i32, mode: i32, shift: i32, factor: u32, coefficients: i32[] }
+pub struct Parameters { depth: i32, mode: i32, shift: i32, factor: u32, order: i32 }
 
-// Keep predictor fields, coefficient count, and coefficient reads within one packet extent.
+// Keep predictor fields and the coefficient count within one packet extent.
 // fern-lint: allow cyclomatic-complexity
 pub function parameters(input: [u8], at: i64, info: config.Info, depth: i32): Result[(i64, Parameters), pcm.AudioError] {
   if (depth < 1 || depth > 32) {
@@ -37,13 +38,20 @@ pub function parameters(input: [u8], at: i64, info: config.Info, depth: i32): Re
   if (mode != 0u32 && mode != 15u32) {
     return Err(pcm.Header);
   }
-  let coefficients = pcm.zeros(order as i32);
-  for i in 0..order as i32 {
+  return Ok((at, Parameters { depth: depth, mode: mode as i32, shift: shift as i32, factor: factor * (info.pb as u32) >> 2u32, order: order as i32 }));
+}
+
+// Read the predictor coefficients of `parameters` into the prefix of `taps`.
+pub function coefficients(input: [u8], at: i64, parameters: Parameters, own taps: i32[]): Result[(i64, i32[]), pcm.AudioError] {
+  if (parameters.order < 0 || parameters.order > taps.len()) {
+    return Err(pcm.Header);
+  }
+  for i in 0..parameters.order {
     let (next, value) = bits.signed(input, at, 16)?;
     at = next;
-    coefficients = coefficients.with(i, value);
+    taps = taps.with(i, value);
   }
-  return Ok((at, Parameters { depth: depth, mode: mode as i32, shift: shift as i32, factor: factor * (info.pb as u32) >> 2u32, coefficients: coefficients }));
+  return Ok((at, taps));
 }
 
 // Capped unary, escape, and shortened suffix rules form one bounded Rice code.

@@ -5,6 +5,7 @@ It handles direct residuals, the first-order special case, and the two-pass mode
 Orders 4 and 8, the two orders that Apple's encoder writes, have their own loops.
 Arithmetic retains the format's signed 32-bit wrap behavior before the declared-width clip.
 The valid prefix uses at most the supplied scratch capacity.
+The caller supplies the coefficient taps and gets them back after the adaptation.
 
 This module is available under MPL-2.0. See `licenses/alac/NOTICE.txt`.
 
@@ -144,19 +145,19 @@ function restore8(own values: i32[], count: i32, coefficients: [i32], shift: i32
 
 // Validate scratch and predictor extents before direct, delta, or adaptive reconstruction.
 // fern-lint: allow cyclomatic-complexity
-pub function restore(own values: i32[], count: i32, parameters: entropy.Parameters): Result[i32[], pcm.AudioError] {
-  if (count < 1 || count > values.len() || parameters.depth < 1 || parameters.depth > 32 || parameters.shift < 0 || parameters.shift > 15 || parameters.coefficients.len() > 31 || parameters.mode != 0 && parameters.mode != 15) {
+pub function restore(own values: i32[], count: i32, parameters: entropy.Parameters, own taps: i32[]): Result[(i32[], i32[]), pcm.AudioError] {
+  if (count < 1 || count > values.len() || parameters.depth < 1 || parameters.depth > 32 || parameters.shift < 0 || parameters.shift > 15 || parameters.order < 0 || parameters.order > 31 || parameters.order > taps.len() || parameters.mode != 0 && parameters.mode != 15) {
     return Err(pcm.Header);
   }
   if (parameters.mode == 15) {
     values = delta(values, count, parameters.depth);
   }
-  let order = parameters.coefficients.len();
+  let order = parameters.order;
   if (order == 0) {
-    return Ok(values);
+    return Ok((values, taps));
   }
   if (order == 31) {
-    return Ok(delta(values, count, parameters.depth));
+    return Ok((delta(values, count, parameters.depth), taps));
   }
   if (order >= count) {
     return Err(pcm.Header);
@@ -167,18 +168,17 @@ pub function restore(own values: i32[], count: i32, parameters: entropy.Paramete
   let shift = parameters.shift;
   let unused = 32 - parameters.depth;
   if (order == 8) {
-    return Ok(restore8(values, count, parameters.coefficients, shift, unused));
+    return Ok((restore8(values, count, taps, shift, unused), taps));
   }
   if (order == 4) {
-    return Ok(restore4(values, count, parameters.coefficients, shift, unused));
+    return Ok((restore4(values, count, taps, shift, unused), taps));
   }
-  let coefficients = parameters.coefficients;
   let round = 1 << shift >> 1;
   for i in order + 1..count {
     let top = values[i - order - 1];
     let sum = 0;
     for k in 0..order {
-      sum += coefficients[k] * (values[i - 1 - k] - top);
+      sum += taps[k] * (values[i - 1 - k] - top);
     }
     let residual = values[i];
     values = values.with(i, residual + top + (sum + round >> shift) << unused >> unused);
@@ -189,7 +189,7 @@ pub function restore(own values: i32[], count: i32, parameters: entropy.Paramete
       while (k >= 0) {
         let difference = top - values[i - 1 - k];
         let adjustment = direction * sign(difference);
-        coefficients = coefficients.with(k, coefficients[k] - adjustment << 16 >> 16);
+        taps = taps.with(k, taps[k] - adjustment << 16 >> 16);
         residual -= (order - k) * (adjustment * difference >> shift);
         if (direction > 0 && residual <= 0 || direction < 0 && residual >= 0) {
           break;
@@ -198,6 +198,6 @@ pub function restore(own values: i32[], count: i32, parameters: entropy.Paramete
       }
     }
   }
-  return Ok(values);
+  return Ok((values, taps));
 }
 ```
