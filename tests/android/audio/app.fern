@@ -6,6 +6,7 @@ import "std/android";
 import "std/android/launch";
 import "std/android/audio";
 import "std/log";
+import "./tone";
 
 struct App { ctx: usize, done: boolean }
 
@@ -51,17 +52,7 @@ function check(ctx: usize): void {
   let speaker: audio.Stream = audio.playback(48000);
   let wrote = 0;
   if (speaker.start()) {
-    for k in 0..25 {
-      let tone: i32[] = [];
-      for i in 0..960 {
-        let level = 8000;
-        if ((k * 960 + i) / 60 % 2 == 1) {
-          level = -8000;
-        }
-        tone = tone.append(level);
-      }
-      wrote += speaker.write(tone, 200);
-    }
+    wrote = tone.play(960, 1, 60, (samples: [i32], ms: i32): i32 => speaker.write(samples, ms));
     log_anchor(speaker);
     log_underruns("playback", speaker.xrun_count());
     speaker.stop();
@@ -77,33 +68,21 @@ function check(ctx: usize): void {
 function play_music(): void {
   let music = audio.music(44100, 2);
   let wrote = 0;
-  let odd = 0;
   let again = 0;
   if (music.start()) {
-    for k in 0..25 {
-      let tone: i32[] = [];
-      for i in 0..882 {
-        let level = 8000;
-        if ((k * 882 + i) / 50 % 2 == 1) {
-          level = -8000;
-        }
-        tone = tone.append(level).append(0);
-      }
-      let n = music.write(tone, 200);
-      wrote += n;
-      odd += n % 2;
-    }
+    let send = (samples: [i32], ms: i32): i32 => music.write(samples, ms);
+    wrote = tone.play(882, 2, 50, send);
     log_timestamp("music timestamp", music.timestamp());
     log_underruns("music", music.xrun_count());
     music.pause();
     music.flush();
     if (music.start()) {
-      again = music.write([100, 100, 200, 200], 200);
+      again = tone.block([100, 100, 200, 200], 2, send);
     }
     music.pause();
   }
   music.close();
-  log.warn("audiotest: music rate " + music.rate.to_string() + ", channels " + music.channels.to_string() + ", wrote " + wrote.to_string() + " samples, " + odd.to_string() + " odd, " + again.to_string() + " after the flush");
+  log.warn("audiotest: music rate " + music.rate.to_string() + ", channels " + music.channels.to_string() + ", wrote " + wrote.to_string() + " samples, " + (wrote % 2).to_string() + " odd, " + again.to_string() + " after the flush");
 }
 
 function log_anchor(speaker: audio.Stream): void {
