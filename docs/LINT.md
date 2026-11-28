@@ -69,13 +69,12 @@ the source, not of the desugar:
 
 - A tuple, struct, literal or nested pattern match scores the arms as the
   author wrote them (the `sugar` that the printer prints again).
-- A C-style `for` scores the loop that `printer.as_c_for` recovers.
 - A `todo` scores nothing.
 
 | Construct | Adds |
 |---|---|
 | `if`, if-expression | 1 per condition (an `else if` nests a second `If`, so a chain costs one per test) |
-| `while`, C-style `for`, `for … in` | 1 |
+| `while`, `for … in` | 1 |
 | `loop` | 1 — an unconditional loop is still a back edge |
 | `match` arm | 1 per arm that can fail to match; `_` is the fall-through, not a test |
 | `when` guard | 1 — a second condition after the pattern |

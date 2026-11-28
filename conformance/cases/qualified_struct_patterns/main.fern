@@ -102,8 +102,9 @@ function main(): i32 {
   if (sum != 28) {
     return 4;
   }
-  for (let shapes.Open { n: start, .. } = o; start < 8; start = start + 1) {
-    sum = sum + start;
+  let shapes.Open { n: start, .. } = o;
+  for s in start..8 {
+    sum = sum + s;
   }
   if (sum != 35) {
     return 5;

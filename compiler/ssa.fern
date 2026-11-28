@@ -2201,6 +2201,8 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let cbase = 0;
   let sat = nregs;
   let cabi = abi_reg;
+  // The last value that held each register, so a fresh pick can leave a register to a mate of that value.
+  let freed_by = util.minus_ones(nregs + nsaved + nf + nfs);
   let oi = 0;
   while (oi < order.len()) {
     if (oi == split) {
@@ -2239,6 +2241,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
       let nr: i32[] = [];
       for ai in 0..act_val.len() {
         if (act_hi[ai] < lo[v]) {
+          freed_by = freed_by.with(act_reg[ai], act_val[ai]);
           if (act_reg[ai] >= sat) {
             free_s = free_s.append(act_reg[ai]);
           } else {
@@ -2395,6 +2398,8 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
         if (phi_only.len() == 0) {
           phi_only = phi_results(f);
           phi_none = __alloc_bool(f.nvals + 1);
+        }
+        if (mate_lo.start.len() == 0) {
           mate_lo = mate_starts(mates, def_a, def_b, lo, hi, f.nvals);
         }
         let saved = Lender { cbase: sat, sat: sat + nsaved, cabi: -1, abi_ok: true, phi: phi_none, keeps: phi_only, wanted: mate_lo, first: false };
@@ -2454,13 +2459,15 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
         reg_of = reg_of.with(v, -1);
       }
     } else {
-      let reg = 0;
-      if (from_caller) {
-        reg = pick;
+      if (mate_lo.start.len() == 0) {
+        mate_lo = mate_starts(mates, def_a, def_b, lo, hi, f.nvals);
+      }
+      let fresh = FreshPick { free: free, free_s: free_s, from_caller: from_caller, pick: pick, keep_abi: call_def[v] == 1 && pick == cabi, cabi: cabi };
+      let reg = fresh_reg(fresh, fixed, freed_by, mate_lo, shared_with, lo[v], hi[v]);
+      if (index_of_reg(free, reg) >= 0) {
         free = remove_reg(free, reg);
       } else {
-        reg = free_s[free_s.len() - 1];
-        free_s = util.drop_last_i32(free_s);
+        free_s = remove_reg(free_s, reg);
       }
       reg_of = reg_of.with(v, reg);
       act_val = act_val.append(v);
@@ -3964,6 +3971,45 @@ function chain_wanted(ms: MateStarts, holder: i32, shared_with: i32[], from: i32
     m = shared_with[m];
   }
   return false;
+}
+
+struct FreshPick { free: i32[], free_s: i32[], from_caller: boolean, pick: i32, keep_abi: boolean, cabi: i32 }
+
+// The register for a value that no candidate places: the pick from the caller
+// registers, or else the last saved register. When a mate of the last holder
+// of that register starts in `lo` to `hi`, a register that no mate wants
+// replaces it, so the mate can share.
+function fresh_reg(p: FreshPick, fixed: ssafixed.Table, freed_by: i32[], ms: MateStarts, shared_with: i32[], lo: i32, hi: i32): i32 {
+  let reg = if (p.from_caller) { p.pick } else { p.free_s[p.free_s.len() - 1] };
+  if (p.keep_abi || !chain_wanted(ms, freed_by[reg], shared_with, lo, hi)) {
+    return reg;
+  }
+  let other: i32 = -1;
+  if (p.from_caller) {
+    other = unwanted_reg(p.free, p.cabi, fixed, freed_by, ms, shared_with, lo, hi);
+  }
+  if (other < 0) {
+    other = unwanted_reg(p.free_s, -1, fixed, freed_by, ms, shared_with, lo, hi);
+  }
+  if (other >= 0) {
+    return other;
+  }
+  return reg;
+}
+
+// A free register whose last holder has a mate that starts in `lo` to `hi`
+// costs that mate its share. This gives the last free register that no such
+// mate wants, or -1.
+function unwanted_reg(regs: i32[], abi_reg: i32, fixed: ssafixed.Table, freed_by: i32[], ms: MateStarts, shared_with: i32[], lo: i32, hi: i32): i32 {
+  let i = regs.len() - 1;
+  while (i >= 0) {
+    let r = regs[i];
+    if (r != abi_reg && ssafixed.allows(fixed, r, lo, hi) && !chain_wanted(ms, freed_by[r], shared_with, lo, hi)) {
+      return r;
+    }
+    i -= 1;
+  }
+  return -1;
 }
 
 // A register from `first` to before `last` has values that hold it to `until`
@@ -7993,6 +8039,42 @@ pub function shared_lengths(f: SFunc): SFunc {
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
 }
 
+// The `ir_kind` of an LD_SUM whose index counts elements of the size of its
+// mark. With no such mark, the index counts bytes.
+pub const SUM_SCALED: i32 = 1;
+
+// The element marks that a load with a scaled register index takes on arm64:
+// 4 bytes, and 2 bytes with no sign.
+function scaled_sum_mark(mark: string): boolean {
+  return mark == "i32" || mark == "u32" || mark == "u16";
+}
+
+// A read of an element of 2 or 4 bytes with an index in a register. With or
+// without its bounds check, a load with a scaled index can take it. A read
+// with a constant index is one instruction already.
+function scaled_read(ins: SInst, defs: SInst[], nvals: i32): boolean {
+  if (ins.kind_tag != ARR_AT || ins.result < 0 || ins.imm > 1 || !scaled_sum_mark(ins.str) || ins.args.len() < 2) {
+    return false;
+  }
+  let i = ins.args[1];
+  return i >= 0 && i < nvals && !is_constant(defs[i], nvals);
+}
+
+// The arrays that the loop from `h` to `last` reads two times or more with a
+// scaled index. The address of the elements holds a register for the loop,
+// and each read gains one instruction, so one read does not pay for it.
+function read_twice(blocks: SBlock[], defs: SInst[], h: i32, last: i32, nvals: i32): boolean[] {
+  let reads = __alloc_i32(nvals);
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      if (scaled_read(ins, defs, nvals) && ins.args[0] >= 0 && ins.args[0] < nvals) {
+        reads = reads.with(ins.args[0], reads[ins.args[0]] + 1);
+      }
+    }
+  }
+  return reads.map((n: i32): boolean => n > 1);
+}
+
 // A checked read or write of an array or a string in a loop compares its
 // index with the length in memory on each trip. When the loop has one way
 // in, and nothing in it can change a length, one load of the length in the
@@ -8006,6 +8088,7 @@ pub function hoisted_lengths(f: SFunc): SFunc {
   let latch = furthest_latches(f, at);
   let used = used_values(f);
   let def_pos = def_positions(f);
+  let defs = inst_defs(f);
   let preds = position_preds(f, at);
   let blocks = f.blocks;
   let made: i32[] = [];
@@ -8020,14 +8103,42 @@ pub function hoisted_lengths(f: SFunc): SFunc {
     }
     let bases: i32[] = [];
     let lens: i32[] = [];
-    let datas = util.minus_ones(0);
+    let addressed: i32[] = [];
+    let datas: i32[] = [];
     let loads: SInst[] = [];
+    let twice = read_twice(blocks, defs, h, last, f.nvals);
     for bi in h..=last {
       let insts: SInst[] = [];
       let changed = false;
       for ins in blocks[bi].insts {
         let b = if (ins.args.len() > 0) { ins.args[0] } else { -1 };
-        if (!length_checked(ins, used) || !defined_before(f, def_pos, b, h, last)) {
+        let invariant = defined_before(f, def_pos, b, h, last);
+        let checked = length_checked(ins, used) && invariant;
+        // A read of a byte, or of an element of 2 or 4 bytes that the loop
+        // reads two times or more, loads from the address of the elements,
+        // which the block before the loop forms one time.
+        let scaled = b >= 0 && b < f.nvals && invariant && scaled_read(ins, defs, f.nvals) && twice[b] && (ins.imm == 1 || checked);
+        let data = -1;
+        if (scaled || checked && ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
+          let dk = util.index_of_i32(addressed, b);
+          if (dk < 0) {
+            dk = addressed.len();
+            let eight = f.nvals + made.len();
+            made = made.append(b).append(b);
+            addressed = addressed.append(b);
+            datas = datas.append(eight + 1);
+            loads = loads.append(SInst { ir_kind: 0, kind_tag: CONST_INT, result: eight, args: [], imm: 8, str: "" });
+            loads = loads.append(binary_inst(eight + 1, [b, eight], 64, ir.K_ADD));
+          }
+          data = datas[dk];
+        }
+        let read = SInst { ir_kind: if (scaled) { SUM_SCALED } else { 0 }, kind_tag: LD_SUM, result: ins.result, args: [data, if (ins.args.len() > 1) { ins.args[1] } else { -1 }], imm: 0, str: if (scaled) { ins.str } else { "" } };
+        if (scaled && ins.imm == 1) {
+          insts = insts.append(read);
+          changed = true;
+          continue;
+        }
+        if (!checked) {
           insts = insts.append(ins);
           continue;
         }
@@ -8038,21 +8149,11 @@ pub function hoisted_lengths(f: SFunc): SFunc {
           let id = f.nvals + made.len();
           made = made.append(b);
           lens = lens.append(id);
-          datas = datas.append(-1);
           loads = loads.append(SInst { ir_kind: 0, kind_tag: LD_AT, result: id, args: [b], imm: if (ins.kind_tag == STR_AT) { 8 } else { 0 }, str: "" });
         }
         insts = insts.append(SInst { ir_kind: 0, kind_tag: BOUND, result: -1, args: [ins.args[1], lens[k]], imm: if (ins.kind_tag == STR_AT) { 1 } else { 0 }, str: "" });
-        // A byte read loads from the address of the elements, which the
-        // block before the loop forms one time.
-        if (ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
-          if (datas[k] < 0) {
-            let eight = f.nvals + made.len();
-            made = made.append(b).append(b);
-            datas = datas.with(k, eight + 1);
-            loads = loads.append(SInst { ir_kind: 0, kind_tag: CONST_INT, result: eight, args: [], imm: 8, str: "" });
-            loads = loads.append(binary_inst(eight + 1, [b, eight], 64, ir.K_ADD));
-          }
-          insts = insts.append(SInst { ir_kind: 0, kind_tag: LD_SUM, result: ins.result, args: [datas[k], ins.args[1]], imm: 0, str: "" });
+        if (data >= 0) {
+          insts = insts.append(read);
         } else if (ins.kind_tag == ARR_ST || ins.imm == 0) {
           insts = insts.append(SInst { ...ins, imm: 1 });
         }
@@ -8217,6 +8318,77 @@ pub function hoisted_invariants(f: SFunc): Formed {
     flat = flat.with(v, t);
   }
   return Formed { f: rewrite_through(moved, flat), repl: flat };
+}
+
+// An integer constant whose definition costs an instruction on arm64: a
+// value that is not the immediate of an add or a compare, or an operand of a
+// multiplication, which takes no immediate. Zero stays where it is: the
+// certifier reads it next to the store that empties a slot.
+function costly_constant(ins: SInst, multiplied: boolean): boolean {
+  if (ins.kind_tag != CONST_INT && !(ins.kind_tag == CONST_I64 && ins.str.len() > 0)) {
+    return false;
+  }
+  let c = if (ins.kind_tag == CONST_INT) { ins.imm as i64 } else { util.lit_to_i64(ins.str) };
+  return c < 0i64 || c > 4095i64 || multiplied && c != 0i64;
+}
+
+// The operands of the multiplications of the loop from `h` to `last`.
+function multiplied_values(blocks: SBlock[], h: i32, last: i32, nvals: i32): boolean[] {
+  let out = __alloc_bool(nvals);
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      if (ins.kind_tag == BINARY && ins.ir_kind == ir.K_MUL) {
+        for a in ins.args {
+          if (a >= 0 && a < nvals) {
+            out = out.with(a, true);
+          }
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Moves each costly constant of a loop to the one block that enters the
+// loop, so that the loop does not make it again in each trip. A loop that
+// makes a call that returns keeps its constants: no register that the call
+// does not keep can hold one there, so it goes to a frame slot and each read
+// makes it again. Inner loops go first.
+pub function hoisted_constants(f: SFunc): SFunc {
+  if (f.blocks.len() < 3) {
+    return f;
+  }
+  let at = block_positions(f);
+  let latch = furthest_latches(f, at);
+  let preds = position_preds(f, at);
+  let blocks = f.blocks;
+  for k in 0..latch.len() {
+    let h = latch.len() - 1 - k;
+    let last = latch[h];
+    let pre = if (last > h) { loop_entry(blocks, preds, at, h, last) } else { -1 };
+    if (pre < 0 || loop_calls(blocks, h, last)) {
+      continue;
+    }
+    let multiplied = multiplied_values(blocks, h, last, f.nvals);
+    let moving: SInst[] = [];
+    for bi in h..=last {
+      let kept: SInst[] = [];
+      for ins in blocks[bi].insts {
+        if (ins.result >= 0 && ins.result < f.nvals && costly_constant(ins, multiplied[ins.result])) {
+          moving = moving.append(ins);
+        } else {
+          kept = kept.append(ins);
+        }
+      }
+      if (kept.len() != blocks[bi].insts.len()) {
+        blocks = blocks.with(bi, SBlock { ...blocks[bi], insts: kept });
+      }
+    }
+    if (moving.len() > 0) {
+      blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(moving) });
+    }
+  }
+  return SFunc { ...f, blocks: blocks };
 }
 
 // A call in the loop from `h` to `last`. No lane register is kept across a

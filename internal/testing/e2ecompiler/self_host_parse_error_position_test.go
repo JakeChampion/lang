@@ -440,7 +440,8 @@ func TestSelfHostStatementTerminators(t *testing.T) {
 		{"defer-block-trailing-let", "function main(): i32 { defer { let z: i32 = 1 } return 0; }\n",
 			`error[P001]: in fn 'main': expected ";", got "}" (1:47)`},
 		{"bare-return-clean", "function f(): void { return; }\nfunction main(): i32 { f(); return 0; }\n", ""},
-		{"c-for-step-clean", "function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }\n", ""},
+		{"three-part-for", "function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }\n",
+			"error[P001]: in fn 'main': Fern has no three-part `for (init; cond; step)`. Write `for i in lo..hi { … }` or a `while` loop (1:44)"},
 		{"refused-expression-one-error", "function main(): i32 { let x: i32 = 1; return x +; }\n",
 			"error[P001]: in fn 'main': expected an expression, got \";\" (1:50)"},
 	}

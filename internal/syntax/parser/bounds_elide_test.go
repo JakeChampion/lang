@@ -55,11 +55,6 @@ func TestElideLenBounded_Eligible(t *testing.T) {
 			while (i < a.len()) { s = s + a[i]; i = i + 1; }
 			return s;
 		}`},
-		{"for_sum", `function f(a: i32[]): i32 {
-			let s: i32 = 0;
-			for (let i: i32 = 0; i < a.len(); i = i + 1) { s = s + a[i]; }
-			return s;
-		}`},
 		{"rhs_read", `function f(a: i32[]): i32 {
 			let s: i32 = 0; let i: i32 = 0;
 			while (i < a.len()) { s = a[i] * 2; i = i + 1; }

@@ -12,10 +12,10 @@ boilerplate. None are exotic.
 
 ## Iteration — `for … in`
 
-The three-part `for (init; cond; step)` loop exists, but it is rarely what
-you want. `for x in …` walks an array, a slice, a string, a `Map`, a range,
-anything implementing `core/iter`'s `Iterator`, or a value whose `iter()`
-method returns one, and binds each element directly:
+Fern has no three-part `for (init; cond; step)` loop. `for x in …` walks
+an array, a slice, a string, a `Map` or a range. It also walks a value that
+implements the `Iterator` of `core/iter`, or a value whose `iter()` method
+returns one. It binds each element directly:
 
 ```fern
 let trees: string[] = ["ash", "beech", "elm"];

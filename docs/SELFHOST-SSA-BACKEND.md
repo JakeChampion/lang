@@ -79,7 +79,16 @@ lowered function it:
    change in the loop to the one block that enters the loop
    (`ssa.hoisted_invariants`). A computation of constants only stays. A
    constant stays in the loop, where a target can use it as an immediate,
-   and the moved computation reads a copy of it. Inner loops go first.
+   and the moved computation reads a copy of it. The arm64 backend then
+   moves a constant that costs an instruction in each trip
+   (`ssa.hoisted_constants`): a value outside 0 to 4095, which is not the
+   immediate of an add or a compare, or an operand of a multiplication,
+   which takes no immediate. It moves out of a loop that makes no call that
+   returns. In a loop with such a call it stays, because it then goes to a
+   frame slot and each read makes it again. x86-64 takes these constants as
+   immediates, and there a constant in a register costs the split of a
+   spilled value around an inner loop, so x86-64 does not run the pass.
+   Inner loops go first.
    A loop with a second way in keeps its instructions. A division moves
    only when its divisor is a constant other than 0 and -1. Equal
    computations that move to the same block become one value;

@@ -150,6 +150,8 @@ const OPT_MERGE_ASSIST: i32 = 70;
 
 const OPT_NO_DIRECTORY: i32 = 71;
 
+const OPT_PRESUME_OUTPUT_TTY: i32 = 72;
+
 const OPT_DIGIT: i32 = 100;
 
 // The kinds of a group: the bits of a change, as GNU diff numbers them.
@@ -342,6 +344,7 @@ struct Cfg {
   inhibit_merge: boolean,
   merge_assist: boolean,
   no_directory: boolean,
+  presume_output_tty: boolean,
 }
 
 // The options of GNU diff in the order of its table, which is the order of
@@ -363,7 +366,7 @@ function options(): gnu.Opt[] {
     gnu.valued("S", "starting-file", OPT_STARTING_FILE), gnu.flag("", "strip-trailing-cr", OPT_STRIP_CR), gnu.flag("", "suppress-blank-empty", OPT_SUPPRESS_BLANK), gnu.flag("", "suppress-common-lines", OPT_SUPPRESS_COMMON),
     gnu.valued("", "tabsize", OPT_TABSIZE), gnu.flag("a", "text", OPT_TEXT), gnu.valued("", "to-file", OPT_TO_FILE), gnu.valued("", "unchanged-group-format", OPT_GROUP_FORMAT + G_UNCHANGED),
     gnu.valued("", "unchanged-line-format", OPT_LINE_FORMAT + G_UNCHANGED), gnu.flag("P", "unidirectional-new-file", OPT_UNIDIRECTIONAL), gnu.valued_optional_long("U", "unified", OPT_UNIFIED),
-    gnu.flag("v", "version", gnu.version_id()), gnu.valued("W", "width", OPT_WIDTH), gnu.flag("", "-no-directory", OPT_NO_DIRECTORY), gnu.flag("c", "", OPT_C), gnu.flag("u", "", OPT_U),
+    gnu.flag("v", "version", gnu.version_id()), gnu.valued("W", "width", OPT_WIDTH), gnu.flag("", "-no-directory", OPT_NO_DIRECTORY), gnu.flag("", "-presume-output-tty", OPT_PRESUME_OUTPUT_TTY), gnu.flag("c", "", OPT_C), gnu.flag("u", "", OPT_U),
     gnu.flag("h", "", OPT_NO_EFFECT + 1),
   ];
   for d in 0..10 {
@@ -666,6 +669,7 @@ function apply(cfg: Cfg, m: gnu.OptMatch): Cfg {
     OPT_TRAILING_SPACE => Cfg { ...cfg, white: if (cfg.white < WS_CHANGE) { cfg.white | WS_TRAILING } else { cfg.white } },
     OPT_STRIP_CR => Cfg { ...cfg, strip_cr: true },
     OPT_INHIBIT_MERGE => Cfg { ...cfg, inhibit_merge: true },
+    OPT_PRESUME_OUTPUT_TTY => Cfg { ...cfg, presume_output_tty: true },
     OPT_NO_DIRECTORY => Cfg { ...cfg, no_directory: true },
     _ => cfg,
   };
@@ -703,7 +707,7 @@ function mark_taken(own taken: boolean[], from: i32, to: i32, operands: i32): bo
 
 function parse(argv: string[]): (Cfg, string[]) {
   let empty: string[] = [];
-  let cfg = Cfg { style: STYLE_NONE, context: 0i64, explicit_context: false, ocontext: -1i64, prev: -1, horizon: 0i64, brief: false, identical: false, ignore_case: false, white: WS_NONE, blank: false, text: false, new_file: false, unidirectional: false, recursive: false, minimal: false, speed: false, labels: empty, switches: "", width: 0i64, left_column: false, suppress_common: false, groups: ["", "", "", ""], groups_set: [false, false, false, false], lines: ["", "", ""], lines_set: [false, false, false], show_c_function: false, function_res: [], ignore_res: [], expand_tabs: false, initial_tab: false, tabsize: 0i64, suppress_blank: false, paginate: false, color: COLOR_NEVER, palette: "", excludes: empty, starting_file: empty, from_file: empty, to_file: empty, no_dereference: false, name_case: false, strip_cr: false, inhibit_merge: false, merge_assist: false, no_directory: false };
+  let cfg = Cfg { style: STYLE_NONE, context: 0i64, explicit_context: false, ocontext: -1i64, prev: -1, horizon: 0i64, brief: false, identical: false, ignore_case: false, white: WS_NONE, blank: false, text: false, new_file: false, unidirectional: false, recursive: false, minimal: false, speed: false, labels: empty, switches: "", width: 0i64, left_column: false, suppress_common: false, groups: ["", "", "", ""], groups_set: [false, false, false, false], lines: ["", "", ""], lines_set: [false, false, false], show_c_function: false, function_res: [], ignore_res: [], expand_tabs: false, initial_tab: false, tabsize: 0i64, suppress_blank: false, paginate: false, color: COLOR_NEVER, palette: "", excludes: empty, starting_file: empty, from_file: empty, to_file: empty, no_dereference: false, name_case: false, strip_cr: false, inhibit_merge: false, merge_assist: false, no_directory: false, presume_output_tty: false };
   let g = gnu.getopt_new(argv, options(), "diff", help_text(), EXIT_TROUBLE).in_package("diffutils");
   let taken: boolean[] = [];
   for _ in 0..argv.len() {
@@ -779,7 +783,7 @@ function finish_options(cfg: Cfg): Cfg {
 // output. Under -l, `pager` holds the header of the comparison whose output
 // waits for 'pr', and `queue` the messages that wait for the end. When
 // `capture` is set, the output stays in the buffer for diff3.
-struct Run { cfg: Cfg, out: usize, zone: tz.Zone, colors: boolean, palette: string[], context: Cell[i32], pager: Cell[string], paging: Cell[boolean], queue: usize, capture: boolean }
+struct Run { cfg: Cfg, out: usize, zone: tz.Zone, colors: boolean, palette: Cell[string[]], context: Cell[i32], pager: Cell[string], paging: Cell[boolean], queue: usize, capture: boolean }
 
 function flush_out(run: Run): void {
   if (buf_len(run.out) == 0 || run.paging.get() || run.capture) {
@@ -828,9 +832,13 @@ function message(run: Run, s: string): void {
 
 function set_color(run: Run, ctx: i32): void {
   if (run.colors && run.context.get() != ctx) {
-    buf_push(run.out, run.palette[0]);
-    buf_push(run.out, run.palette[ctx]);
-    buf_push(run.out, run.palette[1]);
+    let palette = run.palette.get();
+    if (palette.len() == 0) {
+      return;
+    }
+    buf_push(run.out, palette[0]);
+    buf_push(run.out, palette[ctx]);
+    buf_push(run.out, palette[1]);
     run.context.set(ctx);
   }
 }
@@ -2372,6 +2380,10 @@ function header_line(run: Run, p: Pair, f: i32, mark: string): void {
 // Under -l the output of the comparison waits for 'pr', with the line that
 // names the comparison as the page header.
 function begin_output(run: Run, p: Pair): void {
+  // GNU diagnoses an invalid palette once for each comparison that starts output.
+  if (run.colors && run.palette.get().len() == 0) {
+    run.palette.set(parse_palette(run.cfg.palette));
+  }
   let name = "diff" + run.cfg.switches + " " + p.names[0] + " " + p.names[1];
   if (run.cfg.paginate) {
     flush_out(run);
@@ -3425,12 +3437,12 @@ function colors_on(cfg: Cfg): boolean {
   if (cfg.color == COLOR_ALWAYS) {
     return true;
   }
-  if (cfg.color != COLOR_AUTO || !isatty(1)) {
+  if (cfg.color != COLOR_AUTO || !cfg.presume_output_tty && (cfg.paginate || !isatty(1))) {
     return false;
   }
   return match (env("TERM")) {
     Some(t) => t != "dumb",
-    None => false,
+    None => true,
   };
 }
 
@@ -3633,13 +3645,8 @@ function run_with(argv: string[], capture: boolean): (i32, u8[]) {
       usage_error("extra operand '" + ops[2] + "'");
     }
   }
-  let colors = colors_on(cfg);
-  let palette: string[] = [];
-  if (colors) {
-    palette = parse_palette(cfg.palette);
-    colors = palette.len() > 0;
-  }
-  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone(), colors: colors, palette: palette, context: cell_new(C_RESET), pager: cell_new(""), paging: cell_new(false), queue: buf_new(256), capture: capture };
+  let palette: Cell[string[]] = cell_new([]);
+  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone(), colors: colors_on(cfg), palette: palette, context: cell_new(C_RESET), pager: cell_new(""), paging: cell_new(false), queue: buf_new(256), capture: capture };
   let status = compare_operands(run, ops);
   let queued = buf_take_bytes(run.queue);
   buf_push_bytes_range(run.out, queued, 0, queued.len());

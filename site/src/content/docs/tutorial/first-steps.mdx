@@ -69,11 +69,11 @@ function main(): i32 {
 }`}
 />
 
-The three-part `for (init; cond; step)` form also exists, for the rare
-loop whose stepping isn't a simple walk:
+For a loop that does not count up by one, use `while`:
 
 ```fern
-for (let i: i32 = 1; i < n; i = i * 2) { … }
+let i: i32 = 1;
+while (i < n) { …; i = i * 2; }
 ```
 
 `loop { … }` is an unconditional loop you leave with `break`. Any loop can

@@ -27,7 +27,7 @@ func TestSelfHostRequiredPunctGrammar(t *testing.T) {
 		"if let P { x } = q { n = x; }",
 		"let (a, b) = (1, 2);",
 		"let P { x } = q;",
-		"for (let i = 0; i < 3; i = i + 1) { n = n + i; }",
+		"for i in 0..3 { n = n + i; }",
 		"let Some(v) = o else { return 1; };",
 		"let 3 = n else { return 1; };",
 	}
@@ -54,7 +54,7 @@ func TestSelfHostRequiredPunctGrammar(t *testing.T) {
 		"if (n == 3 { n = 1; }",
 		"while n < 3) { n = n + 1; }",
 		"while (n < 3 { n = n + 1; }",
-		"for (let i = 0; i < 3; i = i + 1 { n = n + i; }",
+		"for (let i = 0; i < 3; i = i + 1) { n = n + i; }",
 		"if let Some(v) o { n = v; }",
 		"if let (a, b) t { n = a + b; }",
 		"if let 3 n { n = 1; }",

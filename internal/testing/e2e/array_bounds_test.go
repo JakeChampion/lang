@@ -210,7 +210,7 @@ import "std/string";
 function main(): i32 {
     let s: string = "0123456789abcdefghijklmn";
     let sum: i32 = 0;
-    for (let i: i32 = 0; i < s.len(); i = i + 1) { sum = sum + (s[i] as i32); }
+    for i in 0..s.len() { sum = sum + (s[i] as i32); }
     print(sum.to_string());
     return 0;
 }`},

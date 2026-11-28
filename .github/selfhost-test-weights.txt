@@ -585,7 +585,6 @@ TestSelfHostCPUProfileRefusals 3
 TestSelfHostCPUProfileSamplerHasNoCalls 4
 TestSelfHostCRC32Array 7
 TestSelfHostCRC32ArrayInterpAndComponent 5
-TestSelfHostCStyleForIR 2
 TestSelfHostCafFileReader 5
 TestSelfHostCallBoundEnumReclaimX86_64 3
 TestSelfHostCallBoundStrPayloadReclaimX86_64 3
@@ -1383,7 +1382,6 @@ TestSelfHostFmtBytes 7
 TestSelfHostFmtCorpusParityX86_64 26
 TestSelfHostFmtDiffCorpusParityX86_64 16
 TestSelfHostFmtEscapesHiddenScalars 4
-TestSelfHostFmtKeepsCStyleFor 4
 TestSelfHostFmtKeepsLambdaAsWritten 4
 TestSelfHostFmtLambdaListGroups 4
 TestSelfHostFmtLambdaListLayouts 3
