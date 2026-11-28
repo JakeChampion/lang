@@ -45,11 +45,11 @@ def main(path):
     ascent, descent = font.getmetrics()
     cell_w = max(font.getbbox(chr(c))[2] for c in range(32, 127))
     cell_h = ascent + descent
-    hexes = []
+    glyphs = []
     for c in CODES:
         img = Image.new("L", (cell_w, cell_h), 0)
         ImageDraw.Draw(img).text((0, 0), chr(c), font=font, fill=255)
-        hexes.append("".join("%x" % (img.getpixel((x, y)) >> 4) for y in range(cell_h) for x in range(cell_w)))
+        glyphs.append("".join(chr(0x40 + (img.getpixel((x, y)) >> 4)) for y in range(cell_h) for x in range(cell_w)))
     head = [
         "// The Fern raster of DejaVu Sans Mono: the printable ASCII, Latin-1 and Latin",
         "// Extended-A glyphs and some punctuation at " + str(SIZE) + " pixels, for text on an Android",
@@ -67,9 +67,9 @@ def main(path):
         "// The baseline, in pixels from the top of a cell.",
         "pub const ASCENT: i32 = " + str(ascent) + ";",
         "",
-        "// The 4-bit coverage of each pixel of each glyph, as one hex digit, glyph by",
+        "// Each printable byte stores coverage in its low four bits, glyph by",
         "// glyph in the order of glyph_index and row by row.",
-        "const GLYPHS: string = \"" + "".join(hexes) + "\";",
+        "const GLYPHS: string = \"" + "".join(glyphs) + "\";",
         "",
         "// The punctuation after the Latin letters, in the order of its glyphs.",
         "const EXTRA: i32[] = [" + ", ".join(str(c) for c in EXTRA) + "];",
@@ -99,10 +99,7 @@ def main(path):
         "// The coverage of pixel x, y of glyph `g` of glyph_index, from 0 to 15.",
         "pub function glyph_coverage(g: i32, x: i32, y: i32): i32 {",
         "  let d: u8 = GLYPHS[(g * CELL_H + y) * CELL_W + x];",
-        "  if (d >= b'a') {",
-        "    return (d - b'a') as i32 + 10;",
-        "  }",
-        "  return (d - b'0') as i32;",
+        "  return d as i32 & 15;",
         "}",
         "",
     ]
