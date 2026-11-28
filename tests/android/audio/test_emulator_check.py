@@ -19,6 +19,15 @@ class TimestampDiagnostics(unittest.TestCase):
             for reading in ['-1', '', '3 stale']:
                 self.assertNotRegex('audiotest: ' + kind + ' underruns ' + reading, pattern)
 
+    def test_complete_playback(self):
+        for full in (
+            'audiotest: playback rate 48000, wrote 24000 samples',
+            'audiotest: music rate 44100, channels 2, wrote 44100 samples, 0 odd, 4 after the flush',
+        ):
+            partial = full.replace('wrote 24000', 'wrote 23999').replace('wrote 44100', 'wrote 44098')
+            self.assertTrue(any(pattern.search(full) for pattern in audio.LINES))
+            self.assertFalse(any(pattern.search(partial) for pattern in audio.LINES))
+
     def test_available(self):
         for pattern, name in PATTERNS:
             for values in ('0 monotonic_ns 0', '48000 monotonic_ns 123456789',
