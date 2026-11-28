@@ -450,8 +450,9 @@ it.
 - **Bootstrap** (`make bootstrap`, `bootstrap/stage0.lock`, `make distcheck`) —
   `docs/BOOTSTRAP.md`. The pin is a release asset, refreshed by dispatching
   `bootstrap.yml` with `publish` on the branch that needs it, never by hand.
-- **Module loading** — there is no prelude injector; a program sees only what it
-  `import`s. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
+- **Module loading** — there is no prelude injector; a program sees no stdlib
+  module it does not `import`, but the builtins stay visible until #14400
+  lands. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
   dedupe, `pub use` re-exports, and the in-memory (`modload.LoadSource`) path.
 - **Reference counting** (the semantic graph, ownership inference, the unit
   plan and its replay, the physical lowering, the certifier, the runtime box

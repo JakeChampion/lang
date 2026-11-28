@@ -65,8 +65,8 @@ const BOUNCE_EVERY: i32 = 64;
 // - `out` holds the text that the command line writes next, and `last` the
 //   kind of its last output: 0 for none, 1 for false or null, 2 otherwise.
 // - `calls` counts the calls of a function of a `def` since the last bounce,
-//   and `next` holds the one step of a bounce. `links` counts the calls that
-//   are not the last step of their body since the last landing.
+//   and `next` holds its step followed by any suspended continuations.
+//   `links` counts non-tail calls since the last landing.
 pub struct St {
   sig: i32,
   err: json.JsonValue,
@@ -176,9 +176,23 @@ function drive(own st: St): own St {
   }
   let calls = st.calls;
   let s = st;
-  while (s.sig == BOUNCE) {
-    let step = s.next[0];
-    s = step(St { ...s, sig: OK, calls: 0, next: [] });
+  // The innermost continuation runs first, including on errors and breaks.
+  let pending: ((own St) => own St)[] = [];
+  while (s.sig == BOUNCE || pending.len() > 0) {
+    if (s.sig == BOUNCE) {
+      let i = s.next.len();
+      while (i > 1) {
+        i = i - 1;
+        pending = pending.append(s.next[i]);
+      }
+      let step = s.next[0];
+      s = step(St { ...s, sig: OK, calls: 0, next: [] });
+    } else {
+      let last = pending.len() - 1;
+      let finish = pending[last];
+      pending = pending.truncate(last);
+      s = finish(s);
+    }
   }
   return St { ...s, calls: calls };
 }
@@ -262,7 +276,15 @@ function append_item(v: json.JsonValue, own s: St): own St {
 // The outputs of `f` in an array. `k` takes the array, unless `f` stopped.
 function run_collect(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let saved = st.items;
-  let s = drive(run(f, input, e, append_item, St { ...st, items: [] }));
+  let s = collected(f, input, e, st);
+  if (s.sig == BOUNCE) {
+    let finish = (own t: St): own St => finish_collect(saved, k, t);
+    return St { ...s, next: s.next.append(finish) };
+  }
+  return finish_collect(saved, k, s);
+}
+
+function finish_collect(saved: json.JsonValue[], k: (json.JsonValue, own St) => own St, own s: St): own St {
   let items = s.items;
   let t = St { ...s, items: saved };
   if (t.sig != OK) {
@@ -361,7 +383,11 @@ function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, o
       return each_of(a, input, e, (v: json.JsonValue, own s: St): own St => run(b, v, e, k, s), st);
     },
     filter.Comma(a, b) => {
-      let s = drive(run(a, input, e, k, st));
+      let s = run(a, input, e, k, st);
+      if (s.sig == BOUNCE) {
+        let right = (own t: St): own St => if (t.sig == OK) { run(b, input, e, k, t) } else { t };
+        return St { ...s, next: s.next.append(right) };
+      }
       if (s.sig != OK) {
         return s;
       }
@@ -562,6 +588,9 @@ function give_all(vs: json.JsonValue[], k: (json.JsonValue, own St) => own St, o
 // an array, so that its frames are gone while `k` runs: a function that
 // calls itself then needs less stack for each call.
 function each_of(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  if let filter.Collect(inner) = f {
+    return run_collect(inner, input, e, k, st);
+  }
   if (!single(f, e)) {
     return run(f, input, e, k, st);
   }
@@ -1898,7 +1927,11 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
       return run_paths(a, it, e, (x: PathItem, own s: St): own St => run_paths(b, x, e, k, s), st);
     },
     filter.Comma(a, b) => {
-      let s = drive(run_paths(a, it, e, k, st));
+      let s = run_paths(a, it, e, k, st);
+      if (s.sig == BOUNCE) {
+        let right = (own t: St): own St => if (t.sig == OK) { run_paths(b, it, e, k, t) } else { t };
+        return St { ...s, next: s.next.append(right) };
+      }
       if (s.sig != OK) {
         return s;
       }

@@ -1332,19 +1332,23 @@ function ssa_save_runs(saved: i32[]): i32[][] {
   return [ints, fls];
 }
 
-// The saved registers go to fixed slots below x29, which is sp here. No
-// store or load of a slot moves sp, so none waits for another.
-function ssa_save(saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// A save-only frame can reserve its register slots with the frame record.
+function ssa_saved_frame(saved: i32[], s: asmcore.EmitState, compact: i32): asmcore.EmitState {
+  if (compact > 0) {
+    return ssa_saved_slots(saved, false, ssa_frame_record(s, compact), compact);
+  }
+  s = ssa_frame_record(s);
   if (saved.len() == 0) {
     return s;
   }
   return ssa_saved_slots(saved, false, ssa_addsub_imm(s, true, "sp", "sp", ssa_save_bytes(saved)));
 }
 
-// A store or a load of each saved register at its slot below x29.
-function ssa_saved_slots(saved: i32[], load: boolean, s: asmcore.EmitState): asmcore.EmitState {
+// Slots descend from the top of the save area. For a compact frame the
+// frame record is below that area, so its slots have positive offsets.
+function ssa_saved_slots(saved: i32[], load: boolean, s: asmcore.EmitState, compact: i32 = 0): asmcore.EmitState {
   let m = if (load) { "    ldp " } else { "    stp " };
-  let off = 0;
+  let off = compact;
   for run in ssa_save_runs(saved) {
     let i = 0;
     while (i + 1 < run.len() && run[i] < ssa_fbase()) {
@@ -1392,7 +1396,7 @@ function ssa_dwarf(reg: string): i32 {
   return n;
 }
 
-function ssa_emit_unwind(saved: i32[], canary: i32, s: asmcore.EmitState, tail: string): asmcore.EmitState {
+function ssa_emit_unwind(saved: i32[], canary: i32, s: asmcore.EmitState, tail: string, compact: i32 = 0): asmcore.EmitState {
   if (canary > 0) {
     s = fr_ldr(s, "x17", -canary);
     let ok = asmcore.fresh_label(s);
@@ -1400,9 +1404,11 @@ function ssa_emit_unwind(saved: i32[], canary: i32, s: asmcore.EmitState, tail: 
     s = s.write("    adrp x16, __fern_canary\n    ldr x16, [x16, :lo12:__fern_canary]\n    cmp x16, x17\n    b.eq " + ok.name + "\n    b __fern_canary_fail\n" + ok.name + ":\n");
   }
   s = ssa_cfi(s, 7, "", 0);
-  s = ssa_saved_slots(saved, true, s);
-  s = ssa_mov_rr(s, "sp", "x29");
-  s = ssa_pair(s, true, 1, "x29", "x30", 16);
+  s = ssa_saved_slots(saved, true, s, compact);
+  if (compact == 0) {
+    s = ssa_mov_rr(s, "sp", "x29");
+  }
+  s = ssa_pair(s, true, 1, "x29", "x30", if (compact > 0) { compact } else { 16 });
   s = ssa_cfi(s, 5, "sp", 0);
   s = ssa_sign_ra(s, "autiasp");
   if (tail == "") {
@@ -1420,7 +1426,7 @@ function ssa_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcore.Emi
   if (fr.leaf) {
     return s.write(ssa_exit_mark() + tail + "\n");
   }
-  return ssa_emit_unwind(fr.saved, fr.canary, s, tail);
+  return ssa_emit_unwind(fr.saved, fr.canary, s, tail, fr.compact);
 }
 
 function ssa_exit_mark(): string {
@@ -4437,7 +4443,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
 
 // frameless says the block runs before the function makes its frame
 // (ssa.frame_split), so its return takes no frame down.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lits: ssa.Literals, lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32, frameless: boolean }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], carry: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lits: ssa.Literals, lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32, frameless: boolean, compact: i32 }
 
 // `shape` names the shape whose tag `b` is, when the fused test covers the
 // instruction that makes `b`.
@@ -5901,7 +5907,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let lanes = ssa.lane_values(f);
   let cold = ssa_cold_saves(f, alloc);
   let uses = ssa.use_counts(f);
-  let fr = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, imm: imm, lits: ssa.literals(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary, frameless: false };
+  let fr = SsaFrame { nspill: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: uses, carry: ssa.carry_roles(f, uses), nsave: save, saved: saved, imm: imm, lits: ssa.literals(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: asmcore.ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa.view_count(views), canary: canary, frameless: false, compact: 0 };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa.view_count(views)) * 8;
   if (cold.any) {
@@ -5914,6 +5920,11 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   if (canary > 0) {
     drop = frame + 16;
   }
+  // No spill, view, canary or incoming stack argument needs the old x29.
+  // A paired post-index must encode the whole (16-byte aligned) frame.
+  if (drop == 0 && save > 0 && save + 16 <= 504 && f.nparams == ssa_reg_params(f) && s.profile == 0) {
+    fr = SsaFrame { ...fr, compact: save + 16 };
+  }
   let early_homes = ssa_early_homes(f, fr, reg_of, s);
   let split = if (!leaf && drop == 0 && s.profile == 0) { ssa_frame_split(f, fr, reg_of, early_homes) } else { ssa.FrameSplit { early: [], sites: [] } };
   let fr_early = SsaFrame { ...fr, frameless: true };
@@ -5925,7 +5936,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = ssa_saved_slots(saved, false, ssa_addsub_imm(ssa_frame_record(s), true, "sp", "sp", ssa_save_bytes(saved) + drop));
     drop = 0;
   } else if (!leaf) {
-    s = ssa_save(saved, ssa_frame_record(s));
+    s = ssa_saved_frame(saved, s, fr.compact);
   }
   if (drop > 0) {
     s = ssa_frame_drop(s, drop);
@@ -5965,10 +5976,10 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
       if (cfi_framed) {
         s = ssa_cfi_no_frame(s);
       }
-      s = ssa_late_params(frame_homes, early_homes, ssa_save(saved, ssa_frame_record(s)));
+      s = ssa_late_params(frame_homes, early_homes, ssa_saved_frame(saved, s, fr.compact));
       cfi_framed = true;
     } else if (split.early.len() > 0 && early == cfi_framed) {
-      s = if (early) { ssa_cfi_no_frame(s) } else { ssa_cfi_frame_record(s) };
+      s = if (early) { ssa_cfi_no_frame(s) } else { ssa_cfi_frame_record(s, if (fr.compact > 0) { fr.compact } else { 16 }) };
       cfi_framed = !early;
     }
     let fu = ssa_fuse(ssa_fuse_view(fr), blk);
@@ -6189,8 +6200,8 @@ function ssa_taken_home(late: i32[], h: i32): boolean {
 
 // The CFI rows of the frame record, for a block that follows text with no
 // frame.
-function ssa_cfi_frame_record(s: asmcore.EmitState): asmcore.EmitState {
-  return ssa_cfi(ssa_cfi(ssa_cfi(s, 5, "x29", 16), 6, "x29", -16), 6, "x30", -8);
+function ssa_cfi_frame_record(s: asmcore.EmitState, size: i32): asmcore.EmitState {
+  return ssa_cfi(ssa_cfi(ssa_cfi(s, 5, "x29", size), 6, "x29", -size), 6, "x30", 8 - size);
 }
 
 // The CFI rows of the entry, which the emitter remembered there.
@@ -6198,10 +6209,10 @@ function ssa_cfi_no_frame(s: asmcore.EmitState): asmcore.EmitState {
   return ssa_cfi(ssa_cfi(s, 8, "", 0), 7, "", 0);
 }
 
-function ssa_frame_record(s: asmcore.EmitState): asmcore.EmitState {
+function ssa_frame_record(s: asmcore.EmitState, size: i32 = 16): asmcore.EmitState {
   s = ssa_sign_ra(s, "paciasp");
-  s = ssa_pair(s, false, 3, "x29", "x30", -16);
-  s = ssa_cfi(ssa_cfi(ssa_cfi(s, 3, "", 16), 6, "x29", -16), 6, "x30", -8);
+  s = ssa_pair(s, false, 3, "x29", "x30", -size);
+  s = ssa_cfi(ssa_cfi(ssa_cfi(s, 3, "", size), 6, "x29", -size), 6, "x30", 8 - size);
   s = ssa_mov_rr(s, "x29", "sp");
   return ssa_cfi(s, 4, "x29", 0);
 }

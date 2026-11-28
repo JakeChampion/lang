@@ -39,10 +39,10 @@ struct Shape { ok: boolean, head: i32, entry: i32, latch: i32, exits: i32[], cou
 struct Counter { phi: i32, init: i32, step: i32, bound: i32, inclusive: boolean, inside: i32, outside: i32[] }
 
 // An access the test covers: the array whose length the test reads, and its
-// index, `scale` times the counter plus `delta` plus each of `terms`, or minus
-// each term where `minus` holds. The access reads `span` elements from its
+// index, `scale` times the counter plus `delta` plus each of `terms` times its
+// one of `factors`, or minus that where `minus` holds. The access reads `span` elements from its
 // index.
-struct Site { result: i32, array: i32, counter: i32, scale: i32, span: i32, delta: i32, terms: i32[], minus: boolean[] }
+struct Site { result: i32, array: i32, counter: i32, scale: i32, span: i32, delta: i32, terms: i32[], factors: i32[], minus: boolean[] }
 
 // A constant offset, step or scale above these keeps the checks, so no sum
 // of them overflows an i32.
@@ -404,7 +404,7 @@ function span_of(f: ssasem.Func, ins: ssa.SInst): i32 {
 // The index `v` as a counter plus a sum of constants and values from before
 // the loop, or a site with a counter of -1.
 function index_site(f: ssasem.Func, ix: Index, s: Shape, v: i32): Site {
-  let none = Site { result: -1, array: -1, counter: -1, scale: 1, span: 1, delta: 0, terms: [], minus: [] };
+  let none = Site { result: -1, array: -1, counter: -1, scale: 1, span: 1, delta: 0, terms: [], factors: [], minus: [] };
   let out = sum_of(f, ix, s, v, false, none, 0);
   if (out.delta > MAX_CONST || out.delta < -MAX_CONST) {
     return none;
@@ -434,12 +434,16 @@ function sum_of(f: ssasem.Func, ix: Index, s: Shape, v: i32, negative: boolean, 
     return Site { ...acc, delta: acc.delta + (if (negative) { -n } else { n }) };
   }
   if (!home_in(ix, x, s.blocks)) {
-    return Site { ...acc, terms: acc.terms.append(x), minus: acc.minus.append(negative) };
+    return Site { ...acc, terms: acc.terms.append(x), factors: acc.factors.append(1), minus: acc.minus.append(negative) };
   }
   let a = d[x];
   if (a.kind_tag == ssa.BINARY && a.args.len() == 2 && (a.str == "*" || a.str == "<<")) {
     let (k, n) = scaled(d, s, a);
-    return if (k < 0 || acc.counter >= 0) { none } else { Site { ...acc, counter: k, scale: if (negative) { -n } else { n } } };
+    if (k >= 0) {
+      return if (acc.counter >= 0) { none } else { Site { ...acc, counter: k, scale: if (negative) { -n } else { n } } };
+    }
+    let (t, m) = fixed_product(f, ix, s, a);
+    return if (t < 0) { none } else { Site { ...acc, terms: acc.terms.append(t), factors: acc.factors.append(m), minus: acc.minus.append(negative) } };
   }
   if (a.kind_tag != ssa.BINARY || a.args.len() != 2 || a.str != "+" && a.str != "-") {
     return none;
@@ -463,6 +467,24 @@ function scaled(d: ssa.SInst[], s: Shape, a: ssa.SInst): (i32, i32) {
     return if (m >= 0 && m <= 16) { (k, 1 << m) } else { (-1, 0) };
   }
   return if (m >= 1 && m <= MAX_SCALE) { (k, m) } else { (-1, 0) };
+}
+
+// The value from before the loop that `a` multiplies by a constant, and the
+// constant, or a value of -1. The test before the loop makes the product
+// again from the value.
+function fixed_product(f: ssasem.Func, ix: Index, s: Shape, a: ssa.SInst): (i32, i32) {
+  let d = ix.defs;
+  let at = if (a.str == "*" && int_const(d, a.args[0])) { 1 } else { 0 };
+  let v = ssa.copy_root(d, a.args[at]);
+  let c = ssa.copy_root(d, a.args[1 - at]);
+  if (home_in(ix, v, s.blocks) || int_const(d, v) || !int_const(d, c) || !ssasem.is_i32(f.values[v])) {
+    return (-1, 0);
+  }
+  let m = d[c].imm;
+  if (a.str == "<<") {
+    return if (m >= 0 && m <= 16) { (v, 1 << m) } else { (-1, 0) };
+  }
+  return if (m >= 1 && m <= MAX_SCALE) { (v, m) } else { (-1, 0) };
 }
 
 function counter_at(s: Shape, v: i32): i32 {
@@ -616,7 +638,9 @@ function terms_into(own b: Built, v: i32, site: Site, d: ssa.SInst[], negate: bo
   let sum = v;
   for t in 0..site.terms.len() {
     b = wide(b, site.terms[t], d);
-    let w = last(b);
+    let value = last(b);
+    let (b1, w) = times(b, value, site.factors[t]);
+    b = b1;
     let op = if (site.minus[t] != negate) { "-" } else { "+" };
     b = add(b, ssa.BINARY, [sum, w], 0, op, typeinfo.t_i64());
     sum = last(b);
