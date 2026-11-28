@@ -4863,6 +4863,9 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   }
   let d = ssa_dst(reg_of, ins.result);
   if (k == ssa.LD_IDX) {
+    if (ins.str == "f64" && ssa_fhome(reg_of, ins.result) != "") {
+      d = ssa_fhome(reg_of, ins.result);
+    }
     s = s.write("    ldr " + d + ", " + at + "\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
