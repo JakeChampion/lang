@@ -81,7 +81,7 @@ function channel(a: u8, b: u8, c: u8, d: u8, aa: f64, ba: f64, ca: f64, da: f64,
     color.srgb_to_linear(c as f64 / 255.0) * ca,
     color.srgb_to_linear(d as f64 / 255.0) * da, fx, fy,
   ) / alpha;
-  return byte(color.linear_to_srgb(linear));
+  return color.linear_to_srgb_byte(linear);
 }
 
 pub function interpolate(a: pixels.Pixel, b: pixels.Pixel, c: pixels.Pixel, d: pixels.Pixel, fx: f64, fy: f64): Result[pixels.Pixel, pixels.ImageError] {

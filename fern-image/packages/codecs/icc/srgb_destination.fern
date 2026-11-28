@@ -1,0 +1,24 @@
+import "./matrix_eval";
+import "./matrix_solve";
+import "../../color/color";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum DestinationError { Solve(matrix_solve.SolveError), Cancelled }
+
+pub struct Srgb8 { r: u8, g: u8, b: u8 }
+
+// The raw s15Fixed16 colorant columns of the frozen sRGB profile, in row order.
+pub function matrix(): i32[] {
+  return [28576, 25239, 9375, 14581, 46983, 3972, 912, 6361, 46787];
+}
+
+// Relative D50 XYZ to encoded sRGB bytes, with a clip of each linear channel (decision 0003).
+pub function encode(input: matrix_eval.XYZ, cancelled: () => boolean): Result[Srgb8, DestinationError] {
+  let linear = match (matrix_solve.solve(matrix()[:], input, cancelled)) {
+    Ok(out) => out,
+    Err(matrix_solve.SolveError.Cancelled) => { return Err(DestinationError.Cancelled); },
+    Err(error) => { return Err(DestinationError.Solve(error)); },
+  };
+  return Ok(Srgb8 { r: color.linear_to_srgb_byte(linear.r), g: color.linear_to_srgb_byte(linear.g), b: color.linear_to_srgb_byte(linear.b) });
+}

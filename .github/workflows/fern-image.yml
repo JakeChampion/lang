@@ -265,6 +265,10 @@ jobs:
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-matrix-solve.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_srgb_destination_test.py
+      - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-icc-srgb-destination.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/both-modes.sh ./fern-image/scripts/test-deflate-reader.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern

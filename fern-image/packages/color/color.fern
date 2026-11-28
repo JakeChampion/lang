@@ -34,6 +34,11 @@ pub function linear_to_srgb(linear: f64): f64 {
   return 1.055 * x.pow(1.0 / 2.4) - 0.055;
 }
 
+// Clip linear light to [0, 1], encode it, and round ties upward to a byte.
+pub function linear_to_srgb_byte(linear: f64): u8 {
+  return byte(linear_to_srgb(linear));
+}
+
 pub function rgb(r: u8, g: u8, b: u8): pixels.Pixel {
   return pixels.Pixel { r: r, g: g, b: b, a: 255 };
 }
@@ -84,7 +89,7 @@ pub function unpremultiply(p: Premultiplied): pixels.Pixel {
 function over_channel(source: u8, background: u8, sa: f64, ba: f64, out_alpha: f64): u8 {
   let linear = (srgb_to_linear(source as f64 / 255.0) * sa
     + srgb_to_linear(background as f64 / 255.0) * ba * (1.0 - sa)) / out_alpha;
-  return byte(linear_to_srgb(linear));
+  return linear_to_srgb_byte(linear);
 }
 
 // Composite straight pixels in linear light. Return straight encoded sRGB.
