@@ -1,0 +1,14 @@
+// spec: RH-48
+import "core/map";
+
+function check_assignment(path: string): Result[i32, IoError] {
+  let w: Writer = open_writer(path)?;
+  let ws: Map[i32, Writer] = map_new(2);
+  ws = ws.insert(1, w);
+  w.close()?;
+  return Ok(ws.len());
+}
+
+function main(): i32 {
+  return 0;
+}
