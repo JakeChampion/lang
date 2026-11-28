@@ -65,7 +65,7 @@ const BOUNCE_EVERY: i32 = 64;
 // - `out` holds the text that the command line writes next, and `last` the
 //   kind of its last output: 0 for none, 1 for false or null, 2 otherwise.
 // - `calls` counts the calls of a function of a `def` since the last bounce,
-//   and `next` holds its step followed by any suspended collectors.
+//   and `next` holds its step followed by any suspended continuations.
 //   `links` counts non-tail calls since the last landing.
 pub struct St {
   sig: i32,
@@ -176,7 +176,7 @@ function drive(own st: St): own St {
   }
   let calls = st.calls;
   let s = st;
-  // The innermost collector completes first, including on errors and breaks.
+  // The innermost continuation runs first, including on errors and breaks.
   let pending: ((own St) => own St)[] = [];
   while (s.sig == BOUNCE || pending.len() > 0) {
     if (s.sig == BOUNCE) {
@@ -383,7 +383,11 @@ function run(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.JsonValue, o
       return each_of(a, input, e, (v: json.JsonValue, own s: St): own St => run(b, v, e, k, s), st);
     },
     filter.Comma(a, b) => {
-      let s = drive(run(a, input, e, k, st));
+      let s = run(a, input, e, k, st);
+      if (s.sig == BOUNCE) {
+        let right = (own t: St): own St => if (t.sig == OK) { run(b, input, e, k, t) } else { t };
+        return St { ...s, next: s.next.append(right) };
+      }
       if (s.sig != OK) {
         return s;
       }
@@ -1923,7 +1927,11 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
       return run_paths(a, it, e, (x: PathItem, own s: St): own St => run_paths(b, x, e, k, s), st);
     },
     filter.Comma(a, b) => {
-      let s = drive(run_paths(a, it, e, k, st));
+      let s = run_paths(a, it, e, k, st);
+      if (s.sig == BOUNCE) {
+        let right = (own t: St): own St => if (t.sig == OK) { run_paths(b, it, e, k, t) } else { t };
+        return St { ...s, next: s.next.append(right) };
+      }
       if (s.sig != OK) {
         return s;
       }

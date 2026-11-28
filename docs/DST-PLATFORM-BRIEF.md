@@ -109,6 +109,11 @@ supplies the clock, as the section above describes.
   clock and PRNG, the scripted network, and the mock's call log
   (`internal/testing/e2e/sim_platform_test.go`).
 
+The simulation controls only what the handler reads through its
+`Platform`. A direct call to `std/clock`, `std/rand` or the `now_ns`
+builtin reads the host. `std/log`, `std/dns`, `std/net` and `std/io`
+always call the host.
+
 ## Constraints
 
 - Zero cost and zero behaviour change on the real path (the real

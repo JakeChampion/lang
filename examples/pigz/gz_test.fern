@@ -212,6 +212,22 @@ function test_zip_trailer(): test.TestOutcome {
   return test.assert_eq(hex.encode(tail), "504b07080088590b0b000000000000001800000000000000504b01022dff2d0008000800c42864520088590b0b00000018000000050009000000000000000000000000000000682e7478745554050001bf6a4060504b050600000000010001003c000000630000000000");
 }
 
+// Split the central-directory signature across reads, then return its comment.
+function test_split_zip_comment(): test.TestOutcome {
+  let record = __alloc_u8(42).with(28, 3u8);
+  let rest = cell_new([2u8].concat(record).concat([b'a', 0u8, b'b']));
+  let stream = gz.feed_of((n: i32): Result[u8[], gz.Fail] => {
+    let bytes = rest.get();
+    rest.set([]);
+    return Ok(bytes);
+  });
+  let found = gz.zip_entries(gz.Feed { ...stream, buf: [0u8, 0u8, 0u8, 0u8, 80u8, 75u8, 1u8] }, 0u32, true);
+  let Ok(entries) = found else {
+    return test.assert_eq("read error", "a b");
+  };
+  return test.assert_eq(hex.encode(entries.1.unwrap_or([])), "612062");
+}
+
 function small(): u8[] {
   let out: u8[] = [];
   for i in 0..20 {
@@ -509,6 +525,7 @@ function main(): i32 {
   r = r.it("the names of the output files", test_names);
   r = r.it("the gzip, zip and zlib headers", test_headers);
   r = r.it("the zip data descriptor and central directory", test_zip_trailer);
+  r = r.it("a central-directory signature split across reads", test_split_zip_comment);
   r = r.it("deflate gives the bytes of zlib 1.3 at each level", test_zlib);
   r = r.it("the block layouts give the bytes of pigz", test_layout);
   r = r.it("zopfli and level 11 give the bytes of pigz", test_zopfli);

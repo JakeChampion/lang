@@ -365,7 +365,16 @@ followed to the end). Covered end-to-end by the self-host IR e2e gates
 
 ## How loading works now (post-Phase 5 summary)
 
-There is no prelude injector anymore — a program sees only what it `import`s.
+There is no prelude injector anymore. No stdlib module is visible to a program
+until the program imports it. The builtins are still visible with no import:
+the free functions in `compiler/builtinsigs.fern` (`read_file`, `now_ns`,
+`tcp_listen` and more), the reserved struct names in `is_reserved_struct_name`
+(`compiler/parser.fern`), and the `__` intrinsics.
+
+A builtin that `stdlib_only_wrapper` (`compiler/checker.fern`) names is the
+exception. A program that calls it gets E097, which names the stdlib function
+to call. #14400 moves the other effectful builtins behind modules the same way.
+Then `import` is the only way to reach the host.
 
 `modload` loads each imported `std/` / `core/` module (and its transitive
 imports), mangles non-entry decls to `<mod>__name`, and rewrites qualified call

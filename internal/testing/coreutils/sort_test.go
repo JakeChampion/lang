@@ -357,6 +357,8 @@ func sortCases(t *testing.T) []invocation {
 		{name: "files0 zero length name", args: []string{"--files0-from=" + namesEmpty}},
 		{name: "files0 dash name", args: []string{"--files0-from=" + namesDash}},
 		{name: "files0 missing", args: []string{"--files0-from=" + missing}},
+		{name: "files0 character device", args: []string{"--files0-from=/dev/null"}},
+		{name: "files0 named stdin", args: []string{"--files0-from=/dev/stdin"}, stdin: ab + "\x00"},
 		{name: "files0 directory", args: []string{"--files0-from=" + d}},
 		{name: "files0 empty", args: []string{"--files0-from=" + empty}},
 		{name: "files0 with an operand", args: []string{"--files0-from=" + names0, ab}},

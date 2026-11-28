@@ -176,6 +176,8 @@ func wcCases(t *testing.T) []invocation {
 		{name: "files0 directory name", args: []string{"--files0-from=" + namesDir}},
 		{name: "files0 a dash name from a file", args: []string{"--files0-from=" + namesDash}, stdin: "a\n"},
 		{name: "files0 from stdin", args: []string{"--files0-from=-"}, stdin: f1 + "\x00"},
+		{name: "files0 stdin continues after dash", args: []string{"--files0-from=-"}, stdin: f1 + "\x00-\x00" + big + "\x00"},
+		{name: "files0 stdin keeps errors in list order", args: []string{"--files0-from=-", "--total=only"}, stdin: missing + "\x00-\x00" + f1 + "\x00"},
 		{name: "files0 a dash name from stdin", args: []string{"--files0-from=-"}, stdin: "-\x00"},
 		{name: "files0 with an operand", args: []string{"--files0-from=" + names2, f1}},
 		{name: "files0 missing list", args: []string{"--files0-from=" + missing}},
