@@ -321,6 +321,12 @@ func TestSelfHostExportStringParamRunsViaConsumer(t *testing.T) {
 	exporterSrc := `@export("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32 { return s.len(); }
 
+@export("local:test/strings@0.1.0", "double")
+function twice(b: i32): i32 { return b + b; }
+
+@export("local:test/numbers@0.1.0", "half")
+function half(b: i32): i32 { return b / 2; }
+
 function main(): i32 { return 0; }`
 	watBytes := runCapture(t, "", runner, driverBin, []byte(exporterSrc))
 	if !bytes.Contains(watBytes, []byte("local:test/strings@0.1.0#len-of")) {
@@ -346,11 +352,11 @@ function main(): i32 { return 0; }`
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(expWit, "deps", "test", "strings.wit"),
-		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; }\n"), 0o644); err != nil {
+		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; double: func(b: u32) -> u32; }\ninterface numbers { half: func(b: u32) -> u32; }\n"), 0o644); err != nil {
 		t.Fatalf("write strings dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(expWit, "world.wit"),
-		[]byte("package local:exporter@0.0.0;\nworld m {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    export local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:exporter@0.0.0;\nworld m {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    export local:test/strings@0.1.0;\n    export local:test/numbers@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write exporter wit: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ee.wat", "(module)"), "-o", filepath.Join(dir, "ee.wasm"))
@@ -382,11 +388,11 @@ function main(): i32 { return 0; }`
 		t.Fatalf("mkdir deps/test: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "deps", "test", "strings.wit"),
-		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; }\n"), 0o644); err != nil {
+		[]byte("package local:test@0.1.0;\ninterface strings { len-of: func(s: string) -> u32; double: func(b: u32) -> u32; }\ninterface numbers { half: func(b: u32) -> u32; }\n"), 0o644); err != nil {
 		t.Fatalf("write strings dep: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(userWit, "world.wit"),
-		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/strings@0.1.0;\n}\n"), 0o644); err != nil {
+		[]byte("package local:userworld@0.0.0;\nworld u {\n    import wasi:cli/stdout@0.2.0;\n    import wasi:cli/stderr@0.2.0;\n    import local:test/strings@0.1.0;\n    import local:test/numbers@0.1.0;\n}\n"), 0o644); err != nil {
 		t.Fatalf("write user world: %v", err)
 	}
 	run(wasmtools, "parse", mustWrite(t, dir, "ue.wat", "(module)"), "-o", filepath.Join(dir, "ue.wasm"))
@@ -403,9 +409,16 @@ function main(): i32 { return 0; }`
 	userSrc := `@import("local:test/strings@0.1.0", "len-of")
 function len_of(s: string): i32;
 
+@import("local:test/strings@0.1.0", "double")
+function twice(b: i32): i32;
+
+@import("local:test/numbers@0.1.0", "half")
+function half(b: i32): i32;
+
 function main(): i32 {
 	let text = "` + strings.Repeat("abcdefgh", 16) + `";
 	for i in 0..12000 {
+		if (twice(21) != 42 || half(42) != 21) { write("double-bad"); return 1; }
 		if (len_of(text) != 128) { write("len-bad"); return 1; }
 	}
 	write("` + want + `");
