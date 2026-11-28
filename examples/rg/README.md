@@ -224,7 +224,7 @@ order of the walk.
   `std/regex`, and a pattern with one of them gives an error of
   `std/regex`. They are Script_Extensions, Age and Sentence_Break. The
   binary properties that are not in Go's tables are also not there, such as
-  ID_Start, XID_Start and Bidi_Mirrored.
+  XID_Start and Bidi_Mirrored.
 
 - **Pattern errors.** `regex.check` reports each error of regex-syntax
   0.8.2 with its text and its span, and ripgrep's hint about PCRE2. `-P`

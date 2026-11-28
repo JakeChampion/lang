@@ -170,7 +170,7 @@ func TestSelfHostConstExprFoldShape(t *testing.T) {
 			target:  "arm64-linux",
 			extra:   []string{"-target", "arm64-linux"},
 			want:    `mov x[0-9]+, #63`,
-			arith:   []string{`add x[0-9]+, x[0-9]+, #6`, `mul x[0-9]+, x[0-9]+, x[0-9]+`},
+			arith:   []string{`add x[0-9]+, x[0-9]+, #6`, `add x[0-9]+, x[0-9]+, x[0-9]+, lsl #3`},
 			backend: "asm_arm64_ir.fern",
 		},
 	} {
