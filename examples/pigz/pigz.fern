@@ -703,8 +703,7 @@ function list_info(r: Run, src: Source, own f: gz.Feed, h: gz.Header): Result[Ru
   }
   let o = r.o;
   if (h.form > 1) {
-    let all = if (o.verbosity >= 2) { gz.fill_all(f)? } else { f };
-    let (_, comment) = gz.zip_comment(all.buf, h.next, 0u32, o.verbosity >= 2);
+    let comment = if (o.verbosity >= 2) { gz.zip_entries(gz.Feed { ...f, at: h.next }, 0u32, true)?.1 } else { None };
     r = Run { ...r, listing: gz.show_info(r.listing, o, src.path, h.name, h.stamp, r.now, h.form, h.method, h.zip_crc as u32, h.zip_clen, h.zip_ulen, false, comment) };
     return print_listing(r);
   }

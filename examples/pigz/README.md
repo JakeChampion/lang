@@ -101,9 +101,6 @@ Two cases keep more:
 - `-R` reads the input in blocks, as pigz does. The port keeps the input
   from the start of the current block, because the block ends at a hit of
   the hash. Level 11 also keeps the 32 KiB before the block.
-- With `-lv`, the port keeps all of a zip file in memory, for the comment
-  of its central directory.
-
 When data does not decode, the standard output has the output before the
 error, as in pigz. For deflate data, that is the output of each symbol
 before the error. For compress data, it is each full buffer of 32 KiB. A
@@ -326,9 +323,6 @@ The messages and the exit codes are those of pigz 2.8. Some examples:
 - Speed: compression is not yet as fast as pigz (see the table). The
   causes that "Speed" gives are not fixed. Level 11 is about 1.5 times
   slower than pigz.
-
-- With `-lv`, the port keeps all of a zip file in memory, for the comment
-  of its central directory.
 
 - With `-N`, a header name that is not UTF-8 gives another output name.
   pigz uses the bytes of the name. A Fern path is a `string`, which is

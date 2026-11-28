@@ -1300,14 +1300,17 @@ pub function infchk(own feed: Feed, first: Header, path: string, o: Options, now
       return Ok(failed(members, path + ": corrupted -- " + inflate_refusal(e)));
     }
     let find = o.list && o.verbosity >= 2;
-    f = if (form > 1 && find) { fill_all(f)? } else { fill(f, 64)? };
-    let t = if (form > 1) { zip_trailer_of(f.buf, f.at, h, got.check, got.clen, got.ulen, find) } else { trailer_of(f.buf, f.at, form, got.check, got.ulen) };
+    f = fill(f, 64)?;
+    let t = if (form > 1) { zip_trailer_of(f.buf, f.at, h, got.check, got.clen, got.ulen) } else { trailer_of(f.buf, f.at, form, got.check, got.ulen) };
     if (t.error.len() > 0) {
       return Ok(failed(members, path + ": " + t.error));
     }
     f = Feed { ...f, at: t.pos };
-    more = t.more;
-    comment = t.comment;
+    if (form > 1) {
+      let entries = zip_entries(Feed { ...f, at: t.pos }, got.check, find)?;
+      more = entries.0;
+      comment = entries.1;
+    }
     members = members.append(Member { form: form, check: got.check, clen: got.clen, ulen: got.ulen });
     if (form != 0) {
       break;
@@ -1337,24 +1340,18 @@ pub function infchk(own feed: Feed, first: Header, path: string, o: Options, now
   return Ok(d);
 }
 
-// The trailer after a member: the position after it or the error, and for
-// zip, whether more entries follow and the comment of the entry.
-struct Trailer {
-  pos: i32,
-  error: string,
-  more: boolean,
-  comment: Option[u8[]],
-}
+// The position after a member trailer, or the error in that trailer.
+struct Trailer { pos: i32, error: string }
 
 function trailer_error(why: string): Trailer {
-  return Trailer { pos: 0, error: why, more: false, comment: None };
+  return Trailer { pos: 0, error: why };
 }
 
 // The trailer of a zip entry: the data descriptor for form 3, with or
 // without its signature, then the check of the lengths.
 // It keeps the branches of infchk() of pigz in their order, to check against it.
 // fern-lint: allow cyclomatic-complexity
-function zip_trailer_of(data: u8[], at: i32, h: Header, check: u32, clen: i64, ulen: i64, find: boolean): Trailer {
+function zip_trailer_of(data: u8[], at: i32, h: Header, check: u32, clen: i64, ulen: i64): Trailer {
   let low32 = 4294967295i64;
   let r = In { at: at, eof: false };
   let zcrc = h.zip_crc;
@@ -1392,8 +1389,7 @@ function zip_trailer_of(data: u8[], at: i32, h: Header, check: u32, clen: i64, u
   if (zclen != (clen & low32) || zulen != (ulen & low32)) {
     return trailer_error("corrupted entry -- length mismatch");
   }
-  let (more, comment) = more_zip_entries(data, r.at, check, find);
-  return Trailer { pos: r.at, error: "", more: more, comment: comment };
+  return Trailer { pos: r.at, error: "" };
 }
 
 // The trailer of a zlib stream (form 1) or a gzip member.
@@ -1410,7 +1406,7 @@ function trailer_of(data: u8[], at: i32, form: i32, check: u32, ulen: i64): Trai
     if ((a << 24 | b << 16 | c << 8 | d) != check as i64) {
       return trailer_error("corrupted -- adler32 mismatch");
     }
-    return Trailer { pos: r4.at, error: "", more: false, comment: None };
+    return Trailer { pos: r4.at, error: "" };
   }
   let (c, r1) = get4(data, r);
   let (l, r2) = get4(data, r1);
@@ -1423,7 +1419,7 @@ function trailer_of(data: u8[], at: i32, form: i32, check: u32, ulen: i64): Trai
   if (l != (ulen & 4294967295i64)) {
     return trailer_error("corrupted -- length mismatch");
   }
-  return Trailer { pos: r2.at, error: "", more: false, comment: None };
+  return Trailer { pos: r2.at, error: "" };
 }
 
 function inflate_refusal(e: deflate.InflateError): string {
@@ -1438,51 +1434,66 @@ function inflate_refusal(e: deflate.InflateError): string {
   return "incomplete deflate data";
 }
 
-// more_zip_entries() for a listing.
+// The comment lookup for an input already in memory.
 pub function zip_comment(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[u8[]]) {
-  return more_zip_entries(data, at, check, find);
+  let feed = Feed { ...memory_feed(data), at: at };
+  return zip_entries(feed, check, find).unwrap_or((false, None));
 }
 
-// It keeps the branches of more_zip_entries() of pigz in their order, to check against it.
-// fern-lint: allow cyclomatic-complexity
-// more_zip_entries(): whether another local header follows the entry at
-// data[at:]. With `find`, also the comment of the first entry. That comes
-// from the central directory header with its CRC and offset 0.
-function more_zip_entries(data: u8[], at: i32, check: u32, find: boolean): (boolean, Option[u8[]]) {
-  let (sig, r) = get4(data, In { at: at, eof: false });
+// Whether a second local header follows, and optionally the first entry’s comment.
+pub function zip_entries(own f: Feed, check: u32, find: boolean): Result[(boolean, Option[u8[]]), Fail] {
+  f = fill(f, 4)?;
+  let (sig, r) = get4(f.buf, In { at: f.at, eof: false });
   let another = !r.eof && sig == 67324752i64;
   if (!find) {
-    return (another, None);
+    return Ok((another, None));
   }
-  let pos = if (sig == 33639248i64) { r.at - 4 } else { r.at };
+  if (sig != 33639248i64) {
+    f = Feed { ...f, at: r.at };
+  }
+  return Ok((another, find_zip_comment(f, check)?));
+}
+
+// Keep three possible signature bytes across reads, then bound the next
+// read by the lengths in the central-directory record.
+function find_zip_comment(own f: Feed, check: u32): Result[Option[u8[]], Fail] {
   loop {
-    let Some(found) = central_at(data, pos) else {
-      return (another, None);
+    f = fill(f, 4)?;
+    let Some(found) = central_at(f.buf, f.at) else {
+      if (f.ended) {
+        return Ok(None);
+      }
+      f = Feed { ...f, at: f.buf.len() - 3 };
+      continue;
     };
-    let head = found + 4;
-    if (head + 42 > data.len()) {
-      return (another, None);
+    f = fill(Feed { ...f, at: found }, 46)?;
+    if (f.buf.len() - f.at < 46) {
+      return Ok(None);
     }
-    let crc = le32(data, head + 12);
-    let offset = le32(data, head + 38);
-    if (crc == check as i64 && offset == 0i64) {
-      let len = le16(data, head + 28);
-      if (len == 0) {
-        return (another, None);
-      }
-      let from = head + 42 + le16(data, head + 24) + le16(data, head + 26);
-      if (from + len > data.len()) {
-        return (another, None);
-      }
-      let bytes: u8[] = [];
-      for i in from..from + len {
-        bytes = bytes.append(if (data[i] == 0 as u8) { b' ' } else { data[i] });
-      }
-      return (another, Some(bytes));
+    let head = f.at + 4;
+    if (le32(f.buf, head + 12) == check as i64 && le32(f.buf, head + 38) == 0i64) {
+      let len = le16(f.buf, head + 28);
+      let offset = 46 + le16(f.buf, head + 24) + le16(f.buf, head + 26);
+      return read_zip_comment(f, offset, len);
     }
-    pos = head;
+    f = Feed { ...f, at: head };
   }
-  return (another, None);
+}
+
+function read_zip_comment(own f: Feed, offset: i32, len: i32): Result[Option[u8[]], Fail] {
+  if (len == 0) {
+    return Ok(None);
+  }
+  f = fill(f, offset + len)?;
+  if (f.buf.len() - f.at < offset + len) {
+    return Ok(None);
+  }
+  let bytes: u8[] = [];
+  for i in 0..len {
+    let b = f.buf[f.at + offset + i];
+    bytes = bytes.append(if (b == 0u8) { b' ' } else { b });
+  }
+  return Ok(Some(bytes));
 }
 
 function central_at(data: u8[], from: i32): Option[i32] {
