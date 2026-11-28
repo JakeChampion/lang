@@ -170,6 +170,8 @@ func diffCases(t *testing.T) []invocation {
 		c("unified empty context value", "-U", "", "a", "b"),
 		c("unified context with a sign and blanks", "-U", " +2", "a", "b"),
 		c("unified with labels", "-u", "--label", "old", "--label=new", "a", "b"),
+		c("unified with one empty label", "-u", "--label=", "a", "b"),
+		c("unified with two empty labels", "-u", "-L", "", "-L", "", "a", "b"),
 		c("unified with one label", "-u", "-L", "only one", "a", "b"),
 		c("unified names that need quotes", "-u", "s p", "t\tq"),
 		c("unified horizon lines", "-u", "--horizon-lines=4", "s30", "s30ends"),
@@ -183,6 +185,7 @@ func diffCases(t *testing.T) []invocation {
 		c("context from an empty file", "-c", "empty", "a"),
 		c("context to an empty file", "-c", "a", "empty"),
 		c("context only deletions", "-c", "b", "a2"),
+		c("context with empty second label", "-c", "-L", "old", "--label=", "a", "b"),
 		c("context with labels", "-c", "--label", "x y", "--label", "z", "a", "b"),
 		c("context names that need quotes", "-c", "s p", "t\tq"),
 

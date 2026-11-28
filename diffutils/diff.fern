@@ -2159,7 +2159,7 @@ function diff_texts(cfg: Cfg, a: Text, b: Text): (Script, i32) {
 // part, the names for the header and the status of each file. `searched`
 // is the line where the last search for a function line of -F started, and
 // `found` the line that it found, or -1.
-struct Pair { a: Text, b: Text, first: i32, names: string[], labels: string[], stats: FileStat[], nested: boolean, searched: Cell[i32], found: Cell[i32] }
+struct Pair { a: Text, b: Text, first: i32, names: string[], stats: FileStat[], nested: boolean, searched: Cell[i32], found: Cell[i32] }
 
 // A hunk: the kinds of change in it (1 deletes, 2 inserts, 3 both, 0 when
 // each line is one that -B or -I ignores) and its bounds in each file,
@@ -2367,8 +2367,8 @@ function time_text(run: Run, st: FileStat): string {
 
 function header_line(run: Run, p: Pair, f: i32, mark: string): void {
   set_color(run, C_HEADER);
-  if (p.labels[f].len() > 0) {
-    buf_push(run.out, mark + " " + p.labels[f]);
+  if (f < run.cfg.labels.len()) {
+    buf_push(run.out, mark + " " + run.cfg.labels[f]);
   } else {
     buf_push(run.out, mark + " " + p.names[f] + "\t" + time_text(run, p.stats[f]));
   }
@@ -3395,9 +3395,8 @@ function diff_2_files(run: Run, nested: boolean, sides: Side[], c0: Contents, c1
   }
   let r = diff_texts(cfg, a, b);
   let s = r.0;
-  let labels: string[] = [if (cfg.labels.len() > 0) { cfg.labels[0] } else { "" }, if (cfg.labels.len() > 1) { cfg.labels[1] } else { "" }];
   let names: string[] = [c_escape(label_or(run, 0, sides[0].name)), c_escape(label_or(run, 1, sides[1].name))];
-  let p = Pair { a: a, b: b, first: r.1, names: names, labels: labels, stats: [sides[0].st, sides[1].st], nested: nested, searched: cell_new(0), found: cell_new(-1) };
+  let p = Pair { a: a, b: b, first: r.1, names: names, stats: [sides[0].st, sides[1].st], nested: nested, searched: cell_new(0), found: cell_new(-1) };
   let changed = any_change(cfg, p, s);
   if (cfg.brief) {
     if (changed) {
