@@ -9,6 +9,9 @@ The Platform trait groups operations that a handler obtains from its environment
 ## Contracts
 
 Host configuration carries optional peer, deadline, cookie, access, and trace values. Tests can supply another trait implementation instead of host effects.
+
+A `Platform` is the effect boundary for the clock and for random numbers. A handler that reads them through its `Platform` gets the simulated values under `std/sim_platform` and `std/mock_platform`. A handler that calls `std/clock`, `std/rand` or the `now_ns` builtin directly reads the host instead.
+`std/log`, `std/dns`, `std/net` and `std/io` call the host directly, and a `Platform` does not intercept them.
 `now` reads the wall clock as a `time.Timestamp`. `instant` reads the monotonic clock, and a deadline is an `Instant` on that clock.
 
 ## Module assembly
