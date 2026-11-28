@@ -225,6 +225,10 @@ func diffOptionCases(t *testing.T) []invocation {
 		w(d+"/same", "s\n")
 	}
 	w("dA/only", "only\n")
+	diffMkdir(t, dir, "variants", "exact")
+	w("variants/FILE", "other\n")
+	w("variants/File", "same\n")
+	w("exact/File", "same\n")
 	w("cA/Foo", "1\n")
 	w("cB/foo", "2\n")
 	w("cA/bar", "3\n")
@@ -377,6 +381,9 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("exclude a directory", "-r", "--exclude=sub", "dA", "dB"),
 		c("exclude before enabling file name case folding", "-q", "-x", "mixed", "--ignore-file-name-case", "dA", "dB"),
 		c("exclude file before disabling file name case folding", "-q", "--ignore-file-name-case", "-X", "ex", "--no-ignore-file-name-case", "dA", "dB"),
+		c("exclude uppercase class with case folding", "-q", "--ignore-file-name-case", "-x", "[[:upper:]]*", "dA", "dB"),
+		c("exclude lowercase class beside folded literal", "-q", "--ignore-file-name-case", "-x", "[[:lower:]m]*", "dA", "dB"),
+		c("exclude uppercase class name with case folding", "-q", "--ignore-file-name-case", "-x", "[[:UPPER:]]*", "dA", "dB"),
 		c("exclude patterns with different case modes", "-q", "-x", "X", "--ignore-file-name-case", "-x", "MIXED", "--no-ignore-file-name-case", "dA", "dB"),
 		c("exclude twice", "-r", "-x", "x", "-x", "y", "dA", "dB"),
 		c("exclude all", "-r", "--exclude=*", "dA", "dB"),
@@ -414,6 +421,8 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("no dereference directory with link and regular file", "--no-dereference", "lA", "lB/mixed"),
 		c("no dereference links", "--no-dereference", "ka", "kb"),
 		c("no dereference same links", "--no-dereference", "ka", "ka2"),
+		c("no dereference differing links with labels", "--no-dereference", "-L", "left", "-L", "right", "ka", "kb"),
+		c("no dereference identical links with labels", "--no-dereference", "-s", "-L", "left", "-L", "right", "ka", "ka2"),
 		c("no dereference brief", "--no-dereference", "-q", "ka", "kb"),
 		c("no dereference link and file", "--no-dereference", "ka", "b"),
 		c("no dereference file and link", "--no-dereference", "a", "kb"),
@@ -424,6 +433,8 @@ func diffOptionCases(t *testing.T) []invocation {
 		c("ignore file name case with directory on right", "-q", "--ignore-file-name-case", "cA/Foo", "cB"),
 		c("ignore file name case with directory on left", "-q", "--ignore-file-name-case", "cB", "cA/Foo"),
 		c("ignore file name case with excluded directory entry", "-q", "--ignore-file-name-case", "-x", "foo", "cA/Foo", "cB"),
+		c("prefer exact case in left directory", "-qs", "--ignore-file-name-case", "variants", "exact"),
+		c("prefer exact case in right directory", "-qs", "--ignore-file-name-case", "exact", "variants"),
 		c("ignore file name case and exclude", "-r", "--ignore-file-name-case", "-x", "f*", "cA", "cB"),
 		c("ignore file name case and exclude upper", "--ignore-file-name-case", "-x", "B*", "cA", "cB"),
 		c("ignore file name case and starting file", "--ignore-file-name-case", "-r", "-S", "MIXED", "dA", "dB"),

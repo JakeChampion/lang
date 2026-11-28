@@ -19,7 +19,7 @@ function probe(nregs: i32, nsaved: i32): ssa.Alloc {
   for _ in 0..12 {
     no_home = no_home.append(false);
   }
-  return ssa.regalloc_linear_fixed_costs(f, nregs, nsaved, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: true });
+  return ssa.regalloc_linear_fixed_costs(f, nregs, nsaved, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] });
 }
 
 function main(): i32 {

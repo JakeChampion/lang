@@ -581,17 +581,6 @@ function lower(c: i32): i32 {
   return c;
 }
 
-function lower_text(s: string): string {
-  let h = buf_new(s.len());
-  let i = 0;
-  while (i < s.len()) {
-    buf_push_byte(h, lower(s[i] as i32));
-    i += 1;
-  }
-  let t = take_text(h);
-  return t;
-}
-
 function special(c: i32): boolean {
   return c == 42 || c == 63 || c == 91 || c == 92;
 }
@@ -618,8 +607,7 @@ function bytes_of(s: string, lo: i32, hi: i32): u8[] {
   return out;
 }
 
-function glob_new(pat0: string, fold: boolean): Glob {
-  let pat = if (fold) { lower_text(pat0) } else { pat0 };
+function glob_new(pat: string, fold: boolean): Glob {
   let n = pat.len();
   if (plain(pat, 0, n)) {
     return Glob { kind: G_LITERAL, lit: pat.bytes(), pat: pat, fold: fold };
@@ -687,10 +675,7 @@ function glob_match(g: Glob, s: string, lo: i32): boolean {
     return lit_in(s, lo, s.len(), g.lit, g.fold);
   }
   let text = slice_unchecked(s, lo, s.len()) + "";
-  if (g.fold) {
-    text = lower_text(text);
-  }
-  return fnmatch.fnmatch(g.pat, text);
+  return fnmatch.fnmatch(g.pat, text, g.fold);
 }
 
 // ---------------------------------------------------------------------------

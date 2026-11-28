@@ -16,6 +16,8 @@ import "std/io";
 import "std/pcre";
 import "std/process";
 import "std/regex";
+import "std/unicode";
+import "std/utf8";
 import "std/worker";
 import "./decompress";
 import "./encoding";
@@ -131,7 +133,7 @@ function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matche
         return Some((Ctx { ...ctx, pcre: true }, m));
       },
       Err(e) => {
-        eprint("rg: " + e);
+        report_error(e);
         return None;
       },
     };
@@ -153,12 +155,12 @@ function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matche
         return Some((Ctx { ...ctx, pcre: true }, m));
       },
       Err(e) => {
-        eprint("rg: " + engine_error(o, why, e));
+        report_error(engine_error(o, why, e));
         return None;
       }
     }
   }
-  eprint("rg: " + engine_error(o, why, ""));
+  report_error(engine_error(o, why, ""));
   return None;
 }
 
@@ -571,9 +573,16 @@ function noted(ctx: Ctx, r: Part, it: walk.Item): Part {
   return note(ctx, r, it.message, it.error);
 }
 
+// Unix paths can contain arbitrary bytes. Rust displays errors as UTF-8
+// and replaces each malformed sequence with one replacement character.
+function report_error(text: string): void {
+  let message = if (encoding.invalid_at(text) < 0) { text } else { whatwg.decoder("UTF-8").decode(text.bytes()) };
+  eprint("rg: " + message);
+}
+
 function note(ctx: Ctx, r: Part, text: string, error: boolean): Part {
   if (ctx.messages && (error || ctx.ignore_messages)) {
-    eprint("rg: " + text);
+    report_error(text);
   }
   return Part { ...r, failed: r.failed || error };
 }
@@ -787,7 +796,7 @@ function with_files(ctx: Ctx, o: flags.Options, cfg: ignore.Config): ignore.Conf
 
 function note_now(ctx: Ctx, text: string): void {
   if (ctx.messages && ctx.ignore_messages) {
-    eprint("rg: " + text);
+    report_error(text);
   }
 }
 
@@ -891,7 +900,7 @@ function type_list(o: flags.Options): i32 {
       return 0;
     },
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     }
   }
@@ -1181,7 +1190,7 @@ function run(o: flags.Options, t0: i64): i32 {
   let cfg = match (config(o)) {
     Ok(c) => c,
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     },
   };
@@ -1232,16 +1241,30 @@ function search_serial(ctx: Ctx, re: matcher.Matcher, items: walk.Item[]): Part 
 // The options with the patterns of the -f files in their place among the
 // -e patterns. A line terminator, and a CR before it, end each pattern.
 function with_pattern_files(o: flags.Options): Result[flags.Options, string] {
+  if (!o.searches()) {
+    return Ok(o);
+  }
+  let stdin_used = false;
   let patterns: string[] = [];
   let k = 0;
   for i in 0..o.patterns.len() + 1 {
     while (k < o.pattern_files.len() && o.pattern_file_at[k] == i) {
-      patterns = patterns.concat(read_patterns(o.pattern_files[k])?);
+      let path = o.pattern_files[k];
+      if (path == "-") {
+        if (stdin_used) {
+          return Err("error reading -f/--file from stdin: stdin has already been consumed");
+        }
+        stdin_used = true;
+      }
+      patterns = patterns.concat(read_patterns(path)?);
       k += 1;
     }
     if (i < o.patterns.len()) {
       patterns = patterns.append(o.patterns[i]);
     }
+  }
+  if (stdin_used && o.paths.contains("-")) {
+    return Err("error: attempted to read patterns from stdin while also searching stdin");
   }
   return Ok(flags.Options { ...o, patterns: patterns });
 }
@@ -1260,12 +1283,13 @@ function read_patterns(path: string): Result[string[], string] {
   while (start < text.len()) {
     let nl = __memchr(text, 10, start);
     let end = if (nl < 0) { text.len() } else { nl };
-    let stop = if (end > start && text[end - 1] == 13u8) { end - 1 } else { end };
+    let stop = if (nl >= 0 && end > start && text[end - 1] == 13u8) { end - 1 } else { end };
     let line = slice_unchecked(text, start, stop).to_owned();
     let bad = encoding.invalid_at(line);
     if (bad >= 0) {
       let hex = encoding.escaped(slice_unchecked(line, bad, bad + 1).to_owned());
-      return Err(f"{path}:{n}: found invalid UTF-8 in pattern at byte offset {bad}: {encoding.escaped(line)} (disable Unicode mode and use hex escape sequences to match arbitrary bytes in a pattern, e.g., '(?-u){hex}')");
+      let source = if (path == "-") { "<stdin>" } else { path };
+      return Err(f"{source}:{n}: found invalid UTF-8 in pattern at byte offset {bad}: {encoding.escaped(line)} (disable Unicode mode and use hex escape sequences to match arbitrary bytes in a pattern, e.g., '(?-u){hex}')");
     }
     out = out.append(line);
     start = end + 1;
@@ -1314,6 +1338,33 @@ function generate(kind: string): i32 {
   return 0;
 }
 
+// Config arguments are byte strings. Trim Unicode whitespace at the edges
+// and keep undecodable bytes as part of the argument.
+function trim_config_line(line: string): string {
+  let start = 0;
+  let end = line.len();
+  while (start < end) {
+    let Some(cp) = utf8.decode_at(line, start) else {
+      break;
+    };
+    if (!(cp.0 as char).is_whitespace()) {
+      break;
+    }
+    start += cp.1;
+  }
+  while (end > start) {
+    let pos = utf8.floor_char_boundary(line, end - 1);
+    let Some(cp) = utf8.decode_at(line, pos) else {
+      break;
+    };
+    if (pos + cp.1 != end || !(cp.0 as char).is_whitespace()) {
+      break;
+    }
+    end = pos;
+  }
+  return slice_unchecked(line, start, end).to_owned();
+}
+
 // The arguments of the file that RIPGREP_CONFIG_PATH names: each line that
 // is not empty and does not start with `#`, without the white space around
 // it.
@@ -1329,14 +1380,14 @@ function config_args(messages: boolean, log: i32): string[] {
     Ok(b) => unsafe { string_from_bytes_unchecked(b) },
     Err(e) => {
       if (messages) {
-        eprint("rg: failed to read the file specified in RIPGREP_CONFIG_PATH: " + path + ": " + ignore.os_error(e));
+        report_error("failed to read the file specified in RIPGREP_CONFIG_PATH: " + path + ": " + ignore.os_error(e));
       }
       return none;
     },
   };
   let out: string[] = [];
   for raw in text.split("\n") {
-    let line = raw.trim();
+    let line = trim_config_line(raw);
     if (line != "" && line[0] != b'#') {
       out = out.append(line);
     }
@@ -1370,7 +1421,7 @@ function main(): i32 {
   let parsed = match (options_of(argv.drop(1))) {
     Ok(v) => v,
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     },
   };
@@ -1380,7 +1431,7 @@ function main(): i32 {
   let o = match (with_pattern_files(parsed)) {
     Ok(v) => v,
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     },
   };
