@@ -1351,7 +1351,7 @@ function read_size(): i32 {
   return 262144;
 }
 
-function read_into(h: usize, path: string, open_msg: string): i32 {
+function read_into(h: usize, path: string, name_list: boolean): i32 {
   let r = stdin();
   if (path != "-") {
     match (open_reader(path)) {
@@ -1359,18 +1359,18 @@ function read_into(h: usize, path: string, open_msg: string): i32 {
         r = f;
       },
       Err(e) => {
-        die_file(open_msg, path, e);
+        die_file("open failed", path, e);
       }
     }
   }
-  let last = read_into_from(h, r, path);
+  let last = read_into_from(h, r, path, name_list);
   if (path != "-") {
     r.close();
   }
   return last;
 }
 
-function read_into_from(h: usize, r: Reader, path: string): i32 {
+function read_into_from(h: usize, r: Reader, path: string, name_list: boolean): i32 {
   let last = -1;
   while (true) {
     match (r.read_chunk_bytes(read_size())) {
@@ -1382,6 +1382,9 @@ function read_into_from(h: usize, r: Reader, path: string): i32 {
         last = chunk[chunk.len() - 1] as i32;
       },
       Err(e) => {
+        if (name_list) {
+          die("cannot read file names from " + gnu.quote(path));
+        }
         die_file("read failed", path, e);
       }
     }
@@ -1389,9 +1392,9 @@ function read_into_from(h: usize, r: Reader, path: string): i32 {
   return last;
 }
 
-function slurp(path: string, open_msg: string): u8[] {
+function read_name_bytes(path: string): u8[] {
   let h = buf_new(read_size());
-  read_into(h, path, open_msg);
+  read_into(h, path, true);
   let bytes = buf_take_bytes(h);
   buf_free(h);
   return bytes;
@@ -2064,20 +2067,7 @@ function check_order(c: Conf, name: string, quiet: boolean): i32 {
 }
 
 function read_names(file: string): Option[string[]] {
-  let text: u8[] = [];
-  if (file == "-") {
-    text = slurp("-", "open failed");
-  } else {
-    match (stat(file)) {
-      Ok(st) => {
-        if (!st.is_file) {
-          die("cannot read file names from " + gnu.quote(file));
-        }
-      },
-      Err(_) => {}
-    }
-    text = slurp(file, "open failed");
-  }
+  let text = read_name_bytes(file);
   if (text.len() == 0) {
     die("no input from " + gnu.quote(file));
   }
@@ -2574,7 +2564,7 @@ function run(a0: Args): i32 {
   let hb = buf_new(read_size());
   i = 0;
   while (i < files.len()) {
-    let last = read_into(hb, files[i], "open failed");
+    let last = read_into(hb, files[i], false);
     if (last >= 0 && last != term) {
       buf_push_byte(hb, term);
     }
@@ -2735,7 +2725,7 @@ function open_feed(own m: Feeds, path: string, o_file: boolean, o_dev: i64, o_in
   }
   if (whole) {
     let h = buf_new(read_size());
-    let last = read_into_from(h, r, path);
+    let last = read_into_from(h, r, path, false);
     if (last >= 0 && last != term) {
       buf_push_byte(h, term);
     }
