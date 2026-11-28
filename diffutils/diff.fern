@@ -1345,6 +1345,13 @@ function diff_dirs(run: Run, parent: Option[Parent], sides: Side[]): i32 {
   let val = 0;
   while (i < a.len() || j < b.len()) {
     let order = if (i >= a.len()) { 1 } else if (j >= b.len()) { -1 } else { compare_names(run.cfg, a[i], b[j]) };
+    if (order == 0 && run.cfg.name_case) {
+      if (a[i] < b[j]) {
+        a = prefer_exact_name(a, i, b[j]);
+      } else if (b[j] < a[i]) {
+        b = prefer_exact_name(b, j, a[i]);
+      }
+    }
     let n0: Option[string] = None;
     let n1: Option[string] = None;
     if (order <= 0) {
@@ -1361,6 +1368,26 @@ function diff_dirs(run: Run, parent: Option[Parent], sides: Side[]): i32 {
     }
   }
   return val;
+}
+
+// Within a group of case variants, move an exact match to the front and
+// preserve the order of the remaining entries for subsequent comparisons.
+function prefer_exact_name(own names: string[], start: i32, target: string): string[] {
+  let folded = lower(target);
+  for i in start + 1..names.len() {
+    if (names[i] > target || lower(names[i]) != folded) {
+      break;
+    }
+    if (names[i] == target) {
+      let j = i;
+      while (j > start) {
+        names = names.with(j, names[j - 1]);
+        j -= 1;
+      }
+      return names.with(start, target);
+    }
+  }
+  return names;
 }
 
 // The entries of a directory to compare, in order: not those that -x or -X
