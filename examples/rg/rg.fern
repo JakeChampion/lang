@@ -133,7 +133,7 @@ function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matche
         return Some((Ctx { ...ctx, pcre: true }, m));
       },
       Err(e) => {
-        eprint("rg: " + e);
+        report_error(e);
         return None;
       },
     };
@@ -155,12 +155,12 @@ function compiled(ctx: Ctx, o: flags.Options, banned: u8[]): Option[(Ctx, matche
         return Some((Ctx { ...ctx, pcre: true }, m));
       },
       Err(e) => {
-        eprint("rg: " + engine_error(o, why, e));
+        report_error(engine_error(o, why, e));
         return None;
       }
     }
   }
-  eprint("rg: " + engine_error(o, why, ""));
+  report_error(engine_error(o, why, ""));
   return None;
 }
 
@@ -573,9 +573,16 @@ function noted(ctx: Ctx, r: Part, it: walk.Item): Part {
   return note(ctx, r, it.message, it.error);
 }
 
+// Unix paths can contain arbitrary bytes. Rust displays errors as UTF-8
+// and replaces each malformed sequence with one replacement character.
+function report_error(text: string): void {
+  let message = if (encoding.invalid_at(text) < 0) { text } else { whatwg.decoder("UTF-8").decode(text.bytes()) };
+  eprint("rg: " + message);
+}
+
 function note(ctx: Ctx, r: Part, text: string, error: boolean): Part {
   if (ctx.messages && (error || ctx.ignore_messages)) {
-    eprint("rg: " + text);
+    report_error(text);
   }
   return Part { ...r, failed: r.failed || error };
 }
@@ -789,7 +796,7 @@ function with_files(ctx: Ctx, o: flags.Options, cfg: ignore.Config): ignore.Conf
 
 function note_now(ctx: Ctx, text: string): void {
   if (ctx.messages && ctx.ignore_messages) {
-    eprint("rg: " + text);
+    report_error(text);
   }
 }
 
@@ -893,7 +900,7 @@ function type_list(o: flags.Options): i32 {
       return 0;
     },
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     }
   }
@@ -1183,7 +1190,7 @@ function run(o: flags.Options, t0: i64): i32 {
   let cfg = match (config(o)) {
     Ok(c) => c,
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     },
   };
@@ -1373,7 +1380,7 @@ function config_args(messages: boolean, log: i32): string[] {
     Ok(b) => unsafe { string_from_bytes_unchecked(b) },
     Err(e) => {
       if (messages) {
-        eprint("rg: failed to read the file specified in RIPGREP_CONFIG_PATH: " + path + ": " + ignore.os_error(e));
+        report_error("failed to read the file specified in RIPGREP_CONFIG_PATH: " + path + ": " + ignore.os_error(e));
       }
       return none;
     },
@@ -1414,7 +1421,7 @@ function main(): i32 {
   let parsed = match (options_of(argv.drop(1))) {
     Ok(v) => v,
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     },
   };
@@ -1424,7 +1431,7 @@ function main(): i32 {
   let o = match (with_pattern_files(parsed)) {
     Ok(v) => v,
     Err(why) => {
-      eprint("rg: " + why);
+      report_error(why);
       return 2;
     },
   };
