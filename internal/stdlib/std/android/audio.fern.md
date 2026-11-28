@@ -53,6 +53,11 @@ The video controller can use this anchor through `std/android/video/player.synch
 The app supplies the matching media and frame origin and controls both streams.
 The timestamp query does not assign media timestamps or measure acoustic lip-sync error.
 
+On a live stream, `xrun_count` reads AAudio's cumulative count of output
+underruns or input overruns. Zero is a valid reading. A missing stream or a
+platform error returns `None`. Read successive counts on the same open stream
+to measure the change during playback.
+
 ## Module assembly
 
 ```fern
@@ -150,6 +155,9 @@ function c_buffer_capacity(stream: usize): i32;
 
 @import("libaaudio.so", "AAudioStream_setBufferSizeInFrames")
 function c_set_buffer_size(stream: usize, frames: i32): i32;
+
+@import("libaaudio.so", "AAudioStream_getXRunCount")
+function c_xrun_count(stream: usize): i32;
 
 @import("libaaudio.so", "AAudioStream_getTimestamp")
 function c_timestamp(stream: usize, clock: i32, position: usize, time_ns: usize): i32;
@@ -272,6 +280,19 @@ pub function (s: Stream) close(): void {
   }
 }
 
+// AAudio counts underruns on output and overruns on input.
+pub function (s: Stream) xrun_count(): Option[i32] {
+  return read_xrun_count(s.ptr);
+}
+
+function read_xrun_count(ptr: usize): Option[i32] {
+  if (ptr == 0 as usize) {
+    return None;
+  }
+  let n = c_xrun_count(ptr);
+  return if (n >= 0) { Some(n) } else { None };
+}
+
 // Query the platform audio anchor in CLOCK_MONOTONIC units.
 pub function (s: Stream) timestamp(): Option[Timestamp] {
   return read_timestamp(s.ptr);
@@ -364,6 +385,10 @@ function write_frames(ptr: usize, samples: [i32], frames: i32, timeout_ms: i32):
 // frame are one after the other.
 pub struct Music { ptr: usize, rate: i32, channels: i32 }
 
+pub function (m: Music) xrun_count(): Option[i32] {
+  return read_xrun_count(m.ptr);
+}
+
 // The position counts frames, each of which contains all channel samples.
 pub function (m: Music) timestamp(): Option[Timestamp] {
   return read_timestamp(m.ptr);
@@ -443,6 +468,10 @@ A `Buffered` stream has the fields of a `Music` stream and the address of its ri
 // from `ring`. `channels` is 1 or 2, and the samples of a frame are one
 // after the other.
 pub struct Buffered { ptr: usize, rate: i32, channels: i32, ring: usize }
+
+pub function (m: Buffered) xrun_count(): Option[i32] {
+  return read_xrun_count(m.ptr);
+}
 
 // The position counts frames, each of which contains all channel samples.
 pub function (m: Buffered) timestamp(): Option[Timestamp] {

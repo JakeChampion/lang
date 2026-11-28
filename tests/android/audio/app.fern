@@ -63,6 +63,7 @@ function check(ctx: usize): void {
       wrote += speaker.write(tone, 200);
     }
     log_anchor(speaker);
+    log_underruns("playback", speaker.xrun_count());
     speaker.stop();
   }
   speaker.close();
@@ -93,6 +94,7 @@ function play_music(): void {
       odd += n % 2;
     }
     log_timestamp("music timestamp", music.timestamp());
+    log_underruns("music", music.xrun_count());
     music.pause();
     music.flush();
     if (music.start()) {
@@ -117,4 +119,9 @@ function log_timestamp(name: string, stamp: Option[audio.Timestamp]): void {
       log.warn("audiotest: " + name + " unavailable");
     }
   }
+}
+
+function log_underruns(name: string, count: Option[i32]): void {
+  let reading = match (count) { Some(n) => n.to_string(), None => "unavailable" };
+  log.warn("audiotest: " + name + " underruns " + reading);
 }

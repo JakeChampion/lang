@@ -12,6 +12,13 @@ PATTERNS = ((audio.TIMESTAMP, 'timestamp'), (audio.MUSIC_TIMESTAMP, 'music times
 
 
 class TimestampDiagnostics(unittest.TestCase):
+    def test_underrun_diagnostics(self):
+        for kind, pattern in [('playback', audio.PLAYBACK_UNDERRUNS), ('music', audio.MUSIC_UNDERRUNS)]:
+            for reading in ['0', '12', 'unavailable']:
+                self.assertRegex('audiotest: ' + kind + ' underruns ' + reading, pattern)
+            for reading in ['-1', '', '3 stale']:
+                self.assertNotRegex('audiotest: ' + kind + ' underruns ' + reading, pattern)
+
     def test_available(self):
         for pattern, name in PATTERNS:
             for values in ('0 monotonic_ns 0', '48000 monotonic_ns 123456789',
