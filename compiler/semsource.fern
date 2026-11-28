@@ -2267,7 +2267,7 @@ function armed_cleanup(s: State): ast.Stmt[] {
   for st in s.try_cleanup {
     if let ast.StmtIf(f) = st {
       if let ast.ExprIdent(id) = f.cond {
-        if (deferlower.defer_flag(id.name) >= s.armed) {
+        if (deferlower.armed_after_flag(id.name, s.armed) != s.armed) {
           continue;
         }
       }
@@ -4647,9 +4647,9 @@ function declare_from_call(v: ast.StmtVar, s: State, bound: typeinfo.Type): Stat
 }
 
 function assign(a: ast.StmtAssign, s: State): State {
-  let ax = deferlower.defer_armed(a);
-  if (ax >= s.armed) {
-    s = State { ...s, armed: ax + 1 };
+  let armed = deferlower.armed_after_assign(a, s.armed);
+  if (armed != s.armed) {
+    s = State { ...s, armed: armed };
   }
   let old = lookup(s, a.target);
   if (old < 0) {
