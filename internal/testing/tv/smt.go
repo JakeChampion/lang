@@ -200,7 +200,9 @@ func (s *side) local(n int) value {
 func (s *side) define(w int, expr string) value {
 	name := s.tag + strconv.Itoa(s.temps)
 	s.temps++
-	s.e.defs = append(s.e.defs, fmt.Sprintf("(define-fun %s () (_ BitVec %d) %s)", name, w, expr))
+	// A fresh constant constrained to the result lets Z3 simplify each operation
+	// before substituting it into a consumer such as signed division.
+	s.e.defs = append(s.e.defs, fmt.Sprintf("(declare-const %s (_ BitVec %d))\n(assert (= %s %s))", name, w, name, expr))
 	return value{term: name, width: w}
 }
 
@@ -332,7 +334,8 @@ func Encode(p Pair) (string, error) {
 	for _, d := range e.defs {
 		q.WriteString(d + "\n")
 	}
-	fmt.Fprintf(&q, "(assert (not (and true %s)))\n(check-sat)\n", strings.Join(eqs, " "))
+	// Run the bit-vector preprocessing for each query, even inside Prove's push/pop batch.
+	fmt.Fprintf(&q, "(assert (not (and true %s)))\n(check-sat-using qfbv)\n", strings.Join(eqs, " "))
 	return q.String(), nil
 }
 
