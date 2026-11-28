@@ -6401,9 +6401,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.need("heap");
     s = s.need(rb);
     s = s.write("    bl __fn___fern_" + rb + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_RANDOM_I32) {
-    s = s.need("random_i32");
-    s = s.write("    bl __fn___fern_random_i32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_PROC_FORK) {
     s = s.need("proc_fork").need("heap");
     s = s.write("    bl __fn___fern_proc_fork\n");
@@ -6457,9 +6454,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = emit_arm64_op_heap_release_to(o, s);
   } else if (o.kind_tag == ir.K_HEAP_ADOPT) {
     s = emit_arm64_op_heap_adopt(o, s);
-  } else if (o.kind_tag == ir.K_NOW_NS) {
-    s = s.need("now_ns");
-    s = s.write("    bl __fn___fern_now_ns\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == ir.K_POLL) {
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_poll\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
@@ -6489,10 +6483,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     s = s.write("    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_set_window_size\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == ir.K_PIPE) {
-    s = s.need("heap");
-    s = s.need("pipe");
-    s = s.write("    bl __fn___fern_pipe\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag >= ir.K_OPEN_DIR && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     s = emit_dir_op(o, s);
   } else if (o.kind_tag == ir.K_WINDOW_SIZE) {
@@ -6513,9 +6503,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_set_process_group\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
     s = s.need("set_process_group");
-  } else if (o.kind_tag == ir.K_PRIORITY) {
-    s = s.write("    bl __fn___fern_priority\n    str x0, [sp, #-16]!\n");
-    s = s.need("priority");
   } else if (o.kind_tag == ir.K_SET_PRIORITY) {
     s = s.write("    bl __fn___fern_set_priority\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need("heap");
