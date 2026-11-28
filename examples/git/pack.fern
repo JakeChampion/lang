@@ -109,10 +109,18 @@ pub function pack_sum(ix: Index): u8[] {
   return array.slice(ix.bytes, n - 2 * ix.width, n - ix.width);
 }
 
-function compare(ix: Index, i: i32, name: u8[]): i32 {
+function compare(ix: Index, i: i32, name: u8[], prefix: i64): i32 {
   let at = ix.names + i * ix.stride;
   let b = ix.bytes;
-  for k in 0..ix.width {
+  let start = 0;
+  if (ix.width >= 4) {
+    let word = be32(b, at);
+    if (word != prefix) {
+      return if (word < prefix) { -1 } else { 1 };
+    }
+    start = 4;
+  }
+  for k in start..ix.width {
     if (b[at + k] != name[k]) {
       return if (b[at + k] < name[k]) { -1 } else { 1 };
     }
@@ -133,11 +141,12 @@ pub function find(ix: Index, name: u8[]): i32 {
     return -1;
   }
   let (first, end) = bucket(ix, name[0] as i32);
+  let prefix = if (ix.width >= 4) { be32(name, 0) } else { 0i64 };
   let lo = first;
   let hi = end;
   while (lo < hi) {
     let mid = lo + (hi - lo) / 2;
-    let c = compare(ix, mid, name);
+    let c = compare(ix, mid, name, prefix);
     if (c == 0) {
       return mid;
     }
