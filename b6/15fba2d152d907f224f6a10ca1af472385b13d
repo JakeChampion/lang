@@ -341,3 +341,14 @@ bootstrap/arm64-darwin/stage2.size_bytes	22987921
 bootstrap/arm64-darwin/stage3.wall_s	119
 bootstrap/arm64-darwin/stage3.peak_rss_mb	2940
 bootstrap/arm64-darwin/stage3.size_bytes	22987921
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	53
+bootstrap/x86-64-linux/stage1.peak_rss_mb	2496
+bootstrap/x86-64-linux/stage1.size_bytes	20515824
+bootstrap/x86-64-linux/stage2.wall_s	111
+bootstrap/x86-64-linux/stage2.peak_rss_mb	2652
+bootstrap/x86-64-linux/stage2.size_bytes	22111200
+bootstrap/x86-64-linux/stage3.wall_s	89
+bootstrap/x86-64-linux/stage3.peak_rss_mb	2637
+bootstrap/x86-64-linux/stage3.size_bytes	22111200
