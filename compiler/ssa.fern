@@ -7998,6 +7998,9 @@ pub function shared_lengths(f: SFunc): SFunc {
 // in, and nothing in it can change a length, one load of the length in the
 // block before the loop serves each trip. The base must be defined before
 // the loop. A target that compares with the length in memory gains nothing.
+// A load of the first word of such a base in the loop head, as the length in
+// `while (i < a.len())`, moves to that block too. The head runs each time
+// that block runs, so the load runs no more often than before.
 pub function hoisted_lengths(f: SFunc): SFunc {
   if (f.blocks.len() < 3) {
     return f;
@@ -8009,6 +8012,7 @@ pub function hoisted_lengths(f: SFunc): SFunc {
   let preds = position_preds(f, at);
   let blocks = f.blocks;
   let made: i32[] = [];
+  let moved = false;
   for h in 0..latch.len() {
     let last = latch[h];
     if (last <= h) {
@@ -8022,6 +8026,18 @@ pub function hoisted_lengths(f: SFunc): SFunc {
     let lens: i32[] = [];
     let datas = util.minus_ones(0);
     let loads: SInst[] = [];
+    let head: SInst[] = [];
+    for ins in blocks[h].insts {
+      if (ins.kind_tag == LD_AT && ins.imm == 0 && ins.str == "" && ins.result >= 0 && defined_before(f, def_pos, ins.args[0], h, last)) {
+        loads = loads.append(ins);
+      } else {
+        head = head.append(ins);
+      }
+    }
+    if (loads.len() > 0) {
+      blocks = blocks.with(h, SBlock { ...blocks[h], insts: head });
+      moved = true;
+    }
     for bi in h..=last {
       let insts: SInst[] = [];
       let changed = false;
@@ -8066,7 +8082,7 @@ pub function hoisted_lengths(f: SFunc): SFunc {
       blocks = blocks.with(pre, SBlock { ...blocks[pre], insts: blocks[pre].insts.concat(loads) });
     }
   }
-  if (made.len() == 0) {
+  if (made.len() == 0 && !moved) {
     return f;
   }
   return SFunc { ...f, blocks: blocks, nvals: f.nvals + made.len() };
