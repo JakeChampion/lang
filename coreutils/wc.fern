@@ -295,7 +295,9 @@ function total_of(v: string): i32 {
 
 struct Job { path: string, name: string, origin: string }
 
-function read_names(file: string): Option[Job[]] {
+struct NameList { jobs: Job[], align: boolean }
+
+function read_names(file: string): Option[NameList] {
   let from_stdin = file == "-";
   let r = stdin();
   if (!from_stdin) {
@@ -310,6 +312,10 @@ function read_names(file: string): Option[Job[]] {
     }
   }
   let data: u8[] = [];
+  let align = match (r.stat()) {
+    Ok(st) => st.is_file && st.size <= 10485760i64,
+    Err(_) => false,
+  };
   let result = io.read_all_bytes(r);
   if (!from_stdin) {
     r.close();
@@ -343,17 +349,13 @@ function read_names(file: string): Option[Job[]] {
         return None;
       }
     }
-    if (name == "-" && from_stdin) {
-      gnu.error("when reading file names from standard input, no file name of '-' allowed");
-      return None;
-    }
     jobs = jobs.append(Job { path: name, name: name, origin: origin });
     start = end + 1;
   }
-  return Some(jobs);
+  return Some(NameList { jobs: jobs, align: align });
 }
 
-function width_for(jobs: Job[], show: Show, total: i32): i32 {
+function width_for(jobs: Job[], show: Show, total: i32, stdin_names: boolean): i32 {
   if (total == total_only()) {
     return 1;
   }
@@ -364,6 +366,10 @@ function width_for(jobs: Job[], show: Show, total: i32): i32 {
   let sum = 0 as i64;
   let i = 0;
   while (i < jobs.len()) {
+    if (stdin_names && jobs[i].path == "-") {
+      i += 1;
+      continue;
+    }
     match (job_stat(jobs[i].path)) {
       Ok(st) => {
         if (st.is_file) {
@@ -404,8 +410,12 @@ function job_label(job: Job): string {
   return gnu.quotef(job.path);
 }
 
-function count_job(job: Job, show: Show, o: io_buffered.BufWriter): Done {
+function count_job(job: Job, show: Show, o: io_buffered.BufWriter, stdin_names: boolean): Done {
   let w = o;
+  if (stdin_names && job.path == "-") {
+    w = gnu.error_out(w, "when reading file names from standard input, no file name of '-' allowed");
+    return Done { counts: zero_counts(), counted: false, failed: true, w: w };
+  }
   if (job.path.len() == 0) {
     let where = "";
     if (job.origin.len() > 0) {
@@ -469,6 +479,7 @@ pub function main(): i32 {
   let total_when = total_auto();
   let files0 = "";
   let have_files0 = false;
+  let align = true;
 
   let g = gnu.getopt_new(argv, opts, "wc", help_text(), 1);
   while (true) {
@@ -516,7 +527,8 @@ pub function main(): i32 {
     }
     match (read_names(files0)) {
       Some(names) => {
-        jobs = names;
+        jobs = names.jobs;
+        align = names.align;
       },
       None => {
         return 1;
@@ -532,13 +544,13 @@ pub function main(): i32 {
     }
   }
 
-  let width = width_for(jobs, show, total_when);
+  let width = if (align) { width_for(jobs, show, total_when, files0 == "-") } else { 1 };
   let out = gnu.out_new();
   let total = zero_counts();
   let ok = true;
   let i = 0;
   while (i < jobs.len()) {
-    let res = count_job(jobs[i], show, out);
+    let res = count_job(jobs[i], show, out, files0 == "-");
     out = res.w;
     if (res.failed) {
       ok = false;
