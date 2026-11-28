@@ -30,7 +30,7 @@ import "./walk";
 // and `drivers` records whether each named driver has a command.
 // With a `verbosity` of 5 or more, the messages of an inner merge are kept. `abbrev` is the least length of a short name.
 // `attrs` holds the attributes, or nothing.
-pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, renormalize: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, driver_error: Option[(string, string)], drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
+pub struct Options { repo: Option[refs.Repo], style: i32, algo: linediff.Options, renames: boolean, renormalize: boolean, autocrlf: boolean, dir_renames: boolean, dir_moves: boolean, rename_limit: i64, default_driver: string, driver_error: Option[(string, string)], drivers: Map[string, boolean], verbosity: i32, abbrev: i32, attrs: attr.Attrs[] }
 
 // The text of a gap: a part of a merge that the port does not have.
 function gap(what: string): string {
@@ -39,7 +39,7 @@ function gap(what: string): string {
 
 // The settings of git with no configuration.
 pub function defaults(): Options {
-  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, renormalize: false, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", driver_error: None, drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
+  return Options { repo: None, style: linediff.STYLE_MERGE, algo: linediff.Options { algorithm: linediff.HISTOGRAM, minimal: false, indent_heuristic: false }, renames: true, renormalize: false, autocrlf: false, dir_renames: true, dir_moves: false, rename_limit: 7000, default_driver: "", driver_error: None, drivers: Map { }, verbosity: 2, abbrev: 7, attrs: [] };
 }
 
 // The settings of a merge from the configuration, or the message of git
@@ -76,6 +76,9 @@ pub function configured(c: config.Config, base: Options, verbosity: string): Con
         }
       }
     }
+  }
+  for e in last_entry(c, "core.autocrlf") {
+    o = Options { ...o, autocrlf: e.maybe_bool() != 0 };
   }
   for e in last_entry(c, "merge.renormalize") {
     let b = e.maybe_bool();
@@ -705,10 +708,28 @@ function driver_of(st: State, path: string): (State, string) {
   return (st, if (name == "binary" || name == "union") { name } else { "text" });
 }
 
+// Git builds a temporary attribute index from the merge's root
+// .gitattributes. Without it, conversion comes from configuration and
+// attributes visible in the checkout. Only skip conversion when it is inert.
+function may_convert(st: State, path: string): boolean {
+  if (st.o.autocrlf || st.paths.contains(".gitattributes")) {
+    return true;
+  }
+  for a in st.o.attrs {
+    for name in ["text", "crlf", "eol", "ident", "filter", "working-tree-encoding"] {
+      let value = attr.value_of(a, path, name);
+      if (value != attr.UNSPECIFIED && value != attr.UNSET) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // The merge of the blobs `o`, `a` and `b` for `path`, and the name of its
 // blob (`merge_3way` of git). The names of the three sides are `names`.
 function merge_3way(st_in: State, path: string, o: string, a: string, b: string, names: string[], extra_marker: i32): (State, i32, string) {
-  if (st_in.o.renormalize) {
+  if (st_in.o.renormalize && may_convert(st_in, path)) {
     return (State { ...st_in, fatal: gap("merge.renormalize") }, CLEAN, "");
   }
   let plain = names[0] == names[1] && names[1] == names[2];
@@ -1637,10 +1658,11 @@ function process_entry(st_in: State, d_in: Dirs, path_in: string, ci_in: Info): 
     let side = if (ci.filemask == 5) { 2 } else { 1 };
     // Matching object IDs already establish equality without converting the blob.
     if (st.o.renormalize && ci.stages[0].mode == ci.stages[side].mode) {
-      if (ci.stages[0].hash != ci.stages[side].hash) {
+      let unchanged = ci.stages[0].hash == ci.stages[side].hash;
+      if (!unchanged && may_convert(st, path)) {
         return (State { ...st, fatal: gap("merge.renormalize") }, d);
       }
-      if (!ci.path_conflict) {
+      if (unchanged && !ci.path_conflict) {
         ci = Info { ...ci, is_null: true, clean: true, df_conflict: false, result: none };
         return (with_path(st, path, ci), record(d, path, ci));
       }
