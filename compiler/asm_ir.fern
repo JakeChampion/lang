@@ -13459,9 +13459,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    call __fn___fern_" + rb + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need(rb);
-  } else if (o.kind_tag == ir.K_RANDOM_I32) {
-    s = s.write("    call __fn___fern_random_i32\n    pushq %rax\n");
-    s = s.need("random_i32");
   } else if (o.kind_tag == ir.K_PROC_FORK) {
     s = s.write("    call __fn___fern_proc_fork\n");
     s = fork_mark(s.need("proc_fork").need("heap"));
@@ -13500,9 +13497,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    call __fn___fern_proc_exec_as\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("proc_exec_as");
-  } else if (o.kind_tag == ir.K_NOW_NS) {
-    s = s.write("    call __fn___fern_now_ns\n    pushq %rax\n");
-    s = s.need("now_ns");
   } else if (o.kind_tag == ir.K_POLL) {
     s = s.write("    popq %rsi\n    popq %rdi\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_poll\n    addq $16, %rsp\n    pushq %rax\n");
@@ -13531,10 +13525,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    call __fn___fern_set_window_size\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("set_window_size");
-  } else if (o.kind_tag == ir.K_PIPE) {
-    s = s.write("    call __fn___fern_pipe\n    pushq %rax\n");
-    s = s.need("heap");
-    s = s.need("pipe");
   } else if (o.kind_tag >= ir.K_OPEN_DIR && o.kind_tag <= ir.K_DIR_OPEN_FILE) {
     s = emit_dir_op(o, s);
   } else if (o.kind_tag == ir.K_WINDOW_SIZE) {
@@ -13557,9 +13547,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_set_process_group\n    addq $16, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("set_process_group");
-  } else if (o.kind_tag == ir.K_PRIORITY) {
-    s = s.write("    call __fn___fern_priority\n    pushq %rax\n");
-    s = s.need("priority");
   } else if (o.kind_tag == ir.K_SET_PRIORITY) {
     s = s.write("    call __fn___fern_set_priority\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("heap");
