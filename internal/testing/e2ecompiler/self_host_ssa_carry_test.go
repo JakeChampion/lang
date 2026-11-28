@@ -281,6 +281,25 @@ struct Limbs { l0: u64, l1: u64, l2: u64, l3: u64 }
     let hi: u64 = __mulhi_u64(y, x);
     return lo ^ hi;
 }
+@noinline function sum_spills(a0: u64, a1: u64, a2: u64, a3: u64, a4: u64, a5: u64): u64 {
+    let s0: u64 = a0 * 3u64 + a1;
+    let s1: u64 = a1 * 5u64 + a2;
+    let s2: u64 = a2 * 7u64 + a3;
+    let s3: u64 = a3 * 11u64 + a4;
+    let s4: u64 = a4 * 13u64 + a5;
+    let s5: u64 = a5 * 17u64 + a0;
+    let s6: u64 = a0 * 19u64 + a1;
+    let s7: u64 = a1 * 23u64 + a2;
+    let s8: u64 = a2 * 29u64 + a3;
+    let s9: u64 = a3 * 31u64 + a4;
+    let s10: u64 = a4 * 37u64 + a5;
+    let s11: u64 = a5 * 41u64 + a0;
+    let s12: u64 = a0 * 43u64 + a1;
+    let s13: u64 = a1 * 47u64 + a2;
+    let s14: u64 = a2 * 53u64 + a3;
+    let s15: u64 = a3 * 59u64 + a4;
+    return s0 ^ s1 ^ s2 ^ s3 ^ s4 ^ s5 ^ s6 ^ s7 ^ s8 ^ s9 ^ s10 ^ s11 ^ s12 ^ s13 ^ s14 ^ s15 ^ a0 ^ a1 ^ a2 ^ a3 ^ a4 ^ a5;
+}
 @noinline function mul_rows(a0: u64, a1: u64, a2: u64, a3: u64, b0: u64, b1: u64): u64 {
     let l00: u64 = a0 * b0;
     let h00: u64 = __mulhi_u64(a0, b0);
@@ -410,6 +429,7 @@ function main(): i32 {
                 acc = acc * 37u64 + sub_p(x, y, h, x ^ h) + 3u64 * add_k(y, h) + 5u64 * add_sub_p(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
                 acc = acc ^ sub4(x, y, h, y - x, y, h, x + 1u64, ALL - y) ^ add4_spilled(x, h, x ^ y, y - x, y, ALL - h, x + 1u64, ALL - y);
                 acc = acc * 41u64 + mul_rows(x, y, h, x ^ y, y - h, ALL - x);
+                acc = acc * 53u64 + sum_spills(x, y, h, x ^ y, y - h, ALL - x);
                 acc = acc * 47u64 + wide_spilled(x, h, x ^ y, y - x, ALL - h, y + 1u64);
                 acc = acc * 53u64 + mul_row(x, y, h, x ^ y, ALL - h) + 3u64 * mul_row_div(x, y, h, x ^ h);
                 acc = acc * 43u64 + sub_mask(x, h, y, ALL - x, y, x ^ h, h, x + 1u64);
@@ -706,12 +726,12 @@ func TestSelfHostSSASpilledSumWritesDyingOperand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fn := functionListing(string(asm), "__fn_mul_rows")
+	fn := functionListing(string(asm), "__fn_sum_spills")
 	if fn == "" {
-		t.Fatal("no __fn_mul_rows in the listing")
+		t.Fatal("no __fn_sum_spills in the listing")
 	}
 	if copied := regexp.MustCompile(`(?m)^\s+movq %r\w+, %r11\n\s+(addq|adcq) [^\n]+, %r11$`); copied.MatchString(fn) {
-		t.Errorf("mul_rows copies an operand to %%r11 for a sum:\n%s", fn)
+		t.Errorf("sum_spills copies an operand to %%r11 for a sum:\n%s", fn)
 	}
 	inPlace := 0
 	sum := regexp.MustCompile(`(?m)^\s+(?:addq|adcq) [^\n]+, (%r\w+)\n\s+movq (%r\w+), -\d+\(%rbp\)$`)
@@ -721,7 +741,7 @@ func TestSelfHostSSASpilledSumWritesDyingOperand(t *testing.T) {
 		}
 	}
 	if inPlace == 0 {
-		t.Errorf("mul_rows spills no sum, so the shape is not exercised:\n%s", fn)
+		t.Errorf("sum_spills spills no sum, so the shape is not exercised:\n%s", fn)
 	}
 }
 
@@ -911,7 +931,8 @@ func TestSelfHostSSACarryChainAddsInPlace(t *testing.T) {
 		t.Fatal(err)
 	}
 	fn := functionListing(string(asm), "__fn_add_mod_p")
-	chain := regexp.MustCompile(`(?m)^\s+addq %r\w+, %r\w+\n\s+adcq %r\w+, %r\w+\n\s+adcq %r\w+, %r\w+\n\s+adcq %r\w+, %r\w+\n\s+setb `)
+	operand := `(?:%r\w+|\d+\(%rbp\))`
+	chain := regexp.MustCompile(`(?m)^\s+addq %r\w+, %r\w+\n\s+adcq ` + operand + `, %r\w+\n\s+adcq ` + operand + `, %r\w+\n\s+adcq ` + operand + `, %r\w+\n\s+setb `)
 	if !chain.MatchString(fn) {
 		t.Errorf("add_mod_p should add its four limbs with addq and three adcq, and copy no operand first:\n%s", fn)
 	}
