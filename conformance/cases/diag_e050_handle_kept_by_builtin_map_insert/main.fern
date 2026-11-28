@@ -1,0 +1,29 @@
+// spec: RH-47
+// A built-in method lends its receiver and each argument to its result when
+// the result can hold a handle of their kind. The map that `insert` returns
+// holds the Writer, so a write through it after the close is refused.
+// Natively, that write reached the next file that took the closed descriptor.
+import "core/map";
+
+function write_late(path: string, next: string): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  let empty: Map[i32, Writer] = map_new(4);
+  let m = empty.insert(1, w);
+  w.close()?;
+  let r: Writer = open_writer(next)?;
+  m.get_or(1, stderr()).write("late")?;
+  r.close()?;
+  return Ok(());
+}
+
+function main(): i32 {
+  match (write_late("late.txt", "next.txt")) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}

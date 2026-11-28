@@ -20136,7 +20136,8 @@ function ocl_lender(id: ast.ExprIdent, facts: OclFacts): OclCapture[] {
 }
 
 // The receiver and the borrowed arguments of a declared method lend to its
-// result.
+// result. A method with no declaration, such as `Map.insert`, lends each
+// operand whose handle kinds meet those of its typed result.
 function ocl_method_loans(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
   let Some(lenders) = facts.methods else {
     return [];
@@ -20145,8 +20146,13 @@ function ocl_method_loans(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
     return [];
   };
   let out: OclCapture[] = [];
+  let declared = false;
   for method in lenders.methods {
-    if (lu_matches_method(method, fa) && !lenders.fresh_methods.has(method.receiver + "." + method.name)) {
+    if (lu_matches_method(method, fa)) {
+      declared = true;
+      if (lenders.fresh_methods.has(method.receiver + "." + method.name)) {
+        continue;
+      }
       if (lu_lends(method, 0)) {
         out = ocl_lent_loans(out, fa.obj, facts);
       }
@@ -20156,6 +20162,21 @@ function ocl_method_loans(call: ast.ExprCall, facts: OclFacts): OclCapture[] {
         }
       }
     }
+  }
+  if (declared || call.ty.len() == 0 || util.has_str(ow_fresh_builtin_method_names(), fa.field)) {
+    return out;
+  }
+  out = ocl_operand_loans(out, fa.obj, call.ty, facts);
+  for arg in call.args {
+    out = ocl_operand_loans(out, arg, call.ty, facts);
+  }
+  return out;
+}
+
+function ocl_operand_loans(own out: OclCapture[], operand: ast.Expr, result_ty: string, facts: OclFacts): OclCapture[] {
+  let ty = ast.expr_ty(operand);
+  if (ty.len() > 0 && ow_kinds_meet(ty, result_ty, facts.factories.decls, facts.tparams)) {
+    return ocl_lent_loans(out, operand, facts);
   }
   return out;
 }
@@ -29599,7 +29620,7 @@ function ow_lenders(mod: parser.Module, ofuncs: OwnFuncs, dx: OwnDecls): OwnLend
   let names: string[] = [];
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0) {
-      let lend: boolean[] = [!fn.receiver_own && ow_handle_kinds_meet(fn.receiver_type, ow_result_spelling(fn), fn, dx)];
+      let lend: boolean[] = [!fn.receiver_own && ow_kinds_meet(fn.receiver_type, ow_result_spelling(fn), dx, fn.all_type_params)];
       let callbacks: boolean[] = [false];
       for param in fn.params {
         lend = lend.append((!param.own || param.type_name == "fn") && ow_param_can_lend(fn, param, ofuncs, dx));
@@ -29652,7 +29673,7 @@ function ow_param_can_lend(fn: parser.FuncDecl, param: ast.ParamDecl, ofuncs: Ow
   if (util.has_str(fn.all_type_params, tn)) {
     return true;
   }
-  return ow_decl_type_is_pointer(fn, tn, ofuncs) && ow_handle_kinds_meet(tn, ow_result_spelling(fn), fn, dx);
+  return ow_decl_type_is_pointer(fn, tn, ofuncs) && ow_kinds_meet(tn, ow_result_spelling(fn), dx, fn.all_type_params);
 }
 
 function ow_result_spelling(fn: parser.FuncDecl): string {
@@ -29661,9 +29682,9 @@ function ow_result_spelling(fn: parser.FuncDecl): string {
 
 // A value of type tn can lend a handle to a result of type ret only when the
 // two types can hold a handle of one kind.
-function ow_handle_kinds_meet(tn: string, ret: string, fn: parser.FuncDecl, dx: OwnDecls): boolean {
-  let given = ow_handle_kinds(tn, dx, fn.all_type_params);
-  let held = ow_handle_kinds(ret, dx, fn.all_type_params);
+function ow_kinds_meet(tn: string, ret: string, dx: OwnDecls, open: string[]): boolean {
+  let given = ow_handle_kinds(tn, dx, open);
+  let held = ow_handle_kinds(ret, dx, open);
   if (given.len() == 0 || held.len() == 0) {
     return false;
   }

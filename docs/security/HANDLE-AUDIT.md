@@ -110,6 +110,8 @@ A `Socket` held as a `Socket` is refused the same way.
 | A result that holds a handle of another kind than the borrowed argument or receiver, used after the close of the argument | accepted | `handle_lent_only_to_a_result_of_its_kind` |
 | A handle moved into the literal argument of a call, and a later call that borrows the local that the first call initialized | accepted | `owner_moved_into_an_argument_lends_through_its_holder` |
 | A local that borrows a handle directly, used after the handle moved into another local | `E050` | `diag_e050_direct_borrow_after_owner_moved_into_holder` |
+| A map that `insert` returns, or an array that `append` returns, used after the close of the handle it holds | `E050` | `diag_e050_handle_kept_by_builtin_map_insert`, `diag_e050_handle_kept_by_builtin_array_append` |
+| A built-in method result that cannot hold a handle, used after the close, and a close after the last use of the map that holds the handle | accepted | `builtin_method_lends_only_to_a_holder_of_its_kind` |
 
 The rows for `diag_e051_variant_result_borrows_its_payload` and `diag_e051_local_from_borrowing_call` close two holes that the consuming close exposed.
 
@@ -119,6 +121,9 @@ A type parameter, a callback and a type with no declaration can hold every kind.
 Before this rule, a function could keep a borrowed `Writer` in the record that it returned.
 A write through the record after the close went to the next file that took the descriptor number.
 A variant constructor carries its payload, so its result borrows what the payload borrows.
+A built-in method, such as `Map.insert` or the array `append`, has no declaration.
+It lends its receiver and each argument to a result that can hold a handle of their kind.
+The methods that open a file or a directory under a `Dir` are fresh.
 
 A generic type parameter can hold a handle after substitution.
 An identity function retains that borrow in its result.
