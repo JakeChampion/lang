@@ -5449,16 +5449,36 @@ function ssa_rotates(f: ssa.SFunc, fr: SsaFrame, from: i32, to: i32): boolean {
   return ssa_only_test(fr, h);
 }
 
-// The head has no instruction before its fused test but phis and immediates.
+// The head has no instruction before its fused test but phis, immediates,
+// and constants that the latch loads again (ssa_latch_constants).
 function ssa_only_test(fr: SsaFrame, h: ssa.SBlock): boolean {
   let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
   for k in 0..tail {
     let ins = h.insts[k];
-    if (ins.kind_tag != ssa.PHI && !(asmcore.immediate_inst(ins) && fr.imm.is_imm[ins.result])) {
+    if (ins.kind_tag != ssa.PHI && !(asmcore.immediate_inst(ins) && fr.imm.is_imm[ins.result]) && !ssa_latch_constant(fr, ins)) {
       return false;
     }
   }
   return true;
+}
+
+function ssa_latch_constant(fr: SsaFrame, ins: ssa.SInst): boolean {
+  return ssa_is_constant(ins) && !fr.imm.is_imm[ins.result] && !ssa_lane_arm_at(ins, fr);
+}
+
+// A rotated test does not run the head, so the latch loads the constants of
+// the head into their homes.
+function ssa_latch_constants(fr: SsaFrame, h: ssa.SBlock, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let tail = h.insts.len() - ssa_fuse(ssa_fuse_view(fr), h).n;
+  for k in 0..tail {
+    let ins = h.insts[k];
+    if (ssa_latch_constant(fr, ins)) {
+      let d = ssa_dst(reg_of, ins.result);
+      let text = if (ins.kind_tag == ssa.CONST_INT) { util.i32_to_string(ins.imm) } else { ins.str };
+      s = ssa_store(reg_of, ins.result, d, ssa_const_reg(text, d, s));
+    }
+  }
+  return s;
 }
 
 function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp: string, next: i32, fu: SsaFuse, s: asmcore.EmitState): asmcore.EmitState {
@@ -5486,6 +5506,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     if (ssa_rotates(f, fr, ssa.block_index(fr.blk_pos, blk.id), head)) {
       let h = f.blocks[ssa.block_index(fr.blk_pos, head)];
       let hfu = ssa_fuse(ssa_fuse_view(fr), h);
+      s = ssa_latch_constants(fr, h, reg_of, s);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, asmcore.ssa_join(lp, blk.id), s));
     }
     return ssa_jump_on(f, fr, reg_of, lp, t.target, next, s);
