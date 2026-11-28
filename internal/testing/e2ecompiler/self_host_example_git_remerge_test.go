@@ -691,6 +691,9 @@ func TestSelfHostExampleGitRemerge(t *testing.T) {
 			// Renormalization compares the unchanged renamed blob by object ID.
 			g.git("config", "merge.renormalize", "true")
 			gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", "rename-delete-1")
+			for _, ref := range []string{"markers-1", "moddel-1", "delmod-1"} {
+				gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", ref)
+			}
 			g.git("config", "--unset", "merge.renormalize")
 			// The value of `log.diffMerges` is the diff of `-m`.
 			for _, value := range []string{"remerge", "r", "off", "combined", "first-parent"} {
@@ -1061,5 +1064,12 @@ func gitRemergeGaps(t *testing.T, oracle, port gitTool, run gitRun) {
 	g.git("config", "merge.renormalize", "true")
 	// A gitlink merge never normalizes file content.
 	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--raw", "-p", "-1", rightMerge)
+	gitCompare(t, oracle, port, dir, "", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
+	g.git("config", "core.autocrlf", "input")
+	refuse("merge.renormalize", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
+	g.git("config", "core.autocrlf", "false")
+	if err := os.WriteFile(filepath.Join(dir, ".git", "info", "attributes"), []byte("file.txt text\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	refuse("merge.renormalize", "log", "--remerge-diff", "--format=%s", "-n", "1", "driver-1")
 }

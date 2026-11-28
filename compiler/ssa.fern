@@ -1925,15 +1925,18 @@ function unhomed_call_results(f: SFunc, own no_home: boolean[]): boolean[] {
 }
 
 pub function regalloc_linear_fixed(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32, fixed: ssafixed.Table, cold: i32[], crossing: boolean[]): Alloc {
-  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false, two_address: false });
+  return regalloc_linear_fixed_costs(f, nregs, nsaved, abi_reg, abi_fixed_by_div, no_home, pref, fl, nf, nfs, fixed, cold, crossing, [], [], SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] });
 }
 
 // A spill definition or normal read needs an extra transfer instruction.
 // An x86 ALU instruction can read a right operand from its spill slot.
 // The model discounts those reads and keeps the squared-use protection.
+// The read is free only when the left operand has a register: `spilled`
+// names the values that an earlier allocation kept in frame slots, and a
+// read whose left operand is one of them costs a load.
 // On a two-address ISA, a subtract that writes the register of its right
 // operand needs a scratch register and one more move.
-pub struct SpillCosts { fold_alu_rhs: boolean, two_address: boolean }
+pub struct SpillCosts { fold_alu_rhs: boolean, two_address: boolean, spilled: boolean[] }
 
 function phi_count(insts: SInst[]): i32 {
   let count = 0;
@@ -1985,11 +1988,9 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let big = 2000000000;
   let lo = __alloc_i32(f.nvals);
   let hi = __alloc_i32(f.nvals);
-  let i = 0;
-  while (i < f.nvals) {
+  for i in 0..f.nvals {
     lo = lo.with(i, big);
     hi = hi.with(i, -1);
-    i += 1;
   }
   let calls: i32[] = [];
   let all_calls: i32[] = [];
@@ -2003,13 +2004,11 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   let def_a = __alloc_i32(f.nvals);
   let def_b = __alloc_i32(f.nvals);
   let right_of: i32[] = [];
-  i = 0;
-  while (i < f.nvals) {
+  for i in 0..f.nvals {
     def_pos = def_pos.with(i, -1);
     def_blk = def_blk.with(i, -1);
     def_a = def_a.with(i, -1);
     def_b = def_b.with(i, -1);
-    i += 1;
   }
   if (costs.two_address) {
     right_of = util.minus_ones(f.nvals);
@@ -2104,7 +2103,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     pos += 1;
     bi += 1;
   }
-  i = 0;
+  let i = 0;
   while (i < f.nparams && i < f.nvals) {
     if (hi[i] >= 0) {
       lo = lo.with(i, 0);
@@ -2650,7 +2649,7 @@ function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[]): i32[]
         }
         if (a >= 0 && a < f.nvals && rb >= 0) {
           let cost = 1;
-          if (costs.fold_alu_rhs && ins.kind_tag == BINARY && sl == 1 && folds_spill_rhs(ins.ir_kind)) {
+          if (costs.fold_alu_rhs && ins.kind_tag == BINARY && sl == 1 && folds_spill_rhs(ins.ir_kind) && !in_slot(costs.spilled, ins.args[0])) {
             cost = 0;
           }
           w = w.with(a, w[a] + bw[rb] * cost);
@@ -2669,6 +2668,35 @@ function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[]): i32[]
     }
   }
   return w;
+}
+
+function in_slot(spilled: boolean[], v: i32): boolean {
+  return v >= 0 && v < spilled.len() && spilled[v];
+}
+
+// The values that `reg_of` keeps in frame slots.
+pub function slotted_values(reg_of: i32[]): boolean[] {
+  let out = __alloc_bool(reg_of.len());
+  for v in 0..reg_of.len() {
+    if (reg_of[v] <= -2) {
+      out = out.with(v, true);
+    }
+  }
+  return out;
+}
+
+// The folded reads of a right operand in a frame slot whose left operand is
+// in a frame slot too, so that the read needs a load after all.
+pub function unfolded_reads(f: SFunc, spilled: boolean[]): i32 {
+  let n = 0;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == BINARY && ins.args.len() == 2 && folds_spill_rhs(ins.ir_kind) && in_slot(spilled, ins.args[0]) && in_slot(spilled, ins.args[1])) {
+        n += 1;
+      }
+    }
+  }
+  return n;
 }
 
 function folds_spill_rhs(kind: i32): boolean {
@@ -3319,7 +3347,7 @@ pub function spill_slot(code: i32): i32 {
 // register index or frame slot it took. FERN_DEBUG_SSA_ALLOC=<function> prints it,
 // and `*` prints each function.
 pub function print_alloc(f: SFunc, a: Alloc): string {
-  return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false, two_address: false });
+  return print_alloc_costs(f, a, SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] });
 }
 
 pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {
@@ -4796,12 +4824,10 @@ function leaf_index(leaves: Leaves, name: string, argc: i32): i32 {
 pub function prune_trivial_phis(f: SFunc): Formed {
   let repl = trivial_phi_repl(f);
   let any = false;
-  let i = 0;
-  while (i < f.nvals) {
+  for i in 0..f.nvals {
     if (repl[i] != i) {
       any = true;
     }
-    i += 1;
   }
   if (!any) {
     return Formed { f: f, repl: [] };

@@ -105,6 +105,29 @@ function fn_class[P: ByteInput](p: P, lo: i32, hi: i32, c: i32): i32 {
   return -1;
 }
 
+// Locate the end of [:name:], [.symbol.] or [=element=]. GNU fnmatch
+// treats an impossible class name as an ordinary '[' (-2). A class name
+// beyond CHARCLASS_NAME_MAX or an unfinished collating element fails (-1).
+function fn_member_end[P: ByteInput](p: P, body: i32, kind: i32): i32 {
+  let gnu_class = kind == 58 && target_os() != "darwin";
+  let j = body;
+  while (j < p.byte_count()) {
+    if (gnu_class && j - body >= 2048) {
+      return -1;
+    }
+    let c = p.byte_at(j);
+    if (c as i32 == kind && j + 1 < p.byte_count() && p.byte_at(j + 1) == b']') {
+      return j;
+    }
+    // The GNU scanner accepts class-name letters from 'a' through 'y'.
+    if (gnu_class && (c < b'a' || c >= b'z')) {
+      return -2;
+    }
+    j += 1;
+  }
+  return if (gnu_class) { -2 } else { -1 };
+}
+
 function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
   let n = p.byte_count();
   let i = start + 1;
@@ -128,11 +151,13 @@ function fn_bracket[P: ByteInput](p: P, start: i32, ch: i32): i32 {
     if (c == 91 && i + 1 < n && (p.byte_at(i + 1) as i32 == 58 || target_os() != "darwin" && (p.byte_at(i + 1) as i32 == 46 || p.byte_at(i + 1) as i32 == 61))) {
       let kind = p.byte_at(i + 1) as i32;
       let body = i + 2;
-      let j = body;
-      while (j + 1 < n && !(p.byte_at(j) as i32 == kind && p.byte_at(j + 1) as i32 == 93)) {
-        j += 1;
+      let j = fn_member_end(p, body, kind);
+      if (j == -2) {
+        hit = hit || ch == 91;
+        i += 1;
+        continue;
       }
-      if (j + 1 >= n) {
+      if (j < 0) {
         return -1;
       }
       i = j + 2;

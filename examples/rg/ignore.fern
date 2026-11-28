@@ -209,16 +209,43 @@ function add_text(l: Loaded, text: string, ci: boolean, file: string): Loaded {
 // The rules of the ignore file `file`, matched from `root`. As in the
 // ignore crate, a file that cannot be read has no rules and no message.
 pub function load(root: string, file: string, ci: boolean): Loaded {
-  let Ok(text) = read_file(file) else {
+  let Ok(bytes) = read_file_bytes(file) else {
     return parse(root, "", ci, file);
   };
-  return parse(root, text, ci, file);
+  return parse_file_bytes(root, bytes, ci, file, false);
 }
 
 // The rules of the text of the ignore file `file`, matched from `root`.
 pub function parse(root: string, text: string, ci: boolean, file: string): Loaded {
   let none: string[] = [];
   return add_text(Loaded { m: Matcher { ...empty(root), file: file }, errors: none }, text, ci, file);
+}
+
+// The ignore reader stops at the first line that is not valid UTF-8.
+// Keep earlier rules and diagnostics. The walker suppresses a lone I/O
+// diagnostic for an automatically discovered file.
+function parse_file_bytes(root: string, bytes: u8[], ci: boolean, file: string, explicit: boolean): Loaded {
+  match (utf8.from_bytes(bytes)) {
+    Ok(text) => {
+      return parse(root, text, ci, file);
+    },
+    Err(e) => {
+      let line = 1;
+      let start = 0;
+      for i in 0..e.offset {
+        if (bytes[i] == b'\n') {
+          start = i + 1;
+          line += 1;
+        }
+      }
+      let prefix = unsafe { string_from_bytes_unchecked(bytes.slice(0, start)) };
+      let l = parse(root, prefix, ci, file);
+      if (explicit || l.errors.len() > 0) {
+        return Loaded { ...l, errors: l.errors.append(f"{file}: line {line}: stream did not contain valid UTF-8") };
+      }
+      return l;
+    }
+  }
 }
 
 // The message of globset for the rules, or "" for none.
@@ -960,9 +987,9 @@ pub function global(ci: boolean): Loaded {
 pub function explicit_file(path: string, ci: boolean): Loaded {
   let none: string[] = [];
   let l = Loaded { m: empty(""), errors: none };
-  match (read_file(path)) {
-    Ok(text) => {
-      return add_text(l, text, ci, path);
+  match (read_file_bytes(path)) {
+    Ok(bytes) => {
+      return parse_file_bytes("", bytes, ci, path, true);
     },
     Err(Other(_, _, 21)) => {
       return Loaded { ...l, errors: [path + ": line 1: Is a directory (os error 21)"] };

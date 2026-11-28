@@ -7709,15 +7709,26 @@ function ssa_allocate(f: ssa.SFunc, imm: ssa.Imms, floats: boolean[], ops: ir.Op
   let cold = ssa.with_kernels(ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), direct_boxes(s)), kernels);
   let clobbers = ssa_cold_clobbers(cold, kernels);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, cold));
-  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true });
+  let kept = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] });
+  // A folded read is free only beside a left operand in a register. When
+  // the first allocation left both operands of such reads in slots, count
+  // those reads and allocate again, and keep the allocation that costs less.
+  let first = ssa.slotted_values(kept.reg_of);
+  if (ssa.unfolded_reads(f, first) >= 4) {
+    let again = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: first });
+    let after = ssa.slotted_values(again.reg_of);
+    if (ssa.spill_cost(f, again.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: after }) < ssa.spill_cost(f, kept.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: first })) {
+      kept = again;
+    }
+  }
   let audited = ssa_can_borrow_r11(f, imm, floats);
   if (audited && ssa.spill_count(kept.reg_of) == 0 && ssa_small_extra_homes(kept.reg_of)) {
-    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true });
+    return ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, false, false, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] });
   }
   if (!audited || !ssa_has_integer_saved(kept.reg_of) || ssa.spill_count(kept.reg_of) > 0) {
     return kept;
   }
-  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true });
+  let borrowed = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, true, homeless, prefs, floats, ssa_nfregs(), 0, ssa_fixed_registers(f, imm, true, true, clobbers, words, s.ssa_deny), cold, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] });
   if (ssa.spill_count(borrowed.reg_of) > 0) {
     return kept;
   }
@@ -12662,7 +12673,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     let imm2 = ssa_imms(tried.f, s);
     let s2 = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(tried.f), ssa_even: ssadeps.even_values(tried.f) };
     let again = ssa_allocate(tried.f, imm2, ssa.float_values(tried.f, [], false), prepared.lowered.ops, s2);
-    if ((ssa.spill_cost(tried.f, again.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true }) + tried.cost) * 10 < ssa.spill_cost(f, alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true }) * 9) {
+    if ((ssa.spill_cost(tried.f, again.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] }) + tried.cost) * 10 < ssa.spill_cost(f, alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] }) * 9) {
       f = tried.f;
       imm = imm2;
       alloc = again;
@@ -12691,7 +12702,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   match (util.debug_env("FERN_DEBUG_SSA_ALLOC", "FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
-        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa.SpillCosts { fold_alu_rhs: true, two_address: true }));
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, alloc, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: [] }));
       }
     },
     None => {}
