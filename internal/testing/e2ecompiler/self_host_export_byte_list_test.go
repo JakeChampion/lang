@@ -36,6 +36,12 @@ function value(n: i32): u8[] { return [n as u8, 1u8]; }
 function wide(n: i32): i64[] { return [n as i64, -1i64]; }
 @export("fern:test/bytes", "text")
 function text(n: i32): string { return "number " + n.to_string(); }
+@export("fern:test/bytes", "invert")
+function invert(data: boolean[]): boolean[] {
+  let out: boolean[] = [];
+  for x in data { out = out.append(!x); }
+  return out;
+}
 @export("fern:test/bytes", "sum")
 function sum(data: u8[]): i32 {
   let total = 0;
@@ -62,6 +68,10 @@ function result(name, i, read) {
   return value;
 }
 function round(i) {
+  const bits = i % 3 === 0 ? [] : [1, 0, i & 1];
+  const r = call('invert', bits);
+  assert.deepEqual(take(r), bits.map(x => 1-x));
+  e['cabi_post_fern:test/bytes#invert'](r);
   assert.deepEqual(result('value', i, (p,n) => [...new Uint8Array(e.memory.buffer,p,n)]), [i & 255,1]);
   assert.deepEqual(result('wide', i, (p,n) => [...new BigInt64Array(e.memory.buffer,p,n)]), [BigInt(i),-1n]);
   assert.equal(result('text', i, (p,n) => new TextDecoder().decode(new Uint8Array(e.memory.buffer,p,n))), 'number ' + i);
