@@ -1499,17 +1499,30 @@ function all_lowered_ok(cache: irtables.LowerResult[]): boolean {
 
 pub function wasm_unsupported_import(mod: parser.Module): string {
   let stab = irtables.struct_tab(mod.structs);
-  let why = " fields must be integers, floats, booleans or records of them, at most 16 leaves in all";
   for i in 0..mod.funcs.len() {
     let f = mod.funcs[i];
     if (is_sync_extern(f)) {
       if (is_struct_type(stab, f.ret_type) && !extern_record_result_supported(mod, f.ret_type)) {
-        return "fern: error: @import " + f.name + " returns record " + f.ret_type + ", which wasm cannot lower: its" + why;
+        return "fern: error: @import " + f.name + " returns record " + f.ret_type + ", which wasm cannot lower: its fields must be integers, floats, booleans or records of them, at most 16 leaves in all";
       }
+      let has_record = false;
       for p in 0..f.params.len() {
         let pt = f.params[p].type_name;
-        if (is_struct_type(stab, pt) && !extern_record_param_supported(mod, pt)) {
-          return "fern: error: @import " + f.name + " takes record " + pt + ", which wasm cannot lower: its" + why;
+        if (!is_struct_type(stab, pt)) {
+          continue;
+        }
+        has_record = true;
+        if (!extern_record_param_supported(mod, pt)) {
+          return "fern: error: @import " + f.name + " takes record " + pt + ", which wasm cannot lower: its fields must be integers, floats, booleans, strings, byte lists or records of them, at most 16 flat parameters";
+        }
+      }
+      if (has_record) {
+        let flat = 0;
+        for p in f.params {
+          flat += extern_param_valtypes(mod, p.type_name).len();
+        }
+        if (flat > 16) {
+          return "fern: error: @import " + f.name + " requires indirect parameters: more than 16 flat parameters";
         }
       }
     }
@@ -11253,7 +11266,9 @@ function extern_record_leaf_valtypes(mod: parser.Module, t: string): string[] {
       let j = 0;
       while (j < mod.structs[i].fields.len()) {
         let ft = mod.structs[i].fields[j].type_name;
-        if (extern_field_is_scalar(ft)) {
+        if (ft == "string" || ft == "u8[]") {
+          out = out.append("i32").append("i32");
+        } else if (extern_field_is_scalar(ft)) {
           out = out.append(extern_core_valtype(ft));
         } else {
           out = util.append_all(out, extern_record_leaf_valtypes(mod, ft));
@@ -11273,7 +11288,9 @@ pub function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
       let leaves = 0;
       for j in 0..n {
         let ft = mod.structs[i].fields[j].type_name;
-        if (extern_field_is_scalar(ft)) {
+        if (ft == "string" || ft == "u8[]") {
+          leaves += 2;
+        } else if (extern_field_is_scalar(ft)) {
           leaves += 1;
         } else {
           leaves += extern_record_leaf_count(mod, ft);
@@ -11285,7 +11302,7 @@ pub function extern_record_leaf_count(mod: parser.Module, t: string): i32 {
   return 0;
 }
 
-pub function extern_record_nestable(mod: parser.Module, t: string): boolean {
+pub function extern_record_nestable(mod: parser.Module, t: string, parameter: boolean = false): boolean {
   for i in 0..mod.structs.len() {
     if (mod.structs[i].name == t) {
       let n = mod.structs[i].fields.len();
@@ -11294,7 +11311,10 @@ pub function extern_record_nestable(mod: parser.Module, t: string): boolean {
       }
       for j in 0..n {
         let ft = mod.structs[i].fields[j].type_name;
-        if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) {
+        if (parameter && (ft == "string" || ft == "u8[]")) {
+          continue;
+        }
+        if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft, parameter)) {
           return false;
         }
       }
@@ -11325,23 +11345,11 @@ pub function extern_record_depth(mod: parser.Module, t: string): i32 {
 }
 
 pub function extern_record_param_supported(mod: parser.Module, t: string): boolean {
-  for i in 0..mod.structs.len() {
-    if (mod.structs[i].name == t) {
-      let n = mod.structs[i].fields.len();
-      if (n == 0 || n > 16) {
-        return false;
-      }
-      for j in 0..n {
-        let ft = mod.structs[i].fields[j].type_name;
-        if (!extern_field_is_scalar(ft) && !extern_record_nestable(mod, ft)) {
-          return false;
-        }
-      }
-      let leaves = extern_record_leaf_count(mod, t);
-      return leaves >= 1 && leaves <= 16;
-    }
+  if (!extern_record_nestable(mod, t, true)) {
+    return false;
   }
-  return false;
+  let leaves = extern_record_leaf_count(mod, t);
+  return leaves >= 1 && leaves <= 16;
 }
 
 pub function extern_record_result_supported(mod: parser.Module, t: string): boolean {
@@ -12035,7 +12043,9 @@ pub function extern_emit_record_param_leaves(mod: parser.Module, base_expr: stri
   for fi in 0..n {
     let ft = struct_field_type_at(stab, tn, fi);
     let field_expr = "(i32.add " + base_expr + " (i32.const " + util.i32_to_string(xbox_field_off(fi)) + "))";
-    if (extern_field_is_scalar(ft)) {
+    if (ft == "string" || ft == "u8[]") {
+      parts = parts.append(extern_byte_span(ft, "(i32.load " + field_expr + ")"));
+    } else if (extern_field_is_scalar(ft)) {
       parts = parts.append(" " + extern_param_field_load(ft, field_expr));
     } else {
       parts = parts.append(extern_emit_record_param_leaves(mod, "(i32.load " + field_expr + ")", ft));
@@ -12208,41 +12218,44 @@ function extern_core_params(mod: parser.Module, f: parser.FuncDecl): string {
 
 function extern_core_param(mod: parser.Module, t: string): string {
   let parts: string[] = [];
-  if (t == "string" || extern_array_param_supported(t) || extern_byte_array_param(t)) {
-    parts = parts.append(" (param i32) (param i32)");
+  for ty in extern_param_valtypes(mod, t) {
+    parts = parts.append(" (param " + ty + ")");
+  }
+  return util.str_join_chunks(parts);
+}
+
+function extern_param_valtypes(mod: parser.Module, t: string): string[] {
+  let parts: string[] = [];
+  if (t == "string" || extern_array_param_supported(t) || extern_byte_array_param(t) || extern_sum_param_supported(t)) {
+    return ["i32", "i32"];
   } else if (extern_record_param_supported(mod, t)) {
-    let leaves = extern_record_leaf_valtypes(mod, t);
-    for rn in 0..leaves.len() {
-      parts = parts.append(" (param " + leaves[rn] + ")");
-    }
-  } else if (extern_sum_param_supported(t)) {
-    parts = parts.append(" (param i32) (param i32)");
+    return extern_record_leaf_valtypes(mod, t);
   } else if (extern_tuple_param_supported(t)) {
     let tn = 0;
     while (tn < tuple_type_elem_count(t)) {
-      parts = parts.append(" (param i32)");
+      parts = parts.append("i32");
       tn += 1;
     }
   } else if (extern_plain_enum_param(mod, t)) {
-    parts = parts.append(" (param i32)");
+    parts = parts.append("i32");
   } else if (extern_variant_param_supported(mod, t)) {
-    parts = parts.append(" (param i32)");
+    parts = parts.append("i32");
     if (extern_variant_is_multifield(mod, t)) {
       let sc = extern_variant_max_fields(mod, t);
       for si in 0..sc {
-        parts = parts.append(" (param " + extern_variant_slot_join(mod, t, si) + ")");
+        parts = parts.append(extern_variant_slot_join(mod, t, si));
       }
     } else if (extern_variant_is_uniform_f64(mod, t)) {
-      parts = parts.append(" (param f64)");
+      parts = parts.append("f64");
     } else if (extern_variant_join_is64(mod, t)) {
-      parts = parts.append(" (param i64)");
+      parts = parts.append("i64");
     } else {
-      parts = parts.append(" (param i32)");
+      parts = parts.append("i32");
     }
   } else {
-    parts = parts.append(" (param " + extern_core_valtype(t) + ")");
+    parts = parts.append(extern_core_valtype(t));
   }
-  return util.str_join_chunks(parts);
+  return parts;
 }
 
 pub function extern_imports(mod: parser.Module): string {
@@ -13155,15 +13168,21 @@ function extern_marshal_args(mod: parser.Module, f: parser.FuncDecl): string {
   return margs;
 }
 
+// Strings and packed bytes already have canonical element storage.
+function extern_byte_span(t: string, ptr: string): string {
+  if (t == "string") {
+    return " " + str_data_wat(ptr) + " " + str_len_wat(ptr);
+  }
+  return " (i32.add " + ptr + " (i32.const 8)) (i32.load " + ptr + ")";
+}
+
 function extern_marshal_arg(mod: parser.Module, t: string, fi: i32): string {
   let fppn = "$ep" + util.i32_to_string(fi);
   let margs = "";
-  if (t == "string") {
-    margs += " " + str_data_wat("(local.get " + fppn + ")") + " " + str_len_wat("(local.get " + fppn + ")");
+  if (t == "string" || t == "u8[]") {
+    margs += extern_byte_span(t, "(local.get " + fppn + ")");
   } else if (extern_param_repacks(t)) {
     margs += " (local.get $ab" + util.i32_to_string(fi) + ") (i32.load (local.get " + fppn + "))";
-  } else if (extern_byte_array_param(t)) {
-    margs += " (i32.add (local.get " + fppn + ") (i32.const 8)) (i32.load (local.get " + fppn + "))";
   } else if (extern_record_param_supported(mod, t)) {
     margs += extern_emit_record_param_leaves(mod, "(local.get " + fppn + ")", t);
   } else if (extern_sum_param_supported(t)) {
