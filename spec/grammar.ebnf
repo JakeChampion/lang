@@ -209,18 +209,13 @@ IfStmt      = 'if' 'let' ArmPatterns '=' NoStructExpr Stmt [ 'else' Stmt ] [ ';'
 WhileStmt   = 'while' '(' Expr ')' Block ;
 LoopStmt    = 'loop' Block ;
 
-ForStmt     = 'for' '(' [ ForInit ] ';' Expr ';' [ Assign ] ')' Block
-            | 'for' ForBinding 'in' NoStructExpr Block
-            ;
-ForInit     = LetNoSemi | Assign ;
+ForStmt     = 'for' ForBinding 'in' NoStructExpr Block ;
 # A shape binder is a BindPattern, the same production `let (a, b) = e;` and a
 # destructuring parameter take, and irrefutable for the same reason: a loop
 # body has no else branch. Which loop it lowers to is a typing question, not a
 # grammar one — over an array it binds against each element, over a Map against
 # each entry. A Map binds its key and value separately, so there is no whole
 # value for an `@` binding to name and one is rejected there.
-# A `for` header's '(' also opens the three-part form, decided by whether the
-# token after the matching ')' is `in`.
 ForBinding  = BindPattern | IDENT ;
 
 MatchStmt   = 'match' '(' Expr ')' '{' [ MatchArm { ',' MatchArm } [ ',' ] ] '}' [ ';' ] ;

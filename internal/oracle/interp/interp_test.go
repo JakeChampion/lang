@@ -66,7 +66,7 @@ func TestForLoopWithBreakContinue(t *testing.T) {
 	v, _ := evalProgram(t, `
 		function main(): i32 {
 			let sum: i32 = 0;
-			for (let i: i32 = 0; i < 10; i = i + 1) {
+			for i in 0..10 {
 				if (i == 3) { continue; }
 				if (i == 7) { break; }
 				sum = sum + i;

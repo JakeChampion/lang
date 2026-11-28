@@ -26,7 +26,7 @@ function main(): i32 {
 
   let z: i32 = 0;
   while (z > 10) { h = h * 7; z = z + 1; }
-  for (let y: i32 = 9; y < 3; y = y + 1) { h = h * 7; }
+  for y in 9..3 { h = h * 7; }
 
 
 
@@ -34,11 +34,11 @@ function main(): i32 {
   while (j < 6) { j = j + 1; if (j % 2 == 0) { continue; } h = h * 13 + j; }
 
 
-  for (let q: i32 = 0; q < 6; q = q + 1) { if (q % 2 == 0) { continue; } h = h * 13 + q; }
+  for q in 0..6 { if (q % 2 == 0) { continue; } h = h * 13 + q; }
 
   let k: i32 = 0;
   while (k < 100) { if (k == 4) { break; } h = h * 17 + k; k = k + 1; }
-  for (let r: i32 = 0; r < 100; r = r + 1) { if (r == 4) { break; } h = h * 17 + r; }
+  for r in 0..100 { if (r == 4) { break; } h = h * 17 + r; }
 
 
   let a: i32 = 0;
@@ -47,8 +47,8 @@ function main(): i32 {
     let b: i32 = 0;
     while (b < 4) { b = b + 1; if (b == 2) { continue outer; } if (a == 3) { break outer; } h = h * 3 + b; }
   }
-  louter: for (let c: i32 = 0; c < 4; c = c + 1) {
-    for (let d: i32 = 0; d < 4; d = d + 1) {
+  louter: for c in 0..4 {
+    for d in 0..4 {
       if (d == 2) { continue louter; }
       if (c == 3) { break louter; }
       h = h * 3 + d;

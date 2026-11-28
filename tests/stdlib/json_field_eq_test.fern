@@ -1,14 +1,14 @@
 import "std/test";
 
 function test_field_string_pass(): test.TestOutcome {
-  return test.assert_json_eq_field_string(
+  return test.assert_json_eq_field(
     "{\"name\":\"alice\",\"city\":\"NYC\"}",
     "name", "alice",
   );
 }
 
 function test_field_string_wrong_value(): test.TestOutcome {
-  match (test.assert_json_eq_field_string(
+  match (test.assert_json_eq_field(
     "{\"name\":\"alice\"}", "name", "bob",
   )) {
     Pass => {
@@ -26,15 +26,15 @@ function test_field_string_wrong_value(): test.TestOutcome {
 }
 
 function test_field_string_wrong_type(): test.TestOutcome {
-  match (test.assert_json_eq_field_string(
+  match (test.assert_json_eq_field(
     "{\"count\":42}", "count", "42",
   )) {
     Pass => {
       return test.fail("wrong type should fail");
     },
     Fail(msg) => {
-      if (!msg.contains("number, not string")) {
-        return test.fail("expected 'number, not string': " + msg);
+      if (!msg.contains("expected a string, got a number")) {
+        return test.fail("expected 'expected a string, got a number': " + msg);
       }
       return test.pass();
     }
@@ -42,7 +42,7 @@ function test_field_string_wrong_type(): test.TestOutcome {
 }
 
 function test_field_string_missing_key(): test.TestOutcome {
-  match (test.assert_json_eq_field_string(
+  match (test.assert_json_eq_field(
     "{\"a\":\"x\"}", "missing", "y",
   )) {
     Pass => {
@@ -58,7 +58,7 @@ function test_field_string_missing_key(): test.TestOutcome {
 }
 
 function test_field_string_invalid_json(): test.TestOutcome {
-  match (test.assert_json_eq_field_string("not-json", "k", "v")) {
+  match (test.assert_json_eq_field("not-json", "k", "v")) {
     Pass => {
       return test.fail("invalid JSON should fail");
     },
@@ -72,21 +72,21 @@ function test_field_string_invalid_json(): test.TestOutcome {
 }
 
 function test_field_i32_pass(): test.TestOutcome {
-  return test.assert_json_eq_field_i32(
+  return test.assert_json_eq_field(
     "{\"count\":42,\"name\":\"x\"}",
     "count", 42,
   );
 }
 
 function test_field_i32_wrong_value(): test.TestOutcome {
-  match (test.assert_json_eq_field_i32(
+  match (test.assert_json_eq_field(
     "{\"count\":42}", "count", 99,
   )) {
     Pass => {
       return test.fail("wrong value should fail");
     },
     Fail(msg) => {
-      if (!msg.contains("expected 99") || !msg.contains("got 42")) {
+      if (!msg.contains("expected \"99\"") || !msg.contains("got \"42\"")) {
         return test.fail("expected both values: " + msg);
       }
       return test.pass();
@@ -95,15 +95,15 @@ function test_field_i32_wrong_value(): test.TestOutcome {
 }
 
 function test_field_i32_wrong_type(): test.TestOutcome {
-  match (test.assert_json_eq_field_i32(
+  match (test.assert_json_eq_field(
     "{\"count\":\"42\"}", "count", 42,
   )) {
     Pass => {
       return test.fail("string-value should fail");
     },
     Fail(msg) => {
-      if (!msg.contains("string, not number")) {
-        return test.fail("expected 'string, not number': " + msg);
+      if (!msg.contains("expected an integer, got a string")) {
+        return test.fail("expected 'expected an integer, got a string': " + msg);
       }
       return test.pass();
     }
@@ -111,14 +111,14 @@ function test_field_i32_wrong_type(): test.TestOutcome {
 }
 
 function test_field_i32_non_integer_number(): test.TestOutcome {
-  match (test.assert_json_eq_field_i32(
+  match (test.assert_json_eq_field(
     "{\"count\":3.14}", "count", 3,
   )) {
     Pass => {
       return test.fail("decimal should not parse as i32");
     },
     Fail(msg) => {
-      if (!msg.contains("not i32-parseable")) {
+      if (!msg.contains("expected an integer in the i32 range, got 3.14")) {
         return test.fail("expected parse-failure diag: " + msg);
       }
       return test.pass();
@@ -127,32 +127,32 @@ function test_field_i32_non_integer_number(): test.TestOutcome {
 }
 
 function test_field_i32_negative(): test.TestOutcome {
-  return test.assert_json_eq_field_i32(
+  return test.assert_json_eq_field(
     "{\"delta\":-7}", "delta", -7,
   );
 }
 
 function test_field_bool_true_pass(): test.TestOutcome {
-  return test.assert_json_eq_field_bool(
+  return test.assert_json_eq_field(
     "{\"ok\":true}", "ok", true,
   );
 }
 
 function test_field_bool_false_pass(): test.TestOutcome {
-  return test.assert_json_eq_field_bool(
+  return test.assert_json_eq_field(
     "{\"flag\":false}", "flag", false,
   );
 }
 
 function test_field_bool_wrong_value(): test.TestOutcome {
-  match (test.assert_json_eq_field_bool(
+  match (test.assert_json_eq_field(
     "{\"ok\":true}", "ok", false,
   )) {
     Pass => {
       return test.fail("wrong bool should fail");
     },
     Fail(msg) => {
-      if (!msg.contains("expected false") || !msg.contains("got true")) {
+      if (!msg.contains("expected \"false\"") || !msg.contains("got \"true\"")) {
         return test.fail("expected both true/false: " + msg);
       }
       return test.pass();
@@ -161,15 +161,15 @@ function test_field_bool_wrong_value(): test.TestOutcome {
 }
 
 function test_field_bool_wrong_type(): test.TestOutcome {
-  match (test.assert_json_eq_field_bool(
+  match (test.assert_json_eq_field(
     "{\"ok\":\"true\"}", "ok", true,
   )) {
     Pass => {
       return test.fail("string-true should fail");
     },
     Fail(msg) => {
-      if (!msg.contains("string, not bool")) {
-        return test.fail("expected 'string, not bool': " + msg);
+      if (!msg.contains("expected a boolean, got a string")) {
+        return test.fail("expected 'expected a boolean, got a string': " + msg);
       }
       return test.pass();
     }

@@ -26,6 +26,38 @@ pub function format_problems(ps: Problem[], max: i32): string {
   return out;
 }
 
+function width_letter(c: u8): boolean {
+  return c == b'w' || c == b'l' || c == b'd';
+}
+
+// A signature tag is a width letter for each operand, the function value
+// first, then `_` and the width letter of the result. An empty tag is a call
+// whose words all have the pointer width.
+function indirect_signature_problem(op: ir.Op): string {
+  let tag = op.str;
+  if (tag.len() == 0) {
+    return "";
+  }
+  if (op.i64_imm == 0) {
+    return "signature tag " + tag + " with no signature word";
+  }
+  let shape = "signature tag " + tag + " is not width letters, `_` and a result letter";
+  let n = tag.len() - 2;
+  if (n < 1 || tag[0] != b'w' || tag[n] != b'_' || !width_letter(tag[n + 1])) {
+    return shape;
+  }
+  for i in 0..n {
+    if (!width_letter(tag[i])) {
+      return shape;
+    }
+  }
+  if (n != op.i32_imm) {
+    return "signature tag " + tag + " names " + util.i32_to_string(n)
+      + " operands, but the call passes " + util.i32_to_string(op.i32_imm);
+  }
+  return "";
+}
+
 pub struct FnSig { name: string, n_params: i32 }
 
 pub struct NameIndex {
@@ -357,6 +389,11 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
           fn_name: fn_name, op: i, kind: ir.kind_name(kt),
           msg: "negative argument count " + util.i32_to_string(op.i32_imm),
         });
+      } else if (kt == k_calli) {
+        let msg = indirect_signature_problem(op);
+        if (msg.len() > 0) {
+          out = out.append(Problem { fn_name: fn_name, op: i, kind: "call_indirect", msg: msg });
+        }
       }
     }
   }

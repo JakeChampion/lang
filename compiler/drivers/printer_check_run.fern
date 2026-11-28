@@ -928,39 +928,6 @@ function check_const_and_for_sugar(): test.TestOutcome {
     return test.fail("rtFn.funcs[0].is_const");
   }
 
-  let srcCFor = "function main(): i32 { let s: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { s = s + i; } return s; }";
-  let outCFor = printer.print_module(parser.parse_module(lexer.tokenize(srcCFor)));
-  if (!util.contains(outCFor, "for (let i: i32 = 0; i < 3; i = i + 1) {")) {
-    return test.fail("!util.contains(outCFor, \"for (let i: i32 = 0; i < 3; i = i + 1) {\")");
-  }
-  if (util.contains(outCFor, "__forc_")) {
-    return test.fail("util.contains(outCFor, \"__forc_\")");
-  }
-  let rtCFor = roundtrip_module(srcCFor);
-  if (rtCFor.funcs.len() != 1) {
-    return test.fail("rtCFor.funcs.len() != 1");
-  }
-  match (rtCFor.funcs[0].body[1]) {
-    ast.StmtIf(cf) => {
-      match (printer.as_c_for(cf)) {
-        Some(_) => {},
-        None => {
-          return test.fail("unexpected variant of printer.as_c_for(cf)");
-        }
-      }
-    },
-    _ => {
-      return test.fail("unexpected variant of rtCFor.funcs[0].body[1]");
-    }
-  }
-
-  let outBare: string = printer.print_module(parser.parse_module(lexer.tokenize(
-    "function main(): i32 { let i: i32 = 0; for (; i < 3; ) { i = i + 1; } return i; }",
-  )));
-  if (!util.contains(outBare, "for (; i < 3; ) {")) {
-    return test.fail("!util.contains(outBare, \"for (; i < 3; ) {\")");
-  }
-
   let outRange: string = printer.print_module(parser.parse_module(lexer.tokenize(
     "function main(): i32 { let t: i32 = 0; for i in 0..4 { t = t + i; } for j in 0..=4 { t = t + j; } return t; }",
   )));
@@ -981,13 +948,13 @@ function check_const_and_for_sugar(): test.TestOutcome {
     return test.fail("!util.contains(outMap, \"for (k, v) in m {\")");
   }
 
-  let srcLabels = "function main(): i32 { let t: i32 = 0; outer: while (t < 10) { inner: for (let i: i32 = 0; i < 3; i = i + 1) { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
+  let srcLabels = "function main(): i32 { let t: i32 = 0; outer: while (t < 10) { inner: for i in 0..3 { if (i == 2) { continue outer; } break inner; } t = t + 1; } return t; }";
   let outLabels = printer.print_module(parser.parse_module(lexer.tokenize(srcLabels)));
   if (!util.contains(outLabels, "outer: while (t < 10) {")) {
     return test.fail("!util.contains(outLabels, \"outer: while (t < 10) {\")");
   }
-  if (!util.contains(outLabels, "inner: for (let i: i32 = 0; i < 3; i = i + 1) {")) {
-    return test.fail("!util.contains(outLabels, \"inner: for (let i: i32 = 0; i < 3; i = i + 1) {\")");
+  if (!util.contains(outLabels, "inner: for i in 0..3 {")) {
+    return test.fail("!util.contains(outLabels, \"inner: for i in 0..3 {\")");
   }
   if (!util.contains(outLabels, "continue outer;")) {
     return test.fail("!util.contains(outLabels, \"continue outer;\")");
@@ -1029,10 +996,9 @@ function check_visibility_and_destructuring(): test.TestOutcome {
 
   let srcTd = "function pair(): (i32, i32) { return (1, 2); } function main(): i32 { let (a, b) = pair(); return a + b; }";
   let rtTd = roundtrip_module(srcTd);
-  let mti = func_index(rtTd.funcs, "main");
-  if (mti < 0) {
-    return test.fail("mti < 0");
-  }
+  let Some(mti) = func_index(rtTd.funcs, "main") else {
+    return test.fail("no function main");
+  };
   if (rtTd.funcs[mti].body.len() != 2) {
     return test.fail("rtTd.funcs[mti].body.len() != 2");
   }
@@ -1051,10 +1017,9 @@ function check_visibility_and_destructuring(): test.TestOutcome {
   }
   let srcSd: string = "struct P { x: i32, y: i32 } function main(): i32 { let P { x, y: bb } = P { x: 1, y: 2 }; return x + bb; }";
   let rtSd = roundtrip_module(srcSd);
-  let msi = func_index(rtSd.funcs, "main");
-  if (msi < 0) {
-    return test.fail("msi < 0");
-  }
+  let Some(msi) = func_index(rtSd.funcs, "main") else {
+    return test.fail("no function main");
+  };
   match (rtSd.funcs[msi].body[0]) {
     ast.StmtVar(v) => {
       if (ast.destr_text(v.destr) != "x,bb" || v.name.len() != 0) {
@@ -1071,10 +1036,9 @@ function check_visibility_and_destructuring(): test.TestOutcome {
 
   let srcMt = "enum Opt[T] { Some(T), None } pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
   let rtMt = roundtrip_module(srcMt);
-  let mmi = func_index(rtMt.funcs, "map");
-  if (mmi < 0) {
-    return test.fail("mmi < 0");
-  }
+  let Some(mmi) = func_index(rtMt.funcs, "map") else {
+    return test.fail("no function map");
+  };
   if (rtMt.funcs[mmi].receiver_name != "o") {
     return test.fail("rtMt.funcs[mmi].receiver_name != \"o\"");
   }
@@ -1159,8 +1123,8 @@ function check_traits_and_impls(): test.TestOutcome {
   if (pfIm.pimpls[1].methods.len() != 1) {
     return test.fail("pfIm.pimpls[1].methods.len() != 1");
   }
-  if (func_index(pfIm.pmod.funcs, "to_string") >= 0) {
-    return test.fail("func_index(pfIm.pmod.funcs, \"to_string\") >= 0");
+  if (func_index(pfIm.pmod.funcs, "to_string").is_some()) {
+    return test.fail("func_index(pfIm.pmod.funcs, \"to_string\").is_some()");
   }
   let outIm = printer.format_module(pfIm.pmod, pfIm.ptraits, pfIm.pimpls, pfIm.pflines, [], []);
   if (!util.contains(outIm, "impl Display for i32 {}")) {
@@ -1248,13 +1212,13 @@ function struct_index(structs: parser.StructDecl[], name: string): i32 {
   return -1;
 }
 
-function func_index(funcs: parser.FuncDecl[], name: string): i32 {
+function func_index(funcs: parser.FuncDecl[], name: string): Option[i32] {
   for i in 0..funcs.len() {
     if (funcs[i].name == name) {
-      return i;
+      return Some(i);
     }
   }
-  return -1;
+  return None;
 }
 
 function diff_replay(sc: printer.DiffScript, keep: i32): string {

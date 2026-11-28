@@ -63,19 +63,6 @@ function main(): i32 { return f((1, 2)); }`},
 	}
 }
 
-func TestCStyleForStillParses(t *testing.T) {
-	cases := []string{
-		`function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }`,
-		`function main(): i32 { let i: i32 = 0; let t: i32 = 0; for (; i < 3; i = i + 1) { t = t + i; } return t; }`,
-		`function main(): i32 { let i: i32 = 0; for (let j: i32 = 0; i < 3; ) { i = i + 1; } return i; }`,
-	}
-	for _, src := range cases {
-		if _, err := Parse(src); err != nil {
-			t.Fatalf("C-style for rejected: %v\nsrc: %s", err, src)
-		}
-	}
-}
-
 func TestEmptyListsStillParse(t *testing.T) {
 	cases := []struct {
 		name string

@@ -564,7 +564,7 @@ function unwrap(value: i64): Option[u8] {
   while (total < n) {
     let step: i32 = if (c) { let k = 1; while (k < 3) { k = k + 1; } k } else { 1 };
     let w: i32 = { let a = 2; if (a > 1) { a = a + step; } a };
-    let z: i32 = if (c) { let q = if (!c) { 0 } else { let m = 2; for (let j = 0; j < 2; j = j + 1) { m = m + j; } m }; q } else { 0 };
+    let z: i32 = if (c) { let q = if (!c) { 0 } else { let m = 2; for j in 0..2 { m = m + j; } m }; q } else { 0 };
     total = total + w + z;
   }
   let d: i32 = if (c) { 4 } else { if (n > 0) { return 9; } 5 };
@@ -1394,7 +1394,7 @@ function main(): i32 {
 	{"loop-labels", `function walk(a: i32[]): i32 {
   let t: i32 = 0;
   outer: while (t < 10) {
-    inner: for (let i: i32 = 0; i < 3; i = i + 1) {
+    inner: for i in 0..3 {
       if (i == 2) {
         continue outer;
       }
@@ -1544,34 +1544,7 @@ function h(c: i32): i32 {
   return 0;
 }
 `},
-	{"c-style-for", `function main(): i32 {
-let sum: i32 = 0;
-for (let i: i32 = 1; i <= 10; i = i + 1) {
-sum = sum + i;
-}
-return sum;
-}
-`},
-	{"c-style-for-optional-clauses", `function main(): i32 {
-let t: i32 = 0;
-let j: i32 = 0;
-for (; j < 3; j = j + 1) {
-t = t + 1;
-}
-for (let m: i32 = 0; m < 4; ) {
-m = m + 1;
-t = t + 1;
-}
-for (let n: i32 = 0; n < 5; n = n + 1) {
-if (n == 2) {
-continue;
-}
-t = t + 1;
-}
-return t;
-}
-`},
-	{"if-true-while-is-not-a-for", `function main(): i32 {
+	{"if-true-around-while", `function main(): i32 {
 let acc: i32 = 0;
 if (true) {
 let q: i32 = 1;
@@ -2613,43 +2586,6 @@ func TestSelfHostFmtNativeParityX86_64(t *testing.T) {
 				t.Errorf("self-host -fmt is not idempotent\n--- first ---\n%s\n--- second ---\n%s", got, got2)
 			}
 		})
-	}
-}
-
-func TestSelfHostFmtKeepsCStyleFor(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("CLI driver test runs only natively (argv paths)")
-	}
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	fernBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-
-	const src = `function main(): i32 {
-  let sum: i32 = 0;
-  for (let i: i32 = 1; i <= 10; i = i + 1) {
-    sum = sum + i;
-  }
-  return sum;
-}
-`
-	path := filepath.Join(dir, "keep_c_for.fern")
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	out, err := exec.Command(fernBin, "-fmt", path).Output()
-	if err != nil {
-		t.Fatalf("self-host -fmt: %v", err)
-	}
-	got := string(out)
-	if strings.Contains(got, "__forc_") {
-		t.Errorf("formatted output leaks the desugar's synthesised flag:\n%s", got)
-	}
-	if !strings.Contains(got, "for (let i: i32 = 1; i <= 10; i = i + 1)") {
-		t.Errorf("the C-style for header did not survive formatting:\n%s", got)
-	}
-	if got != src {
-		t.Errorf("already-formatted source was rewritten:\n--- in ---\n%s\n--- out ---\n%s", src, got)
 	}
 }
 

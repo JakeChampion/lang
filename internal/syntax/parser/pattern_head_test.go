@@ -33,7 +33,6 @@ function f(w @ P { x, y }: P): i32 { return w.x + x + y; }`},
 		{"qualified_lambda_parameter", `function f(): i32 { let g = (m.P { x, .. }: m.P): i32 => x; return 0; }`},
 		{"qualified_for", `function f(ps: m.P[]): i32 { for m.P { x, .. } in ps { return x; } return 0; }`},
 		{"qualified_at_for", `function f(ps: m.P[]): i32 { for w @ m.P { x, .. } in ps { return w.x + x; } return 0; }`},
-		{"qualified_for_initializer", `function f(p: m.P): i32 { for (let m.P { x, .. } = p; false;) {} return 0; }`},
 		{"qualified_variant_else", `function f(e: m.E): i32 { let m.V { x } = e else { return 0; }; return x; }`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -111,16 +110,5 @@ function f(e: E): i32 { let w @ A(n) = e; return n; }`)
 		t.Error("a refutable `@` head with no else should be rejected")
 	} else if !strings.Contains(err.Error(), "else") {
 		t.Errorf("error = %q, want it to name the missing `else`", err.Error())
-	}
-}
-
-func TestPatternHeadKeepsCStyleForApart(t *testing.T) {
-	for _, src := range []string{
-		`function f(): i32 { let s = 0; for (let i = 0; i < 3; i = i + 1) { s = s + i; } return s; }`,
-		`function f(): i32 { let s = 0; for (; false; ) { s = s + 1; } return s; }`,
-	} {
-		if _, err := Parse(src); err != nil {
-			t.Errorf("C-style for should still parse: %v\nsrc: %s", err, src)
-		}
 	}
 }
