@@ -1586,7 +1586,7 @@ pub function block_loop_weights(f: SFunc): i32[] {
   return weights_from_latches(furthest_latches(f, block_positions(f)));
 }
 
-function weights_from_latches(latch: i32[]): i32[] {
+function weights_from_latches(latch: i32[], max_depth: i32 = 3): i32[] {
   let out = __alloc_i32(latch.len());
   let depth = 0;
   for i in 0..latch.len() {
@@ -1597,7 +1597,7 @@ function weights_from_latches(latch: i32[]): i32[] {
       out = out.with(last, out[last] + 1);
     }
     let ending = out[i];
-    let levels = if (depth < 3) { depth } else { 3 };
+    let levels = if (depth < max_depth) { depth } else { max_depth };
     out = out.with(i, 1 << levels * 3);
     depth -= ending;
   }
@@ -2153,7 +2153,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
   }
   let mates = phi_mates(f, at, def_pos, hi, no_home);
   let bw = weights_from_latches(furthest_latches(f, at));
-  let weight = spill_weights(f, at, costs, bw);
+  let weight = spill_weights(f, at, costs, bw, []);
   let hard = hard_spans(f, bw, cum, cold, lo, hi, weight, crossing);
   let sole = sole_readers(f);
 
@@ -2630,10 +2630,19 @@ function sole_readers(f: SFunc): i32[] {
   return out;
 }
 
-function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[]): i32[] {
+function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[], uses: i32[]): i32[] {
   let w = __alloc_i32(f.nvals);
   for bi in 0..f.blocks.len() {
     let blk = f.blocks[bi];
+    // A branch on the last integer comparison reads either operand directly
+    // from a slot. With two slots it loads the left and folds the right.
+    let folded = -1;
+    if (uses.len() > 0 && blk.term.kind_tag == TERM_BRIF && blk.term.t != blk.term.f && blk.insts.len() > 0) {
+      let last = blk.insts[blk.insts.len() - 1];
+      if (last.kind_tag == BINARY && ir.is_int_cmp_kind(last.ir_kind) && last.result == blk.term.cond && uses[last.result] == 1) {
+        folded = last.result;
+      }
+    }
     for ins in blk.insts {
       if (ins.result >= 0 && ins.result < f.nvals) {
         w = w.with(ins.result, w[ins.result] + bw[bi]);
@@ -2650,6 +2659,9 @@ function spill_weights(f: SFunc, at: i32[], costs: SpillCosts, bw: i32[]): i32[]
         if (a >= 0 && a < f.nvals && rb >= 0) {
           let cost = 1;
           if (costs.fold_alu_rhs && ins.kind_tag == BINARY && sl == 1 && folds_spill_rhs(ins.ir_kind) && !in_slot(costs.spilled, ins.args[0])) {
+            cost = 0;
+          }
+          if (folded >= 0 && ins.result == folded && (sl == 1 || !in_slot(costs.spilled, ins.args[1]))) {
             cost = 0;
           }
           w = w.with(a, w[a] + bw[rb] * cost);
@@ -2712,8 +2724,9 @@ function kept_for_mate(wanted_by: i32[], reg_of: i32[], holder: i32, v: i32): bo
 // in a frame slot.
 pub function spill_cost(f: SFunc, reg_of: i32[], costs: SpillCosts): i32 {
   let at = block_positions(f);
-  let bw = weights_from_latches(furthest_latches(f, at));
-  let w = spill_weights(f, at, costs, bw);
+  let rank = costs.fold_alu_rhs && costs.spilled.len() > 0;
+  let bw = weights_from_latches(furthest_latches(f, at), if (rank) { 4 } else { 3 });
+  let w = spill_weights(f, at, costs, bw, if (rank) { use_counts(f) } else { [] });
   let total = 0;
   for v in 0..f.nvals {
     if (v < reg_of.len() && reg_of[v] <= -2) {
@@ -3353,7 +3366,7 @@ pub function print_alloc(f: SFunc, a: Alloc): string {
 pub function print_alloc_costs(f: SFunc, a: Alloc, costs: SpillCosts): string {
   let at = block_positions(f);
   let bw = weights_from_latches(furthest_latches(f, at));
-  let w = spill_weights(f, at, costs, bw);
+  let w = spill_weights(f, at, costs, bw, []);
   let cold = cold_blocks(f);
   let out = "";
   let start = 0;

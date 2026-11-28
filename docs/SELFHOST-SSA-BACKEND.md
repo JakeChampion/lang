@@ -606,7 +606,8 @@ are in slots, the emitter loads the right operand into %r11 first.
 So when an allocation leaves 4 or more such reads, `ssa_allocate` allocates
 again with those reads counted (`SpillCosts.spilled`, `ssa.unfolded_reads`).
 It keeps the allocation with the lower spill cost. Each allocation counts
-the reads by its own slots. In the theta step of Keccak, each `d` value is the
+the reads by its own slots. This comparison distinguishes up to four nested loops
+and discounts slot operands folded into a single-use integer branch comparison. In the theta step of Keccak, each `d` value is the
 right operand of 5 reads beside lanes in slots. With the
 second allocation the `d` values keep registers. The round body goes from
 283 to 256 instructions, and SHA3-256 runs 9% fewer instructions.
