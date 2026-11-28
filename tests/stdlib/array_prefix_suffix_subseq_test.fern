@@ -1,20 +1,20 @@
 import "std/test";
 
 function test_starts_with_i32_pass(): test.TestOutcome {
-  return test.assert_array_starts_with_i32([1, 2, 3, 4, 5], [1, 2, 3]);
+  return test.assert_array_starts_with([1, 2, 3, 4, 5], [1, 2, 3]);
 }
 
 function test_starts_with_i32_empty_prefix_vacuous(): test.TestOutcome {
   let empty: i32[] = [];
-  return test.assert_array_starts_with_i32([1, 2, 3], empty);
+  return test.assert_array_starts_with([1, 2, 3], empty);
 }
 
 function test_starts_with_i32_full_array_is_own_prefix(): test.TestOutcome {
-  return test.assert_array_starts_with_i32([1, 2, 3], [1, 2, 3]);
+  return test.assert_array_starts_with([1, 2, 3], [1, 2, 3]);
 }
 
 function test_starts_with_i32_prefix_too_long(): test.TestOutcome {
-  match (test.assert_array_starts_with_i32([1, 2], [1, 2, 3])) {
+  match (test.assert_array_starts_with([1, 2], [1, 2, 3])) {
     Pass => {
       return test.fail("too-long prefix should fail");
     },
@@ -28,7 +28,7 @@ function test_starts_with_i32_prefix_too_long(): test.TestOutcome {
 }
 
 function test_starts_with_i32_mismatch_at_index(): test.TestOutcome {
-  match (test.assert_array_starts_with_i32([1, 99, 3], [1, 2, 3])) {
+  match (test.assert_array_starts_with([1, 99, 3], [1, 2, 3])) {
     Pass => {
       return test.fail("mismatch should fail");
     },
@@ -42,23 +42,23 @@ function test_starts_with_i32_mismatch_at_index(): test.TestOutcome {
 }
 
 function test_starts_with_string_pass(): test.TestOutcome {
-  return test.assert_array_starts_with_string(
+  return test.assert_array_starts_with(
     ["alpha", "beta", "gamma"],
     ["alpha", "beta"],
   );
 }
 
 function test_ends_with_i32_pass(): test.TestOutcome {
-  return test.assert_array_ends_with_i32([1, 2, 3, 4, 5], [3, 4, 5]);
+  return test.assert_array_ends_with([1, 2, 3, 4, 5], [3, 4, 5]);
 }
 
 function test_ends_with_i32_empty_suffix_vacuous(): test.TestOutcome {
   let empty: i32[] = [];
-  return test.assert_array_ends_with_i32([1, 2, 3], empty);
+  return test.assert_array_ends_with([1, 2, 3], empty);
 }
 
 function test_ends_with_i32_suffix_too_long(): test.TestOutcome {
-  match (test.assert_array_ends_with_i32([1, 2], [1, 2, 3])) {
+  match (test.assert_array_ends_with([1, 2], [1, 2, 3])) {
     Pass => {
       return test.fail("too-long suffix should fail");
     },
@@ -72,7 +72,7 @@ function test_ends_with_i32_suffix_too_long(): test.TestOutcome {
 }
 
 function test_ends_with_i32_mismatch_reports_arr_index(): test.TestOutcome {
-  match (test.assert_array_ends_with_i32([1, 2, 99, 4, 5], [3, 4, 5])) {
+  match (test.assert_array_ends_with([1, 2, 99, 4, 5], [3, 4, 5])) {
     Pass => {
       return test.fail("mismatch should fail");
     },
@@ -86,28 +86,28 @@ function test_ends_with_i32_mismatch_reports_arr_index(): test.TestOutcome {
 }
 
 function test_ends_with_string_pass(): test.TestOutcome {
-  return test.assert_array_ends_with_string(
+  return test.assert_array_ends_with(
     ["alpha", "beta", "gamma"],
     ["beta", "gamma"],
   );
 }
 
 function test_subseq_i32_pass_middle(): test.TestOutcome {
-  return test.assert_array_contains_subseq_i32(
+  return test.assert_array_contains_subseq(
     [10, 20, 30, 40, 50],
     [30, 40],
   );
 }
 
 function test_subseq_i32_pass_at_start(): test.TestOutcome {
-  return test.assert_array_contains_subseq_i32(
+  return test.assert_array_contains_subseq(
     [10, 20, 30],
     [10, 20],
   );
 }
 
 function test_subseq_i32_pass_at_end(): test.TestOutcome {
-  return test.assert_array_contains_subseq_i32(
+  return test.assert_array_contains_subseq(
     [10, 20, 30],
     [20, 30],
   );
@@ -115,11 +115,11 @@ function test_subseq_i32_pass_at_end(): test.TestOutcome {
 
 function test_subseq_i32_empty_vacuous(): test.TestOutcome {
   let empty: i32[] = [];
-  return test.assert_array_contains_subseq_i32([1, 2, 3], empty);
+  return test.assert_array_contains_subseq([1, 2, 3], empty);
 }
 
 function test_subseq_i32_needle_longer(): test.TestOutcome {
-  match (test.assert_array_contains_subseq_i32([1, 2], [1, 2, 3])) {
+  match (test.assert_array_contains_subseq([1, 2], [1, 2, 3])) {
     Pass => {
       return test.fail("over-long needle should fail");
     },
@@ -130,7 +130,7 @@ function test_subseq_i32_needle_longer(): test.TestOutcome {
 }
 
 function test_subseq_i32_order_matters(): test.TestOutcome {
-  match (test.assert_array_contains_subseq_i32(
+  match (test.assert_array_contains_subseq(
     [1, 2, 3, 4, 5], [2, 4],
   )) {
     Pass => {
@@ -146,20 +146,20 @@ function test_subseq_i32_order_matters(): test.TestOutcome {
 }
 
 function test_subseq_i32_almost_match(): test.TestOutcome {
-  return test.assert_array_contains_subseq_i32(
+  return test.assert_array_contains_subseq(
     [1, 2, 3, 1, 2, 4], [1, 2, 4],
   );
 }
 
 function test_subseq_string_pass(): test.TestOutcome {
-  return test.assert_array_contains_subseq_string(
+  return test.assert_array_contains_subseq(
     ["GET", "/foo", "HTTP/1.1"],
     ["/foo", "HTTP/1.1"],
   );
 }
 
 function test_subseq_string_missing(): test.TestOutcome {
-  match (test.assert_array_contains_subseq_string(
+  match (test.assert_array_contains_subseq(
     ["GET", "/foo", "HTTP/1.1"],
     ["POST"],
   )) {
