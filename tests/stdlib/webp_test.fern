@@ -465,6 +465,104 @@ function test_decode_alpha_end(): test.TestOutcome {
   return test.assert_eq(got.join(" | "), "4x10 3927774449 | 13x8 3520020184 | webp: the data ends early | webp: the data ends early");
 }
 
+// An image of `w` by `h` pixels. Kind 0 is noise, 1 a gradient, 2 a few
+// colors in runs, 3 one color with some noise, and 4 noise in the alpha.
+function made_image(w: i32, h: i32, kind: i32, seed: i32): webp.Image {
+  let px = __alloc_u8(w * h * 4);
+  let x = seed;
+  for i in 0..w * h * 4 {
+    x = x * 1103515245 + 12345 & 2147483647;
+    let r = x >> 16;
+    let p = i / 4;
+    let v = if (kind == 0) { r & 255 } else if (kind == 1) { (p % w + p / w) * (i % 4 + 1) & 255 } else if (kind == 2) { p / 9 % 3 * 70 + i % 4 } else if (kind == 3) { if (r % 13 == 0) { r & 255 } else { 77 } } else if (i % 4 == 3) { r & 255 } else { p % 5 * 60 };
+    px = px.with(i, v as u8);
+  }
+  return webp.Image { width: w, height: h, pixels: px };
+}
+
+// The result of a decode of the encoded image: "same", or what differs.
+function round_trip(img: webp.Image): string {
+  match (webp.encode_lossless(img)) {
+    Ok(file) => {
+      match (webp.decode(file)) {
+        Ok(back) => {
+          if (back.width != img.width || back.height != img.height || back.pixels != img.pixels) {
+            return img.width.to_string() + "x" + img.height.to_string() + " differs";
+          }
+          return "same";
+        },
+        Err(e) => {
+          return e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+// Each kind of image at sizes that give each case of the encoder: one pixel,
+// one row, one column, a copy of the 4096 pixels at most, and rows wider
+// than the 120 nearest pixels reach.
+function test_encode_lossless_round_trip(): test.TestOutcome {
+  let sizes = [(1, 1), (5, 1), (1, 7), (2, 3), (17, 9), (100, 60), (300, 20)];
+  let differs: string[] = [];
+  for kind in 0..5 {
+    for k in 0..sizes.len() {
+      let (w, h) = sizes[k];
+      let got = round_trip(made_image(w, h, kind, kind * 31 + k));
+      if (got != "same") {
+        differs = differs.append("kind " + kind.to_string() + ": " + got);
+      }
+    }
+  }
+  let pillow = webp.decode(lossless()).unwrap_or(webp.Image { width: 0, height: 0, pixels: [] });
+  differs = if (round_trip(pillow) != "same") { differs.append("Pillow") } else { differs };
+  return test.assert_eq(differs.join(", "), "");
+}
+
+// The encoded size of an image of 16384 bytes: a flat image takes less than
+// 1% of its pixels, a gradient less than 5%, and noise at most 2% more.
+function test_encode_lossless_size(): test.TestOutcome {
+  let flat = webp.Image { width: 64, height: 64, pixels: __alloc_u8(64 * 64 * 4) };
+  let images = [flat, made_image(64, 64, 1, 3), made_image(64, 64, 0, 5)];
+  let limits = [163, 819, 16712];
+  let over: string[] = [];
+  for k in 0..images.len() {
+    let n = webp.encode_lossless(images[k]).unwrap_or([]).len();
+    if (n == 0 || n > limits[k]) {
+      over = over.append(k.to_string() + ": " + n.to_string() + " bytes");
+    }
+  }
+  return test.assert_eq(over.join(", "), "");
+}
+
+// An encoded file is one `VP8L` chunk, so `animate` takes it as a frame.
+function test_encode_lossless_animation(): test.TestOutcome {
+  let a = made_image(6, 4, 2, 1);
+  let b = made_image(6, 4, 4, 2);
+  let stills = [webp.encode_lossless(a).unwrap_or([]), webp.encode_lossless(b).unwrap_or([])];
+  let made = webp.animate(6, 4, stills, [40, 60]).unwrap_or([]);
+  let got = match (webp.decode_animation(made)) {
+    Ok(anim) => anim.frames.len().to_string() + " " + (anim.frames[0].image.pixels == a.pixels).to_string() + " " + (anim.frames[1].image.pixels == b.pixels).to_string(),
+    Err(e) => e.message(),
+  };
+  return test.assert_eq(got, "2 true true");
+}
+
+function encode_message(img: webp.Image): string {
+  return match (webp.encode_lossless(img)) {
+    Ok(_) => "ok",
+    Err(e) => e.message(),
+  };
+}
+
+function test_encode_lossless_errors(): test.TestOutcome {
+  let got = [encode_message(webp.Image { width: 0, height: 1, pixels: [] }), encode_message(webp.Image { width: 16385, height: 1, pixels: __alloc_u8(16385 * 4) }), encode_message(webp.Image { width: 2, height: 2, pixels: __alloc_u8(15) })];
+  return test.assert_eq(got.join(" | "), "webp: the width and the height must be from 1 to 16384 | webp: the width and the height must be from 1 to 16384 | webp: the image must have four bytes for each pixel");
+}
+
 function main(): i32 {
   let r = test.new("std/webp");
   r = r.it("animation of lossy, alpha and lossless frames", test_animation);
@@ -485,5 +583,9 @@ function main(): i32 {
   r = r.it("a short lossy file with a large frame", test_decode_lossy_short_large_frame);
   r = r.it("the limits of the size of an image", test_size_limits);
   r = r.it("decode animations with lossy frames", test_decode_lossy_animation);
+  r = r.it("encode lossless images that decode to the same pixels", test_encode_lossless_round_trip);
+  r = r.it("the size of a lossless file", test_encode_lossless_size);
+  r = r.it("animate takes lossless files that encode_lossless writes", test_encode_lossless_animation);
+  r = r.it("lossless encode errors", test_encode_lossless_errors);
   return r.finish();
 }

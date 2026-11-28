@@ -62,10 +62,11 @@ func countByteCases() []struct {
 		}
 	}
 
-	for _, n := range []int{1023, 1024, 1025, 2047, 2048, 2049, 8191, 8192, 8193, 65535, 65536, 65537} {
+	// 3840 bytes are one batch of the arm64 kernel, 60 blocks of 64 bytes.
+	for _, n := range []int{1023, 1024, 1025, 2047, 2048, 2049, 3839, 3840, 3841, 3903, 3904, 7679, 7680, 7681, 8191, 8192, 8193, 65535, 65536, 65537} {
 		base := strings.Repeat("a", n)
 		out = append(out, c{base, 'a'}, c{base, 'z'})
-		for _, at := range []int{0, 1, 15, 16, 31, 32, 127, 128, 1023, 1024, n - 1} {
+		for _, at := range []int{0, 1, 15, 16, 31, 32, 63, 64, 127, 128, 1023, 1024, 3839, 3840, n - 1} {
 			if at < n {
 				withHit := base[:at] + "z" + base[at+1:]
 				out = append(out, c{withHit, 'a'}, c{withHit, 'z'})

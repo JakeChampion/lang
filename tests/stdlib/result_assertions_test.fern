@@ -34,13 +34,13 @@ function test_is_ok_string_err_fails(): test.TestOutcome {
   }
 }
 
-function test_is_err_string_pass(): test.TestOutcome {
-  return test.assert_is_err_string(read_file(
+function test_is_err_pass(): test.TestOutcome {
+  return test.assert_is_err(read_file(
     "/tmp/lang-no-such-file-batch30-zztop",
   ));
 }
 
-function test_is_err_string_ok_fails_with_value(r: test.TestRunner): test.TestRunner {
+function test_is_err_ok_fails(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "err-on-ok");
   if (dir == "") {
     return rr;
@@ -52,18 +52,18 @@ function test_is_err_string_ok_fails_with_value(r: test.TestRunner): test.TestRu
     },
     Ok(_) => {}
   }
-  match (test.assert_is_err_string(read_file(path))) {
+  match (test.assert_is_err(read_file(path))) {
     Pass => {
       return rr.it("Ok should fail is_err", () => test.fail("missed"));
     },
     Fail(msg) => {
-      if (!msg.contains("Ok(\"data\")")) {
+      if (!msg.contains("assert_is_err: got Ok")) {
         return rr.it(
-          "expected 'Ok(\"data\")' in msg",
+          "expected 'got Ok' in msg",
           () => test.fail("got: " + msg),
         );
       }
-      return rr.it("is_err on Ok embeds payload", test.pass);
+      return rr.it("is_err on Ok fails", test.pass);
     }
   }
 }
@@ -148,13 +148,13 @@ function test_is_ok_string_array_pass(r: test.TestRunner): test.TestRunner {
   );
 }
 
-function test_is_err_string_array_pass(): test.TestOutcome {
-  return test.assert_is_err_string_array(read_dir(
+function test_is_err_array_pass(): test.TestOutcome {
+  return test.assert_is_err(read_dir(
     "/tmp/lang-no-such-dir-batch30-zztop",
   ));
 }
 
-function test_is_err_string_array_ok_embeds_length(r: test.TestRunner): test.TestRunner {
+function test_is_err_array_ok_fails(r: test.TestRunner): test.TestRunner {
   let (dir, rr) = test.must_temp_dir(r, "err-array-ok");
   if (dir == "") {
     return rr;
@@ -165,7 +165,7 @@ function test_is_err_string_array_ok_embeds_length(r: test.TestRunner): test.Tes
     },
     Ok(_) => {}
   }
-  match (test.assert_is_err_string_array(read_dir(dir))) {
+  match (test.assert_is_err(read_dir(dir))) {
     Pass => {
       return rr.it(
         "Ok-array should fail is_err",
@@ -173,13 +173,13 @@ function test_is_err_string_array_ok_embeds_length(r: test.TestRunner): test.Tes
       );
     },
     Fail(msg) => {
-      if (!msg.contains("length 1")) {
+      if (!msg.contains("assert_is_err: got Ok")) {
         return rr.it(
-          "expected 'length 1' in msg",
+          "expected 'got Ok' in msg",
           () => test.fail("got: " + msg),
         );
       }
-      return rr.it("is_err_array on Ok embeds length", test.pass);
+      return rr.it("is_err on an array Ok fails", test.pass);
     }
   }
 }
@@ -192,10 +192,10 @@ function main(): i32 {
     test_is_ok_string_err_fails,
   );
   r = r.it(
-    "is_err_string on Err pass",
-    test_is_err_string_pass,
+    "is_err on a string Err passes",
+    test_is_err_pass,
   );
-  r = test_is_err_string_ok_fails_with_value(r);
+  r = test_is_err_ok_fails(r);
   r = test_is_ok_eq_string_pass(r);
   r = test_is_ok_eq_string_wrong_value(r);
   r = r.it(
@@ -204,9 +204,9 @@ function main(): i32 {
   );
   r = test_is_ok_string_array_pass(r);
   r = r.it(
-    "is_err_string_array on Err pass",
-    test_is_err_string_array_pass,
+    "is_err on an array Err passes",
+    test_is_err_array_pass,
   );
-  r = test_is_err_string_array_ok_embeds_length(r);
+  r = test_is_err_array_ok_fails(r);
   return r.finish();
 }

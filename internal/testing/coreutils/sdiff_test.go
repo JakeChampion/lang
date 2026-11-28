@@ -39,6 +39,15 @@ printf ' note\000hidden\ni1,1\000hidden\nleft\000right\n'
 	diffMkdir(t, dir, "dA", "dB")
 	w("dA/x", "x\n")
 	w("dB/x", "y\n")
+	assist := func(name, commands string) {
+		t.Helper()
+		w(name, "#!/bin/sh\ncat <<'EOF'\n"+commands+"EOF\n")
+		if err := os.Chmod(filepath.Join(dir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assist("empty-count", "i1,\nfirst\ni,1\nsecond\ni1,1\nthird\n")
+	assist("invalid-count", "i1,+\n")
 	path := diffutilsPath(t)
 	env := func(extra ...string) []string {
 		return append([]string{path, "TMPDIR=" + tmp, "EDITOR=cat"}, extra...)
@@ -125,6 +134,8 @@ printf ' note\000hidden\ni1,1\000hidden\nleft\000right\n'
 		merge("merge with a diff program that fails", "", nil, "--diff-program=false", "a", "b"),
 		merge("merge with a diff program that succeeds", "", nil, "--diff-program=true", "a", "b"),
 		merge("merge with a diff program that echoes", "", nil, "--diff-program=echo", "a", "b"),
+		merge("merge with omitted line counts", "", nil, "--diff-program=./empty-count", "a", "b"),
+		merge("merge with a sign but no digits", "", nil, "--diff-program=./invalid-count", "a", "b"),
 		merge("merge with diff as the diff program", "l\nr\n", nil, "--diff-program=diff", "a", "b"),
 		merge("merge with cat as the diff program", "", nil, "--diff-program=cat", "a", "b"),
 		merge("merge suppressing common lines", "1\n2\n", nil, "-s", "a", "b"),

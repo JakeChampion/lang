@@ -1630,6 +1630,24 @@ function main(): i32 {
   if (count_problems([ir.op_call_indirect(-1)], 0, 1) != 1) {
     return 51;
   }
+  if (count_problems([ir.op_call_indirect_sig(3, "wld_d", 7)], 0, 1) != 0) {
+    return 52;
+  }
+  if (count_problems([ir.op_call_indirect_sig(2, "", 7)], 0, 1) != 0) {
+    return 53;
+  }
+  if (!util.contains(first_msg([ir.op_call_indirect_sig(2, "wld_d", 7)], 0, 1), "names 3 operands, but the call passes 2")) {
+    return 54;
+  }
+  if (!util.contains(first_msg([ir.op_call_indirect_sig(3, "wld_d", 0)], 0, 1), "with no signature word")) {
+    return 55;
+  }
+  let shapes = ["wld", "wldd", "wlx_d", "ld_d", "_d", "wl_dd", "wl_x"];
+  for s in shapes {
+    if (!util.contains(first_msg([ir.op_call_indirect_sig(2, s, 7)], 0, 1), "is not width letters")) {
+      return 56;
+    }
+  }
 
   let many: ir.Op[] = [ir.op_load_local(9), ir.op_end(), ir.op_br(4)];
   let mp = irverify.verify_fn("g", many, 0, 1, no_sigs());
