@@ -10359,8 +10359,9 @@ function mc_walk_body(stmts: ast.Stmt[], s: Scope, structs: parser.StructDecl[],
     match (st) {
       ast.StmtVar(v) => {
         // A match on a struct pattern consumes its subject. The local that
-        // holds the subject is not a binding of the program.
-        let tn = if (parser.is_struct_match_subject(v.name)) { "" } else { mc_var_type_name(v, cur, structs, enums) };
+        // holds the subject, and the destructure of its fields, are not
+        // bindings of the program.
+        let tn = if (parser.is_struct_match_subject(v.name) || v.destr.struct_match) { "" } else { mc_var_type_name(v, cur, structs, enums) };
         if (tn.len() > 0) {
           out = util.append_diags(out, mc_check_binding(stmts, i + 1, v.name, tn, v.line, v.col, structs, enums));
         }
