@@ -1226,7 +1226,7 @@ func TestSelfHostSSAResultTakesDyingOperandRegister(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "step.fern")
 	prog := `@noinline function step(x: i64, y: i64): i64 {
-    let a: i64 = x * 3i64;
+    let a: i64 = x * 7i64;
     let b: i64 = a + y;
     if (b > 100i64) { return b - 7i64; }
     return b;
@@ -1247,7 +1247,7 @@ function main(): i32 { return (step(40i64, 2i64) + step(1i64, 2i64) + first_over
 		add     string
 		jump    *regexp.Regexp
 	}{
-		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+imulq \$3, %r\w+, (%r\w+)$`), `(?m)^\s+addq %%r\w+, %s$`, regexp.MustCompile(`(?m)^\s+jmp `)},
+		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+imulq \$7, %r\w+, (%r\w+)$`), `(?m)^\s+addq %%r\w+, %s$`, regexp.MustCompile(`(?m)^\s+jmp `)},
 		{"arm64-linux", regexp.MustCompile(`(?m)^\s+mul (x\d+), x\d+, x\d+$`), `(?m)^\s+add %[1]s, %[1]s, x\d+$`, regexp.MustCompile(`(?m)^\s+b \.`)},
 	}
 	for _, c := range cases {
