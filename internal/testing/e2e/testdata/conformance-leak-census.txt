@@ -502,6 +502,7 @@ handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
 handle_foreach_destructured_field_own                0
 handle_foreach_field_local_own                       0
+handle_holder_reassigned_after_close                 0
 handle_lent_only_to_a_result_of_its_kind             0
 handle_let_literal_in_returning_arm                  0
 handle_literal_in_arm_of_nested_returns              0
