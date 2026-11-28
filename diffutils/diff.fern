@@ -1,5 +1,6 @@
 import "core/cmp";
 import "std/tz";
+import "std/io";
 import "std/errno";
 import "std/linediff";
 import "../coreutils/lib/gnu";
@@ -576,7 +577,8 @@ function diff_syntax(): bre.Syntax {
 
 // -X FILE: each line of FILE is a pattern.
 function exclude_from(cfg: Cfg, name: string): Cfg {
-  let bytes = match (read_file_bytes(name)) {
+  let patterns = if (name == "-") { io.read_all_bytes(stdin()) } else { read_file_bytes(name) };
+  let bytes = match (patterns) {
     Ok(b) => b,
     Err(e) => {
       gnu.error(name + ": " + gnu.io_error_text(e));
