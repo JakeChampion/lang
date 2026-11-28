@@ -21514,7 +21514,11 @@ function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
     return true;
   }
-  match (check_expr(e, ctx.scope)) {
+  return ow_type_is_scalar(check_expr(e, ctx.scope));
+}
+
+function ow_type_is_scalar(ty: typeinfo.Type): boolean {
+  match (ty) {
     typeinfo.TypeI32(_) => {
       return true;
     },
@@ -22242,10 +22246,13 @@ function ow_variant_args_owned(c: ast.ExprCall, ctx: OwnCtx): boolean {
 }
 
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
-  if (ow_expr_is_scalar(e, ctx)) {
+  if (ow_scalar_literal(e)) {
     return true;
   }
   let ty = check_expr(e, ctx.scope);
+  if (ow_type_is_scalar(ty)) {
+    return true;
+  }
   if let typeinfo.TypeStruct(st) = ty {
     if (ow_value_decl(st.name, ctx.structs, ctx.snames) && ow_value_data(typeinfo.spelling(ty), ctx.decls, [])) {
       return true;
@@ -22259,7 +22266,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       return true;
     },
     ast.ExprStructLit(sl) => {
-      return ow_struct_lit_owned(sl, check_expr(e, ctx.scope), ctx);
+      return ow_struct_lit_owned(sl, ty, ctx);
     },
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
