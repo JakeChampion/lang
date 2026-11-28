@@ -1835,7 +1835,7 @@ function float_def(ins: SInst): boolean {
 }
 
 function float_load(ins: SInst): boolean {
-  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && mark_bits(ins.str) == 0;
+  return ins.kind_tag == LD_AT || ins.kind_tag == ARR_AT && mark_bits(ins.str) == 0 || ins.kind_tag == LD_IDX && ins.str == "f64";
 }
 
 // The bits of an array element that an access marks: "u8" for a byte, "u16"
@@ -8089,11 +8089,14 @@ function scaled_sum_mark(mark: string): boolean {
   return mark == "i32" || mark == "u32" || mark == "i16" || mark == "u16";
 }
 
-// A read of an element of 2 or 4 bytes with an index in a register. With or
+// A narrow integer or a floating-point word read with a register index. With or
 // without its bounds check, a load with a scaled index can take it. A read
 // with a constant index is one instruction already.
-function scaled_read(ins: SInst, defs: SInst[], nvals: i32): boolean {
-  if (ins.kind_tag != ARR_AT || ins.result < 0 || ins.imm > 1 || !scaled_sum_mark(ins.str) || ins.args.len() < 2) {
+function scaled_read(ins: SInst, defs: SInst[], nvals: i32, floats: boolean[]): boolean {
+  if (ins.kind_tag != ARR_AT || ins.result < 0 || ins.imm > 1 || ins.args.len() < 2) {
+    return false;
+  }
+  if (!scaled_sum_mark(ins.str) && !(ins.str == "" && ins.result < floats.len() && floats[ins.result])) {
     return false;
   }
   let i = ins.args[1];
@@ -8111,15 +8114,36 @@ function indexed_write(ins: SInst, defs: SInst[], nvals: i32): boolean {
   return (ins.str == "u8" || scaled_sum_mark(ins.str)) && i >= 0 && i < nvals && !is_constant(defs[i], nvals);
 }
 
+// Word reads have the same element mark for integers and floats. Only hoist
+// a word read when a floating-point operation consumes its result in the loop.
+function loop_float_operands(blocks: SBlock[], h: i32, last: i32, nvals: i32): boolean[] {
+  let floats: boolean[] = [];
+  for bi in h..=last {
+    for ins in blocks[bi].insts {
+      if (float_use(ins)) {
+        if (floats.len() == 0) {
+          floats = __alloc_bool(nvals);
+        }
+        for v in ins.args {
+          if (v >= 0 && v < nvals) {
+            floats = floats.with(v, true);
+          }
+        }
+      }
+    }
+  }
+  return floats;
+}
+
 // The arrays that the loop from `h` to `last` touches two times or more with
 // a read or a write that one instruction at the address of the elements can
 // take. That address holds a register for the loop, and each access gains
 // one instruction, so one access does not pay for it.
-function read_twice(blocks: SBlock[], defs: SInst[], h: i32, last: i32, nvals: i32): boolean[] {
+function read_twice(blocks: SBlock[], defs: SInst[], h: i32, last: i32, nvals: i32, floats: boolean[]): boolean[] {
   let reads = __alloc_i32(nvals);
   for bi in h..=last {
     for ins in blocks[bi].insts {
-      if ((scaled_read(ins, defs, nvals) || indexed_write(ins, defs, nvals)) && ins.args[0] >= 0 && ins.args[0] < nvals) {
+      if ((scaled_read(ins, defs, nvals, floats) || indexed_write(ins, defs, nvals)) && ins.args[0] >= 0 && ins.args[0] < nvals) {
         reads = reads.with(ins.args[0], reads[ins.args[0]] + 1);
       }
     }
@@ -8174,7 +8198,8 @@ pub function hoisted_lengths(f: SFunc): SFunc {
       blocks = blocks.with(h, SBlock { ...blocks[h], insts: head });
       moved = true;
     }
-    let twice = read_twice(blocks, defs, h, last, f.nvals);
+    let floats = loop_float_operands(blocks, h, last, f.nvals);
+    let twice = read_twice(blocks, defs, h, last, f.nvals, floats);
     for bi in h..=last {
       let insts: SInst[] = [];
       let changed = false;
@@ -8182,11 +8207,11 @@ pub function hoisted_lengths(f: SFunc): SFunc {
         let b = if (ins.args.len() > 0) { ins.args[0] } else { -1 };
         let invariant = defined_before(f, def_pos, b, h, last);
         let checked = length_checked(ins, used) && invariant;
-        // A read of a byte, or of an element of 2 or 4 bytes that the loop
-        // reads two times or more, loads from the address of the elements,
+        // A byte read, or a repeated scaled access in the loop, loads
+        // from the address of the elements,
         // which the block before the loop forms one time.
         let touched = b >= 0 && b < f.nvals && invariant && twice[b] && (ins.imm == 1 || checked);
-        let scaled = touched && scaled_read(ins, defs, f.nvals);
+        let scaled = touched && scaled_read(ins, defs, f.nvals, floats);
         let write = touched && indexed_write(ins, defs, f.nvals);
         let data = -1;
         if (scaled || write || checked && ins.kind_tag == ARR_AT && ins.imm == 0 && ins.str == "u8" && ins.result >= 0) {
@@ -8202,7 +8227,8 @@ pub function hoisted_lengths(f: SFunc): SFunc {
           }
           data = datas[dk];
         }
-        let read = SInst { ir_kind: if (scaled) { SUM_SCALED } else { 0 }, kind_tag: LD_SUM, result: ins.result, args: [data, if (ins.args.len() > 1) { ins.args[1] } else { -1 }], imm: 0, str: if (scaled) { ins.str } else { "" } };
+        let fp = scaled && ins.str == "";
+        let read = SInst { ir_kind: if (scaled && !fp) { SUM_SCALED } else { 0 }, kind_tag: if (fp) { LD_IDX } else { LD_SUM }, result: ins.result, args: [data, if (ins.args.len() > 1) { ins.args[1] } else { -1 }], imm: 0, str: if (fp) { "f64" } else if (scaled) { ins.str } else { "" } };
         // A write of such an element, or of a byte, is one store at that
         // address with the index.
         let stored = if (write) { SInst { ir_kind: if (ins.str == "u8") { 0 } else { SUM_SCALED }, kind_tag: ST_BYTE, result: ins.result, args: [data, ins.args[1], ins.args[2]], imm: 0, str: if (ins.str == "u8") { "" } else { ins.str } } } else { ins };

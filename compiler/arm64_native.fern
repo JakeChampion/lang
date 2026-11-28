@@ -6916,7 +6916,7 @@ function arm64_gas_bad_pair(mnem: string, ops: string[], lm: Arm64Mem): string {
 }
 
 function arm64_gas_bad_regext(mnem: string, ops: string[], lm: Arm64Mem): string {
-  if (ops.len() != 2) {
+  if (ops.len() < 2) {
     return "";
   }
   let m = arm64_gas_mem_at(ops, 1, lm);
@@ -6926,7 +6926,11 @@ function arm64_gas_bad_regext(mnem: string, ops: string[], lm: Arm64Mem): string
   if (mnem == "ldrsw" && arm64_gas_is_w(ops[0])) {
     return "width";
   }
-  if (arm64_gas_fp_ldst_size(ops[0]) > 0) {
+  if (ops.len() != 2 || arm64_gas_has_bang(ops[1])) {
+    return "regoff";
+  }
+  let fp = arm64_gas_fp_ldst_size(ops[0]);
+  if (fp > 0 && mnem != "ldr" && mnem != "str") {
     return "regoff";
   }
   if (m.ext_opt < 0) {
@@ -6935,7 +6939,7 @@ function arm64_gas_bad_regext(mnem: string, ops: string[], lm: Arm64Mem): string
   if (m.idx_w != (m.ext_opt == 2 || m.ext_opt == 6)) {
     return "ext";
   }
-  if (m.ext_has_amt && m.ext_amt != 0 && m.ext_amt != arm64_gas_ldst_size(mnem, ops[0])) {
+  if (m.ext_has_amt && m.ext_amt != 0 && m.ext_amt != (if (fp > 0) { fp } else { arm64_gas_ldst_size(mnem, ops[0]) })) {
     return "ext";
   }
   return "";
@@ -7269,6 +7273,13 @@ function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: st
     return a;
   }
   let m = arm64_gas_mem_at(ops, 1, lm);
+  if (m.off_reg >= 0) {
+    let scaled = m.ext_has_amt && m.ext_amt == size;
+    let word = arm64_ldst_regext_word(size, load, rt, m.base, m.off_reg, m.ext_opt, scaled);
+    // V selects the SIMD/FP bank. A Q register also sets the high opc bit.
+    arm64_push_word(a.code, word | 0x04000000i64 | (if (size == 4) { 0x00800000i64 } else { 0i64 }));
+    return a;
+  }
   if (arm64_gas_has_bang(ops[1])) {
     util.push_bytes(a.code, arm64_ldst_fp_imm9([], load, rt, m.base, m.off, 0xc00, size));
     return a;
