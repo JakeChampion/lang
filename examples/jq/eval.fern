@@ -1533,40 +1533,55 @@ function keyed_items(what: string, f: filter.Ast, input: json.JsonValue, items: 
 }
 
 function walk(v: json.JsonValue, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  if (st.calls >= BOUNCE_EVERY) {
+    return bounce(st, (own s: St): own St => walk(v, f, e, k, s));
+  }
+  let s = St { ...st, calls: st.calls + 1 };
   match (v) {
     json.JObject(o) => {
-      let names = o.keys();
-      let values = o.values();
-      let fields = json.object();
-      let saved = st.items;
-      let s = St { ...st, items: [] };
-      for i in 0..names.len() {
-        s = drive(walk(values[i], f, e, append_item, St { ...s, items: [], labels: s.labels + 1 }));
-        if (s.sig != OK) {
-          return St { ...s, items: saved };
-        }
-        if (s.items.len() > 0) {
-          fields = fields.insert(names[i], s.items[0]);
-        }
-      }
-      return run(f, json.JObject(fields), e, k, St { ...s, items: saved });
+      return walk_fields(o.keys(), o.values(), 0, json.object(), f, e, k, s.items, St { ...s, items: [] });
     },
     json.JArray(items) => {
-      let saved = st.items;
-      let s = St { ...st, items: [] };
-      for x in items {
-        s = drive(walk(x, f, e, append_item, s));
-        if (s.sig != OK) {
-          return St { ...s, items: saved };
-        }
-      }
-      let out = s.items;
-      return run(f, json.JArray(out), e, k, St { ...s, items: saved });
+      return walk_items(items, 0, f, e, k, s.items, St { ...s, items: [] });
     },
     _ => {
-      return run(f, v, e, k, st);
+      return run(f, v, e, k, s);
     }
   }
+}
+
+function walk_items(values: json.JsonValue[], at: i32, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, saved: json.JsonValue[], own s: St): own St {
+  while (at < values.len() && s.sig == OK) {
+    s = walk(values[at], f, e, append_item, s);
+    at += 1;
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => walk_items(values, at, f, e, k, saved, t)) };
+    }
+  }
+  if (s.sig != OK) {
+    return St { ...s, items: saved };
+  }
+  return run(f, json.JArray(s.items), e, k, St { ...s, items: saved });
+}
+
+// An object update takes the first output for each field, deleting the field
+// when the filter gives no output. Stop its generator as soon as it yields.
+function walk_fields(names: string[], values: json.JsonValue[], at: i32, fields: json.JsonObject, f: filter.Ast, e: Env, k: (json.JsonValue, own St) => own St, saved: json.JsonValue[], own s: St): own St {
+  while (s.sig == OK) {
+    if (at > 0 && s.items.len() > 0) {
+      fields = fields.insert(names[at - 1], s.items[0]);
+    }
+    if (at == names.len()) {
+      return run(f, json.JObject(fields), e, k, St { ...s, items: saved });
+    }
+    let (id, local) = new_label(s);
+    s = ended(id, walk(values[at], f, e, (v: json.JsonValue, own t: St): own St => broken(St { ...t, items: [v] }, id), St { ...local, items: [] }));
+    at += 1;
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => walk_fields(names, values, at, fields, f, e, k, saved, t)) };
+    }
+  }
+  return St { ...s, items: saved };
 }
 
 // `halt_error` writes a string as it is and any other value as JSON with a
