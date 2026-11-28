@@ -6680,7 +6680,16 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
 function emit_arm64_op_memset(s: asmcore.EmitState): asmcore.EmitState {
   let tag = asmcore.fresh_label(s);
   s = tag.state;
+  let t = tag.name;
   s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+  // The op is a call for the register allocator, so v16 is free. The last
+  // store of a fill of 16 bytes or more ends at the end of the range, and
+  // can write again some bytes that an earlier store wrote.
+  s = s.write("    cmp x2, #16\n    b.lo " + t + "ms\n");
+  s = s.write("    dup v16.16b, w1\n    add x4, x0, x2\n    cmp x2, #32\n    b.lo " + t + "msm\n");
+  s = s.write(t + "msv:\n    stp q16, q16, [x0], #32\n    sub x2, x2, #32\n    cmp x2, #32\n    b.hs " + t + "msv\n");
+  s = s.write("    sub x4, x4, #32\n    stp q16, q16, [x4]\n    b " + t + "msd\n");
+  s = s.write(t + "msm:\n    str q16, [x0]\n    sub x4, x4, #16\n    str q16, [x4]\n    b " + t + "msd\n");
   s = s.write(tag.name + "ms:\n");
   s = s.write("    cbz x2, " + tag.name + "msd\n");
   s = s.write("    strb w1, [x0], #1\n    sub x2, x2, #1\n");
