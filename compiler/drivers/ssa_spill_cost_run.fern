@@ -8,10 +8,10 @@ function inst(kind: i32, v: i32, args: i32[]): ssa.SInst {
 }
 
 function probe(reads: i32): ssa.Alloc {
-  return probe_costs(reads, false, false);
+  return probe_costs(reads, false, false, []);
 }
 
-function probe_costs(reads: i32, folded: boolean, rhs: boolean): ssa.Alloc {
+function probe_func(reads: i32, rhs: boolean): ssa.SFunc {
   let ops: ssa.SInst[] = [inst(ssa.CONST_INT, 0, []), inst(ssa.CONST_INT, 1, []), inst(ssa.CONST_INT, 2, []), inst(ssa.CONST_INT, 3, []), inst(ssa.UNARY, 4, [1])];
   for i in 5..100 {
     if (i < 5 + reads) {
@@ -24,13 +24,18 @@ function probe_costs(reads: i32, folded: boolean, rhs: boolean): ssa.Alloc {
       ops = ops.append(inst(ssa.CONST_INT, i, []));
     }
   }
-  let f = ssa.SFunc { name: "spill", nparams: 0, nvals: 100, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 0 } }] };
+  return ssa.SFunc { name: "spill", nparams: 0, nvals: 100, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 0 } }] };
+}
+
+// spilled names the values of an earlier allocation in frame slots.
+function probe_costs(reads: i32, folded: boolean, rhs: boolean, spilled: boolean[]): ssa.Alloc {
+  let f = probe_func(reads, rhs);
   let no_home: boolean[] = [false, false];
   for i in 2..100 {
     no_home = no_home.append(true);
   }
   if (folded) {
-    return ssa.regalloc_linear_fixed_costs(f, 1, 0, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: false });
+    return ssa.regalloc_linear_fixed_costs(f, 1, 0, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: false, spilled: spilled });
   }
   return ssa.regalloc_linear(f, 1, 0, -1, false, no_home, [], [], 0, 0);
 }
@@ -45,20 +50,30 @@ function main(): i32 {
   if (cold.reg_of[0] >= 0 || cold.reg_of[1] < 0) {
     failures += 1;
   }
-  let folded_hot = probe_costs(9, true, false);
+  let folded_hot = probe_costs(9, true, false, []);
   if (folded_hot.reg_of[0] < 0 || folded_hot.reg_of[1] >= 0) {
     failures += 1;
   }
-  let folded_cold = probe_costs(1, true, false);
+  let folded_cold = probe_costs(1, true, false, []);
   if (folded_cold.reg_of[0] >= 0 || folded_cold.reg_of[1] < 0) {
     failures += 1;
   }
-  let plain_rhs = probe_costs(9, false, true);
+  let plain_rhs = probe_costs(9, false, true, []);
   if (plain_rhs.reg_of[0] < 0 || plain_rhs.reg_of[1] >= 0) {
     failures += 1;
   }
-  let folded_rhs = probe_costs(9, true, true);
+  let folded_rhs = probe_costs(9, true, true, []);
   if (folded_rhs.reg_of[0] >= 0 || folded_rhs.reg_of[1] < 0) {
+    failures += 1;
+  }
+  // A folded read beside a left operand in a frame slot costs a load, so the
+  // right operand of those reads keeps its register.
+  let lhs_slot = __alloc_bool(100).with(2, true);
+  let unfolded = probe_costs(9, true, true, lhs_slot);
+  if (unfolded.reg_of[0] < 0 || unfolded.reg_of[1] >= 0) {
+    failures += 1;
+  }
+  if (ssa.unfolded_reads(probe_func(9, true), lhs_slot.with(0, true)) != 9 || ssa.unfolded_reads(probe_func(9, true), lhs_slot) != 0) {
     failures += 1;
   }
   print("failures=" + util.i32_to_string(failures));
