@@ -2024,7 +2024,7 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
     let phi_end = pos + phi_count(blk.insts) - 1;
     for k in 0..blk.insts.len() {
       let ins = blk.insts[k];
-      // One `mulq` writes both halves, so the low half starts with the high half.
+      // One instruction writes both halves, so the low half starts with the high half.
       let dpos = if (abi_fixed_by_div && wide_product_at(blk, k)) { pos + 1 } else { pos };
       if (ins.result >= 0 && ins.result < lo.len() && dpos < lo[ins.result]) {
         lo = lo.with(ins.result, dpos);
@@ -2080,7 +2080,8 @@ pub function regalloc_linear_fixed_costs(f: SFunc, nregs: i32, nsaved: i32, abi_
           call_def = call_def.with(ins.result, 1);
         }
       }
-      if (abi_fixed_by_div && ins.kind_tag == BINARY && binary_fixes_abi(ins.ir_kind)) {
+      // The `mulxq` of a product and its high half leaves the ABI register as it was.
+      if (abi_fixed_by_div && ins.kind_tag == BINARY && binary_fixes_abi(ins.ir_kind) && !wide_product_at(blk, k - 1)) {
         abi_cl = abi_cl.append(pos);
       }
       pos += 1;

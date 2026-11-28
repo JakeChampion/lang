@@ -146,8 +146,10 @@ lowered function it:
    is one chain too (#17029). On x86-64, `a * b` directly before
    `__mulhi_u64(a, b)` is one `mulxq` for both halves. The `mulxq` reads
    one factor from `%rdx` and the other from its register or its slot.
-   It writes each half into its home register, or into `%rax` or `%rdx`
-   for a half that has no register. The step
+   It writes each half into its home register. A low half in a slot goes
+   through `%r11` and a high half in a slot through `%rdx`. The `mulxq`
+   does not change `%rax`, so a value in `%rax` stays live across it. A
+   lone `__mulhi_u64` is a `mulq`, which writes `%rax`. The step
    then lets a call return from its own block when its result reaches the
    return only through joins (`ssa.return_calls`): the last operand of an
    `&&` or an `||` that the function returns is then a tail call. Last,
