@@ -12312,9 +12312,9 @@ pub function export_func_params(mod: parser.Module, name: string): ast.ParamDecl
   return none;
 }
 
-pub function export_has_string_param(params: ast.ParamDecl[]): boolean {
+pub function export_has_param(params: ast.ParamDecl[], ty: string): boolean {
   for i in 0..params.len() {
-    if (params[i].type_name == "string") {
+    if (params[i].type_name == ty) {
       return true;
     }
   }
@@ -12372,14 +12372,14 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     if (params[j].type_name == "string" || extern_export_list(params[j].type_name)) {
       head += " (param i32) (param i32)";
     } else {
-      head = head + " (param " + wat_extern_valtype(params[j].type_name) + ")";
+      head = head + " (param " + extern_core_valtype(params[j].type_name) + ")";
     }
     j += 1;
   }
   if (str_result || arr_result || sum_result || tup_result) {
     head += " (result i32)";
   } else if (returns_value(ret)) {
-    head = head + " (result " + wat_extern_valtype(ret) + ")";
+    head = head + " (result " + extern_core_valtype(ret) + ")";
   }
   head += "\n";
 
@@ -12471,7 +12471,8 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
       blk += 1;
       wp += 2;
     } else {
-      callargs = callargs + " (local.get " + util.i32_to_string(wp) + ")";
+      let arg = "(local.get " + util.i32_to_string(wp) + ")";
+      callargs += " " + (if (t == "f32") { "(f64.promote_f32 " + arg + ")" } else { arg });
       wp += 1;
     }
   }
@@ -12524,6 +12525,8 @@ pub function build_export_wrapper(fname: string, params: ast.ParamDecl[], ret: s
     body = body + "    (local.get " + trbS + ")\n";
   } else if (!returns_value(ret)) {
     body = body + "    (drop (call $" + fname + callargs + "))\n";
+  } else if (ret == "f32") {
+    body += "    (f32.demote_f64 (call $" + fname + callargs + "))\n";
   } else {
     body = body + "    (call $" + fname + callargs + ")\n";
   }
@@ -12534,7 +12537,7 @@ pub function export_needs_heap(mod: parser.Module): boolean {
   for i in 0..mod.exports.len() {
     let nm = mod.exports[i].func_name;
     let params = export_func_params(mod, nm);
-    if (export_func_ret(mod, nm) == "string" || export_has_string_param(params) || extern_export_list(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
+    if (export_func_ret(mod, nm) == "string" || export_has_param(params, "string") || extern_export_list(export_func_ret(mod, nm)) || export_has_numeric_array_param(params) || extern_sum_param_supported(export_func_ret(mod, nm)) || extern_tuple_param_supported(export_func_ret(mod, nm))) {
       return true;
     }
   }
@@ -12544,7 +12547,7 @@ pub function export_needs_heap(mod: parser.Module): boolean {
 pub function export_needs_realloc(mod: parser.Module): boolean {
   for i in 0..mod.exports.len() {
     let params = export_func_params(mod, mod.exports[i].func_name);
-    if (export_has_string_param(params) || export_has_numeric_array_param(params)) {
+    if (export_has_param(params, "string") || export_has_numeric_array_param(params)) {
       return true;
     }
   }
@@ -12557,7 +12560,7 @@ pub function extern_exports(mod: parser.Module): string {
     let x = mod.exports[i];
     let ret = export_func_ret(mod, x.func_name);
     let params = export_func_params(mod, x.func_name);
-    if (ret == "string" || export_has_string_param(params) || extern_export_list(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
+    if (ret == "f32" || export_has_param(params, "f32") || ret == "string" || export_has_param(params, "string") || extern_export_list(ret) || export_has_numeric_array_param(params) || extern_sum_param_supported(ret) || extern_tuple_param_supported(ret) || !returns_value(ret)) {
       parts = parts.append(build_export_wrapper(x.func_name, params, ret));
       parts = parts.append("  (export \"" + x.iface + "#" + x.wit + "\" (func $__xwrap_" + x.func_name + "))\n");
       if (ret == "string" || extern_export_list(ret)) {
