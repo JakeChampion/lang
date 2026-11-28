@@ -342,8 +342,8 @@ x86_64/draw_rgba.text	2572
 x86_64/draw_rgba.ir	126517674
 x86_64/draw_rgba.dr	13749774
 x86_64/jpeg_decode.text	17136
-x86_64/jpeg_decode.ir	312926350
-x86_64/jpeg_decode.dr	63551208
+x86_64/jpeg_decode.ir	294665156
+x86_64/jpeg_decode.dr	59024811
 aarch64/draw_fill.text	1903
 aarch64/draw_fill.ir	68613473
 aarch64/draw_fill.dr	4032432
@@ -354,8 +354,8 @@ aarch64/draw_rgba.text	2688
 aarch64/draw_rgba.ir	106380737
 aarch64/draw_rgba.dr	6867397
 aarch64/jpeg_decode.text	17369
-aarch64/jpeg_decode.ir	293846726
-aarch64/jpeg_decode.dr	40830298
+aarch64/jpeg_decode.ir	278552010
+aarch64/jpeg_decode.dr	37359350
 aarch64/draw_image.text	2068
 aarch64/draw_image.ir	13214020
 aarch64/draw_image.dr	2219913
