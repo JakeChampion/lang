@@ -138,7 +138,7 @@ function allocation(data: [u8], h: Header, own widths: u8[]): (u8[], Result[i32,
         if (at >= data.len()) {
           return (widths, Err(pcm.Truncated));
         }
-        let value = data[at] as i32 >> (4 - (pos & 4)) & 15;
+        let value = data[at] as i32 >> 4 - (pos & 4) & 15;
         pos += 4;
         if (value == 15) {
           return (widths, Err(pcm.Header));

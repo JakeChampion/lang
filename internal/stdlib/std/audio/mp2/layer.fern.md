@@ -148,9 +148,7 @@ function samples(input: [u8], b: bits.Bits, ba: i32, own output: f32[], at: i32)
     b = next;
     let mask = (1 << ba) - 1;
     let half = mask >> 1;
-    output = output.with(at, ((code >> (ba * 2)) - half) as f32)
-      .with(at + 1, ((code >> ba & mask) - half) as f32)
-      .with(at + 2, ((code & mask) - half) as f32);
+    output = output.with(at, ((code >> ba * 2) - half) as f32).with(at + 1, ((code >> ba & mask) - half) as f32).with(at + 2, ((code & mask) - half) as f32);
   } else if (ba < 17) {
     let half = (1 << ba - 1) - 1;
     for i in 0..3 {
