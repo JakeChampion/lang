@@ -9,6 +9,18 @@ function require(ok: boolean, code: i32): void {
   }
 }
 
+// A compact save-only frame includes the register save area in the
+// pre-indexed pair. Its post-indexed restore releases the same byte count.
+pub function arm_frame_record(row: ssaprepare.Emitted, check_restore: boolean): boolean {
+  for bytes in [16, 16 + row.allocation.save_bytes] {
+    let size = bytes.to_string();
+    if (row.assembly.contains("    stp x29, x30, [sp, #-" + size + "]!\n")) {
+      return !check_restore || row.assembly.contains("    ldp x29, x30, [sp], #" + size + "\n");
+    }
+  }
+  return false;
+}
+
 pub function consistent(row: ssaprepare.Emitted): void {
   if (row.context.records) {
     require(row.assembly == "" && row.sites.len() == 0, 140);
