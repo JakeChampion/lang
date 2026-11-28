@@ -148,6 +148,7 @@ pub struct Pcre {
   nl: i32,
   anchored: boolean,
   first: u8[],
+  first_byte: i32,
   req: i32,
   minlen: i32,
   word: PSet,
@@ -2658,13 +2659,22 @@ function __pc_build(cx: PCtx, root: PNode, s: PStart): Result[Pcre, CompileError
   let first = if (s.no_start) { none } else { __pc_start_bytes(cx, root) };
   return Ok(Pcre {
     code: g.code, subs: g.subs, calls: calls, sets: cx.sets.get(), ngroups: ngroups, names: cx.names.get(), name_groups: cx.name_groups.get(),
-    nslots: 2 * (ngroups + 1) + g.regs, utf: s.utf, fold: s.utf || s.ucp, nl: s.nl, anchored: __pc_anchored(root), first: first,
+    nslots: 2 * (ngroups + 1) + g.regs, utf: s.utf, fold: s.utf || s.ucp, nl: s.nl, anchored: __pc_anchored(root), first: first, first_byte: __pc_single_first(first),
     req: if (s.no_start || cx.accept.get()) { -1 } else { __pc_req(root) },
     minlen: if (s.no_start || cx.accept.get() || !__pc_takes_char(root)) { 0 } else { __pc_min_len(cx, root) },
     word: __pc_set_of(cx, if (s.ucp) { __pc_property_ranges("Xwd") } else { [48, 57, 65, 90, 95, 95, 97, 122] }, false, false),
     limit: s.limit, depth_limit: s.depth, heap_limit: s.heap, notempty: s.notempty, has_then: cx.has_then, crlf_lit: cx.crlf_lit.get(),
     alts: g.alts, verbs: __pc_has_op(g.code, OP_VERB), plain: __pc_plain(g.code),
   });
+}
+
+// The only marked start byte, or -1 when the membership table is needed.
+function __pc_single_first(marks: u8[]): i32 {
+  let first = __memchr_bytes(marks, 1, 0);
+  if (first < 0 || __memchr_bytes(marks, 1, first + 1) >= 0) {
+    return -1;
+  }
+  return first;
 }
 
 // Whether the program has an instruction of `op`.
@@ -3686,8 +3696,8 @@ function __pc_attempt(re: Pcre, text: string, at: i32): i32 {
   let n = text.len();
   let next = at;
   if (re.first.len() > 0 && next <= n) {
-    next = __scan_set(text, next, re.first);
-    if (next >= n) {
+    next = if (re.first_byte >= 0) { __memchr(text, re.first_byte, next) } else { __scan_set(text, next, re.first) };
+    if (next < 0 || next >= n) {
       return -1;
     }
   }
