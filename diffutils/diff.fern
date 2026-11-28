@@ -1209,7 +1209,7 @@ function compare_links(run: Run, sides: Side[]): i32 {
   if (n == targets[1].len() && __mismatch_bytes(targets[0], 0, targets[1], 0, n) >= n) {
     return 0;
   }
-  message(run, "Symbolic links " + label_or(run, 0, a.name) + " and " + label_or(run, 1, b.name) + " differ\n");
+  message(run, "Symbolic links " + a.name + " and " + b.name + " differ\n");
   return EXIT_DIFFER;
 }
 
