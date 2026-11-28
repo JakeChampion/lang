@@ -779,7 +779,7 @@ function finish_options(cfg: Cfg): Cfg {
 // output. Under -l, `pager` holds the header of the comparison whose output
 // waits for 'pr', and `queue` the messages that wait for the end. When
 // `capture` is set, the output stays in the buffer for diff3.
-struct Run { cfg: Cfg, out: usize, zone: tz.Zone, colors: boolean, palette: string[], context: Cell[i32], pager: Cell[string], paging: Cell[boolean], queue: usize, capture: boolean }
+struct Run { cfg: Cfg, out: usize, zone: tz.Zone, colors: boolean, palette: Cell[string[]], context: Cell[i32], pager: Cell[string], paging: Cell[boolean], queue: usize, capture: boolean }
 
 function flush_out(run: Run): void {
   if (buf_len(run.out) == 0 || run.paging.get() || run.capture) {
@@ -828,9 +828,13 @@ function message(run: Run, s: string): void {
 
 function set_color(run: Run, ctx: i32): void {
   if (run.colors && run.context.get() != ctx) {
-    buf_push(run.out, run.palette[0]);
-    buf_push(run.out, run.palette[ctx]);
-    buf_push(run.out, run.palette[1]);
+    let palette = run.palette.get();
+    if (palette.len() == 0) {
+      return;
+    }
+    buf_push(run.out, palette[0]);
+    buf_push(run.out, palette[ctx]);
+    buf_push(run.out, palette[1]);
     run.context.set(ctx);
   }
 }
@@ -2372,6 +2376,10 @@ function header_line(run: Run, p: Pair, f: i32, mark: string): void {
 // Under -l the output of the comparison waits for 'pr', with the line that
 // names the comparison as the page header.
 function begin_output(run: Run, p: Pair): void {
+  // GNU diagnoses an invalid palette once for each comparison that starts output.
+  if (run.colors && run.palette.get().len() == 0) {
+    run.palette.set(parse_palette(run.cfg.palette));
+  }
   let name = "diff" + run.cfg.switches + " " + p.names[0] + " " + p.names[1];
   if (run.cfg.paginate) {
     flush_out(run);
@@ -3633,13 +3641,8 @@ function run_with(argv: string[], capture: boolean): (i32, u8[]) {
       usage_error("extra operand '" + ops[2] + "'");
     }
   }
-  let colors = colors_on(cfg);
-  let palette: string[] = [];
-  if (colors) {
-    palette = parse_palette(cfg.palette);
-    colors = palette.len() > 0;
-  }
-  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone(), colors: colors, palette: palette, context: cell_new(C_RESET), pager: cell_new(""), paging: cell_new(false), queue: buf_new(256), capture: capture };
+  let palette: Cell[string[]] = cell_new([]);
+  let run = Run { cfg: cfg, out: buf_new(2 * OUT_CHUNK), zone: tz.local_zone(), colors: colors_on(cfg), palette: palette, context: cell_new(C_RESET), pager: cell_new(""), paging: cell_new(false), queue: buf_new(256), capture: capture };
   let status = compare_operands(run, ops);
   let queued = buf_take_bytes(run.queue);
   buf_push_bytes_range(run.out, queued, 0, queued.len());
