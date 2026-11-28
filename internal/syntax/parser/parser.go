@@ -3354,16 +3354,16 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 	}
 
 	if p.match(lexer.Punct, "(") {
-		p.errors = append(p.errors, p.errorf(p.peek().Pos, "%s", threePartForMessage))
+		p.errors = append(p.errors, p.errorfCode(p.peek().Pos, "P001", "%s", threePartForMessage))
 		p.skipParenthesized()
 		p.skipBraced()
 		return &ast.Block{P: kw.Pos}, nil
 	}
 	if p.match(lexer.Ident, "") {
 		p.advance()
-		return nil, p.errorf(p.peek().Pos, "expected \"in\" after the `for` pattern")
+		return nil, p.errorfCode(p.peek().Pos, "P001", "expected \"in\" after the `for` pattern")
 	}
-	return nil, p.errorf(p.peek().Pos, "expected a name or a pattern after \"for\"")
+	return nil, p.errorfCode(p.peek().Pos, "P001", "expected a name or a pattern after \"for\"")
 }
 
 const threePartForMessage = "Fern has no three-part `for (init; cond; step)`. Write `for i in lo..hi { … }` or a `while` loop"
