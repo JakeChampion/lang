@@ -377,11 +377,13 @@ function make_hunks(st_in: Lines, dense: boolean, context: i32): (Lines, boolean
 
 // The line with a carriage return at its end after the color reset:
 // `show_line_to_eol` of git.
-function to_eol(line: string, reset: string): string {
-  if (line.len() > 0 && line[line.len() - 1] == b'\r') {
-    return objects.part(line, 0, line.len() - 1) + reset + "\r";
+function to_eol(line: string, reset: string, lost: boolean): string {
+  let prefix = line.index_of("\x00").unwrap_or(line.len());
+  let end = if (lost) { prefix } else { line.len() };
+  if (end > 0 && line[end - 1] == b'\r') {
+    return objects.part(line, 0, prefix.min(end - 1)) + reset + "\r";
   }
-  return line + reset;
+  return objects.part(line, 0, prefix) + reset;
 }
 
 function is_alpha(b: u8): boolean {
@@ -495,7 +497,7 @@ function dump(t_in: patch.Text, at_call: i32, st: Lines, lb: linediff.Lines, c: 
       lno += 1;
       if ((st.flag[sl] & no_pre_delete) == 0) {
         for ll in st.lost[sl] {
-          t = patch.add(t, at_call, c.old + markers(ll.map, np, "-") + to_eol(ll.line, c.reset));
+          t = patch.add(t, at_call, c.old + markers(ll.map, np, "-") + to_eol(ll.line, c.reset, true));
         }
       }
       if (cnt < lno) {
@@ -509,7 +511,7 @@ function dump(t_in: patch.Text, at_call: i32, st: Lines, lb: linediff.Lines, c: 
         }
         set = c.context;
       }
-      t = patch.add(t, at_call, set + markers(st.flag[sl], np, "+") + to_eol(line_text(lb, sl), c.reset));
+      t = patch.add(t, at_call, set + markers(st.flag[sl], np, "+") + to_eol(line_text(lb, sl), c.reset, false));
     }
   }
   return t;
@@ -556,13 +558,14 @@ pub function show(s_in: store.Store, p: Path, o: patch.Opts, dense: boolean, lea
   let (s1, result) = patch.blob(s_in, p.mode, p.hash);
   let s = s1;
   let mode_differs = p.parents.any((q: Parent): boolean => q.mode != p.mode);
-  let binary = patch.is_binary(result);
+  let binary_mode = patch.binary_mode(o, p.path, true);
+  let binary = binary_mode == 1 || binary_mode < 0 && patch.is_binary(result);
   let blobs: u8[][] = [];
   for q in p.parents {
     let (s2, a) = patch.blob(s, q.mode, q.hash);
     s = s2;
     blobs = blobs.append(a);
-    binary = binary || patch.is_binary(a);
+    binary = binary || binary_mode < 0 && patch.is_binary(a);
   }
   if (binary) {
     t = header(t, at_call, s, p, o, dense, least, mode_differs, false, c);
