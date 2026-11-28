@@ -146,9 +146,9 @@ not standard output, and with `e`, `=` or `F`.
 
 This difference remains in a UTF-8 locale:
 
-- The port does not read the aliases of `locale.alias`, and it does not
-  read the codeset in the files of a locale. It takes the codeset from the
-  name.
+- The port does not read the aliases of `locale.alias`. On Linux, a locale
+  name without a codeset gets its encoding from the LC_CTYPE file in the
+  locale directory or archive. On Darwin the port takes it from the name.
 
 These differences come from faults of the regex of glibc. The port gives
 the result that POSIX gives:

@@ -263,7 +263,7 @@ func sedUTF8Cases() []invocation {
 		}
 	}
 	for _, env := range [][]string{
-		{"LC_ALL=C.utf8"}, {"LC_ALL=", "LC_CTYPE=C.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8"}, {"LC_ALL=", "LC_CTYPE=C", "LANG=C.UTF-8"}, {"LC_ALL=C", "LC_CTYPE=C.UTF-8"},
+		{"LC_ALL=hi_IN"}, {"LC_ALL=en_US"}, {"LC_ALL=C.utf8"}, {"LC_ALL=", "LC_CTYPE=C.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8"}, {"LC_ALL=", "LC_CTYPE=C", "LANG=C.UTF-8"}, {"LC_ALL=C", "LC_CTYPE=C.UTF-8"},
 		// A locale that is not on the system gives the C locale, and so
 		// does a category of the locale that does not load.
 		{"LC_ALL=xx_YY.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8", "LC_TIME=xx_YY.UTF-8"}, {"LC_ALL=", "LANG=C.UTF-8", "LC_MESSAGES=xx_YY"},
@@ -275,6 +275,15 @@ func sedUTF8Cases() []invocation {
 	} {
 		cases = append(cases, invocation{name: "locale from " + strings.Join(env, " "), args: []string{"s/./X/g;y/é/e/"}, stdin: "aé\xff\n", env: env})
 	}
+	cases = append(cases, invocation{
+		name: "codeset from LC_CTYPE in LOCPATH", args: []string{"s/./X/g"}, stdin: "é\n",
+		env: []string{"LC_ALL=", "LANG=C", "LC_CTYPE=fern", "LOCPATH=."},
+		seedTree: func(t *testing.T, dir string) {
+			if err := os.Symlink("/usr/lib/locale/C.utf8", filepath.Join(dir, "fern")); err != nil {
+				t.Fatal(err)
+			}
+		},
+	})
 	return cases
 }
 

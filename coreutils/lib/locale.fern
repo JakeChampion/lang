@@ -30,6 +30,9 @@ pub function category_name(category: string): string {
 pub function utf8(): boolean {
   let ctype = category_name("LC_CTYPE");
   let parts = explode(ctype);
+  if (target_os() == "linux" && !parts.has_codeset) {
+    return ctype != "C" && ctype != "POSIX" && all_load_glibc();
+  }
   if (!parts.has_codeset || !utf8_codeset(parts.codeset)) {
     return false;
   }
@@ -210,29 +213,65 @@ function glibc_dirs(): (string[], boolean) {
   return (dirs.append("/usr/lib/locale"), from_env);
 }
 
-// Whether the file of a category is in a directory of a locale. A directory
-// in place of the file holds the file SYS_ and the name of the category.
-function category_file(dir: string, category: string): boolean {
+// The category data can be a file, or SYS_<category> inside a directory.
+function category_file(dir: string, category: string): string {
   let path = dir + "/" + category;
-  match (stat(path)) {
-    Ok(st) => {
-      if (!st.is_dir) {
-        return true;
-      }
-      if let Ok(_) = stat(path + "/SYS_" + category) {
-        return true;
-      }
-      return false;
-    },
-    Err(_) => {}
+  let Ok(st) = stat(path) else {
+    return "";
+  };
+  if (!st.is_dir) {
+    return path;
   }
-  return false;
+  let nested = path + "/SYS_" + category;
+  if let Ok(_) = stat(nested) {
+    return nested;
+  }
+  return "";
+}
+
+// The glibc LC_CTYPE header holds a count and the offsets of its items.
+// Item 14 is _NL_CTYPE_CODESET_NAME, a NUL-terminated string.
+function ctype_utf8(path: string, base: i64, length: i64): boolean {
+  let Ok(rd) = open_reader(path) else {
+    return false;
+  };
+  let head = read_at(rd, base, 68i64);
+  let off = u32_at(head, 64);
+  let is_utf8 = false;
+  if (u32_at(head, 0) == 0x20090720i64 && u32_at(head, 4) > 14i64 && off >= 68i64 && off < length) {
+    let n = length - off;
+    let bytes = read_at(rd, base + off, if (n < 6i64) { n } else { 6i64 });
+    let i = 0;
+    while (i < bytes.len() && bytes[i] != 0u8) {
+      i += 1;
+    }
+    if (i < bytes.len()) {
+      is_utf8 = utf8_codeset(unsafe { string_from_bytes_range_unchecked(bytes, 0, i) });
+    }
+  }
+  let _ = rd.close();
+  return is_utf8;
+}
+
+const GLIBC_ARCHIVE: string = "/usr/lib/locale/locale-archive";
+
+struct ArchiveLocale { name: string, record: i64 }
+
+function archive_ctype_utf8(path: string, record: i64): boolean {
+  let Ok(rd) = open_reader(path) else {
+    return false;
+  };
+  // The reference count is followed by offset/length pairs, LC_CTYPE first.
+  let entry = read_at(rd, record + 4i64, 8i64);
+  let _ = rd.close();
+  let base = u32_at(entry, 0);
+  return base >= 0i64 && ctype_utf8(path, base, u32_at(entry, 4));
 }
 
 // Whether glibc loads a category of the locale `name` from the files. The
 // first name that it finds must name a codeset, so that its codeset is the
 // one that was asked for.
-function loads_glibc(name: string, category: string, dirs: string[], archive: string[]): boolean {
+function loads_glibc(name: string, category: string, dirs: string[], archive: ArchiveLocale[]): boolean {
   if (name == "C" || name == "POSIX") {
     return true;
   }
@@ -248,16 +287,27 @@ function loads_glibc(name: string, category: string, dirs: string[], archive: st
       key = part(name, 0, dot + 1) + normalize(p.codeset) + part(name, at, name.len());
     }
     for a in archive {
-      if (a == key) {
-        return true;
+      if (a.name == key) {
+        return category != "LC_CTYPE" || p.has_codeset || archive_ctype_utf8(GLIBC_ARCHIVE, a.record);
       }
     }
   }
+  return directory_loads_glibc(p, category, dirs);
+}
+
+function directory_loads_glibc(p: Parts, category: string, dirs: string[]): boolean {
   let (names, coded) = variants(p);
   let k = 0;
   while (k < names.len()) {
     for d in dirs {
-      if (category_file(d + "/" + names[k], category)) {
+      let path = category_file(d + "/" + names[k], category);
+      if (path.len() > 0) {
+        if (category == "LC_CTYPE" && !p.has_codeset) {
+          let Ok(st) = stat(path) else {
+            return false;
+          };
+          return ctype_utf8(path, 0i64, st.size);
+        }
         return coded[k] || !p.has_codeset;
       }
     }
@@ -268,9 +318,9 @@ function loads_glibc(name: string, category: string, dirs: string[], archive: st
 
 function all_load_glibc(): boolean {
   let (dirs, from_env) = glibc_dirs();
-  let archive: string[] = [];
+  let archive: ArchiveLocale[] = [];
   if (!from_env) {
-    archive = archive_names("/usr/lib/locale/locale-archive");
+    archive = archive_locales(GLIBC_ARCHIVE);
   }
   for category in glibc_categories() {
     if (!loads_glibc(category_name(category), category, dirs, archive)) {
@@ -380,8 +430,8 @@ function read_at(rd: Reader, at: i64, n: i64): u8[] {
 // The names of the locales in glibc's locale archive. The header holds the
 // offsets of the table of names and of the strings, and each entry of the
 // table holds the offset of its name in the file.
-function archive_names(path: string): string[] {
-  let names: string[] = [];
+function archive_locales(path: string): ArchiveLocale[] {
+  let names: ArchiveLocale[] = [];
   let Ok(rd) = open_reader(path) else {
     return names;
   };
@@ -403,7 +453,7 @@ function archive_names(path: string): string[] {
           hi += 1;
         }
         if (lo >= 0 && hi < strings.len()) {
-          names = names.append(unsafe { string_from_bytes_range_unchecked(strings, lo, hi) });
+          names = names.append(ArchiveLocale { name: unsafe { string_from_bytes_range_unchecked(strings, lo, hi) }, record: u32_at(table, i + 8) });
         }
       }
       i += 12;
