@@ -178,7 +178,7 @@ selfhost/arm64-linux/base64_decode.emit	3139
 selfhost/wasm32-wasi/base64_decode.emit	4083
 selfhost/x86-64-linux/gather_many.emit	6084
 selfhost/arm64-linux/gather_many.emit	6542
-selfhost/wasm32-wasi/gather_many.emit	6452
+selfhost/wasm32-wasi/gather_many.emit	6581
 selfhost/x86-64-linux/utf8_validate.emit	2633
 selfhost/arm64-linux/utf8_validate.emit	2966
 selfhost/wasm32-wasi/utf8_validate.emit	2231
@@ -190,13 +190,13 @@ selfhost/arm64-linux/draw_fill.emit	1933
 selfhost/wasm32-wasi/draw_fill.emit	1745
 selfhost/x86-64-linux/draw_mask.emit	2507
 selfhost/arm64-linux/draw_mask.emit	2651
-selfhost/wasm32-wasi/draw_mask.emit	2471
+selfhost/wasm32-wasi/draw_mask.emit	3114
 selfhost/x86-64-linux/draw_rgba.emit	2572
 selfhost/arm64-linux/draw_rgba.emit	2733
-selfhost/wasm32-wasi/draw_rgba.emit	2642
+selfhost/wasm32-wasi/draw_rgba.emit	3230
 selfhost/x86-64-linux/jpeg_decode.emit	16637
 selfhost/arm64-linux/jpeg_decode.emit	16974
-selfhost/wasm32-wasi/jpeg_decode.emit	31135
+selfhost/wasm32-wasi/jpeg_decode.emit	32048
 selfhost/x86-64-linux/draw_image.emit	1875
 selfhost/arm64-linux/draw_image.emit	2098
 selfhost/wasm32-wasi/draw_image.emit	1836

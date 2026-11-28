@@ -228,7 +228,7 @@ aarch64/base64_decode.ir	229358253
 x86_64/gather_many.text	6084
 x86_64/gather_many.ir	34173734
 aarch64/gather_many.text	6542
-aarch64/gather_many.ir	39528013
+aarch64/gather_many.ir	38740329
 aarch64/hex_decode.ir	161123229
 aarch64/utf8_validate.text	2966
 aarch64/utf8_validate.ir	197033849
@@ -349,13 +349,13 @@ aarch64/draw_fill.ir	69581283
 aarch64/draw_fill.dr	4032432
 aarch64/draw_mask.text	2651
 aarch64/draw_mask.ir	111654336
-aarch64/draw_mask.dr	4839439
+aarch64/draw_mask.dr	4708623
 aarch64/draw_rgba.text	2733
 aarch64/draw_rgba.ir	107364931
 aarch64/draw_rgba.dr	6867397
 aarch64/jpeg_decode.text	16974
 aarch64/jpeg_decode.ir	299222162
-aarch64/jpeg_decode.dr	40068334
+aarch64/jpeg_decode.dr	40830298
 aarch64/draw_image.text	2098
 aarch64/draw_image.ir	13967814
 aarch64/draw_image.dr	2219913
