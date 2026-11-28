@@ -966,11 +966,11 @@ to smallest. Status pending unless marked.
 - **`for x in arr` / `for (k, v) in map` — shipped.** Both
   shapes desugar in the parser. Map form rewrites to
   `iter() / has_next() / value() / advance()`; array form
-  to a C-style `for (let i = 0; i < len(arr); i = i + 1)`
-  loop with `let x = arr[i]` at the top of the body.
+  to an index loop over `0..len(arr)` with `let x = arr[i]` at the top of the body.
   Detection happens by lookahead in `parseFor` — a leading
   `IDENT in` or `( IDENT , IDENT ) in` selects the foreach
-  shape; everything else falls through to the C-style for.
+  shape. Fern has no three-part `for`, so any other header is
+  a parse error.
   `word_freq.fern`, `json_pretty.fern`, `csv_to_json.fern`
   all use the form.
 

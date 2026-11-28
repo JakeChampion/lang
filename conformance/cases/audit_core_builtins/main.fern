@@ -98,7 +98,7 @@ function main(): i32 {
 
 
     let fs: i32 = 0;
-    for (let i: i32 = 1; i <= 10; i = i + 1) { fs = fs + i; }
+    for i in 1..=10 { fs = fs + i; }
     if (fs != 55) { print("FAIL for"); return 45; }
 
 
@@ -127,13 +127,13 @@ function main(): i32 {
 
 
     let brk: i32 = 0;
-    for (let i: i32 = 0; i < 100; i = i + 1) {
+    for i in 0..100 {
         if (i == 5) { break; }
         brk = brk + 1;
     }
     if (brk != 5) { print("FAIL break"); return 53; }
     let con: i32 = 0;
-    for (let i: i32 = 0; i < 6; i = i + 1) {
+    for i in 0..6 {
         if (i % 2 == 0) { continue; }
         con = con + i;
     }

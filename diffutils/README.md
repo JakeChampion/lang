@@ -208,23 +208,17 @@ numbers and classes is two times as large as in GNU diff. The port uses
 193 MB at the peak, and GNU diff uses 138 MB.
 
 The time of the unrelated files is in the search for the middle snake, the
-`diag` function. There the port runs 4.07 G instructions and GNU diff runs
-2.27 G (callgrind, two files of 10,000 lines from 32 words). Nearly every
-diagonal reads the snake guard once and stops, so the cost is in the loop
-over the diagonals. Each diagonal takes about 54 instructions in the port
-and 32 in GNU diff:
+`diag` function of `std/linediff`. There the port runs 3.28 G instructions and
+GNU diff runs 2.27 G (callgrind, two files of 10,000 lines from 32 words,
+2026-11-27). Nearly every diagonal reads the snake guard once and stops, so
+the cost is in the loop over the diagonals:
 
-- A bounds check on each array access, about 11 instructions. The start of
-  a snake is a value that the loop reads from `v`, so no guard bounds it.
-  The compiler cannot remove these checks without a proof that it does not
-  have.
-- A sign extension after each `i32` addition, 4 instructions. An `i32`
-  wraps, so the extension is necessary. GNU diff uses 64-bit offsets.
-- Loads and stores of loop values in stack slots, about 8 instructions.
-  Short temporaries take the saved registers of these values, and the
-  allocator does not split an interval. Thus each value stays in its slot
-  over its full interval, and the register is empty after the temporary
-  (#15650).
+- Loop versioning removes the bounds checks of the diagonal loops and of the
+  snake loops. The first test of each snake keeps two checks.
+- A sign extension follows each `i32` addition. An `i32` wraps, so the
+  extension is necessary. GNU diff uses 64-bit offsets.
+- Both loops keep some of their values in stack slots, and the backward
+  loop moves the start of each snake through a second register (#16418).
 
 These are causes in the compiler and its array layout, and this work does
 not remove them.

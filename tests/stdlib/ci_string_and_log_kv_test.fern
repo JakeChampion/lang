@@ -90,9 +90,9 @@ function test_ends_with_ci_fail(): test.TestOutcome {
 }
 
 function test_log_kv_chains(r: test.TestRunner): test.TestRunner {
-  r = r.log_kv_string("session_id", "abc-123");
-  r = r.log_kv_i32("retry_count", 3);
-  r = r.log_kv_i64("bytes_seen", 1234567890123 as i64);
+  r = r.log_kv("session_id", "abc-123");
+  r = r.log_kv("retry_count", 3);
+  r = r.log_kv("bytes_seen", 1234567890123 as i64);
   return r.it(
     "log_kv chained without breaking state",
     () => test.assert_true(true),

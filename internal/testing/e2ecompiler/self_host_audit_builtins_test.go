@@ -28,7 +28,6 @@ var auditBuiltinCases = []struct {
 	{"break", `function main(): i32 { let a: i32[] = [0,1,2,3,4,5,6,7]; let n: i32 = 0; for x in a { if (x == 5) { break; } n = n + 1; } return n; }`, 5},
 	{"continue", `function main(): i32 { let a: i32[] = [0,1,2,3,4,5]; let n: i32 = 0; for x in a { if (x % 2 == 0) { continue; } n = n + x; } return n; }`, 9},
 	{"nested-block", `function main(): i32 { let b: i32 = 1; { let inner: i32 = 40; b = b + inner; } return b; }`, 41},
-	{"c-style-for", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
 	{"for-in-string", `function main(): i32 { let s: i32 = 0; for b in "AB" { s = s + (b as i32); } return s; }`, 131},
 }
 

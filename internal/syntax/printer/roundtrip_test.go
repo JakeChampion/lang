@@ -92,7 +92,9 @@ func TestRoundtripStrings(t *testing.T) {
 func TestRoundtripForBreakContinue(t *testing.T) {
 	roundTrip(t, `function f(): i32 {
 		let sum: i32 = 0;
-		for (let i: i32 = 0; i < 10; i = i + 1) {
+		let i: i32 = 0;
+		while (i < 10) {
+			i = i + 1;
 			if (i == 3) { continue; }
 			if (i == 7) { break; }
 			sum = sum + i;

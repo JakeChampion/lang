@@ -36,7 +36,7 @@ function test_split_join_roundtrip(): test.TestOutcome {
 
 function test_split_yields_four_parts(): test.TestOutcome {
   let parts = "a,b,c,d".split(",");
-  return test.assert_len_string(parts, 4);
+  return test.assert_len(parts, 4);
 }
 
 function test_index_of_hit(): test.TestOutcome {

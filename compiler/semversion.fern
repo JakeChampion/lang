@@ -413,7 +413,8 @@ function index_site(f: ssasem.Func, ix: Index, s: Shape, v: i32): Site {
 }
 
 // `acc` plus the i32 value `v`, or minus it when `negative`. The counter
-// may appear only once, only with a plus, and alone or times a constant.
+// may appear only once, alone or times a constant. A minus gives it a
+// negative scale.
 function sum_of(f: ssasem.Func, ix: Index, s: Shape, v: i32, negative: boolean, acc: Site, depth: i32): Site {
   let d = ix.defs;
   let none = Site { ...acc, counter: -2 };
@@ -423,7 +424,7 @@ function sum_of(f: ssasem.Func, ix: Index, s: Shape, v: i32, negative: boolean, 
   let x = ssa.copy_root(d, v);
   let k = counter_at(s, x);
   if (k >= 0) {
-    return if (negative || acc.counter >= 0) { none } else { Site { ...acc, counter: k } };
+    return if (acc.counter >= 0) { none } else { Site { ...acc, counter: k, scale: if (negative) { -1 } else { 1 } } };
   }
   if (int_const(d, x)) {
     let n = d[x].imm;
@@ -438,7 +439,7 @@ function sum_of(f: ssasem.Func, ix: Index, s: Shape, v: i32, negative: boolean, 
   let a = d[x];
   if (a.kind_tag == ssa.BINARY && a.args.len() == 2 && (a.str == "*" || a.str == "<<")) {
     let (k, n) = scaled(d, s, a);
-    return if (k < 0 || negative || acc.counter >= 0) { none } else { Site { ...acc, counter: k, scale: n } };
+    return if (k < 0 || acc.counter >= 0) { none } else { Site { ...acc, counter: k, scale: if (negative) { -n } else { n } } };
   }
   if (a.kind_tag != ssa.BINARY || a.args.len() != 2 || a.str != "+" && a.str != "-") {
     return none;
@@ -570,13 +571,16 @@ function guard(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Built {
     let n = last(b);
     b = add(b, ssasem.cast(), [n], 0, "", typeinfo.t_i64());
     let len = last(b);
-    let (b0, lowest) = times(b, lows[k], site.scale);
-    let (b1, low) = shifted(b0, lowest, site.scale * r.low + site.delta);
+    // A negative scale takes its lowest index from the highest value of the
+    // counter, and its highest index from the lowest value.
+    let up = site.scale > 0;
+    let (b0, lowest) = times(b, if (up) { lows[k] } else { ends[k] }, site.scale);
+    let (b1, low) = shifted(b0, lowest, (if (up) { site.scale * r.low } else { site.scale * r.end - site.scale }) + site.delta);
     let (b2, first) = terms_into(b1, low, site, d, false);
-    let (b5, top) = times(b2, ends[k], site.scale);
+    let (b5, top) = times(b2, if (up) { ends[k] } else { lows[k] }, site.scale);
     b = add(b5, ssa.BINARY, [len, top], 0, "-", typeinfo.t_i64());
     let spare = last(b);
-    let (b3, high) = shifted(b, spare, -(site.scale * r.end + site.delta + site.span - site.scale));
+    let (b3, high) = shifted(b, spare, -((if (up) { site.scale * r.end - site.scale } else { site.scale * r.low }) + site.delta + site.span));
     let (b4, room) = terms_into(b3, high, site, d, true);
     b = add(b4, ssa.BINARY, [first, room], 0, "|", typeinfo.t_i64());
     parts = parts.append(last(b));
