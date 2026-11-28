@@ -16,6 +16,9 @@ function twice[const N: i32, T](v: Vec[N, T]): Vec[N, T] { return v + v; }
 
 func TestVecLaneSpelling(t *testing.T) {
 	for name, src := range map[string]string{
+		"concrete bytes":   `function f(v: Vec[16, u8]): u8x16 { return v; }`,
+		"concrete signed":  `function f(v: Vec[4, i32]): i32x4 { return v; }`,
+		"unsigned count":   `function n[const N: i32](v: Vec[N, u32]): i32 { return N; } function f(): i32 { return n(__u32x4_splat(0u32)); }`,
 		"concrete f64":     `function f(v: Vec[2, f64]): f64x2 { return v; }`,
 		"concrete f32":     `function f(): f32 { let v: Vec[4, f32] = __f32x4_splat(1.0); return __f32x4_lane(v, 3); }`,
 		"infer from lanes": `function f(): f64 { return head(__f64x2_splat(1.0)) + head(__f32x4_splat(2.0)); }`,
@@ -31,13 +34,14 @@ func TestVecLaneSpelling(t *testing.T) {
 		}
 	}
 	for name, tc := range map[string]struct{ src, code, msg string }{
-		"no pair":         {`function f(v: Vec[3, f64]): i32 { return 0; }`, "E096", "Vec[3, f64] names no lane type"},
-		"no generic pair": {`function f[T](v: Vec[8, T]): i32 { return 0; }`, "E096", "Vec[8, T] names no lane type"},
-		"not common":      {`function f[const N: i32, T](v: Vec[N, T]): i32 { return v.only(); }`, "E021", `no method "only" on Vec[N, T]`},
-		"wrong lanes":     {`function f(): f64 { return head2(__f32x4_splat(1.0)); } function head2[const N: i32](v: Vec[N, f64]): f64 { return v.first(); }`, "E038", "got f32x4"},
-		"impl no pair":    {`trait Count { function count(self: Self): i32; } impl[T] Count for Vec[3, T] { function count(self: Vec[3, T]): i32 { return 0; } }`, "E096", "Vec[3, T] names no lane type"},
-		"impl one lane":   {`trait Count { function count(self: Self): i32; } impl[const N: i32, T] Count for Vec[N, T] { function count(self: Vec[N, T]): i32 { return self.only(); } }`, "E043", `no method "only" on f32x4`},
-		"not impl":        {`trait Count { function count(self: Self): i32; } impl[const N: i32] Count for Vec[N, f64] { function count(self: Vec[N, f64]): i32 { return N; } } function f(): i32 { return __f32x4_splat(1.0).count(); }`, "E043", `no method "count" on f32x4`},
+		"wrong byte count": {`function f(v: Vec[4, u8]): i32 { return 0; }`, "E096", "Vec[4, u8] names no lane type"},
+		"no pair":          {`function f(v: Vec[3, f64]): i32 { return 0; }`, "E096", "Vec[3, f64] names no lane type"},
+		"no generic pair":  {`function f[T](v: Vec[8, T]): i32 { return 0; }`, "E096", "Vec[8, T] names no lane type"},
+		"not common":       {`function f[const N: i32, T](v: Vec[N, T]): i32 { return v.only(); }`, "E021", `no method "only" on Vec[N, T]`},
+		"wrong lanes":      {`function f(): f64 { return head2(__f32x4_splat(1.0)); } function head2[const N: i32](v: Vec[N, f64]): f64 { return v.first(); }`, "E038", "got f32x4"},
+		"impl no pair":     {`trait Count { function count(self: Self): i32; } impl[T] Count for Vec[3, T] { function count(self: Vec[3, T]): i32 { return 0; } }`, "E096", "Vec[3, T] names no lane type"},
+		"impl one lane":    {`trait Count { function count(self: Self): i32; } impl[const N: i32, T] Count for Vec[N, T] { function count(self: Vec[N, T]): i32 { return self.only(); } }`, "E043", `no method "only" on f32x4`},
+		"not impl":         {`trait Count { function count(self: Self): i32; } impl[const N: i32] Count for Vec[N, f64] { function count(self: Vec[N, f64]): i32 { return N; } } function f(): i32 { return __f32x4_splat(1.0).count(); }`, "E043", `no method "count" on f32x4`},
 	} {
 		err := checkSource(t, vecDecls+tc.src)
 		if err == nil || !hasCode(err, tc.code) {

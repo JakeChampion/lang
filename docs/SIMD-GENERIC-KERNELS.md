@@ -543,6 +543,12 @@ Slice 7g also adds the other five types. Each one is a keyword.
 | `u32x4` | 4 | `u32` |
 | `i32x4` | 4 | `i32` |
 
+The three lanes with matching scalar types also have `Vec` spellings.
+`Vec[16, u8]` is `u8x16`, `Vec[4, i32]` is `i32x4`, and `Vec[4, u32]`
+is `u32x4`. A kernel or trait implementation can keep the lane count
+generic, for example `Vec[N, u8]`. The existing `Vec[N, T]` kernels with
+an unconstrained element retain their floating-point operations.
+
 Fern has no scalar type of 8 bits with a sign, and none of 16 bits. The
 element of those lane types is `i32`. `splat` and `of` keep the low bits of
 each number. `lane` gives the number of a signed lane with its sign. It

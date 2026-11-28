@@ -544,7 +544,7 @@ pub function lane_builtin_kind(name: string): i32 {
 // vec_lanes is the lane type spelled `Vec[n, elem]`, or "" when the portable
 // tier has none.
 pub function vec_lanes(n: string, elem: string): string {
-  for lanes in lane_types() {
+  for lanes in vec_candidates(elem) {
     let pair = lane_vec_spellings(lanes);
     if (pair[0] == n && pair[1] == elem) {
       return lanes;
@@ -553,8 +553,18 @@ pub function vec_lanes(n: string, elem: string): string {
   return "";
 }
 
-// lane_types are the lane types of the portable tier.
-pub function lane_types(): string[] {
+// An unconstrained element keeps the float lane family used by generic
+// floating-point kernels. A concrete integer element selects its own family.
+pub function vec_candidates(elem: string): string[] {
+  if (elem == "u8") {
+    return ["u8x16"];
+  }
+  if (elem == "i32") {
+    return ["i32x4"];
+  }
+  if (elem == "u32") {
+    return ["u32x4"];
+  }
   return ["f64x2", "f32x4"];
 }
 
@@ -566,6 +576,15 @@ pub function lane_vec_spellings(lanes: string): string[] {
   if (lanes == "f32x4") {
     return ["4", "f32"];
   }
+  if (lanes == "u8x16") {
+    return ["16", "u8"];
+  }
+  if (lanes == "i32x4") {
+    return ["4", "i32"];
+  }
+  if (lanes == "u32x4") {
+    return ["4", "u32"];
+  }
   return [];
 }
 
@@ -575,6 +594,9 @@ pub function lane_vec_args(t: Type): Type[] {
     return [];
   };
   let nt = lane_vec_spellings(lanes_spelling(l.width, l.kind));
+  if (nt.len() == 0) {
+    return [];
+  }
   return [TypeConst { value: nt[0] }, lane_elem(l)];
 }
 
