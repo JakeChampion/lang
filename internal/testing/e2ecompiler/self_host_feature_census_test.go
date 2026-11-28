@@ -359,7 +359,7 @@ func TestSelfHostFeatureCensus(t *testing.T) {
 		"The self-host declares no generic struct, so nothing on the fixpoint path monomorphises a generic TYPE — only generic functions. This is load-bearing, not incidental: a generic struct in a signature promotes its type param to the monomorphiser, and the per-module emit path runs no monomorphiser, so the un-cloned template fails IR verify there — the accumulator spine returns bare tuples for exactly that reason.")
 	pinned(t, c, "try op", 45,
 		"The dexer propagates errors with `?` in dexer and dexfile. The LSP propagates absent indices in lspquery and lsprefs. The literate engine propagates tangle errors.")
-	pinned(t, c, "Map type spellings", 18,
+	pinned(t, c, "Map type spellings", 22,
 		"Each Map is the hash table of core/map. The compiler uses util.NameIndex for name lookups on hot paths. A new Map spelling needs a reason in the commit message, and moves this row and the row in docs/SELFHOST-LANGUAGE-FRICTION.md.")
 
 	atLeast(t, c, "for..in loops", 8651,
