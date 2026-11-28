@@ -87,6 +87,9 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
   record outer { p: inner, n: s64 }
   record one { v: u64 }
   record onef { v: f32 }
+  record payload { name: string, bytes: list<u8> }
+  record tagged { tag: s32, value: payload }
+  span-check: func(v: tagged) -> s32;
   make-wide: func() -> wide;
   make-outer: func() -> outer;
   make-one: func() -> one;
@@ -105,8 +108,8 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
   (global $h (mut i32) (i32.const 1024))
   (func (export "cabi_realloc") (param $op i32) (param $os i32) (param $al i32) (param $ns i32) (result i32)
     (local $p i32)
-    (local.set $p (global.get $h))
-    (global.set $h (i32.add (global.get $h) (local.get $ns)))
+    (local.set $p (i32.and (i32.add (global.get $h) (i32.sub (local.get $al) (i32.const 1))) (i32.sub (i32.const 0) (local.get $al))))
+    (global.set $h (i32.add (local.get $p) (local.get $ns)))
     (local.get $p))
   (func (export "local:test/src@0.1.0#make-wide") (result i32)
     (local $r i32)
@@ -128,6 +131,12 @@ func TestSelfHostExternRecordWideFieldsCustomProvider(t *testing.T) {
     (i64.const 1099511627781))
   (func (export "local:test/src@0.1.0#make-onef") (result f32)
     (f32.const 1.5))
+  (func $span (param $p i32) (param $n i32) (result i32)
+    (if (result i32) (local.get $n)
+      (then (i32.add (local.get $n) (i32.load8_u (i32.sub (i32.add (local.get $p) (local.get $n)) (i32.const 1)))))
+      (else (i32.const 0))))
+  (func (export "local:test/src@0.1.0#span-check") (param $tag i32) (param $p i32) (param $n i32) (param $b i32) (param $m i32) (result i32)
+    (i32.add (local.get $tag) (i32.add (call $span (local.get $p) (local.get $n)) (call $span (local.get $b) (local.get $m)))))
   (func (export "local:test/src@0.1.0#sum-wide") (param $a i32) (param $b i64) (param $c f32) (param $d f64) (param $e i32) (result f64)
     (f64.add (f64.add (f64.add (f64.add (f64.convert_i32_u (local.get $a)) (f64.convert_i64_u (local.get $b)))
       (f64.promote_f32 (local.get $c))) (local.get $d)) (f64.convert_i32_s (local.get $e))))
@@ -196,6 +205,10 @@ struct Inner { x: f32, y: u8 }
 struct Outer { p: Inner, n: i64 }
 struct One { v: u64 }
 struct OneF { v: f32 }
+struct Payload { name: string, bytes: u8[] }
+struct Tagged { tag: i32, value: Payload }
+@import("local:test/src@0.1.0", "span-check")
+function span_check(v: Tagged): i32;
 @import("local:test/src@0.1.0", "make-wide")
 function make_wide(): Wide;
 @import("local:test/src@0.1.0", "make-outer")
@@ -213,6 +226,8 @@ function sum_u64(data: u64[]): u64;
 @import("local:test/src@0.1.0", "iota-u64")
 function iota_u64(n: u32): u64[];
 function main(): i32 {
+    if (span_check(Tagged { tag: 7, value: Payload { name: "é", bytes: [0u8, 255u8] } }) != 435) { write("bad spans\n"); }
+    if (span_check(Tagged { tag: 7, value: Payload { name: "", bytes: [] } }) != 7) { write("bad empty spans\n"); }
     let w: Wide = make_wide();
     if (w.a != 7 as u8) { write("bad a\n"); }
     if (w.b != 1099511627781 as u64) { write("bad b\n"); }
@@ -274,12 +289,13 @@ func TestSelfHostExternRecordOutsideTheBridgeIsRefused(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, decl, call, want string }{
 		{"result", "function make_named(): Named;", "make_named().id", "@import make_named returns record Named, which wasm cannot lower"},
-		{"param", "function take_named(n: Named): i32;", `take_named(Named { id: 1, name: "a" })`, "@import take_named takes record Named, which wasm cannot lower"},
+		{"param", "function take_values(n: Values): i32;", `take_values(Values { data: [1] })`, "@import take_values takes record Values, which wasm cannot lower"},
+		{"indirect", "function take_many(n: Named, a: string, b: string, c: string, d: string, e: string, f: string, g: string): i32;", `take_many(Named { id: 1, name: "a" }, "", "", "", "", "", "", "")`, "@import take_many requires indirect parameters"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			src := filepath.Join(dir, "main.fern")
-			prog := "struct Named { id: i32, name: string }\n@import(\"local:test/src@0.1.0\", \"f\")\n" + tc.decl + "\nfunction main(): i32 { return " + tc.call + "; }\n"
+			prog := "struct Named { id: i32, name: string }\nstruct Values { data: i32[] }\n@import(\"local:test/src@0.1.0\", \"f\")\n" + tc.decl + "\nfunction main(): i32 { return " + tc.call + "; }\n"
 			if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 				t.Fatal(err)
 			}

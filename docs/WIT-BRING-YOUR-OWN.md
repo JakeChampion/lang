@@ -228,9 +228,12 @@ Fern program needs `wasi:cli/stdout`, `wasi:cli/stderr` and `wasi:cli/exit`, so
 the world must import them. `TestSelfHostCLIWitWorld` runs such a component
 with a provider of the world's own interface.
 
-What remains is the **language surface** (P4–P6): letting Fern programs *call*
-arbitrary WIT imports and *implement* arbitrary world exports, rather than
-relying on the built-in capabilities (`write`, `read_file`, …).
+A self-hosted synchronous import can take a record containing `string`
+and `u8[]` fields, including inside nested records. Each contributes an
+`i32` pointer and an `i32` length to the canonical parameter list. Imports
+with record parameters support up to 16 flat parameters across the call.
+Returning records containing these fields still requires additional lifting
+support.
 
 ## P4 design: `extern` import declarations
 
