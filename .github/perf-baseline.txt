@@ -341,9 +341,9 @@ x86_64/draw_mask.dr	10171416
 x86_64/draw_rgba.text	2572
 x86_64/draw_rgba.ir	126517674
 x86_64/draw_rgba.dr	13749774
-x86_64/jpeg_decode.text	16637
-x86_64/jpeg_decode.ir	312926350
-x86_64/jpeg_decode.dr	63551208
+x86_64/jpeg_decode.text	17136
+x86_64/jpeg_decode.ir	294665156
+x86_64/jpeg_decode.dr	59024811
 aarch64/draw_fill.text	1903
 aarch64/draw_fill.ir	68613473
 aarch64/draw_fill.dr	4032432
