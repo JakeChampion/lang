@@ -9,11 +9,9 @@ pub struct MappedResult { result: Result, extra_indices: i32[] }
 
 function unchanged(bodies: irtables.LowerResult[], extra: irtables.LowerResult[], mapped: boolean): MappedResult {
   let indices: i32[] = [];
-  let i = 0;
   if (mapped) {
-    while (i < extra.len()) {
+    for i in 0..extra.len() {
       indices = indices.append(i);
-      i += 1;
     }
   }
   return MappedResult { result: Result { bodies: bodies, extra: extra }, extra_indices: indices };
@@ -42,15 +40,13 @@ function ordinary_candidate(mod: parser.Module, r: irtables.LowerResult): boolea
     && !util.contains(r.name, ".") && !parser.named_outside(mod, r.name);
 }
 
-function adapter_index(mod: parser.Module, bodies: irtables.LowerResult[]): i32 {
-  let i = 0;
-  while (i < bodies.len() && i < mod.funcs.len()) {
+function adapter_index(mod: parser.Module, declared: i32): Option[i32] {
+  for i in 0..declared {
     if (mod.funcs[i].name == "ndarray__inner_kernel") {
-      return i;
+      return Some(i);
     }
-    i += 1;
   }
-  return -1;
+  return None;
 }
 
 pub function unused_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extra: irtables.LowerResult[]): Result {
@@ -62,15 +58,13 @@ pub function unused_adapter_mapped(mod: parser.Module, bodies: irtables.LowerRes
 }
 
 function pruned_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extra: irtables.LowerResult[], mapped: boolean): MappedResult {
-  let adapter = adapter_index(mod, bodies);
-  if (adapter < 0) {
+  let declared = if (bodies.len() < mod.funcs.len()) { bodies.len() } else { mod.funcs.len() };
+  let Some(adapter) = adapter_index(mod, declared) else {
     return unchanged(bodies, extra, mapped);
-  }
+  };
   let all = util.append_all(bodies, extra);
-  let declared = 0;
-  while (declared < bodies.len() && declared < mod.funcs.len()) {
-    all = all.with(declared, irtables.LowerResult { ...all[declared], name: mod.funcs[declared].name });
-    declared += 1;
+  for i in 0..declared {
+    all = all.with(i, irtables.LowerResult { ...all[i], name: mod.funcs[i].name });
   }
   if (!ordinary_candidate(mod, all[adapter]) || referenced(all, adapter)) {
     return unchanged(bodies, extra, mapped);
@@ -82,8 +76,7 @@ function pruned_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extr
   let changed = true;
   while (changed) {
     changed = false;
-    let i = 0;
-    while (i < all.len()) {
+    for i in 0..all.len() {
       let r = all[i];
       if (candidates[i] && ordinary_candidate(mod, r) && !referenced(all, i)) {
         for j in 0..all.len() {
@@ -94,7 +87,6 @@ function pruned_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extr
         all = all.with(i, irtables.LowerResult { ...r, superseded: true });
         changed = true;
       }
-      i += 1;
     }
   }
   let kept: irtables.LowerResult[] = [];
