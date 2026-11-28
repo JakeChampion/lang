@@ -7,6 +7,7 @@ import "std/string";
 import "./colors";
 import "./encoding";
 import "./hyperlink";
+import "./logs";
 import "std/pcre";
 
 // What rg does: write the selected lines, count them, name the files with
@@ -203,7 +204,7 @@ const OTHER_SWITCHES: string[] = [
   "no-context-separator", "crlf", "no-crlf", "null-data", "no-encoding", "pretty",
   "pcre2", "no-pcre2", "auto-hybrid-regex", "no-auto-hybrid-regex", "no-pcre2-unicode", "pcre2-unicode",
   "line-buffered", "no-line-buffered", "block-buffered", "no-block-buffered", "debug", "trace",
-  "pcre2-version", "no-pre",
+  "help", "version", "pcre2-version", "no-pre",
 ];
 
 // The long names of the flags in the order of ripgrep, for the flags that
@@ -404,6 +405,7 @@ function set_late_switch(o: Options, name: string): Options {
     "no-pcre2" | "no-auto-hybrid-regex" => Options { ...o, engine: "default" },
     "no-pcre2-unicode" => with_bit(o, NO_UNICODE, true),
     "pcre2-unicode" => with_bit(o, NO_UNICODE, false),
+    "help" | "version" => Options { ...o, special: name + "-long" },
     "pcre2-version" => Options { ...o, special: "pcre2-version" },
     "no-pre" => Options { ...o, pre: "" },
     _ => set_buffer_switch(o, name),
@@ -732,9 +734,6 @@ function long_flag(o: Options, args: string[], at: i32): Result[Step, string] {
     name = slice_unchecked(arg, 2, eq).to_owned();
   }
   let flag = "--" + name;
-  if (name == "help" || name == "version") {
-    return Ok(Step { o: Options { ...o, special: name + "-long" }, next: at });
-  }
   name = alias(name);
   if (!takes_value(name)) {
     return long_switch(o, arg, name, flag, eq, at);
@@ -756,7 +755,8 @@ function long_switch(o: Options, arg: string, name: string, flag: string, eq: i3
     return Err(unknown_long(name));
   }
   if (eq >= 0) {
-    return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': \"" + slice_unchecked(arg, eq + 1, arg.len()) + "\"");
+    let value = slice_unchecked(arg, eq + 1, arg.len()).to_owned();
+    return Err("invalid CLI arguments: unexpected argument for option '" + flag + "': " + logs.quoted(value));
   }
   return Ok(Step { o: set_switch(o, name, flag)?, next: at });
 }
