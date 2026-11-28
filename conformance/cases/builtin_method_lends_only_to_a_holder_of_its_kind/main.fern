@@ -1,0 +1,30 @@
+// spec: RH-49
+// A built-in method whose result cannot hold a handle lends nothing, so its
+// result stays usable after the close. A close after the last use of the map
+// that holds the handle is accepted.
+import "core/map";
+
+function run(own w: Writer): Result[i32, IoError] {
+  let empty: Map[i32, Writer] = map_new(4);
+  let m = empty.insert(1, w);
+  let count = m.len();
+  let has = m.contains(1);
+  m.get_or(1, w).write("written through the map\n")?;
+  w.close()?;
+  if (has) {
+    return Ok(count);
+  }
+  return Ok(0);
+}
+
+function main(): i32 {
+  match (run(stdout())) {
+    Ok(n) => {
+      return n - 1;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}

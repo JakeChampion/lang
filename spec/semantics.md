@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**175 of 178** claims are pinned by a conformance case. The remaining
+**178 of 181** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -250,6 +250,9 @@ of them.
 | `RH-44` | `docs/security/HANDLE-AUDIT.md` | A field of an `own` parameter moves to an `own` parameter in a match tag when every arm leaves the statement | `owned_field_moves_in_match_tag` |
 | `RH-45` | `docs/security/HANDLE-AUDIT.md` | A handle that moves into the literal argument of a call belongs to the local that the call initializes, and a later borrow of that local is not a loan of the handle | `owner_moved_into_an_argument_lends_through_its_holder` |
 | `RH-46` | `docs/security/HANDLE-AUDIT.md` | A local that borrows a handle directly keeps the loan after the handle moves into another local (`E050`) | `diag_e050_direct_borrow_after_owner_moved_into_holder` |
+| `RH-47` | `docs/security/HANDLE-AUDIT.md` | A built-in method lends each argument to a result that can hold a handle of its kind, so a use of the map that `insert` returns after the close of its handle is refused (`E050`) | `diag_e050_handle_kept_by_builtin_map_insert` |
+| `RH-48` | `docs/security/HANDLE-AUDIT.md` | The array that `append` returns holds its argument, so a use of it after the close of the handle is refused (`E050`) | `diag_e050_handle_kept_by_builtin_array_append` |
+| `RH-49` | `docs/security/HANDLE-AUDIT.md` | A built-in method result that cannot hold a handle lends nothing, and a close after the last use of the holder is accepted | `builtin_method_lends_only_to_a_holder_of_its_kind` |
 
 | `OR-01` | `docs/OWNED-RESULTS.md` | A checked owned result remains available through generic callbacks, function-valued fields, and nested fields of named locals. `checked_owned_nested_results` covers scalar copies before a field transfer | `checked_owned_results` |
 | `OR-02` | `docs/OWNED-RESULTS.md` | An owned generic result cannot transfer a borrowed parameter without a copy contract (`E051`) | `diag_e051_checked_result_borrows` |
