@@ -12,7 +12,7 @@ function tuple_pattern(a: ast.TupArm): ast.Pattern {
     type_name: "", binding: "", extra_bindings: [], nested: [], at_binding: a.at_binding,
     field_names: [], lit_cond: parser.e_bool(true), has_lit_cond: false,
     tup_kinds: a.elem_kinds, tup_binds: a.binds, tup_lits: a.lits, tup_pats: a.elem_pats,
-    bare_name: false, scalar_binding: false, scalar_cells: [], rest_written: false,
+    record_syntax: false, bare_name: false, scalar_binding: false, scalar_cells: [], rest_written: false,
   };
 }
 
