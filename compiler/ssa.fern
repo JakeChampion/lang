@@ -8070,9 +8070,9 @@ pub function shared_lengths(f: SFunc): SFunc {
 pub const SUM_SCALED: i32 = 1;
 
 // The element marks that a load with a scaled register index takes on arm64:
-// 4 bytes, and 2 bytes with no sign.
+// 4-byte and 2-byte integers.
 function scaled_sum_mark(mark: string): boolean {
-  return mark == "i32" || mark == "u32" || mark == "u16";
+  return mark == "i32" || mark == "u32" || mark == "i16" || mark == "u16";
 }
 
 // A read of an element of 2 or 4 bytes with an index in a register. With or
@@ -8094,7 +8094,7 @@ function indexed_write(ins: SInst, defs: SInst[], nvals: i32): boolean {
     return false;
   }
   let i = ins.args[1];
-  return (ins.str == "u8" || ins.str == "i16" || scaled_sum_mark(ins.str)) && i >= 0 && i < nvals && !is_constant(defs[i], nvals);
+  return (ins.str == "u8" || scaled_sum_mark(ins.str)) && i >= 0 && i < nvals && !is_constant(defs[i], nvals);
 }
 
 // The arrays that the loop from `h` to `last` touches two times or more with

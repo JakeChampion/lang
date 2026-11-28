@@ -4867,7 +4867,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k == ssa.LD_SUM && ins.ir_kind == ssa.SUM_SCALED) {
-    let shift = if (ins.str == "u16") { "1" } else { "2" };
+    let shift = if (ssa_elem_bytes(ins.str) == 2) { "1" } else { "2" };
     s = s.write("    " + ssa_sum_load(ins.str, d) + ", [" + a + ", " + ssa_src(reg_of, ins.args[1], "x5") + ", lsl #" + shift + "]\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
@@ -4929,6 +4929,9 @@ function ssa_pool_sites(f: ssa.SFunc, fr: SsaFrame, order: i32[]): boolean[] {
 
 // The load of an LD_SUM of element `mark` and its register for `d`.
 function ssa_sum_load(mark: string, d: string): string {
+  if (mark == "i16") {
+    return "ldrsh " + d;
+  }
   if (mark == "u16") {
     return "ldrh " + ssa_wreg(d);
   }
