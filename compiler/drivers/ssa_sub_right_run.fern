@@ -12,7 +12,7 @@ function probe(nregs: i32, two_address: boolean): ssa.Alloc {
     ssa.binary_inst(3, [0, 2], 0, ir.K_ADD),
   ];
   let f = ssa.SFunc { name: "sub_right", nparams: 0, nvals: 4, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 3 } }] };
-  return ssa.regalloc_linear_fixed_costs(f, nregs, 0, -1, false, [false, false, false, false], [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: two_address, two_address: two_address, spilled: [] });
+  return ssa.regalloc_linear_fixed_costs(f, nregs, 0, -1, false, [false, false, false, false], [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: two_address, two_address: two_address, spilled: [], stack_params: -1 });
 }
 
 function main(): i32 {

@@ -35,7 +35,7 @@ function probe_costs(reads: i32, folded: boolean, rhs: boolean, spilled: boolean
     no_home = no_home.append(true);
   }
   if (folded) {
-    return ssa.regalloc_linear_fixed_costs(f, 1, 0, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: false, spilled: spilled });
+    return ssa.regalloc_linear_fixed_costs(f, 1, 0, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: false, spilled: spilled, stack_params: -1 });
   }
   return ssa.regalloc_linear(f, 1, 0, -1, false, no_home, [], [], 0, 0);
 }
@@ -47,7 +47,36 @@ function compare_cost(regs: i32[]): i32 {
   let end = ssa.SBlock { id: 1, insts: [], preds: [0], term: ret };
   let entry = ssa.SBlock { id: 0, insts: [ssa.binary_inst(2, [0, 1], 0, ir.K_LT_S)], preds: [], term: term };
   let f = ssa.SFunc { name: "cmp", nparams: 2, nvals: 3, entry: 0, takes_env: false, blocks: [entry, end, ssa.SBlock { ...end, id: 2 }] };
-  return ssa.spill_cost(f, regs, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: ssa.slotted_values(regs) });
+  return ssa.spill_cost(f, regs, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: ssa.slotted_values(regs), stack_params: -1 });
+}
+
+function ret_of(v: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: v };
+}
+
+// Value 0 is read only as a factor of a product and its high half, and value 1
+// by one plain read. With one register, the factor takes the slot when the
+// reads of a product cost nothing.
+function factor_probe(fold: boolean): ssa.Alloc {
+  let ops: ssa.SInst[] = [inst(ssa.CONST_INT, 0, []), inst(ssa.CONST_INT, 1, []), inst(ssa.UNARY, 2, [1])];
+  for i in 0..4 {
+    ops = ops.append(ssa.binary_inst(3 + 2 * i, [0, 0], 64, ir.K_MUL)).append(ssa.binary_inst(4 + 2 * i, [0, 0], 64, ir.K_MULHI_U));
+  }
+  ops = ops.append(inst(ssa.UNARY, 11, [1])).append(inst(ssa.UNARY, 12, [0]));
+  let f = ssa.SFunc { name: "factor", nparams: 0, nvals: 13, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ret_of(12) }] };
+  let no_home: boolean[] = [false, false];
+  for i in 2..13 {
+    no_home = no_home.append(true);
+  }
+  return ssa.regalloc_linear_fixed_costs(f, 1, 0, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: fold, two_address: false, spilled: [], stack_params: -1 });
+}
+
+// Parameter 1 is read once, as the right operand of an add. When it arrives
+// on the stack, it keeps no register and takes the last slot.
+function stack_probe(stack_params: i32): ssa.Alloc {
+  let ops: ssa.SInst[] = [ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { ir_kind: 0, kind_tag: ssa.PARAM, result: 1, args: [], imm: 1, str: "" }, inst(ssa.UNARY, 2, [0]), inst(ssa.UNARY, 3, [0]), ssa.binary_inst(4, [0, 1], 0, ir.K_ADD), ssa.binary_inst(5, [4, 2], 0, ir.K_MUL), ssa.binary_inst(6, [5, 3], 0, ir.K_MUL)];
+  let f = ssa.SFunc { name: "stack", nparams: 2, nvals: 7, entry: 0, takes_env: false, blocks: [ssa.SBlock { id: 0, insts: ops, preds: [], term: ret_of(6) }] };
+  return ssa.regalloc_linear_fixed_costs(f, 4, 0, -1, false, [], [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: false, spilled: [], stack_params: stack_params });
 }
 
 function main(): i32 {
@@ -86,7 +115,12 @@ function main(): i32 {
   if (ssa.unfolded_reads(probe_func(9, true), lhs_slot.with(0, true)) != 9 || ssa.unfolded_reads(probe_func(9, true), lhs_slot) != 0) {
     failures += 1;
   }
-  if (compare_cost([-2, 0, -1]) != 0 || compare_cost([0, -2, -1]) != 0 || compare_cost([-2, -3, -1]) != 1) {
+  // A factor of a product costs nothing in a slot, and a stack parameter
+  // with no other cost takes the last slot.
+  let factor_slot = factor_probe(true).reg_of[0] < 0 && factor_probe(true).reg_of[1] >= 0 && factor_probe(false).reg_of[0] >= 0;
+  let on_stack = stack_probe(1);
+  let stack_slot = on_stack.reg_of[0] >= 0 && on_stack.reg_of[1] == -1 - ssa.spill_count(on_stack.reg_of) && stack_probe(-1).reg_of[1] >= 0;
+  if (compare_cost([-2, 0, -1]) != 0 || compare_cost([0, -2, -1]) != 0 || compare_cost([-2, -3, -1]) != 1 || !factor_slot || !stack_slot) {
     failures += 1;
   }
   print("failures=" + util.i32_to_string(failures));

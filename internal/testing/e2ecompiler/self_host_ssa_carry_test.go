@@ -631,6 +631,36 @@ func TestSelfHostSSAProductKeepsArgumentRegisters(t *testing.T) {
 	}
 }
 
+// The arguments after the sixth arrive in the frame of the caller. An argument
+// that only ALU instructions read stays there, so the entry does not copy it.
+func TestSelfHostSSAStackArgumentsStayInTheCallerFrame(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "carries.fern")
+	if err := os.WriteFile(src, []byte(ssaCarryProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "carries.s")
+	if report, err := exec.Command(h.cli, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {
+		t.Fatalf("%v\n%s", err, report)
+	}
+	asm, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := regexp.MustCompile(`(?m)^\s+movq (64|72)\(%rbp\), %`)
+	read := regexp.MustCompile(`(?m)^\s+(adcq|sbbq|imulq|addq) (64|72)\(%rbp\), %`)
+	for _, name := range []string{"add4", "sub4", "add_sub_p", "sub_mask"} {
+		fn := functionListing(string(asm), "__fn_"+name)
+		if fn == "" {
+			t.Fatalf("no __fn_%s in the listing", name)
+		}
+		if copied.MatchString(fn) || len(read.FindAllString(fn, -1)) < 2 {
+			t.Errorf("%s does not read its stack arguments in the frame of the caller:\n%s", name, fn)
+		}
+	}
+}
+
 // A row of products with the same first factor loads that factor into %rdx
 // one time, because mulxq only reads %rdx.
 func TestSelfHostSSAMultiplyRowLoadsItsFactorOnce(t *testing.T) {

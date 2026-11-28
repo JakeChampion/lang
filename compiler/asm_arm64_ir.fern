@@ -5850,7 +5850,7 @@ function ssa_allocated(f: ssa.SFunc, r: irtables.Lowered, s: asmcore.EmitState):
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let floats = ssa.float_values(f, ssa_float_calls(f, s), true);
-  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), floats, ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] });
+  let alloc = ssa.regalloc_linear_fixed_costs(f, ssa_nregs(), ssa_nsaved(), 0, false, ssa_homeless(f, imm), ssa_arg_prefs(f, s), floats, ssa_nfregs(), ssa_nfsaved(), ssa_cold_fixed(f, r, call_kinds, s.ssa_deny), call_kinds, live.crossing, live.crossing_all, live.lengths, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 });
   return Allocated { imm: imm, call_kinds: call_kinds, alloc: alloc, floats: floats };
 }
 
@@ -5866,7 +5866,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let tried = ssa.split_spilled(f, picked.alloc.reg_of, picked.floats);
   if (tried.cost > 0) {
     let again = ssa_allocated(tried.f, r, s);
-    if ((ssa.spill_cost(tried.f, again.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] }) + tried.cost) * 10 < ssa.spill_cost(f, picked.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] }) * 9) {
+    if ((ssa.spill_cost(tried.f, again.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 }) + tried.cost) * 10 < ssa.spill_cost(f, picked.alloc.reg_of, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 }) * 9) {
       f = tried.f;
       picked = again;
     }
@@ -5875,7 +5875,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   match (util.debug_env("FERN_DEBUG_SSA_ALLOC", "FERN_SSA_ALLOC")) {
     Some(want) => {
       if (want == label_name || want == "*") {
-        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, picked.alloc, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [] }));
+        eprint("FERN_SSA_ALLOC: " + label_name + "\n" + ssa.print_func(f) + ssa.print_alloc_costs(f, picked.alloc, ssa.SpillCosts { fold_alu_rhs: false, two_address: false, spilled: [], stack_params: -1 }));
       }
     },
     None => {}
