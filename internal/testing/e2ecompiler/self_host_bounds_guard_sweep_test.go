@@ -246,12 +246,14 @@ func (g *guardGen) stmt(scope []string, out *[]string, ind int, inLoop bool) {
 		cmp := g.pick("<", "<", "<", "<=", "!=")
 		step := g.pick("1", "1", "1", "2", "4", "16")
 		down := g.r.Float64() < 0.15
+		// A range loop steps by one, and its body cannot write the counter.
+		ranged := !down && step == "1" && cmp != "!=" && g.r.Float64() < 0.3
 		inner := append(append([]string{}, scope...), j)
 		var body []string
 		for n := 1 + g.r.Intn(3); n > 0; n-- {
 			g.stmt(inner, &body, ind+1, true)
 		}
-		if g.r.Float64() < 0.15 {
+		if !ranged && g.r.Float64() < 0.15 {
 			body = append(body, fmt.Sprintf("%s    %s = %s + %s;", pad, j, j, g.small()))
 		}
 		switch {
@@ -260,8 +262,12 @@ func (g *guardGen) stmt(scope []string, out *[]string, ind int, inLoop bool) {
 			add("while (%s %s %s) {", j, g.pick(">=", ">", ">="), g.pick("0", lo, "0 - 1"))
 			*out = append(*out, body...)
 			add("    %s = %s - %s;", j, j, step)
-		case g.r.Float64() < 0.3:
-			add("for (let %s: i32 = %s; %s %s %s; %s = %s + %s) {", j, lo, j, cmp, hi, j, j, step)
+		case ranged:
+			op := ".."
+			if cmp == "<=" {
+				op = "..="
+			}
+			add("for %s in %s%s%s {", j, lo, op, hi)
 			*out = append(*out, body...)
 		default:
 			add("let %s: i32 = %s;", j, lo)
