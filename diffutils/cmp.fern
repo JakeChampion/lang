@@ -548,7 +548,7 @@ function compare_span(cfg: Cfg, run: Run, width: i32, a: u8[], b: u8[], n: i32):
     done = off + 1;
   }
   let lines = run.lines;
-  if (!cfg.verbose && !cfg.null_output) {
+  if (!cfg.verbose && !cfg.quiet && !cfg.null_output) {
     lines += newlines(a, 0, n);
   }
   let last = if (n > 0) { a[n - 1] } else { run.last };
