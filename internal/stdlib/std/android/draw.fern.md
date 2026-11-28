@@ -658,7 +658,6 @@ pub function (f: Frame) clip_corners(x: i32, y: i32, w: i32, h: i32, r: i32, bg:
   corner(f, x + r, y + h - r, x, y + h - r, r, bg, true);
   corner(f, x + w - r, y + h - r, x + w - r, y + h - r, r, bg, true);
 }
-
 ```
 
 ### `colors`
