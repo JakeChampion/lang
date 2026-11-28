@@ -51,6 +51,39 @@ def emit_sentence_break(version, ucd):
     print("}")
 
 
+def emit_script_extensions(version, ucd):
+    aliases = {}
+    for line in ucd_file(version, ucd, "PropertyValueAliases.txt").splitlines():
+        fields = [part.strip() for part in line.partition("#")[0].split(";")]
+        if fields[0] == "sc":
+            aliases[fields[1]] = fields[2]
+    scripts = properties(ucd_file(version, ucd, "Scripts.txt"),
+                         set(aliases.values()) - {"Unknown", "Katakana_Or_Hiragana"})
+    # Explicit entries replace the Script value. The remaining characters
+    # keep their ordinary script, including Common and Inherited.
+    replaced = set()
+    added = {}
+    for line in ucd_file(version, ucd, "ScriptExtensions.txt").splitlines():
+        body = line.partition("#")[0].strip()
+        if not body:
+            continue
+        interval, names = body.split(";")
+        limits = interval.strip().split("..")
+        points = range(int(limits[0], 16), int(limits[-1], 16) + 1)
+        replaced.update(points)
+        for short in names.split():
+            added.setdefault(aliases[short], set()).update(points)
+    print("\nvar scriptExtensionRanges = map[string][][2]rune{")
+    for name, base in sorted(scripts.items()):
+        extended = (base - replaced) | added.get(name, set())
+        if extended != base:
+            print(f'\t"{name}": {{')
+            for lo, hi in ranges(extended):
+                print(f"\t\t{{0x{lo:04X}, 0x{hi:04X}}},")
+            print("\t},")
+    print("}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("version")
@@ -80,6 +113,7 @@ def main():
     if changes["Changes_When_Casemapped"] != mapped:
         raise ValueError("unexpected Changes_When_Casemapped definition")
     emit_sentence_break(args.version, args.ucd)
+    emit_script_extensions(args.version, args.ucd)
 
 
 if __name__ == "__main__":
