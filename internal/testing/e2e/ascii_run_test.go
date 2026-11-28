@@ -40,6 +40,16 @@ func asciiRunCases() []struct {
 		}
 	}
 
+	// The arm64 kernel reads blocks of 64 bytes, then blocks of 16.
+	for _, n := range []int{63, 64, 65, 79, 80, 127, 128, 129, 150} {
+		base := strings.Repeat("a", n)
+		out = append(out, c{base, 0}, c{base, 1})
+		for at := 0; at < n; at++ {
+			hi := base[:at] + "\xc3" + base[at+1:]
+			out = append(out, c{hi, 0}, c{hi, 3})
+		}
+	}
+
 	for _, b := range []byte{0x80, 0xBF, 0xC0, 0xE0, 0xF0, 0xF5, 0xFE, 0xFF} {
 		out = append(out, c{"abc" + string([]byte{b}) + "def", 0})
 		out = append(out, c{strings.Repeat("x", 20) + string([]byte{b}), 0})
