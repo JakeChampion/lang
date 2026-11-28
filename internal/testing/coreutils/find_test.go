@@ -332,6 +332,8 @@ var findTestLines = []string{
 	`-name 'a\'`,
 	`-iname 'UP*'`,
 	`-iname '[u]pper.c'`,
+	`-iname '[[:upper:]]*.c'`,
+	`-iname '[[:lower:]]*.c'`,
 	`-path './sub/*'`,
 	`-path '*/deep/*'`,
 	`-path './sub'`,
