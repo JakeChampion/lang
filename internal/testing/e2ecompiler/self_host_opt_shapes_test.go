@@ -299,7 +299,7 @@ function main(): i32 {
 		want:   map[string][]string{"x86-64-linux": {`\bbswapl %(e\w+|r\d+d)\n\s*movslq`}, "arm64-linux": {`\brev w\d+, w\d+\n\s*sxtw x\d+`}},
 		forbid: wordForbid},
 	{name: "identity_operations_fold", fn: "mix", exit: 0, src: identitySrc,
-		want:   map[string][]string{"x86-64-linux": {`\baddq %r\w+, %rax`}, "arm64-linux": {`\badd x\d+, x\d+, x\d+`}},
+		want:   map[string][]string{"x86-64-linux": {`\baddq %r\w+, %rax`}, "arm64-linux": {`\badd x\d+, x\d+, [xw]\d+`}},
 		forbid: map[string][]string{"x86-64-linux": {`\b(add|sub|or|xor|shl|sar|shr)q \$0,`}, "arm64-linux": {`#0\n`, `\blsl x\d+, x\d+, #0`}}},
 	{name: "copy_loop_leaves_no_compare", fn: "run", exit: 0, src: copyLoopSrc,
 		want:   map[string][]string{"x86-64-linux": {`call __fn___fern_bytes_append_range`}, "arm64-linux": {`bl __fn___fern_bytes_append_range`}},

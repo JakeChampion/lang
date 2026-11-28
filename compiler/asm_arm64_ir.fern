@@ -4581,6 +4581,12 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa_mul_add_pair(fr, blk, ii - 1)) {
     return ssa_mul_add(blk.insts[ii - 1], ins, reg_of, s);
   }
+  if (ssa_extend_add_pair(fr, blk, ii)) {
+    return s;
+  }
+  if (ssa_extend_add_pair(fr, blk, ii - 1)) {
+    return ssa_extend_add(blk.insts[ii - 1], ins, reg_of, s);
+  }
   if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI || ssa_feeds_select(fr, blk, ii + 1) || ssa_shape_feeds_select(fr, blk, ii)) {
     return s;
   }
@@ -4611,6 +4617,43 @@ function ssa_mul_add_pair(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
     return false;
   }
   return !fr.imm.is_imm[m.args[0]] && !fr.imm.is_imm[m.args[1]] && !fr.imm.is_imm[other];
+}
+
+// The sign extension of 32 bits at `ii` feeds only the addition or the
+// subtraction after it, so that instruction takes the low word with `sxtw`.
+// The extension emits nothing, and its operand keeps its register to the
+// next instruction.
+function ssa_extend_add_pair(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
+  if (ii < 0 || ii + 1 >= blk.insts.len() - ssa_fuse(ssa_fuse_view(fr), blk).n) {
+    return false;
+  }
+  let x = blk.insts[ii];
+  let a = blk.insts[ii + 1];
+  if (x.kind_tag != ssa.UNARY || !asmcore.ssa_sext32(x) || x.args.len() != 1 || x.result < 0 || fr.uses[x.result] != 1 || ssa_mul_add_pair(fr, blk, ii - 1)) {
+    return false;
+  }
+  if (a.kind_tag != ssa.BINARY || a.args.len() != 2 || a.ir_kind != ir.K_ADD && a.ir_kind != ir.K_SUB) {
+    return false;
+  }
+  if (ssa.carry_role(fr.carry, x) != 0 || ssa.carry_role(fr.carry, a) != 0 || ssa.low_word_pair(blk, ii + 1, fr.uses) || ssa_mul_add_pair(fr, blk, ii + 1) || ssa_feeds_select(fr, blk, ii + 2)) {
+    return false;
+  }
+  // The extended operand is the right one. An addition takes it from either side.
+  let other = if (a.args[1] == x.result) { a.args[0] } else { a.args[1] };
+  if (a.args[1] != x.result && (a.args[0] != x.result || a.ir_kind == ir.K_SUB) || other == x.result) {
+    return false;
+  }
+  return !fr.imm.is_imm[x.args[0]] && !fr.imm.is_imm[other];
+}
+
+function ssa_extend_add(x: ssa.SInst, a: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let other = if (a.args[1] == x.result) { a.args[0] } else { a.args[1] };
+  s = ssa_read(reg_of, other, "x4", s);
+  s = ssa_read(reg_of, x.args[0], "x5", s);
+  let d = ssa_dst(reg_of, a.result);
+  let op = if (a.ir_kind == ir.K_SUB) { "sub " } else { "add " };
+  s = s.write("    " + op + d + ", " + ssa_src(reg_of, other, "x4") + ", " + ssa_wreg(ssa_src(reg_of, x.args[0], "x5")) + ", sxtw\n");
+  return ssa_store(reg_of, a.result, d, s);
 }
 
 function ssa_mul_add(m: ssa.SInst, a: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
