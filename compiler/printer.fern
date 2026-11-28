@@ -1812,7 +1812,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
           if (ni > 0) {
             np += ", ";
           }
-          if (pv_pattern_name(pv.nested[ni]).len() > 0) {
+          if (parser.pattern_needs_probe(pv.nested[ni])) {
             np += print_pattern_ctx(pv.nested[ni], true);
           } else {
             np += payload_slot(pv, parser.payload_binder(pv, ni));
@@ -1821,7 +1821,8 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
         return np + ")";
       }
       if (pv.tup_kinds.len() > 0) {
-        return head + "(" + print_tuple_elems(pv.tup_kinds, pv.tup_binds, pv.tup_lits, pv.tup_pats) + ")";
+        let tuple = print_tuple_elems(pv.tup_kinds, pv.tup_binds, pv.tup_lits, pv.tup_pats);
+        return if (pv.type_name.len() == 0) { tuple } else { head + "(" + tuple + ")" };
       }
       if (pv.binding.len() == 0) {
         if (always_parens && !pv.type_name.contains(".")) {
@@ -1834,20 +1835,6 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
         out = out + ", " + payload_slot(pv, pv.extra_bindings[i]);
       }
       return out + ")";
-    }
-  }
-}
-
-function pv_pattern_name(pat: ast.Pattern): string {
-  match (pat) {
-    ast.PatLiteral(_) => {
-      return "";
-    },
-    ast.PatVariant(v) => {
-      return v.type_name;
-    },
-    ast.PatWildcard(_) => {
-      return "";
     }
   }
 }
@@ -2013,7 +2000,7 @@ function print_record_fields(pv: ast.PatVariant): string {
     }
     let field = pv.field_names[i];
     let slot = payload_slot(pv, parser.payload_binder(pv, i));
-    if (i < pv.nested.len() && pv_pattern_name(pv.nested[i]).len() > 0) {
+    if (i < pv.nested.len() && parser.pattern_needs_probe(pv.nested[i])) {
       slot = print_pattern_ctx(pv.nested[i], true);
     }
     out += field;
