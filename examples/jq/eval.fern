@@ -2004,6 +2004,9 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
 
 function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
   match (f) {
+    filter.Reduce(source, name, init, update) => {
+      return run_paths(init, it, e, (first: PathItem, own s: St): own St => paths_reduce(source, name, update, first, it, e, k, s), st);
+    },
     filter.Foreach(source, name, init, update, extract) => {
       return run(init, it.value, e, (first: json.JsonValue, own s: St): own St => paths_foreach(source, name, update, extract, first, it, e, k, s), st);
     },
@@ -2115,6 +2118,36 @@ function paths_index(target: filter.Ast, key: filter.Ast, it: PathItem, e: Env, 
 
 function paths_slice(target: filter.Ast, from: filter.Ast, to: filter.Ast, it: PathItem, e: Env, guard: boolean, k: (PathItem, own St) => own St, own st: St): own St {
   return run(to, it.value, e, (t: json.JsonValue, own s: St): own St => run(from, it.value, e, (fv: json.JsonValue, own s2: St): own St => run_paths(target, it, e, (x: PathItem, own s3: St): own St => path_step(x, json.JObject(json.object_of(["start", "end"], [fv, t])), guard, k, s3), s2), s), st);
+}
+
+// The source and update of a reduce run on a branch that backtracks.
+// Only the accumulator survives that branch, on the initializer's path.
+function paths_reduce(source: filter.Ast, name: string, update: filter.Ast, first: PathItem, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
+  let saved = st.found;
+  let s = run_paths(source, off_path(first, it.value, true), e, (x: PathItem, own t: St): own St => paths_reduce_step(update, name, x, e, t), St { ...st, found: [first] });
+  return finish_path_reduce(first, saved, k, s);
+}
+
+function finish_path_reduce(first: PathItem, saved: PathItem[], k: (PathItem, own St) => own St, own s: St): own St {
+  if (s.sig == BOUNCE) {
+    return St { ...s, next: s.next.append((own t: St): own St => finish_path_reduce(first, saved, k, t)) };
+  }
+  if (s.sig != OK) {
+    return St { ...s, found: saved };
+  }
+  return k(rebase_path(first, s.found[0]), St { ...s, found: saved });
+}
+
+function rebase_path(to: PathItem, from: PathItem): PathItem {
+  if (order(json.JArray(to.path), json.JArray(from.path)) == 0) {
+    return from;
+  }
+  return off_path(to, from.value, true);
+}
+
+function paths_reduce_step(update: filter.Ast, name: string, x: PathItem, e: Env, own s: St): own St {
+  let acc = s.found[0];
+  return run_paths(update, rebase_path(x, acc), e.with(name, x.value), (u: PathItem, own t: St): own St => St { ...t, found: [u] }, St { ...s, found: [off_path(x, json.JNull, true)] });
 }
 
 function paths_alt(a: filter.Ast, b: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
