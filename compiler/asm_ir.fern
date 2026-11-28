@@ -8826,22 +8826,18 @@ function ssa_r8(r: string): string {
   };
 }
 
-function ssa_const_reg(text: string, wide64: boolean, d: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (!const_text_u32(text)) {
-    let c = util.lit_to_i64(text);
-    if (wide64 && (c > 0i64 || c < 0i64 - 2147483648i64)) {
-      return s.write("    movabsq $" + text + ", " + d + "\n");
-    }
-    if (wide64) {
-      return ssa_mov_ir(s, 64, c, util.i64_to_string(c), d);
-    }
-    return ssa_mov_ir(s, 64, c, text, d);
-  }
-  let v = util.lit_to_i64(text);
-  if (v == 0i64) {
+function ssa_const_reg(text: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  let c = util.lit_to_i64(text);
+  if (c == 0i64) {
     return ssa_zero(s, d);
   }
-  return ssa_mov_ir(s, 32, v, text, d);
+  if (c > 0i64 && c <= 4294967295i64) {
+    return ssa_mov_ir(s, 32, c, text, d);
+  }
+  if (c < 0i64 && c >= 0i64 - 2147483648i64) {
+    return ssa_mov_ir(s, 64, c, util.i64_to_string(c), d);
+  }
+  return s.write("    movabsq $" + text + ", " + d + "\n");
 }
 
 function ssa_unary_known(ins: ssa.SInst): boolean {
@@ -12049,9 +12045,9 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   }
   let d = ssa_dst(reg_of, ins.result);
   if (k == ssa.CONST_INT) {
-    s = ssa_const_reg(util.i32_to_string(ins.imm), false, d, s);
+    s = ssa_const_reg(util.i32_to_string(ins.imm), d, s);
   } else if (k == ssa.CONST_I64) {
-    s = ssa_const_reg(ins.str, ins.imm == 64, d, s);
+    s = ssa_const_reg(ins.str, d, s);
   } else if (k == ssa.CONST_FLOAT) {
     s = s.write("    movabsq $" + ins.str + ", " + d + "\n");
   } else if (k == ssa.COPY) {
@@ -12175,11 +12171,11 @@ function ssa_zero_slots(slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
 
 function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
   if (loc >= ssa_fbase()) {
-    s = ssa_const_reg(util.i64_to_string(c), false, "%rcx", s);
+    s = ssa_const_reg(util.i64_to_string(c), "%rcx", s);
     return ssa_mov_rr(s, ssa_reg(loc), "%rcx");
   }
   if (loc >= 0) {
-    return ssa_const_reg(util.i64_to_string(c), false, ssa_reg(loc), s);
+    return ssa_const_reg(util.i64_to_string(c), ssa_reg(loc), s);
   }
   return ssa_mov_im(s, 64, c, "%rbp", ssa_slot_disp(ssa.spill_slot(loc), s));
 }
@@ -12523,7 +12519,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     if (t.value >= 0 && t.value < fr.lanes.len() && fr.lanes[t.value]) {
       s = ssa_move(reg_of[t.value], ssa_lane_ret(), s);
     } else if (t.value >= 0 && fr.imm.is_imm[t.value]) {
-      s = ssa_const_reg(util.i64_to_string(fr.imm.value[t.value]), false, "%rax", s);
+      s = ssa_const_reg(util.i64_to_string(fr.imm.value[t.value]), "%rax", s);
     } else {
       s = ssa_load(reg_of, t.value, "%rax", s);
     }
@@ -13939,16 +13935,6 @@ function emit_stack_op(o: ir.Op, r: irtables.Lowered, s: asmcore.EmitState): asm
     ircore.flat_arm_missing(o);
   }
   return s;
-}
-
-function const_text_u32(t: string): boolean {
-  if (t.len() > 2 && t[0] == 48 && (t[1] == 120 || t[1] == 88)) {
-    return t.len() <= 10 && util.hex_digits(t, 2);
-  }
-  if (!util.is_all_digits(t) || t.len() > 10) {
-    return false;
-  }
-  return util.digits_to_i64(t) <= 4294967295i64;
 }
 
 function emit_ir_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
