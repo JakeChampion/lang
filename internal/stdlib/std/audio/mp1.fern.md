@@ -14,7 +14,6 @@ For incremental playback, create a `decoder()` and pass a byte view starting at 
 
 import "std/audio/mp2/layer";
 import "std/audio/mp2/tables";
-import "std/audio/mp3/bits";
 import "std/audio/mp3/framing";
 import "std/audio/mp3/spectral";
 import "std/audio/mp3/synthesis";
@@ -127,19 +126,20 @@ pub function (own state: Decoder) decode_packet_into(packet: [u8], own output: f
   return (next, result);
 }
 
-function allocation(data: [u8], h: Header, own widths: u8[]): (u8[], Result[bits.Bits, pcm.AudioError]) {
-  let b = bits.new(data.len() * 8);
+function allocation(data: [u8], h: Header, own widths: u8[]): (u8[], Result[i32, pcm.AudioError]) {
+  let pos = 0;
   for band in 0..32 {
     let width = 0;
     for ch in 0..2 {
       if (ch == h.channels) {
         width = 0;
       } else if (ch == 0 || band < h.separate) {
-        let (next, value) = bits.read(data, b, 4);
-        b = next;
-        if (b.bad) {
+        let at = pos >> 3;
+        if (at >= data.len()) {
           return (widths, Err(pcm.Truncated));
         }
+        let value = data[at] as i32 >> (4 - (pos & 4)) & 15;
+        pos += 4;
         if (value == 15) {
           return (widths, Err(pcm.Header));
         }
@@ -148,7 +148,7 @@ function allocation(data: [u8], h: Header, own widths: u8[]): (u8[], Result[bits
       widths = widths.with(2 * band + ch, width as u8);
     }
   }
-  return (widths, Ok(b));
+  return (widths, Ok(pos));
 }
 
 // Sample fields are 2–15 bits. Their complete extent is checked once
@@ -169,8 +169,8 @@ function sample_code(data: [u8], pos: i32, width: i32): i32 {
 function scales_for(frame: [u8], data: [u8], h: Header, own widths: u8[], own scales: f32[]): (u8[], f32[], Result[i32, pcm.AudioError]) {
   let (filled, allocated) = allocation(data, h, widths);
   widths = filled;
-  let b = match (allocated) { Ok(value) => value, Err(e) => { return (widths, scales, Err(e)); } };
-  if (h.crc && layer.checksum(frame[2:4], data, b.pos) != wire.be(frame, 4, 2) as i32) {
+  let pos = match (allocated) { Ok(value) => value, Err(e) => { return (widths, scales, Err(e)); } };
+  if (h.crc && layer.checksum(frame[2:4], data, pos) != wire.be(frame, 4, 2) as i32) {
     return (widths, scales, Err(pcm.Checksum));
   }
   let slot_bits = 0;
@@ -180,16 +180,19 @@ function scales_for(frame: [u8], data: [u8], h: Header, own widths: u8[], own sc
       if ((i & 1) == 0 || i / 2 < h.separate) {
         slot_bits += width;
       }
-      let (next, index) = bits.read(data, b, 6);
-      b = next;
+      if ((pos + 5) / 8 >= data.len()) {
+        return (widths, scales, Err(pcm.Truncated));
+      }
+      let index = sample_code(data, pos, 6);
+      pos += 6;
       let factor = tables.DEQUANT[3 * (width - 2) + index % 3] * ((2097152 >> index / 3) as f32);
       scales = scales.with(i, factor);
     }
   }
-  if (b.bad || slot_bits * 12 > b.limit - b.pos) {
+  if ((pos + slot_bits * 12 + 7) / 8 > data.len()) {
     return (widths, scales, Err(pcm.Truncated));
   }
-  return (widths, scales, Ok(b.pos));
+  return (widths, scales, Ok(pos));
 }
 
 function decode_slots(data: [u8], h: Header, widths: [u8], scales: [f32], pos: i32, own samples: f32[]): f32[] {
