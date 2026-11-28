@@ -190,16 +190,17 @@ function compressed_element(input: [u8], info: config.Info, paired: boolean, fie
     }
   }
   if (shift > 0) {
+    // The skip above checked every low bit. Both channel fields fit in one window.
     let low = tail;
+    let stride = (channels * shift) as i64;
+    let high = (64 - shift) as u64;
     for i in 0..count {
-      let (next_low, value) = bits.read(input, low, shift)?;
-      low = next_low;
-      first = first.with(i, first[i] << shift | value as i32);
+      let pair = bits.window(input, low);
+      first = first.with(i, first[i] << shift | (pair >> high) as i32);
       if (paired) {
-        let (next_pair_low, other) = bits.read(input, low, shift)?;
-        low = next_pair_low;
-        second = second.with(i, second[i] << shift | other as i32);
+        second = second.with(i, second[i] << shift | (pair << shift as u64 >> high) as i32);
       }
+      low += stride;
     }
   }
   return Ok((at, Work { first: first, second: second, first_taps: first_taps, second_taps: second_taps }));
