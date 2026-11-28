@@ -632,12 +632,20 @@ pub function (f: Frame) image(x: i32, y: i32, w: i32, h: i32, img: Image): void 
   let x1 = clamp(dx + cw, 0, f.width);
   let y0 = clamp(dy, 0, f.height);
   let y1 = clamp(dy + ch, 0, f.height);
-  if (x1 <= x0 || y1 <= y0 || img.pixels.len() < img.width * img.height * 4) {
+  if (x1 <= x0 || y1 <= y0 || img.width as i64 * (img.height as i64) > (img.pixels.len() / 4) as i64) {
     return;
   }
   // An image and a frame hold the bytes of a pixel in the same order, so each
   // row is a copy.
   let n = (x1 - x0) * 4;
+  if (x1 - x0 == img.width && x1 - x0 == f.stride) {
+    let from = (sy + y0 - dy) * n;
+    let bytes = (y1 - y0) * n;
+    unsafe {
+      __memcpy(f.bits + (y0 * n) as usize, __bytes_data(img.pixels[from:from + bytes]), bytes);
+    }
+    return;
+  }
   for row in y0..y1 {
     let from = ((sy + row - dy) * img.width + sx + x0 - dx) * 4;
     unsafe {
