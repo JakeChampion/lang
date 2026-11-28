@@ -35,7 +35,7 @@ pub function consistent(row: ssaprepare.Emitted): void {
   require(a.frame_bytes >= ssa.spill_count(a.alloc.reg_of) * 8 && (a.framed || a.frame_bytes == 0), 113);
   let arm = row.context.architecture == "arm64";
   require(a.save_bytes == (if (arm) { (a.saved.len() + 1) / 2 * 16 } else { a.saved.len() * 8 }), 114);
-  require(!arm || a.framed == row.assembly.contains("    stp x29, x30, [sp, #-16]!\n"), 115);
+  require(!arm || a.framed == sites.arm_frame_record(row, false), 115);
   unfused(a.fusions);
   sites.consistent(row);
 }

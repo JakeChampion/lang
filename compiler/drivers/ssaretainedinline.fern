@@ -1,3 +1,4 @@
+import "./ssaretainedsites" as sites;
 import "../ssainlineunique" as unique;
 import "../ssaprepare";
 import "../ssa";
@@ -160,7 +161,7 @@ pub function run(row: ssaprepare.Emitted, mutations: boolean): void {
     let result = if (site.flags) { "" } else { home(row, site.result_home) };
     if (row.context.architecture == "arm64" && (input == "x30" || result == "x30")) {
       require(row.allocation.framed, 175);
-      require(row.assembly.contains("stp x29, x30, [sp, #-16]!") && row.assembly.contains("ldp x29, x30, [sp], #16"), 176);
+      require(sites.arm_frame_record(row, true), 176);
     }
     check(site.text, row.context.architecture, input, result, site.flags, !site.aligned);
     if (!site.aligned && mutations) {

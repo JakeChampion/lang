@@ -153,11 +153,14 @@ def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; 3000000 | f
 
 A label resumes after its body to handle its own break. Likewise, `first(f)`
 resumes after its first output to stop `f`. Both work in recursive filters
-and in filters passed to `path`.
+and in filters passed to `path`. A suspended `try`, `catch`, or `?`
+handles errors when its body resumes. Errors from the next filter in a
+pipe continue to the enclosing handler. The alternative operator resumes to
+choose its fallback. A counted generator resumes to finish its count and stop
+at the selected output, including when a downstream filter has suspended.
 
 Some constructs still read the end of their filter on the machine stack:
-`{...}`, `try`, `?`, `//`, `reduce`, `foreach`, `limit`
-and `path`. The evaluator calls itself for each of them. Thus a function that calls itself in one of these constructs uses the
+`{...}`, `reduce`, `foreach` and `path`. The evaluator calls itself for each of them. Thus a function that calls itself in one of these constructs uses the
 machine stack for each call. On wasm32-wasi, the option
 `-W max-wasm-stack` of wasmtime makes the stack larger.
 
