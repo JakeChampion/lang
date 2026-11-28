@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/wasm/component"
@@ -403,7 +404,11 @@ function main(): i32 { return 0; }`
 function len_of(s: string): i32;
 
 function main(): i32 {
-	if (len_of("hello") == 5) { write("` + want + `"); } else { write("len-bad"); }
+	let text = "` + strings.Repeat("abcdefgh", 16) + `";
+	for i in 0..12000 {
+		if (len_of(text) != 128) { write("len-bad"); return 1; }
+	}
+	write("` + want + `");
 	return 0;
 }`
 	userCore := selfHostRunIOCore(t, runner, driverBin, wasmtools, dir, []byte(userSrc))
@@ -419,7 +424,7 @@ function main(): i32 {
 	final := filepath.Join(dir, "final.wasm")
 	run(wasmtools, "compose", consumer, "--definitions", exporter, "-o", final)
 	run(wasmtools, "validate", final)
-	out, err := exec.Command(wasmtime, "run", final).CombinedOutput()
+	out, err := exec.Command(wasmtime, "run", "-W", "max-memory-size=2097152", final).CombinedOutput()
 	if err != nil {
 		t.Fatalf("wasmtime run: %v\n%s", err, out)
 	}
