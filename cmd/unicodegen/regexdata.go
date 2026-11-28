@@ -274,7 +274,7 @@ func breakClasses(each func(yield func(lo, hi rune, class int))) []uint8 {
 }
 
 // propTables gives each table of ranges and the keys that name it. A key is
-// "gc:", "sc:", "bp:", "gcb:", "wb:" or "sb:" and the loose name, or "pw:word" for
+// "gc:", "sc:", "bp:", "gcb:", "wb:", "sb:" or "scx:" and the loose name, or "pw:word" for
 // \w.
 func propTables() []propTable {
 	var out []propTable
@@ -307,6 +307,17 @@ func propTables() []propTable {
 	for _, name := range scripts {
 		t := unicode.Scripts[name]
 		add("sc", name, scriptAliases[name], func(r rune) bool { return unicode.Is(t, r) })
+		// Scripts without overrides share their encoded ranges with scx.
+		base := &out[len(out)-1]
+		var keys []string
+		for _, key := range base.keys {
+			keys = append(keys, "scx:"+strings.TrimPrefix(key, "sc:"))
+		}
+		if ranges, ok := scriptExtensionRanges[name]; ok {
+			out = append(out, propTable{keys: keys, rs: ranges})
+		} else {
+			base.keys = append(base.keys, keys...)
+		}
 	}
 	addBreak := func(kind string, values map[string][]string, classes map[string]int, of []uint8) {
 		if len(values) != len(classes) {
@@ -561,7 +572,8 @@ function _prop_decode(span: (i32, i32)): Option[i32[]] {
 // and an "is" at the start do not count. ` + "`gc=`" + `, ` + "`sc=`" + `, ` + "`gcb=`" + ` and ` + "`wb=`" + `, their long
 // names ` + "`General_Category=`" + `, ` + "`Script=`" + `, ` + "`Grapheme_Cluster_Break=`" + ` and
 // ` + "`Word_Break=`" + `, or the same names with ` + "`:`" + ` or ` + "`!=`" + `, select the kind of
-// property. Sentence_Break takes the same operators and the short name sb.
+// property. Script_Extensions (scx) selects the scripts a character is used with.
+// Sentence_Break takes the same operators and the short name sb.
 // A break class always needs its kind. Without a kind, a binary
 // property comes first, then a general category, then a script. An unknown
 // name gives None.
@@ -582,6 +594,7 @@ pub function property_ranges(name: string): Option[i32[]] {
 // kind: a general category, Any, Assigned and ASCII for gc, a script, or a
 // class of Grapheme_Cluster_Break, Word_Break or Sentence_Break other than Other.
 function _prop_valued(kind: string, value: string): (i32, i32) {
+    if (kind == "scx" || kind == "scriptextensions") { return _prop_index("scx:" + value); }
     if (kind == "sc" || kind == "script") { return _prop_index("sc:" + value); }
     if (kind == "gcb" || kind == "graphemeclusterbreak") { return _prop_index("gcb:" + value); }
     if (kind == "sb" || kind == "sentencebreak") { return _prop_index("sb:" + value); }
