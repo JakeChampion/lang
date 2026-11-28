@@ -4867,7 +4867,7 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
     return ssa_store(reg_of, ins.result, d, s);
   }
   if (k == ssa.LD_SUM && ins.ir_kind == ssa.SUM_SCALED) {
-    let shift = if (ins.str == "u16") { "1" } else { "2" };
+    let shift = if (ssa_elem_bytes(ins.str) == 2) { "1" } else { "2" };
     s = s.write("    " + ssa_sum_load(ins.str, d) + ", [" + a + ", " + ssa_src(reg_of, ins.args[1], "x5") + ", lsl #" + shift + "]\n");
     return ssa_store(reg_of, ins.result, d, s);
   }
@@ -4929,6 +4929,9 @@ function ssa_pool_sites(f: ssa.SFunc, fr: SsaFrame, order: i32[]): boolean[] {
 
 // The load of an LD_SUM of element `mark` and its register for `d`.
 function ssa_sum_load(mark: string, d: string): string {
+  if (mark == "i16") {
+    return "ldrsh " + d;
+  }
   if (mark == "u16") {
     return "ldrh " + ssa_wreg(d);
   }
@@ -5575,25 +5578,26 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   return ssa_exit(fr, ssa_mov_imm(s, "x0", "0"), "");
 }
 
-function ssa_load_params(f: ssa.SFunc, reg_of: i32[], mask: string, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_load_params(f: ssa.SFunc, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   let k = ssa_reg_params(f);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let p = 0;
   while (p < k) {
     if (reg_of[p] != -1) {
-      srcs = srcs.append(ssa_arg_loc(mask, p));
+      srcs = srcs.append(ssa_arg_loc(fr.fmask, p));
       dsts = dsts.append(reg_of[p]);
     }
     p += 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
+  let incoming = if (fr.compact > 0) { fr.compact } else { 16 };
   while (p < f.nparams) {
     if (ssa.lane_param(f, p)) {
       ssa_lane_refuse(f.name + ": parameter " + util.i32_to_string(p));
     }
     let d = ssa_dst(reg_of, p);
-    s = s.write("    ldr " + d + ", [x29, #" + util.i32_to_string(16 + p * 16) + "]\n");
+    s = s.write("    ldr " + d + ", [x29, #" + util.i32_to_string(incoming + p * 16) + "]\n");
     s = ssa_store(reg_of, p, d, s);
     p += 1;
   }
@@ -5920,9 +5924,9 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   if (canary > 0) {
     drop = frame + 16;
   }
-  // No spill, view, canary or incoming stack argument needs the old x29.
+  // No spill, view or canary needs the old x29.
   // A paired post-index must encode the whole (16-byte aligned) frame.
-  if (drop == 0 && save > 0 && save + 16 <= 504 && f.nparams == ssa_reg_params(f) && s.profile == 0) {
+  if (drop == 0 && save > 0 && save + 16 <= 504 && s.profile == 0) {
     fr = SsaFrame { ...fr, compact: save + 16 };
   }
   let early_homes = ssa_early_homes(f, fr, reg_of, s);
@@ -5946,7 +5950,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = fr_str(s, "x17", -canary);
   }
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: asmcore.ssa_lane_slot_table(reg_of, lanes), ssa_konst: imm.konst, ssa_konst_value: imm.value };
-  s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr.fmask, s);
+  s = ssa_load_params(f, if (split.early.len() > 0) { early_homes.entry } else { reg_of }, fr, s);
   let frame_homes = reg_of;
   let order = ssa_emit_order(f, fr, reg_of);
   let starts: i32[] = [];

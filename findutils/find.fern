@@ -5033,48 +5033,51 @@ function starts_expression(a: string): boolean {
   return a == "(" || a == "!";
 }
 
-function read_files0(f: string): string[] {
-  let data: u8[] = [];
-  if (f == "-") {
-    let rd = stdin();
-    loop {
-      match (rd.read_chunk_bytes(65536)) {
-        Ok(chunk) => {
-          if (chunk.len() == 0) {
-            break;
-          }
-          data = data.concat(chunk);
-        },
-        Err(e) => {
-          fail("cannot read file names from standard input: " + why(e));
+// Walk each start point as its record arrives. A quit action stops before
+// the next record, even when the producer still has the pipe open.
+function walk_files0_reader(p: Prog, own r: Run, rd: Reader, origin: string): Run {
+  let lines = io_buffered.byte_line_reader_new(rd, 0, 65536);
+  let ordinal = 0i64;
+  while (!r.quit) {
+    match (lines.next_line_bytes()) {
+      Ok((line, next)) => {
+        lines = next;
+        let Some(bytes) = line else {
+          break;
+        };
+        ordinal += 1i64;
+        let n = bytes.len();
+        if (bytes[n - 1] == 0u8) {
+          n -= 1;
         }
-      }
-    }
-  } else {
-    match (read_file_bytes(f)) {
-      Ok(b) => {
-        data = b;
+        if (n == 0) {
+          r = report(r, q(origin) + ":" + ordinal.to_string() + ": invalid zero-length file name");
+        } else {
+          r = walk_top(p, r, unsafe { string_from_bytes_range_unchecked(bytes, 0, n) });
+        }
       },
       Err(e) => {
-        fail("cannot open " + q(f) + " for reading: " + why(e));
+        return report(r, q(origin) + ": read error: " + why(e));
       }
     }
   }
-  let out: string[] = [];
-  let start = 0;
-  let i = 0;
-  while (i <= data.len()) {
-    if (i == data.len() || data[i] == 0u8) {
-      if (i > start) {
-        out = out.append(unsafe { string_from_bytes_range_unchecked(data, start, i) });
-      } else if (i < data.len()) {
-        fail("invalid zero-length file name");
-      }
-      start = i + 1;
-    }
-    i += 1;
+  return r;
+}
+
+function walk_files0(p: Prog, own r: Run, name: string): Run {
+  if (name == "-") {
+    return walk_files0_reader(p, r, stdin(), "(standard input)");
   }
-  return out;
+  match (open_reader(name)) {
+    Ok(rd) => {
+      r = walk_files0_reader(p, r, rd, name);
+      rd.close();
+      return r;
+    },
+    Err(e) => {
+      return report(r, "cannot open " + q(name) + " for reading: " + why(e));
+    }
+  }
 }
 
 function open_outputs(outs: OutSpec[]): io_buffered.BufWriter[] {
@@ -5129,7 +5132,9 @@ function main(): i32 {
       gnu.error("extra operand " + q(paths[0]));
       fail("file operands cannot be combined with -files0-from");
     }
-    paths = read_files0(opts.files0);
+    if (opts.files0 == "-" && execs.any((spec: cmdline.Spec): boolean => spec.ask)) {
+      fail("option -files0-from reading from standard input cannot be combined with -ok, -okdir\n");
+    }
   } else if (paths.len() == 0) {
     paths = ["."];
   }
@@ -5145,10 +5150,14 @@ function main(): i32 {
     batches = batches.append(cmdline.batch_new(s));
   }
   let r = Run { e: top_ent("."), ok: false, outs: writers, status: 0, prune: false, quit: false, names: pwdb.names_new(needs_names, needs_names), mounts: [], have_mounts: false, batches: batches, stdout_tty: false, user_width: 8, group_width: 8, pd: None, level: NO_LEVEL };
-  for path in paths {
-    r = walk_top(p, r, path);
-    if (r.quit) {
-      break;
+  if (opts.has_files0) {
+    r = walk_files0(p, r, opts.files0);
+  } else {
+    for path in paths {
+      r = walk_top(p, r, path);
+      if (r.quit) {
+        break;
+      }
     }
   }
   if ((p.o.dbg & D_RATES) != 0 && !r.quit) {

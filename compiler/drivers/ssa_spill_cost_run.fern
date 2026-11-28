@@ -40,6 +40,16 @@ function probe_costs(reads: i32, folded: boolean, rhs: boolean, spilled: boolean
   return ssa.regalloc_linear(f, 1, 0, -1, false, no_home, [], [], 0, 0);
 }
 
+// Neither a loop bound in a slot nor a register index needs a move for cmp.
+function compare_cost(regs: i32[]): i32 {
+  let term = ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: 2, target: 0, t: 1, f: 2, value: -1 };
+  let ret = ssa.STerm { ...term, kind_tag: ssa.TERM_RET, value: -1 };
+  let end = ssa.SBlock { id: 1, insts: [], preds: [0], term: ret };
+  let entry = ssa.SBlock { id: 0, insts: [ssa.binary_inst(2, [0, 1], 0, ir.K_LT_S)], preds: [], term: term };
+  let f = ssa.SFunc { name: "cmp", nparams: 2, nvals: 3, entry: 0, takes_env: false, blocks: [entry, end, ssa.SBlock { ...end, id: 2 }] };
+  return ssa.spill_cost(f, regs, ssa.SpillCosts { fold_alu_rhs: true, two_address: true, spilled: ssa.slotted_values(regs) });
+}
+
 function main(): i32 {
   let failures = 0;
   let hot = probe(9);
@@ -74,6 +84,9 @@ function main(): i32 {
     failures += 1;
   }
   if (ssa.unfolded_reads(probe_func(9, true), lhs_slot.with(0, true)) != 9 || ssa.unfolded_reads(probe_func(9, true), lhs_slot) != 0) {
+    failures += 1;
+  }
+  if (compare_cost([-2, 0, -1]) != 0 || compare_cost([0, -2, -1]) != 0 || compare_cost([-2, -3, -1]) != 1) {
     failures += 1;
   }
   print("failures=" + util.i32_to_string(failures));

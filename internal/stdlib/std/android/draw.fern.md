@@ -43,6 +43,7 @@ The pixels of a frame are valid until the window is posted. A rectangle or text 
 // Android window.
 import "std/android/font";
 import "std/f64";
+import "std/i64";
 import "std/string";
 import "std/utf8";
 ```
@@ -426,21 +427,45 @@ function dist(x: i32, y: i32, cx: f64, cy: f64): f64 {
 // Fills the disc of radius `r` around cx and cy. Each pixel of the edge
 // takes the part of `color` that the disc covers.
 pub function (f: Frame) disc(cx: i32, cy: i32, r: i32, color: i32): void {
-  f.ring(cx, cy, r, r + 1, color);
+  f.ring(cx, cy, r, r, color);
 }
 
 // Fills the band of `width` pixels inside the circle of radius `r` around cx
 // and cy, with smooth edges.
 pub function (f: Frame) ring(cx: i32, cy: i32, r: i32, width: i32, color: i32): void {
-  let ox = cx as f64;
-  let oy = cy as f64;
+  if (r <= 0 || width <= 0 || alpha_of(color) == 0) {
+    return;
+  }
   let outer = r as f64;
-  let inner = (r - width) as f64;
-  for y in cy - r - 1..cy + r + 1 {
-    for x in cx - r - 1..cx + r + 1 {
-      let d = dist(x, y, ox, oy);
-      let a = cover(d, outer) - cover(d, inner);
-      put(f, x, y, color, a);
+  let inner = outer - width as f64;
+  // Squared radii separate the solid runs from the two antialiased edges.
+  let full = (outer - 0.5) * (outer - 0.5);
+  let hole = if (inner < 0.5) { -1.0 } else { (inner - 0.5) * (inner - 0.5) };
+  let band = if (inner < 0.0) { -1.0 } else { (inner + 0.5) * (inner + 0.5) };
+  let edge = (outer + 0.5) * (outer + 0.5);
+  let x0 = (cx as i64 - r as i64).clamp(0i64, f.width as i64) as i32;
+  let x1 = (cx as i64 + r as i64).clamp(0i64, f.width as i64) as i32;
+  let y0 = (cy as i64 - r as i64).clamp(0i64, f.height as i64) as i32;
+  let y1 = (cy as i64 + r as i64).clamp(0i64, f.height as i64) as i32;
+  for y in y0..y1 {
+    let dy = y as f64 + 0.5 - cy as f64;
+    let start = x0;
+    for x in x0..x1 {
+      let dx = x as f64 + 0.5 - cx as f64;
+      let squared = dx * dx + dy * dy;
+      if (squared < band || squared > full) {
+        if (x > start) {
+          f.fill(start, y, x - start, 1, color);
+        }
+        if (squared > hole && squared < edge) {
+          let d = squared.sqrt();
+          put(f, x, y, color, cover(d, outer) - cover(d, inner));
+        }
+        start = x + 1;
+      }
+    }
+    if (x1 > start) {
+      f.fill(start, y, x1 - start, 1, color);
     }
   }
 }
@@ -818,7 +843,13 @@ function glyph(f: Frame, x: i32, y: i32, c: i32, scale: i32, color: i32): void {
     for gx in 0..font.CELL_W {
       let a = font.glyph_coverage(g, gx, gy);
       if (a > 0) {
-        dot(f, x + gx * scale, y + gy * scale, scale, color, a);
+        let px = x + gx * scale;
+        let py = y + gy * scale;
+        if (scale >= 4) {
+          f.fill(px, py, scale, scale, with_alpha(color, weight(color, a)));
+        } else {
+          dot(f, px, py, scale, color, a);
+        }
       }
     }
   }

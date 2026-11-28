@@ -1,0 +1,26 @@
+// Integer scalar elements select the same lane types as the named builtins.
+function signed_count[const N: i32](v: Vec[N, i32]): i32 {
+  return N;
+}
+
+trait Count {
+  function count(self: Self): i32;
+}
+
+impl[const N: i32] Count for Vec[N, u8] {
+  function count(self: Vec[N, u8]): i32 {
+    return N;
+  }
+}
+
+function main(): i32 {
+  let bytes: Vec[16, u8] = __u8x16_splat(255u8);
+  let signed: Vec[4, i32] = __i32x4_splat(-9);
+  let unsigned: Vec[4, u32] = __u32x4_splat(4294967295u32);
+  assert(bytes.count() == 16);
+  assert(__u8x16_lane(bytes, 15) == 255u8);
+  assert(signed_count(signed) == 4);
+  assert(__i32x4_lane(signed, 2) == -9);
+  assert(__u32x4_lane(unsigned, 3) == 4294967295u32);
+  return 0;
+}

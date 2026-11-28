@@ -218,6 +218,16 @@ func binaryProps() map[string]func(rune) bool {
 		t := t
 		props[name] = func(r rune) bool { return unicode.Is(t, r) }
 	}
+	lower := func(r rune) bool { return (unicode.ToLower(r) != r) != inRuneRanges(changesLowercasedDelta, r) }
+	upper := func(r rune) bool { return (unicode.ToUpper(r) != r) != inRuneRanges(changesUppercasedDelta, r) }
+	title := func(r rune) bool { return (unicode.ToTitle(r) != r) != inRuneRanges(changesTitlecasedDelta, r) }
+	props["Changes_When_Lowercased"] = lower
+	props["Changes_When_Uppercased"] = upper
+	props["Changes_When_Titlecased"] = title
+	props["Changes_When_Casemapped"] = func(r rune) bool { return lower(r) || upper(r) || title(r) }
+	props["Changes_When_Casefolded"] = func(r rune) bool {
+		return (unicode.ToLower(r) != r) != inRuneRanges(changesCasefoldedDelta, r)
+	}
 	props["Cased"] = isCased
 	props["Case_Ignorable"] = isCaseIgnorable
 	for name, rs := range emojiProps() {

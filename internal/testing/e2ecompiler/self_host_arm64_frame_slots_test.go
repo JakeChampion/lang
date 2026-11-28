@@ -33,7 +33,13 @@ const arm64FrameSlotsProgram = `enum List { Nil, Cons(i64, List) }
     return Cons(from, count_up(from + 1i64, n - 1i64));
 }
 
+// The ninth and tenth parameters arrive on the stack and survive a call.
+@noinline function weighted(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32, j: i32): i32 {
+    return noise((a + b + c + d + e + f + g + h) as i64) as i32 + 3 * i + 5 * j;
+}
+
 function main(): i32 {
+    if (weighted(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) != 185) { return 1; }
     return (total(count_up(1i64, 40i64)) % 200i64) as i32;
 }
 `
@@ -56,6 +62,12 @@ func TestSelfHostArm64FrameSlotsAndHoistedBox(t *testing.T) {
 			asm, err := os.ReadFile(asmPath)
 			if err != nil {
 				t.Fatal(err)
+			}
+			weighted := functionListing(string(asm), "__fn_weighted")
+			for _, want := range []string{"[sp, #-32]!", "[x29, #160]", "[x29, #176]", "[sp], #32"} {
+				if !strings.Contains(weighted, want) {
+					t.Errorf("%s: weighted has no %s:\n%s", tg.target, want, weighted)
+				}
 			}
 			fn := functionListing(string(asm), "__fn_total")
 			if moved.MatchString(fn) {

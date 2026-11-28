@@ -8276,7 +8276,7 @@ function vec_bounds(r: parser.TypeRef, tps: string[], s: Scope): string {
 // vec_lane_types are the lane types a `Vec[N, T]` can stand for.
 function vec_lane_types(r: parser.TypeRef, tps: string[]): string[] {
   let out: string[] = [];
-  for lanes in typeinfo.lane_types() {
+  for lanes in typeinfo.vec_candidates(r.args[1].base) {
     let fit = typeinfo.lane_vec_spellings(lanes);
     if (vec_arg_fits(r.args[0], fit[0], tps) && vec_arg_fits(r.args[1], fit[1], tps)) {
       out = out.append(lanes);
@@ -20003,10 +20003,10 @@ struct OwnJump { target: i32, breaks: boolean, moved: MovedEntry[] }
 
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
-// Only single-definition local callbacks and aliases participate.
+// Assignments contribute to the row of their uniquely named binding.
 // binder marks a match binder. It has each loan of the matched value, and each
 // loan covers its whole source.
-struct OclDef { name: string, value: ast.Expr, spelling: string, binder: boolean }
+struct OclDef { name: string, value: ast.Expr, spelling: string, binder: boolean, assignment: boolean }
 
 // lent marks the loan of a local that reads its lender, not a capture.
 struct OclCapture { name: string, type_name: string, result: string, source: string, direct: boolean, wide: boolean, lent: boolean }
@@ -20017,7 +20017,7 @@ struct OclFactoryCache { known: boolean, factories: OclFactories }
 
 struct OclFactoryState { cache: Cell[OclFactoryCache], mod: parser.Module, env: ModuleEnv }
 
-struct OclFacts { names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, proofs: Cell[OwnDataProofs], inlines: OclCapture[], types: string[], tparams: string[], summary: boolean, methods: Option[OwnLenders] }
+struct OclFacts { updates: util.NameIndex, names: util.NameIndex, rows: OclCapture[][], factories: OclFactories, proofs: Cell[OwnDataProofs], inlines: OclCapture[], types: string[], tparams: string[], summary: boolean, methods: Option[OwnLenders] }
 
 struct OclInlineFacts { facts: OclFacts, captures: OclCapture[] }
 
@@ -20026,7 +20026,7 @@ struct OclPlaces { name: string, defs: OclDef[], names: util.NameIndex, aggregat
 struct OclContainers { names: util.NameIndex, holds: boolean[] }
 
 function ocl_unknown(name: string): OclDef {
-  return OclDef { name: name, value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, spelling: "", binder: false };
+  return OclDef { name: name, value: ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 }, spelling: "", binder: false, assignment: false };
 }
 
 function ocl_param(param: ast.ParamDecl): OclDef {
@@ -20036,7 +20036,7 @@ function ocl_param(param: ast.ParamDecl): OclDef {
 function ocl_var(v: ast.StmtVar, own defs: OclDef[]): OclDef[] {
   let names = lu_var_names(v, []);
   if (names.len() == 1 && names[0] == v.name) {
-    return defs.append(OclDef { name: v.name, value: v.init, spelling: parser.fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types), binder: false });
+    return defs.append(OclDef { name: v.name, value: v.init, spelling: parser.fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types), binder: false, assignment: false });
   }
   for name in names {
     defs = defs.append(ocl_unknown(name));
@@ -20050,14 +20050,14 @@ function ocl_stmt(st: ast.Stmt, own defs: OclDef[]): OclDef[] {
       return ocl_var(v, defs);
     },
     ast.StmtAssign(a) => {
-      return defs.append(OclDef { name: a.target, value: a.value, spelling: "", binder: false });
+      return defs.append(OclDef { name: a.target, value: a.value, spelling: "", binder: false, assignment: true });
     },
     ast.StmtFor(f) => {
       return defs.append(ocl_unknown(f.var_name));
     },
     ast.StmtMatch(m) => {
       for name in lu_arm_binders(st, []) {
-        defs = defs.append(OclDef { name: name, value: m.scrutinee, spelling: "", binder: true });
+        defs = defs.append(OclDef { name: name, value: m.scrutinee, spelling: "", binder: true, assignment: false });
       }
     },
     _ => {}
@@ -20127,6 +20127,9 @@ function ocl_environment(loans: OclCapture[]): OclCapture[] {
 // reads it. A factory summary has the loans of callbacks only.
 function ocl_lender(id: ast.ExprIdent, facts: OclFacts): OclCapture[] {
   if (facts.summary || id.builtin || id.ty.len() == 0 || facts.names.find(id.name) < 0 || !ocl_unique(facts.names, id.name)) {
+    return [];
+  }
+  if (facts.updates.has(id.name) && !semtypes.is_fd_handle_name(id.ty)) {
     return [];
   }
   if (id.ty == "fn" || parser.ref_is_fn_value(parser.parse_type_ref(id.ty)) || ocl_plain(id.ty, facts)) {
@@ -20231,6 +20234,23 @@ function ocl_widen(loans: OclCapture[]): OclCapture[] {
   let out: OclCapture[] = [];
   for loan in loans {
     out = ocl_merge(out, [OclCapture { ...loan, result: "", wide: true }]);
+  }
+  return out;
+}
+
+// Reassigning a recursive aggregate can extend a projection on each pass.
+// Fold at a recursive type, preserving the fields of nonrecursive aggregates.
+function ocl_assignment_loans(loans: OclCapture[], holder: string, result_type: string, decls: OwnDecls): OclCapture[] {
+  let out: OclCapture[] = [];
+  for loan in loans {
+    // Handle loans and callback environments survive storage in a local.
+    // A self-update carries the old loans without borrowing its own slot.
+    if (loan.lent && (loan.name == holder || !semtypes.is_fd_handle_name(loan.type_name))) {
+      continue;
+    }
+    let (source, folded) = callbackpaths.bound_callback_path(decls.structs, loan.type_name, loan.source);
+    let (result, recursive) = callbackpaths.bound_callback_path(decls.structs, result_type, loan.result);
+    out = ocl_merge(out, [OclCapture { ...loan, source: source, result: result, wide: loan.wide || folded || recursive }]);
   }
   return out;
 }
@@ -20365,8 +20385,7 @@ function ocl_lambda(lm: ast.ExprLambda, facts: OclFacts): OclCapture[] {
   let out: OclCapture[] = [];
   let places = ocl_place_scope(lm, facts.factories.decls);
   for capture in lm.captures {
-    // The walk of a body follows each assignment of a local. A factory
-    // summary does not, so it keeps a binding with one definition only.
+    // A summary needs a unique binding for each captured name.
     if (!facts.summary || ocl_unique(facts.names, capture.name)) {
       // A `once` lambda moves its captures in, so it holds no loan on them.
       if (!lm.once) {
@@ -20926,6 +20945,38 @@ function ocl_block(c: ast.ExprCall, facts: OclFacts): OclCapture[] {
   return out;
 }
 
+// A local with a handle or a callback in its declared container keeps the
+// corresponding loans across updates. Other aggregates need path-sensitive
+// ownership transfer when an assignment consumes the previous value.
+function ocl_handle_or_callback(ref: parser.TypeRef): boolean {
+  if (ref.is_fn || ref.base == "fn" || semtypes.is_fd_handle_name(ref.base)) {
+    return true;
+  }
+  for part in ref.args {
+    if (ocl_handle_or_callback(part)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function ocl_tracks_assignment(def: OclDef): boolean {
+  if let ast.ExprLambda(_) = def.value {
+    return true;
+  }
+  let spelling = def.spelling;
+  if (spelling.len() == 0) {
+    spelling = ast.expr_ty(def.value);
+    if let ast.ExprArray(array) = def.value {
+      spelling = array.elem_ty;
+      if (spelling.len() == 0 && array.elements.len() > 0) {
+        spelling = ast.expr_ty(array.elements[0]);
+      }
+    }
+  }
+  return spelling.len() > 0 && ocl_handle_or_callback(parser.parse_type_ref(spelling));
+}
+
 function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, proofs: Cell[OwnDataProofs], summarize: boolean, methods: Option[OwnLenders]): OclFacts {
   let defs: OclDef[] = [];
   for param in fn.params {
@@ -20934,18 +20985,38 @@ function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, proofs: Cell[Ow
   for st in fn.body {
     defs = astwalk.fold_stmt_nodes(st, defs, ocl_stmt, ocl_expr, astwalk.descend_all);
   }
+  let tparams = ocl_type_params(fn);
+  let assigned: string[] = [];
+  for def in defs {
+    if (def.assignment) {
+      assigned = assigned.append(def.name);
+    }
+  }
+  let candidates = util.name_index(assigned);
+  let tracked: string[] = [];
+  for def in defs {
+    if (candidates.has(def.name) && ocl_tracks_assignment(def)) {
+      tracked = tracked.append(def.name);
+    }
+  }
+  let updates = util.name_index(tracked);
   let names: string[] = [];
   let rows: OclCapture[][] = [];
   let types: string[] = [];
   for def in defs {
+    if (def.assignment && updates.has(def.name)) {
+      continue;
+    }
     names = names.append(def.name);
     rows = rows.append([]);
     types = types.append(def.spelling);
   }
-  let facts = OclFacts { names: util.name_index(names), rows: rows, factories: factories, proofs: proofs, inlines: [], types: types, tparams: ocl_type_params(fn), summary: summarize, methods: methods };
+  let facts = OclFacts { updates: updates, names: util.name_index(names), rows: rows, factories: factories, proofs: proofs, inlines: [], types: types, tparams: tparams, summary: summarize, methods: methods };
   // A local of plain value data is a copy, which has no lender.
   let copies: boolean[] = [];
+  let targets: i32[] = [];
   for def in defs {
+    targets = targets.append(if (ocl_unique(facts.names, def.name)) { facts.names.find(def.name) } else { -1 });
     let spelling = if (def.spelling.len() > 0) { def.spelling } else { ast.expr_ty(def.value) };
     copies = copies.append(!summarize && !def.binder && ocl_plain(spelling, facts));
   }
@@ -20956,17 +21027,20 @@ function ocl_facts(fn: parser.FuncDecl, factories: OclFactories, proofs: Cell[Ow
   while (changed) {
     changed = false;
     for i in 0..defs.len() {
-      if (ocl_unique(facts.names, defs[i].name)) {
+      let at = targets[i];
+      if (at >= 0) {
         let loans = ocl_value(defs[i].value, facts);
         if (copies[i]) {
           loans = ocl_environment(loans);
         }
         if (defs[i].binder) {
           loans = ocl_widen(loans);
+        } else if (facts.updates.has(defs[i].name)) {
+          loans = ocl_assignment_loans(loans, defs[i].name, facts.types[at], facts.factories.decls);
         }
-        let grown = ocl_merge(facts.rows[i], loans);
-        if (grown.len() > facts.rows[i].len()) {
-          facts = OclFacts { ...facts, rows: facts.rows.with(i, grown) };
+        let grown = ocl_merge(facts.rows[at], loans);
+        if (grown.len() > facts.rows[at].len()) {
+          facts = OclFacts { ...facts, rows: facts.rows.with(at, grown) };
           changed = true;
         }
       }
@@ -21035,11 +21109,11 @@ function ocl_callback_value(e: ast.Expr, facts: OclFacts): boolean {
 }
 
 // The last-use and capture facts are computed on their first question.
-struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_owners: util.NameIndex, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
+struct LastUses { known: boolean, keys: util.NameIndex, fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex, captures_known: boolean, capture_updates: util.NameIndex, capture_owners: util.NameIndex, capture_names: util.NameIndex, capture_rows: OclCapture[][], capture_inlines: OclCapture[], capture_types: string[], capture_tparams: string[] }
 
 function lu_pending(fn: parser.FuncDecl, typed_fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): Cell[LastUses] {
   let none: string[] = [];
-  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, typed_fn: typed_fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_owners: util.name_index(none), capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
+  return cell_new(LastUses { known: false, keys: util.name_index(none), fn: fn, typed_fn: typed_fn, ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, captures_known: false, capture_updates: util.name_index(none), capture_owners: util.name_index(none), capture_names: util.name_index(none), capture_rows: [], capture_inlines: [], capture_types: [], capture_tparams: [] });
 }
 
 function ow_callback_facts(ctx: OwnCtx): OclFacts {
@@ -21051,10 +21125,10 @@ function ow_callback_facts(ctx: OwnCtx): OclFacts {
   }
   if (!lu.captures_known) {
     let facts = ocl_facts(annotate_func(lu.fn, ctx.factories.env), state.factories, ctx.value_proofs, false, Some(lu.lenders));
-    lu = LastUses { ...lu, captures_known: true, capture_owners: ow_capture_owners(facts, ctx), capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
+    lu = LastUses { ...lu, captures_known: true, capture_updates: facts.updates, capture_owners: ow_capture_owners(facts, ctx), capture_names: facts.names, capture_rows: facts.rows, capture_inlines: facts.inlines, capture_types: facts.types, capture_tparams: facts.tparams };
     ctx.last_use.set(lu);
   }
-  return OclFacts { names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, proofs: ctx.value_proofs, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams, summary: false, methods: None };
+  return OclFacts { updates: lu.capture_updates, names: lu.capture_names, rows: lu.capture_rows, factories: state.factories, proofs: ctx.value_proofs, inlines: lu.capture_inlines, types: lu.capture_types, tparams: lu.capture_tparams, summary: false, methods: None };
 }
 
 // Capture facts belong to the function. Index their owners once so checking
@@ -21514,7 +21588,11 @@ function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
     return true;
   }
-  match (check_expr(e, ctx.scope)) {
+  return ow_type_is_scalar(check_expr(e, ctx.scope));
+}
+
+function ow_type_is_scalar(ty: typeinfo.Type): boolean {
+  match (ty) {
     typeinfo.TypeI32(_) => {
       return true;
     },
@@ -22242,10 +22320,13 @@ function ow_variant_args_owned(c: ast.ExprCall, ctx: OwnCtx): boolean {
 }
 
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
-  if (ow_expr_is_scalar(e, ctx)) {
+  if (ow_scalar_literal(e)) {
     return true;
   }
   let ty = check_expr(e, ctx.scope);
+  if (ow_type_is_scalar(ty)) {
+    return true;
+  }
   if let typeinfo.TypeStruct(st) = ty {
     if (ow_value_decl(st.name, ctx.structs, ctx.snames) && ow_value_data(typeinfo.spelling(ty), ctx.decls, [])) {
       return true;
@@ -22259,7 +22340,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       return true;
     },
     ast.ExprStructLit(sl) => {
-      return ow_struct_lit_owned(sl, check_expr(e, ctx.scope), ctx);
+      return ow_struct_lit_owned(sl, ty, ctx);
     },
     ast.ExprBinary(b) => {
       return b.op == "+" && ow_is_string_type(check_expr(b.left, ctx.scope)) && ow_is_string_type(check_expr(b.right, ctx.scope));
@@ -31365,7 +31446,7 @@ function unknown_type_diag(name: string, traits: string[], line: i32, col: i32):
     return dg_at("E106", "type nests deeper than " + util.i32_to_string(MAX_TYPE_DEPTH) + " levels", line, col);
   }
   if (name.starts_with("Vec[")) {
-    return dg_at("E096", name + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", line, col);
+    return dg_at("E096", name + " names no lane type: supported pairs are Vec[2, f64], Vec[4, f32], Vec[16, u8], Vec[4, i32] and Vec[4, u32]", line, col);
   }
   return dg_at("E064", "cannot find type \"" + util.demangle(name) + "\" in this scope" + unknown_type_hint(name, traits), line, col);
 }
@@ -33083,7 +33164,7 @@ function e021_diags(mod: parser.Module): util.Diag[] {
     }
     let ir = parser.parse_type_ref(im.impl_type);
     if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
-      out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
+      out = out.append(dg_at("E096", im.impl_type + " names no lane type: supported pairs are Vec[2, f64], Vec[4, f32], Vec[16, u8], Vec[4, i32] and Vec[4, u32]", im.line, im.col));
       continue;
     }
     if (im.trait_name == "Send" && im.trait_module == "worker") {

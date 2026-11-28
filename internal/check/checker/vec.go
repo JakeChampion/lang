@@ -13,18 +13,32 @@ import (
 
 var vecTable = []ast.LanesType{{Width: 64, Spelling: "f64x2"}, {Width: 32, Spelling: "f32x4"}}
 
+// A concrete integer element selects its own lane family.
+func vecCandidates(elem ast.Type) []ast.LanesType {
+	if n, ok := elem.(ast.NumberType); ok {
+		switch n.String() {
+		case "u8":
+			return []ast.LanesType{{Width: 8, Kind: ast.LaneUnsigned, Spelling: "u8x16"}}
+		case "u32":
+			return []ast.LanesType{{Width: 32, Kind: ast.LaneUnsigned, Spelling: "u32x4"}}
+		case "i32":
+			return []ast.LanesType{{Width: 32, Kind: ast.LaneSigned, Spelling: "i32x4"}}
+		}
+	}
+	return vecTable
+}
+
 // vecLanes is the lane type that `Vec[n, elem]` names on the portable tier.
 func vecLanes(args []ast.Type) (ast.LanesType, bool) {
 	if len(args) != 2 {
 		return ast.LanesType{}, false
 	}
 	n, nok := args[0].(ast.ConstArg)
-	f, fok := args[1].(ast.FloatType)
-	if !nok || !fok {
+	if !nok {
 		return ast.LanesType{}, false
 	}
-	for _, l := range vecTable {
-		if n.Value == int64(l.Lanes()) && f.NormalWidth() == l.Width {
+	for _, l := range vecCandidates(args[1]) {
+		if n.Value == int64(l.Lanes()) && ast.Equal(args[1], l.Elem()) {
 			return l, true
 		}
 	}
@@ -34,8 +48,8 @@ func vecLanes(args []ast.Type) (ast.LanesType, bool) {
 // vecLaneTypes are the lane types that a `Vec[N, T]` can stand for.
 func vecLaneTypes(args []ast.Type) []ast.LanesType {
 	var out []ast.LanesType
-	for _, l := range vecTable {
-		if vecArgFits(args[0], ast.ConstArg{Value: int64(l.Lanes())}) && vecArgFits(args[1], ast.FloatType{Width: l.Width}) {
+	for _, l := range vecCandidates(args[1]) {
+		if vecArgFits(args[0], ast.ConstArg{Value: int64(l.Lanes())}) && vecArgFits(args[1], l.Elem()) {
 			out = append(out, l)
 		}
 	}
@@ -49,9 +63,8 @@ func vecArgFits(a, want ast.Type) bool {
 	case ast.ConstArg:
 		w, ok := want.(ast.ConstArg)
 		return ok && w.Value == x.Value
-	case ast.FloatType:
-		w, ok := want.(ast.FloatType)
-		return ok && w.NormalWidth() == x.NormalWidth()
+	case ast.FloatType, ast.NumberType:
+		return ast.Equal(a, want)
 	}
 	return false
 }
@@ -178,7 +191,7 @@ func vecImplParts(impl *ast.ImplDecl) ([]*ast.ImplDecl, bool) {
 	}
 	var out []*ast.ImplDecl
 	fits := false
-	for _, l := range vecTable {
+	for _, l := range vecCandidates(args[1]) {
 		sub, ok := vecImplBinding(args, impl.TypeParams, l)
 		fits = fits || ok
 		if len(sub) > 0 {

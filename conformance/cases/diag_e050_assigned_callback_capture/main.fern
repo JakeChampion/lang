@@ -1,0 +1,16 @@
+// spec: RH-04
+
+struct Handle { n: i32 }
+
+function (own h: Handle) close(): void {}
+
+function check_callback(own h: Handle): i32 {
+  let read = (): i32 => 0;
+  read = (): i32 => h.n;
+  h.close();
+  return read();
+}
+
+function main(): i32 {
+  return 0;
+}
