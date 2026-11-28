@@ -1652,15 +1652,20 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
   return MethodDedup { mod: deduped, keys: keys };
 }
 
-struct TraitModules { ids: Map[string, i32], names: Map[string, i32] }
+struct TraitModules { ids: util.NameIndex, names: util.NameIndex }
 
 function (index: TraitModules) lookup(im: parser.Import): Option[i32] {
   if (im.resolved.len() > 0) {
-    if let Some(i) = index.ids.get(im.resolved) {
+    let i = index.ids.find(im.resolved);
+    if (i >= 0) {
       return Some(i);
     }
   }
-  return index.names.get(util.path_base(im.path));
+  let k = index.names.find(util.path_base(im.path));
+  if (k < 0) {
+    return None;
+  }
+  return Some(k);
 }
 
 function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[], index: TraitModules): string[] {
@@ -1677,16 +1682,13 @@ function imported_trait_spellings(mod: parser.Module, imports: LoadedModule[], i
 }
 
 function desugar_imported_trait_params(entry: parser.Module, imports: LoadedModule[]): (parser.Module, LoadedModule[]) {
-  let ids: Map[string, i32] = map_new(imports.len());
-  let names: Map[string, i32] = map_new(imports.len());
-  // Insert backwards so both lookups select the first loaded match.
-  let i = imports.len();
-  while (i > 0) {
-    i -= 1;
-    ids = ids.insert(imports[i].ident, i);
-    names = names.insert(imports[i].name, i);
+  let ids: string[] = [];
+  let names: string[] = [];
+  for lm in imports {
+    ids = ids.append(lm.ident);
+    names = names.append(lm.name);
   }
-  let index = TraitModules { ids: ids, names: names };
+  let index = TraitModules { ids: util.name_index(ids), names: util.name_index(names) };
   let out: LoadedModule[] = [];
   for lm in imports {
     out = out.append(LoadedModule { ...lm, mod: parser.desugar_trait_params(lm.mod, imported_trait_spellings(lm.mod, imports, index), true) });
