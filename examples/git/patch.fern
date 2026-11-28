@@ -756,9 +756,9 @@ function patch_one(s_in: store.Store, o: Opts, p: Pair, one: Side, two: Side, le
   let tab0 = if (lbl0.contains(" ")) { "\t" } else { "" };
   let tab1 = if (lbl1.contains(" ")) { "\t" } else { "" };
   if (o.word_diff != WORDS_NONE && o.driver_words) {
-    let pattern = if (one.valid) { o.drivers.word_pattern(o.attrs, text(name_a)) } else { o.drivers.words.get("default") };
+    let pattern = if (is_regular(one.mode)) { o.drivers.word_pattern(o.attrs, text(name_a)) } else { o.drivers.words.get("default") };
     if (pattern == None) {
-      pattern = if (two.valid) { o.drivers.word_pattern(o.attrs, text(name_b)) } else { o.drivers.words.get("default") };
+      pattern = if (is_regular(two.mode)) { o.drivers.word_pattern(o.attrs, text(name_b)) } else { o.drivers.words.get("default") };
     }
     if let Some(word) = pattern {
       o = with_word_pattern(o, word);
