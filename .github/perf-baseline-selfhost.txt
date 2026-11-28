@@ -189,13 +189,13 @@ selfhost/x86-64-linux/draw_fill.emit	1756
 selfhost/arm64-linux/draw_fill.emit	1934
 selfhost/wasm32-wasi/draw_fill.emit	1745
 selfhost/x86-64-linux/draw_mask.emit	2470
-selfhost/arm64-linux/draw_mask.emit	2517
+selfhost/arm64-linux/draw_mask.emit	2659
 selfhost/wasm32-wasi/draw_mask.emit	2471
 selfhost/x86-64-linux/draw_rgba.emit	2572
-selfhost/arm64-linux/draw_rgba.emit	2558
+selfhost/arm64-linux/draw_rgba.emit	2747
 selfhost/wasm32-wasi/draw_rgba.emit	2642
 selfhost/x86-64-linux/jpeg_decode.emit	16637
-selfhost/arm64-linux/jpeg_decode.emit	16743
+selfhost/arm64-linux/jpeg_decode.emit	17074
 selfhost/wasm32-wasi/jpeg_decode.emit	31135
 selfhost/x86-64-linux/draw_image.emit	1875
 selfhost/arm64-linux/draw_image.emit	2102
