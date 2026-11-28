@@ -76,6 +76,15 @@ function test_round_rect(): test.TestOutcome {
   return test.assert_eq(inside.to_string() + " " + tips.to_string() + " " + outside.to_string(), "true true true");
 }
 
+function test_large_round_rect_clips(): test.TestOutcome {
+  let f = frame(7, 5);
+  defer free_frame(f);
+  let white = draw.rgb(255, 255, 255);
+  f.round_rect(-1000000, -1000000, 2000000, 2000000, 1000000, white);
+  f.clip_corners(-1000000, -1000000, 2000000, 2000000, 1000000, draw.rgb(255, 0, 0));
+  return test.assert_eq(count(f, white), 35);
+}
+
 // Over a transparent pixel, a blend and a mask give the premultiplied
 // colour: each channel multiplied by the alpha. An opaque colour stays
 // opaque.
@@ -677,6 +686,7 @@ function main(): i32 {
   r = r.it("a large disc clips to the frame", test_large_disc_clips);
   r = r.it("a ring leaves its middle alone", test_ring);
   r = r.it("a rounded rectangle rounds its corners", test_round_rect);
+  r = r.it("large rounded corners clip to the frame", test_large_round_rect_clips);
   r = r.it("fill clips to the frame", test_fill_clips);
   r = r.it("text draws inside its cells", test_text_draws_inside_its_cells);
   r = r.it("a space draws nothing", test_space_draws_nothing);
