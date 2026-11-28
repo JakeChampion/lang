@@ -648,7 +648,12 @@ function interact(m: Merge, cmds: u8[], left: Lines, lname: string, right: Lines
     if (nl < 0 || nl - at >= COMMAND_MAX) {
       return false;
     }
-    let line = slice_unchecked(text, at, nl) + "";
+    // GNU consumes the whole header line but interprets it as a C string.
+    let end = at;
+    while (end < nl && cmds[end] != 0) {
+      end += 1;
+    }
+    let line = slice_unchecked(text, at, end) + "";
     at = nl + 1;
     diff_lines.pos.set(at);
     if (line.len() > 0 && line[0] == b' ') {
