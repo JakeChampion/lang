@@ -447,6 +447,9 @@ function resolved_list(ts: typeinfo.Type[], b: ssasem.Binding, scope: checker.Sc
 }
 
 function resolved_types(ts: typeinfo.Type[], scope: checker.Scope): typeinfo.Type[] {
+  if (!runtime_callable_list_changes(ts) && !any_names_argless_enum(ts, scope)) {
+    return ts;
+  }
   let out: typeinfo.Type[] = [];
   for t in ts {
     out = out.append(resolved(t, false, ssasem.unbound(), scope));
