@@ -24490,25 +24490,40 @@ function lu_place(line: i32, col: i32): i64 {
   return line as i64 * 65536i64 + col as i64;
 }
 
-function lu_flow(body: ast.Stmt[]): LuFlow {
-  let f = LuFlow { first: [], last: [], ends: [], looping: [], kids: [], block: [], slot: [], blocks: [], owner: [] };
-  return lu_flow_block(body, -1, f);
+struct LuSpan { first: i64, last: i64 }
+
+// A function's fact walk already visits every occurrence in each statement of
+// its body. Keep those spans for the flow tree, before visiting the next statement.
+function lu_body_facts(body: ast.Stmt[]): (LuFacts, LuSpan[]) {
+  let facts = lu_empty_facts();
+  let spans: LuSpan[] = [];
+  for st in body {
+    let start = facts.occ.len();
+    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+    spans = spans.append(lu_occ_span(facts.occ, start));
+  }
+  return (facts, spans);
 }
 
-function lu_flow_block(stmts: ast.Stmt[], owner: i32, own f: LuFlow): LuFlow {
+function lu_flow(body: ast.Stmt[], spans: LuSpan[]): LuFlow {
+  let f = LuFlow { first: [], last: [], ends: [], looping: [], kids: [], block: [], slot: [], blocks: [], owner: [] };
+  return lu_flow_block(body, -1, f, spans);
+}
+
+function lu_flow_block(stmts: ast.Stmt[], owner: i32, own f: LuFlow, spans: LuSpan[]): LuFlow {
   let b = f.blocks.len();
   f = LuFlow { ...f, blocks: f.blocks.append([]), owner: f.owner.append(owner) };
   let nodes: i32[] = [];
   for k in 0..stmts.len() {
     let st = stmts[k];
     let n = f.first.len();
-    let (lo, hi) = lu_span(st);
-    f = LuFlow { ...f, first: f.first.append(lo), last: f.last.append(hi), ends: f.ends.append(lu_ends(st)), looping: f.looping.append(lu_is_loop_stmt(st)), kids: f.kids.append([]), block: f.block.append(b), slot: f.slot.append(k) };
+    let span = if (owner < 0) { spans[k] } else { lu_span(st) };
+    f = LuFlow { ...f, first: f.first.append(span.first), last: f.last.append(span.last), ends: f.ends.append(lu_ends(st)), looping: f.looping.append(lu_is_loop_stmt(st)), kids: f.kids.append([]), block: f.block.append(b), slot: f.slot.append(k) };
     nodes = nodes.append(n);
     let kids: i32[] = [];
     for body in lu_bodies(st) {
       kids = kids.append(f.blocks.len());
-      f = lu_flow_block(body, n, f);
+      f = lu_flow_block(body, n, f, []);
     }
     f = LuFlow { ...f, kids: f.kids.with(n, kids) };
   }
@@ -24578,12 +24593,16 @@ function lu_block_ends(stmts: ast.Stmt[]): boolean {
 }
 
 // The places of the first and the last name in `st`, or -1 and -1.
-function lu_span(st: ast.Stmt): (i64, i64) {
+function lu_span(st: ast.Stmt): LuSpan {
   let f = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  return lu_occ_span(f.occ, 0);
+}
+
+function lu_occ_span(occ: LuOcc[], start: i32): LuSpan {
   let lo = -1i64;
   let hi = -1i64;
-  for o in f.occ {
-    let at = lu_place(o.line, o.col);
+  for i in start..occ.len() {
+    let at = lu_place(occ[i].line, occ[i].col);
     if (lo < 0i64 || at < lo) {
       lo = at;
     }
@@ -24591,7 +24610,7 @@ function lu_span(st: ast.Stmt): (i64, i64) {
       hi = at;
     }
   }
-  return (lo, hi);
+  return LuSpan { first: lo, last: hi };
 }
 
 function lu_holds(fl: LuFlow, n: i32, at: i64): boolean {
@@ -27084,25 +27103,24 @@ function lu_direct_callback_loans(body: ast.Stmt[], own facts: LuFacts): LuFacts
   return LuFacts { ...facts, captured: lu_without_names(facts.captured, ended), escaping: lu_without_names(facts.escaping, ended) };
 }
 
-function lu_function(fn: parser.FuncDecl, facts: LuFacts, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): LuFn {
+function lu_function(fn: parser.FuncDecl, facts: LuFacts, spans: LuSpan[], ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): LuFn {
   let decls: string[] = [];
   for v in facts.vars {
     decls = decls.append(v.name);
   }
-  return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, decls: util.name_index(decls), params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body) };
+  return LuFn { checked_params: lu_checked_params(fn), ret_own: fn.ret_own, facts: facts, decls: util.name_index(decls), params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, lenders: lenders, builtins: builtins, noret: noret, looped: lu_looped_decls(fn.body, false, []), fresh: [], fresh_known: false, flow: lu_flow(fn.body, spans) };
 }
 
 // `fn` is resolved with lu_resolved, so each lambda in its body is resolved too.
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, lenders: OwnLenders, builtins: util.NameIndex, noret: util.NameIndex): string[] {
-  let facts = lu_empty_facts();
+  let (facts, spans) = lu_body_facts(fn.body);
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
-    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, astwalk.keep_lambdas, astwalk.collect_lambda, not_lambda);
   }
   facts = lu_ended_callback_loans(fn.body, facts);
   facts = lu_direct_callback_loans(fn.body, facts);
-  let fx0 = lu_function(fn, facts, ofuncs, borrows, lenders, builtins, noret);
+  let fx0 = lu_function(fn, facts, spans, ofuncs, borrows, lenders, builtins, noret);
   let fx = LuFn { ...fx0, fresh: lu_fresh_names(fx0), fresh_known: true };
   let none: ast.Expr = ast.ExprUnknown { fault: ast.fault_mark(""), line: 0, col: 0 };
   let top = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], bindings: [], loop_depth: 0, in_loop: false, in_iife: false, in_defer: false };
@@ -27306,11 +27324,8 @@ function ow_spread_refusal(arg: ast.Expr, ctx: OwnCtx): string {
   }
   let lu = ctx.last_use.get();
   let fn = lu_resolved(lu.typed_fn);
-  let facts = lu_empty_facts();
-  for st in fn.body {
-    facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
-  }
-  let fx = lu_function(fn, facts, lu.ofuncs, lu.borrows, lu.lenders, lu.builtins, lu.noret);
+  let (facts, spans) = lu_body_facts(fn.body);
+  let fx = lu_function(fn, facts, spans, lu.ofuncs, lu.borrows, lu.lenders, lu.builtins, lu.noret);
   let value = arg;
   if let ast.ExprIdent(id) = arg {
     for occ in facts.occ {
