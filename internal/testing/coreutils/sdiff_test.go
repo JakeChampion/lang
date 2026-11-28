@@ -28,6 +28,12 @@ func sdiffCases(t *testing.T) []invocation {
 	w("crlf", "a\r\nB\r\nc\r\n")
 	w("ws1", "a  b\n\nC\n")
 	w("ws2", "a b\nc\n")
+	w("nul-assist", `#!/bin/sh
+printf ' note\000hidden\ni1,1\000hidden\nleft\000right\n'
+`)
+	if err := os.Chmod(filepath.Join(dir, "nul-assist"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	w("bin1", "\x00a\n")
 	w("bin2", "\x00b\n")
 	diffMkdir(t, dir, "dA", "dB")
@@ -102,6 +108,7 @@ func sdiffCases(t *testing.T) []invocation {
 		merge("merge left then right", "l\nr\n", nil, "a", "b"),
 		merge("merge at the end of input", "", nil, "a", "b"),
 		merge("merge equal files", "", nil, "a", "a"),
+		merge("merge with NUL in command headers and data", "", nil, "--diff-program=./nul-assist", "bin1", "bin2"),
 		merge("merge binary files", "", nil, "bin1", "bin2"),
 		merge("merge directories", "", nil, "dA", "dB"),
 		merge("merge a file and a directory", "", nil, "a", "dA"),
