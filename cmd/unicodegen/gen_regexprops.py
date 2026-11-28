@@ -27,6 +27,9 @@ def ranges(points):
 
 
 def emit(name, points):
+    if not points:
+        print(f"\nvar {name} = [][2]rune{{}}")
+        return
     print(f"\nvar {name} = [][2]rune{{")
     for lo, hi in ranges(points):
         print(f"\t{{0x{lo:04X}, 0x{hi:04X}}},")
