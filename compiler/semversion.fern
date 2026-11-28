@@ -41,8 +41,8 @@ struct Counter { phi: i32, init: i32, step: i32, bound: i32, inclusive: boolean,
 // An access the test covers: the array whose length the test reads, and its
 // index, `scale` times the counter plus `delta` plus each of `terms` times its
 // one of `factors`, or minus that where `minus` holds. The access reads `span` elements from its
-// index.
-struct Site { result: i32, array: i32, counter: i32, scale: i32, span: i32, delta: i32, terms: i32[], factors: i32[], minus: boolean[] }
+// index. A `probe` is the check of a group of accesses, which the copy drops.
+struct Site { result: i32, array: i32, counter: i32, scale: i32, span: i32, delta: i32, terms: i32[], factors: i32[], minus: boolean[], probe: boolean }
 
 // A constant offset, step or scale above these keeps the checks, so no sum
 // of them overflows an i32.
@@ -369,11 +369,13 @@ function covered(f: ssasem.Func, ix: Index, s: Shape): Site[] {
   let out: Site[] = [];
   for id in s.blocks {
     for ins in g.blocks[ix.at[id]].insts {
-      if (checked_access(ins)) {
-        let site = index_site(f, ix, s, ins.args[1]);
+      let probe = group_probe(ins);
+      let (low, extra) = if (probe) { probe_low(ix.defs, ins.args[1]) } else if (checked_access(ins)) { (ins.args[1], 0) } else { (-1, 0) };
+      if (low >= 0) {
+        let site = index_site(f, ix, s, low);
         let array = fixed_length(f, ix, s, ins.args[0]);
         if (site.counter >= 0 && util.index_of_i32(s.counters[site.counter].outside, id) < 0 && array >= 0) {
-          out = out.append(Site { ...site, result: ins.result, array: array, span: span_of(f, ins) });
+          out = out.append(Site { ...site, result: ins.result, array: array, span: if (probe) { extra + 1 } else { span_of(f, ins) }, probe: probe });
         }
       }
     }
@@ -386,6 +388,34 @@ function checked_access(ins: ssa.SInst): boolean {
     return false;
   }
   return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && (ins.str == "" || ins.str == "lane_bytes") || ins.kind_tag == ssasem.with() && ins.args.len() == 3;
+}
+
+// The check of a group of accesses that `ssabounds.grouped_accesses` makes.
+function group_probe(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.array_get() && ins.args.len() == 2 && ins.imm == ssasem.check_only();
+}
+
+// The lowest index `lo` of a group check and the span `c` past it, from
+// its index `(lo + c) | (lo >> 31)`, or a value of -1.
+function probe_low(d: ssa.SInst[], v: i32): (i32, i32) {
+  let or = d[ssa.copy_root(d, v)];
+  if (or.kind_tag != ssa.BINARY || or.str != "|" || or.args.len() != 2) {
+    return (-1, 0);
+  }
+  let sum = d[ssa.copy_root(d, or.args[0])];
+  let sign = d[ssa.copy_root(d, or.args[1])];
+  if (sum.kind_tag != ssa.BINARY || sum.str != "+" || sum.args.len() != 2 || !int_const(d, sum.args[1])) {
+    return (-1, 0);
+  }
+  if (sign.kind_tag != ssa.BINARY || sign.str != ">>" || sign.args.len() != 2 || !int_const(d, sign.args[1]) || d[ssa.copy_root(d, sign.args[1])].imm != 31) {
+    return (-1, 0);
+  }
+  let lo = ssa.copy_root(d, sum.args[0]);
+  let c = d[ssa.copy_root(d, sum.args[1])].imm;
+  if (lo != ssa.copy_root(d, sign.args[0]) || c < 1 || c > MAX_CONST) {
+    return (-1, 0);
+  }
+  return (lo, c);
 }
 
 // The elements that the access reads or writes: 16 bytes for a lane value
@@ -404,7 +434,7 @@ function span_of(f: ssasem.Func, ins: ssa.SInst): i32 {
 // The index `v` as a counter plus a sum of constants and values from before
 // the loop, or a site with a counter of -1.
 function index_site(f: ssasem.Func, ix: Index, s: Shape, v: i32): Site {
-  let none = Site { result: -1, array: -1, counter: -1, scale: 1, span: 1, delta: 0, terms: [], factors: [], minus: [] };
+  let none = Site { result: -1, array: -1, counter: -1, scale: 1, span: 1, delta: 0, terms: [], factors: [], minus: [], probe: false };
   let out = sum_of(f, ix, s, v, false, none, 0);
   if (out.delta > MAX_CONST || out.delta < -MAX_CONST) {
     return none;
@@ -757,7 +787,7 @@ function versioned(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Option[s
   let marks: i32[] = [];
   for site in sites {
     fast = fast.append(vmap[site.result]);
-    marks = marks.append(if (site.span > 1) { ssasem.lane_span_proven() } else { 1 });
+    marks = marks.append(if (site.probe) { -1 } else if (site.span > 1) { ssasem.lane_span_proven() } else { 1 });
   }
   let copies: ssa.SBlock[] = [ssa.SBlock { id: fast_in, insts: [], term: ssa.t_br(bmap[s.head]), preds: [gid] }];
   for id in s.blocks {
@@ -766,6 +796,9 @@ function versioned(f: ssasem.Func, ix: Index, s: Shape, sites: Site[]): Option[s
     for ins in b.insts {
       let c = cloned(ins, vmap);
       let site = util.index_of_i32(fast, c.result);
+      if (site >= 0 && marks[site] < 0) {
+        continue;
+      }
       if (site >= 0) {
         c = ssa.SInst { ...c, imm: marks[site] };
       }
