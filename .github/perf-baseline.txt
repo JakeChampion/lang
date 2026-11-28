@@ -104,7 +104,7 @@ x86_64/struct_drop.ir	199020504
 x86_64/tokenize.text	1270
 x86_64/tokenize.ir	30310112
 x86_64/utf8_ingest_unchecked.text	8986
-x86_64/utf8_ingest_unchecked.ir	1737264
+x86_64/utf8_ingest_unchecked.ir	1704864
 x86_64/utf8_ingest_validated.text	9658
 x86_64/utf8_ingest_validated.ir	3229500
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -183,7 +183,7 @@ aarch64/struct_drop.ir	214300755
 aarch64/tokenize.text	1513
 aarch64/tokenize.ir	31870127
 aarch64/utf8_ingest_unchecked.text	9228
-aarch64/utf8_ingest_unchecked.ir	1749477
+aarch64/utf8_ingest_unchecked.ir	1715477
 aarch64/utf8_ingest_validated.text	9975
 aarch64/utf8_ingest_validated.ir	3711501
 x86_64/perceus_cfold.text	2280
