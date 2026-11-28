@@ -4574,10 +4574,53 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   if (ssa.low_word_pair(blk, ii - 1, fr.uses) && ssa.carry_role(fr.carry, blk.insts[ii - 1]) == 0) {
     return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
+  if (ssa_mul_add_pair(fr, blk, ii)) {
+    return s;
+  }
+  if (ssa_mul_add_pair(fr, blk, ii - 1)) {
+    return ssa_mul_add(blk.insts[ii - 1], ins, reg_of, s);
+  }
   if (ins.kind_tag == ssa.PARAM || ins.kind_tag == ssa.PHI || ssa_feeds_select(fr, blk, ii + 1) || ssa_shape_feeds_select(fr, blk, ii)) {
     return s;
   }
   return ssa_inst(ins, reg_of, fr, lp, r, s);
+}
+
+// The multiplication at `ii` feeds only the addition or the subtraction
+// after it, so one madd or msub makes the sum. The multiplication emits
+// nothing, and its operands keep their registers to the next instruction.
+function ssa_mul_add_pair(fr: SsaFrame, blk: ssa.SBlock, ii: i32): boolean {
+  if (ii < 0 || ii + 1 >= blk.insts.len() - ssa_fuse(ssa_fuse_view(fr), blk).n) {
+    return false;
+  }
+  let m = blk.insts[ii];
+  let a = blk.insts[ii + 1];
+  if (m.kind_tag != ssa.BINARY || m.ir_kind != ir.K_MUL || m.args.len() != 2 || m.result < 0 || fr.uses[m.result] != 1) {
+    return false;
+  }
+  if (a.kind_tag != ssa.BINARY || a.args.len() != 2 || a.ir_kind != ir.K_ADD && a.ir_kind != ir.K_SUB) {
+    return false;
+  }
+  if (ssa.carry_role(fr.carry, m) != 0 || ssa.carry_role(fr.carry, a) != 0 || ssa.low_word_pair(blk, ii + 1, fr.uses) || ssa_feeds_select(fr, blk, ii + 2)) {
+    return false;
+  }
+  // c - a * b is msub. a * b - c has no single instruction.
+  let other = if (a.args[1] == m.result) { a.args[0] } else { a.args[1] };
+  if (a.args[1] != m.result && (a.args[0] != m.result || a.ir_kind == ir.K_SUB) || other == m.result) {
+    return false;
+  }
+  return !fr.imm.is_imm[m.args[0]] && !fr.imm.is_imm[m.args[1]] && !fr.imm.is_imm[other];
+}
+
+function ssa_mul_add(m: ssa.SInst, a: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let other = if (a.args[1] == m.result) { a.args[0] } else { a.args[1] };
+  s = ssa_read(reg_of, m.args[0], "x4", s);
+  s = ssa_read(reg_of, m.args[1], "x5", s);
+  s = ssa_read(reg_of, other, "x6", s);
+  let d = ssa_dst(reg_of, a.result);
+  let op = if (a.ir_kind == ir.K_SUB) { "msub " } else { "madd " };
+  s = s.write("    " + op + d + ", " + ssa_src(reg_of, m.args[0], "x4") + ", " + ssa_src(reg_of, m.args[1], "x5") + ", " + ssa_src(reg_of, other, "x6") + "\n");
+  return ssa_store(reg_of, a.result, d, s);
 }
 
 struct SelectCond { fu: SsaFuse, first: boolean }
