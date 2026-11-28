@@ -915,6 +915,9 @@ function with_patterns(o: Options, positional: string[]): Result[Options, string
   if (positional.len() == 0) {
     return Err("ripgrep requires at least one pattern to execute a search");
   }
+  if (encoding.invalid_at(positional[0]) >= 0) {
+    return Err("pattern given is not valid UTF-8");
+  }
   return Ok(Options { ...o, patterns: [positional[0]], paths: positional.drop(1) });
 }
 

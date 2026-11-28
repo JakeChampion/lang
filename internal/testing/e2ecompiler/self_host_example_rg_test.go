@@ -414,7 +414,7 @@ func rgLateCases() []rgCase {
 		"--generate complete-bash", "--generate complete-zsh", "--generate complete-fish", "--generate complete-powershell",
 		"--generate bogus", "--generate man -c",
 		"-e \xff a.txt", "--glob=\xff foo a.txt", "-m\xff foo a.txt", "--context-separator \xff foo a.txt",
-		"--hostname-bin \xff foo a.txt",
+		"--hostname-bin \xff foo a.txt", "-- \xff a.txt", "--no-unicode \xff a.txt",
 		"--engine bogus foo a.txt", "--engine default foo a.txt", "--engine auto foo a.txt", "--dfa-size-limit 10 foo a.txt",
 		"--dfa-size-limit 1Q foo a.txt", "--regex-size-limit 99999999999999999999 foo a.txt", "--regex-size-limit 1 foo a.txt",
 		"--line-buffered foo a.txt", "--block-buffered foo a.txt", "--no-line-buffered --no-block-buffered foo a.txt",
