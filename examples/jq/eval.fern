@@ -239,29 +239,23 @@ pub function evaluate(f: filter.Ast, input: json.JsonValue, e: Env, k: (json.Jso
 // Each value of `o` to `k`, and then the error of `o`. The last value is the
 // last call when there is no error.
 function give(o: Outputs, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let n = o.values.len();
-  if (n > 0 && o.error.len() == 0) {
-    let t = give_some(o.values, n - 1, k, st);
-    if (t.sig != OK) {
-      return t;
-    }
-    return k(o.values[n - 1], t);
-  }
-  let s = give_some(o.values, n, k, st);
-  if (s.sig != OK || o.error.len() == 0) {
-    return s;
-  }
-  return raised(s, o.error[0]);
+  return give_from(o, 0, k, st);
 }
 
-// The first `n` values of `vs` to `k`.
-function give_some(vs: json.JsonValue[], n: i32, k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let s = st;
-  for i in 0..n {
-    s = drive(k(vs[i], s));
-    if (s.sig != OK) {
-      return s;
+function give_from(o: Outputs, at: i32, k: (json.JsonValue, own St) => own St, own s: St): own St {
+  while (s.sig == OK && at < o.values.len()) {
+    let v = o.values[at];
+    at += 1;
+    if (at == o.values.len() && o.error.len() == 0) {
+      return k(v, s);
     }
+    s = k(v, s);
+    if (s.sig == BOUNCE) {
+      return St { ...s, next: s.next.append((own t: St): own St => give_from(o, at, k, t)) };
+    }
+  }
+  if (s.sig == OK && o.error.len() > 0) {
+    return raised(s, o.error[0]);
   }
   return s;
 }
@@ -595,15 +589,7 @@ function defined(name: string, params: string[], body: filter.Ast, e: Env): Func
 
 // Each value of `vs` to `k`. The last value is the last call.
 function give_all(vs: json.JsonValue[], k: (json.JsonValue, own St) => own St, own st: St): own St {
-  let n = vs.len();
-  if (n == 0) {
-    return st;
-  }
-  let s = give_some(vs, n - 1, k, st);
-  if (s.sig != OK) {
-    return s;
-  }
-  return k(vs[n - 1], s);
+  return give(ok(vs), k, st);
 }
 
 // The outputs of `f` to `k`. When `f` is single, its outputs come first in
@@ -727,24 +713,10 @@ function lookup(e: Env, name: string): Outputs {
 function iterate_to(v: json.JsonValue, guard: boolean, k: (json.JsonValue, own St) => own St, own st: St): own St {
   match (v) {
     json.JArray(items) => {
-      let s = st;
-      for x in items {
-        s = drive(k(x, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
+      return give_all(items, k, st);
     },
     json.JObject(o) => {
-      let s = st;
-      for x in o.values() {
-        s = drive(k(x, s));
-        if (s.sig != OK) {
-          return s;
-        }
-      }
-      return s;
+      return give_all(o.values(), k, st);
     },
     _ => {
       if (guard) {
