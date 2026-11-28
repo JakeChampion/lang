@@ -2175,6 +2175,11 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
   s = ssa_read(reg_of, a, "x4", s);
   let bx = ssa_rhs_scratch(reg_of, b, s);
   s = ssa_read_rhs(fr, reg_of, b, bx, s);
+  if (tag == ir.K_MUL && fr.imm.is_imm[b]) {
+    let wide = size != 32;
+    s = s.write(mul_imm_asm(fr.imm.value[b], if (wide) { dh } else { ssa_wreg(dh) }, if (wide) { ssa_src(reg_of, a, "x4") } else { ssa_wreg(ssa_src(reg_of, a, "x4")) }));
+    return ssa_store(reg_of, v, dh, s);
+  }
   if (size == 32) {
     s = s.write(ssa_bin3_asm(tag, ssa_wreg(dh), ssa_wreg(ssa_src(reg_of, a, "x4")), ssa_rhs32(ssa_rhs(fr, reg_of, b, bx))));
     return ssa_store(reg_of, v, dh, s);
@@ -5716,12 +5721,76 @@ function ssa_logical_imms(f: ssa.SFunc, imm: ssa.Imms): ssa.Imms {
   return ssa.Imms { ...imm, is_imm: is_imm };
 }
 
+// The shift of a multiplier that one instruction applies: k for 2^k, and
+// 64 + k for 2^k + 1. It is -1 for each other value.
+function mul_imm_shift(c: i64): i32 {
+  for k in 1..63 {
+    let p = 1i64 << k as i64;
+    if (c == p) {
+      return k;
+    }
+    if (c == p + 1i64) {
+      return 64 + k;
+    }
+  }
+  return -1;
+}
+
+function mul_imm_asm(c: i64, d: string, a: string): string {
+  let k = mul_imm_shift(c);
+  if (k >= 64) {
+    return "    add " + d + ", " + a + ", " + a + ", lsl #" + util.i32_to_string(k - 64) + "\n";
+  }
+  return "    lsl " + d + ", " + a + ", #" + util.i32_to_string(k) + "\n";
+}
+
+// A constant is an immediate when each use is a multiplication by it that a
+// shift or a shifted add does.
+function ssa_mul_imms(f: ssa.SFunc, imm: ssa.Imms): ssa.Imms {
+  let fit = __alloc_bool(f.nvals);
+  let any = false;
+  for v in 0..f.nvals {
+    if (imm.konst[v] && !imm.is_imm[v] && mul_imm_shift(imm.value[v]) >= 0) {
+      fit = fit.with(v, true);
+      any = true;
+    }
+  }
+  if (!any) {
+    return imm;
+  }
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let mul = ins.kind_tag == ssa.BINARY && ins.args.len() == 2 && ins.ir_kind == ir.K_MUL;
+      for a in 0..ins.args.len() {
+        let v = ins.args[a];
+        if (v >= 0 && fit[v] && !(mul && !imm.konst[ins.args[1 - a]])) {
+          fit = fit.with(v, false);
+        }
+      }
+    }
+    let t = blk.term;
+    if (t.kind_tag == ssa.TERM_BRIF && t.cond >= 0 && fit[t.cond]) {
+      fit = fit.with(t.cond, false);
+    }
+    if (t.kind_tag == ssa.TERM_RET && t.value >= 0 && fit[t.value]) {
+      fit = fit.with(t.value, false);
+    }
+  }
+  let is_imm = imm.is_imm;
+  for v in 0..f.nvals {
+    if (fit[v]) {
+      is_imm = is_imm.with(v, true);
+    }
+  }
+  return ssa.Imms { ...imm, is_imm: is_imm };
+}
+
 // The immediates, the calls and the registers of `f`.
 struct Allocated { imm: ssa.Imms, call_kinds: i32[], alloc: ssa.Alloc, floats: boolean[] }
 
 function ssa_allocated(f: ssa.SFunc, r: irtables.Lowered, s: asmcore.EmitState): Allocated {
   s = asmcore.EmitState { ...s, ssa_boxed: ssadeps.boxed_values(f), ssa_even: ssadeps.even_values(f) };
-  let imm = ssa_logical_imms(f, ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false, true, false));
+  let imm = ssa_mul_imms(f, ssa_logical_imms(f, ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left(), false, true, false)));
   let call_kinds = ssa.cold_positions(f, s.size, asmcore.ssa_inline_back(s), false);
   let live = ssalive.lives(f, ssa.hard_call_positions(f, call_kinds));
   let floats = ssa.float_values(f, ssa_float_calls(f, s), true);
