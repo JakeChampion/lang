@@ -12,6 +12,7 @@ import (
 // gitLineLogFixture. Each case is split at spaces, and `\s` in a case is a
 // space.
 var gitLineLogCases = []string{
+	`log -L 1:a[b]`, `log -L 1:back\path`, `log --format=%s -- a[b]`, `log --format=%s -- back\path`,
 	// The forms of a range: numbers, offsets, regexes and function names.
 	"log -L 4,12:b.c", "log -L 4,+9:b.c", "log -L 12,-9:b.c", "log -L /int\\sf/,/^}/:b.c", "log -L :f:b.c", "log -L :main:b.c",
 	"log -L 1,+4:b.c", "log -L 30:b.c", "log -L ,5:b.c", "log -L 8,:b.c", "log -L 9,3:b.c", "log -L /return/,+1:b.c",
@@ -100,6 +101,8 @@ func gitLineLogFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 		fmt.Fprintf(&big, "line %d\n", i)
 	}
 	run("init", "-q", "-b", "main", "--object-format="+hash.format, ".")
+	write("a[b]", "brackets\n")
+	write(`back\path`, "backslash\n")
 	write("a.c", code(f("int", "\treturn s;\n"), g, main("15")))
 	write("other.txt", "one\ntwo\n")
 	write("n.c", "int top()\n{\n\treturn 1;\n}\n\nint bot()\n{\n\treturn 2;\n}")
@@ -108,6 +111,8 @@ func gitLineLogFixture(t *testing.T, oracle gitTool, dir string, hash gitRun) {
 	write("empty", "")
 	write("d/sub.c", "int sub(void)\n{\n\treturn 3;\n}\n")
 	commit("initial")
+	write("ab", "bracket match\n")
+	write("backpath", "escaped match\n")
 	write("a.c", code(f("long", "\treturn s;\n"), g, main("15")))
 	commit("f: long")
 	write("a.c", code(f("long", "\treturn s;\n"), g, main("16")))
