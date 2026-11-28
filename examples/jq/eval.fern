@@ -2004,7 +2004,7 @@ function run_paths(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) =>
 function paths_more(f: filter.Ast, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
   match (f) {
     filter.Foreach(source, name, init, update, extract) => {
-      return run(init, it.value, e, (first: json.JsonValue, own s: St): own St => paths_foreach(source, name, update, extract, first, it, e, k, s), st);
+      return run_paths(init, it, e, (first: PathItem, own s: St): own St => paths_foreach(source, name, update, extract, first, it, e, k, s), st);
     },
     filter.Catch(body, handler) => {
       return finish_catch(run_paths(body, it, e, pescaping(k), st), (err: json.JsonValue, own t: St): own St => run_paths(handler, off_path(it, err, false), e, k, t));
@@ -2122,11 +2122,12 @@ function paths_alt(a: filter.Ast, b: filter.Ast, it: PathItem, e: Env, k: (PathI
   return finish_alt(depth, (own t: St): own St => run_paths(b, it, e, k, t), s);
 }
 
-// jq keeps the value of the state of a `foreach` and not its path. Each
-// update starts at the path of the `foreach` itself.
-function paths_foreach(source: filter.Ast, name: string, update: filter.Ast, extract: filter.Ast, first: json.JsonValue, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
+// The initializer, source and update each see the path left by the previous
+// filter. The source receives the original input and the update receives
+// the accumulator, which can be detached from that path.
+function paths_foreach(source: filter.Ast, name: string, update: filter.Ast, extract: filter.Ast, first: PathItem, it: PathItem, e: Env, k: (PathItem, own St) => own St, own st: St): own St {
   let depth = st.stack.len();
-  let s = run(source, it.value, e, (x: json.JsonValue, own s1: St): own St => paths_foreach_step(update, extract, name, x, depth, it, e, k, s1), St { ...st, stack: st.stack.append(first) });
+  let s = run_paths(source, off_path(first, it.value, true), e, (x: PathItem, own s1: St): own St => paths_foreach_step(update, extract, name, x.value, depth, x, e, k, s1), St { ...st, stack: st.stack.append(first.value) });
   return finish_foreach(depth, s);
 }
 
