@@ -175,6 +175,7 @@ printf leaf > leaf
 	duRaw(t, j("x4"), "f1\x00f2\n")
 	duRaw(t, j("x5"), "f2")
 	duRaw(t, j("x6"), "\rf2\n")
+	duRaw(t, j("x7"), "f1 \t\n f2\nf2\v\f\r")
 	return dir
 }
 
@@ -477,6 +478,7 @@ func duCases(t *testing.T) []invocation {
 	add("exclude-from-spaces", "-X", "x3", "-a", "a")
 	add("exclude-from-nul", "-X", "x4", "-a", "a")
 	add("exclude-from-no-newline", "-X", "x5", "-a", "a")
+	add("exclude-from-trailing-whitespace", "-X", "x7", "-a", "a")
 	add("exclude-from-leading-cr", "-X", "x6", "-a", "a")
 	add("exclude-from-empty", "-X", "/dev/null", "-a", "a")
 	add("exclude-from-missing", "-X", "/nonexistent", "a")

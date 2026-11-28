@@ -6,6 +6,7 @@ import "std/i64";
 import "std/io_buffered";
 import "std/io";
 import "std/utf8";
+import "std/u8";
 import "core/map";
 import "./lib/gnu";
 import "./lib/fnmatch";
@@ -687,7 +688,7 @@ function exclude_patterns(text: u8[]): fnmatch.BytePattern[] {
   while (i <= text.len()) {
     if (i == text.len() || text[i] as i32 == 10) {
       let stop = i;
-      while (stop > start && text[stop - 1] as i32 == 13) {
+      while (stop > start && text[stop - 1].is_ascii_whitespace()) {
         stop -= 1;
       }
       let j = start;
