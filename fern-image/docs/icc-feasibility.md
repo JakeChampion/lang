@@ -16,6 +16,7 @@ The explicit orientation operation only permutes channel bytes.
 
 The first candidate is an ICC.1 v4.4 RGB matrix/TRC path for input or display profiles with an XYZ PCS.
 The transform will initially support an explicit media-relative colorimetric request to a declared sRGB destination.
+[Decision 0003](decisions/0003-icc-srgb-destination.md) declares that destination and its intent, adaptation, clip, alpha, and order policies.
 This is a proposed admission subset, not a statement that other profiles are invalid.
 Unsupported profiles must return an explicit error.
 The engine must not discard a profile and reinterpret its samples as sRGB.
