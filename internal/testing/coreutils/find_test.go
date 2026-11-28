@@ -43,6 +43,11 @@ func findCases(t *testing.T) []invocation {
 	cases = append(cases, findMaskedCases(shared)...)
 	cases = append(cases, findInodeCases(shared)...)
 	cases = append(cases, findOkCases(shared)...)
+	cases = append(cases,
+		invocation{name: "find files0 empty between paths", args: []string{"-files0-from", "-", "-maxdepth", "0"}, stdin: "old\x00\x00small", dir: shared},
+		invocation{name: "find files0 quit before empty", args: []string{"-files0-from", "-", "-print", "-quit"}, stdin: "small\x00\x00", dir: shared},
+		invocation{name: "find files0 conflicts with okdir", args: []string{"-files0-from", "-", "-okdir", "echo", ";", "-print"}, dir: shared},
+	)
 	cases = append(cases, findChangeCases()...)
 	cases = append(cases, findOutputCases(shared)...)
 	cases = append(cases, findLines(many, findManyLines)...)
