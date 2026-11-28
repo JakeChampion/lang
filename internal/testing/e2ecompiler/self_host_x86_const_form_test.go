@@ -143,22 +143,28 @@ func TestSelfHostConstZeroExtendedFormX86_64(t *testing.T) {
 @noinline function hex(): u32 { return 0xffffffff; }
 @noinline function small64(): i64 { return 4294967295i64; }
 @noinline function wide64(): i64 { return 4294967296i64; }
+@noinline function padded(): u64 { return 0x00000000fffffffeu64; }
+@noinline function padded_wide(): u64 { return 0x00000001fffffffeu64; }
 function main(): i32 {
     let h: u32 = hex();
     let w: i64 = wide64();
     let r: i32 = pos() + zero() + neg();
     if (h == 4294967295) { r = r + 10; }
     if (w == small64() + 1i64) { r = r + 100; }
+    if (padded() == 4294967294u64) { r = r + 50; }
+    if (padded_wide() == 8589934590u64) { r = r + 80; }
     return r;
 }`,
-			want: 114,
+			want: 244,
 			has: map[string][]string{
-				"pos":     {`\n    movl \$7, %e[a-z0-9]+\n`},
-				"zero":    {`\n    xorl %(e[a-z0-9]+), %\1\n`},
-				"neg":     {`\n    movq \$-3, %r[a-z0-9]+\n`},
-				"hex":     {`\n    movl \$0xffffffff, %e[a-z0-9]+\n`},
-				"small64": {`\n    movl \$4294967295, %e[a-z0-9]+\n`},
-				"wide64":  {`\n    movabsq \$4294967296, %r[a-z0-9]+\n`},
+				"pos":         {`\n    movl \$7, %e[a-z0-9]+\n`},
+				"zero":        {`\n    xorl %(e[a-z0-9]+), %\1\n`},
+				"neg":         {`\n    movq \$-3, %r[a-z0-9]+\n`},
+				"hex":         {`\n    movl \$0xffffffff, %e[a-z0-9]+\n`},
+				"small64":     {`\n    movl \$4294967295, %e[a-z0-9]+\n`},
+				"wide64":      {`\n    movabsq \$4294967296, %r[a-z0-9]+\n`},
+				"padded":      {`\n    movl \$0x00000000fffffffe, %e[a-z0-9]+\n`},
+				"padded_wide": {`\n    movabsq \$0x00000001fffffffe, %r[a-z0-9]+\n`},
 			},
 			lacks: map[string][]string{
 				"pos":     {`movq \$7`},
@@ -167,6 +173,7 @@ function main(): i32 {
 				"hex":     {`movq \$0xffffffff`},
 				"small64": {`movabsq`, `movq \$4294967295`},
 				"wide64":  {`movl`},
+				"padded":  {`movabsq`, `movq`},
 			},
 		},
 	})
