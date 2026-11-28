@@ -1382,15 +1382,19 @@ function count_to(from: json.JsonValue, upto: json.JsonValue, k: (json.JsonValue
   let json.JNumber(t) = upto else {
     return failed_with(st, "Range bounds must be numeric");
   };
-  let x = number.value(f);
-  let end = number.value(t);
+  return count_from(number.value(f), number.value(t), k, st);
+}
+
+function count_from(start: f64, end: f64, k: (json.JsonValue, own St) => own St, own st: St): own St {
+  let x = start;
   let s = st;
-  while (x < end) {
-    s = drive(k(computed(x), s));
-    if (s.sig != OK) {
-      return s;
-    }
+  while (s.sig == OK && x < end) {
+    s = k(computed(x), s);
     x += 1.0;
+    if (s.sig == BOUNCE) {
+      let next = x;
+      return St { ...s, next: s.next.append((own t: St): own St => count_from(next, end, k, t)) };
+    }
   }
   return s;
 }
@@ -1402,18 +1406,31 @@ function steps_to(from: json.JsonValue, upto: json.JsonValue, by: json.JsonValue
   if (direction == 0) {
     return st;
   }
+  return step_from(from, upto, by, direction, false, k, st);
+}
+
+// A suspended sink resumes after its value. Add the step only when the
+// sink finishes normally, since addition itself can raise an error.
+function step_from(from: json.JsonValue, upto: json.JsonValue, by: json.JsonValue, direction: i32, advance: boolean, k: (json.JsonValue, own St) => own St, own st: St): own St {
   let x = from;
   let s = st;
-  while (order(x, upto) * direction < 0) {
-    s = drive(k(x, s));
-    if (s.sig != OK) {
+  while (s.sig == OK) {
+    if (advance) {
+      let next = add(x, by);
+      if (next.failed()) {
+        return raised(s, next.error[0]);
+      }
+      x = next.values[0];
+    }
+    if (order(x, upto) * direction >= 0) {
       return s;
     }
-    let next = add(x, by);
-    if (next.failed()) {
-      return raised(s, next.error[0]);
+    s = k(x, s);
+    if (s.sig == BOUNCE) {
+      let last = x;
+      return St { ...s, next: s.next.append((own t: St): own St => step_from(last, upto, by, direction, true, k, t)) };
     }
-    x = next.values[0];
+    advance = true;
   }
   return s;
 }

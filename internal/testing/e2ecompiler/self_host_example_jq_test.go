@@ -234,6 +234,8 @@ func TestSelfHostExampleJqDeepRecursion(t *testing.T) {
 		{"def f: if . == 0 then 0 else [. - 1 | f] | .[0] + 1 end; 5000 | f", "5000"},
 		{"def f: if . == 0 then 0 else {a: (. - 1 | f)} | .a + 1 end; 5000 | f", "5000"},
 		{"def f: if . == 0 then null else (. - 1 | f) // 1 end; 5000 | f", "1"},
+		{"def f: if . == 0 then 0 else range(.-1;.) | f end; 5000 | f", "0"},
+		{"def f: if . == 0 then 0 else range(.-1;.-2;-1) | f end; 5000 | f", "0"},
 		{"def f: if . == 0 then 0 else reduce (. - 1 | f) as $x (1; . + $x) end; 5000 | f", "5000"},
 		{"def f: if . == 0 then 0 else foreach (. - 1 | f) as $x (1; . + $x) end; 5000 | f", "5000"},
 		{"def f: if . == 0 then 0 else (. - 1 | f) as $x | $x + 1 end; 5000 | f", "5000"},
