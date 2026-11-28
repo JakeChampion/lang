@@ -109,15 +109,15 @@ function spills(g: ircore.Gated, arm: boolean, params: i32): void {
   if (arm) {
     require(a.saved.len() > 0, 119);
   } else {
-    let incoming = 0;
+    let incoming = false;
     for p in 6..params {
       let h = a.alloc.reg_of[p];
       if (h < -1 && a.arg_homes[ssa.spill_slot(h)] != 0) {
         require(a.arg_homes[ssa.spill_slot(h)] == 16 + 8 * p, 119);
-        incoming += 1;
+        incoming = true;
       }
     }
-    require(incoming > 0, 119);
+    require(incoming, 119);
   }
   for home in a.alloc.reg_of {
     if (home < -1) {
