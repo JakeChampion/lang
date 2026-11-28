@@ -1492,7 +1492,7 @@ function jni_java_class(class: string, library: string, methods: JniMethod[]): s
 // The library name that System.loadLibrary takes for `out_path`, such as
 // "fern" for "lib/arm64-v8a/libfern.so".
 function jni_library(out_path: string): string {
-  let base = slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned();
+  let base = util.path_base(out_path);
   if (base.starts_with("lib")) {
     base = slice_unchecked(base, 3, base.len()).to_owned();
   }
@@ -1516,7 +1516,7 @@ function write_jni_java(dir: string, out_path: string, methods: JniMethod[]): st
   }
   for class in classes {
     let path = dir + "/" + class.replace(".", "/") + ".java";
-    let parent = slice_unchecked(path, 0, util.last_slash(path)).to_owned();
+    let parent = util.dir_of(path);
     match (create_dir_all(parent)) {
       Err(e) => {
         return "-jni-java: cannot make " + parent + ": " + e.message();
@@ -5353,7 +5353,7 @@ function run_built(target: string, out: string, prog_args: string[], qemu: strin
     emu = "qemu-x86_64";
   }
   let emu_path = emu;
-  if (util.last_slash(emu) < 0) {
+  if (!emu.contains("/")) {
     emu_path = find_on_path(emu);
   }
   if (emu_path.len() == 0) {
@@ -7645,7 +7645,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     }
     out_asm += branch_protection_text(emit_text && harden);
     if (!emit_text && shared) {
-      image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
+      image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, util.path_base(out_path), target, merged, harden);
       if (image.len() == 0) {
         return 2;
       }
@@ -7706,7 +7706,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     }
     out_asm += branch_protection_text(emit_text && harden);
     if (!emit_text && shared) {
-      image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged, harden);
+      image = arm64_elf_shared(out_asm, words_of(recs), shared_roots, util.path_base(out_path), target, merged, harden);
       if (image.len() == 0) {
         return 2;
       }
@@ -7807,7 +7807,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       out_asm = export_entries(merged, entry_names(merged, shared_roots), false, harden) + import_entries(merged, false) + out_asm;
     }
     if (!emit_text && shared) {
-      image = x86_elf_shared(out_asm, words_of(recs), shared_roots, slice_unchecked(out_path, util.last_slash(out_path) + 1, out_path.len()).to_owned(), target, merged);
+      image = x86_elf_shared(out_asm, words_of(recs), shared_roots, util.path_base(out_path), target, merged);
       if (image.len() == 0) {
         return 2;
       }
