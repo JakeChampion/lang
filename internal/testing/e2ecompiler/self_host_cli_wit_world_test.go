@@ -132,6 +132,63 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("exports-from-a-fern-provider", func(t *testing.T) {
+		write(filepath.Join(userWit, "deps", "echo", "echo.wit"), `package local:echo@0.1.0;
+interface service {
+    text-size: func(text: string) -> s32;
+    make-list: func(n: s32) -> list<s32>;
+    twice: func(v: s32) -> s32;
+}`)
+		write(filepath.Join(userWit, "service.wit"), `package local:userworld@0.0.0;
+world server { import wasi:cli/stdout@0.2.0; import wasi:cli/stderr@0.2.0; import wasi:cli/exit@0.2.0; export local:echo/service@0.1.0; }
+world client { import wasi:cli/stdout@0.2.0; import wasi:cli/stderr@0.2.0; import wasi:cli/exit@0.2.0; import local:echo/service@0.1.0; }`)
+		build := func(worldName, program string) string {
+			t.Helper()
+			worldPath := filepath.Join(dir, worldName+"-world.wasm")
+			run(wasmtools, "component", "embed", userWit, "-w", worldName, "--dummy", "-o", worldPath)
+			src := write(filepath.Join(dir, worldName+".fern"), program)
+			out := filepath.Join(dir, worldName+".wasm")
+			if log, err := cli.compileCmd("wasm32-wasi", out, src, "-wit", worldPath).CombinedOutput(); err != nil {
+				t.Fatalf("compile %s: %v\n%s", worldName, err, log)
+			}
+			run(wasmtools, "validate", out)
+			return out
+		}
+		server := build("server", `@export("local:echo/service@0.1.0", "text-size")
+function text_size(s: string): i32 { return s.len(); }
+@export("local:echo/service@0.1.0", "make-list")
+function make_list(n: i32): i32[] { return [n, 21]; }
+@export("local:echo/service@0.1.0", "twice")
+function twice(n: i32): i32 { return n + n; }
+function main(): i32 { return 0; }`)
+		mismatch := write(filepath.Join(dir, "mismatch.fern"), `@export("local:echo/service@0.1.0", "make-list")
+function wrong(n: i32): i64[] { return [n as i64]; }
+function main(): i32 { return 0; }`)
+		cmd := cli.compileCmd("wasm32-wasi", filepath.Join(dir, "mismatch.wasm"), mismatch, "-wit", filepath.Join(dir, "server-world.wasm"))
+		if log, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(log), "WIT expects a list of i32 where Fern declares i64[]") {
+			t.Fatalf("mismatched list result: %v\n%s", err, log)
+		}
+		client := build("client", `@import("local:echo/service@0.1.0", "text-size")
+function text_size(s: string): i32;
+@import("local:echo/service@0.1.0", "make-list")
+function make_list(n: i32): i32[];
+@import("local:echo/service@0.1.0", "twice")
+function twice(n: i32): i32;
+function main(): i32 {
+    for i in 0..12000 {
+        let xs = make_list(i);
+        if (xs.len() != 2 || xs[0] != i || twice(xs[1]) != 42 || text_size("abc") != 3) { return 1; }
+    }
+    write("echo-ok"); return 0;
+}`)
+		final := filepath.Join(dir, "echo.wasm")
+		run(wasmtools, "compose", client, "--definitions", server, "-o", final)
+		out, err := exec.Command(wasmtime, "run", "-W", "max-memory-size=2097152", final).CombinedOutput()
+		if err != nil || !strings.Contains(string(out), "echo-ok") {
+			t.Fatalf("component round trip: %v\n%s", err, out)
+		}
+	})
+
 	t.Run("without-wit-the-fern-world-refuses", func(t *testing.T) {
 		out, code := compile("wasm32-wasi", filepath.Join(dir, "fern.wasm"))
 		if code != 2 || !strings.Contains(out, "the fern world cannot take this program") {
