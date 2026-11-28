@@ -99,10 +99,18 @@ function step(own p: f32[]): f32[] { return p.with(0, p[0] + 3.5 as f32); }
 function main(): i32 { return 0; }`)
 	const check = `const fs=require('node:fs'),assert=require('node:assert/strict');
 (async()=>{const{instance:{exports:e}}=await WebAssembly.instantiate(fs.readFileSync(process.argv[1]),{wasi_snapshot_preview1:{proc_exit:c=>{throw Error(c)},fd_write:()=>0}});
-const a=e['fern:test/f32#create'](),d=new Uint32Array(e.memory.buffer,a,2);
-assert.deepEqual([...new Float32Array(e.memory.buffer,d[0],d[1])],[1.25,2.5]);
-const b=e['fern:test/f32#step'](d[0],d[1]),r=new Uint32Array(e.memory.buffer,b,2);
-assert.deepEqual([...new Float32Array(e.memory.buffer,r[0],r[1])],[4.75,2.5]);})().catch(e=>{console.error(e);process.exit(1)});`
+const lift=(area,post)=>{
+  const [ptr,len]=new Uint32Array(e.memory.buffer,area,2);
+  const values=new Float32Array(e.memory.buffer,ptr,len).slice();
+  e[post](area);
+  return values;
+};
+const values=lift(e['fern:test/f32#create'](),'cabi_post_fern:test/f32#create');
+assert.deepEqual([...values],[1.25,2.5]);
+const arg=e.cabi_realloc(0,0,4,values.byteLength);
+new Float32Array(e.memory.buffer,arg,values.length).set(values);
+const result=lift(e['fern:test/f32#step'](arg,values.length),'cabi_post_fern:test/f32#step');
+assert.deepEqual([...result],[4.75,2.5]);})().catch(e=>{console.error(e);process.exit(1)});`
 	if out, err := exec.Command(node, "-e", check, output).CombinedOutput(); err != nil {
 		t.Fatalf("f32 binary execution: %v\n%s", err, out)
 	}
