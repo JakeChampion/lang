@@ -789,8 +789,26 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       s = s.write(c_next + ":\n    add x2, x2, #1\n    b " + c_tail + "\n");
       return s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
     }
+    let clo5 = asmcore.fresh_label(s);
+    let c_wide = clo5.name;
+    let clo6 = asmcore.fresh_label(clo5.state);
+    let c_batch = clo6.name;
+    s = clo6.state;
     s = s.write("    mov x5, x0\n    add x6, x0, x3\n");
     s = s.write("    dup v1.16b, w1\n");
+    // A batch is at most 60 blocks of 64 bytes. Each byte of v2 counts the
+    // matches of its lane, at most 4 for a block, so it stays below 256.
+    s = s.write(c_wide + ":\n");
+    s = s.write("    sub x4, x6, x5\n    lsr x2, x4, #6\n    cbz x2, " + c_vec + "\n");
+    s = s.write("    cmp x2, #60\n    b.ls " + c_batch + "_n\n    mov x2, #60\n");
+    s = s.write(c_batch + "_n:\n    movi v2.16b, #0\n");
+    s = s.write(c_batch + ":\n");
+    s = s.write("    ldp q0, q3, [x5], #32\n    ldp q4, q5, [x5], #32\n");
+    for r in ["v0", "v3", "v4", "v5"] {
+      s = s.write("    cmeq " + r + ".16b, " + r + ".16b, v1.16b\n    sub v2.16b, v2.16b, " + r + ".16b\n");
+    }
+    s = s.write("    sub x2, x2, #1\n    cbnz x2, " + c_batch + "\n");
+    s = s.write("    uaddlv h0, v2.16b\n    fmov x4, d0\n    add x7, x7, x4\n    b " + c_wide + "\n");
     s = s.write(c_vec + ":\n");
     s = s.write("    sub x4, x6, x5\n    cmp x4, #16\n    b.lt " + c_tail + "\n");
     s = s.write("    ld1 {v0.16b}, [x5]\n    cmeq v0.16b, v0.16b, v1.16b\n");

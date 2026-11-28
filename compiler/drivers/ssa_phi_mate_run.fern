@@ -1,0 +1,47 @@
+import "../ssa";
+import "../ssafixed";
+import "../util";
+
+function inst(kind: i32, v: i32, args: i32[], str: string): ssa.SInst {
+  return ssa.lifted_inst(kind, v, args, 0, str);
+}
+
+// v3 = v0 - v1 enters the loop as the phi v6 and dies on the edge. v0 lives
+// after the loop, so the phi v5 cannot share its register. v5 starts first and
+// takes a fresh register, which must not be the one that v3 leaves to v6.
+function probe(nregs: i32, nsaved: i32): ssa.Alloc {
+  let b0 = ssa.SBlock { id: 0, insts: [inst(ssa.CONST_INT, 0, [], ""), inst(ssa.CONST_INT, 1, [], ""), inst(ssa.CONST_INT, 2, [], ""), inst(ssa.BINARY, 3, [0, 1], "sub")], term: ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: 1, t: 0, f: 0, value: 0 }, preds: [] };
+  let b1 = ssa.SBlock { id: 1, insts: [inst(ssa.PHI, 5, [0, 8], ""), inst(ssa.PHI, 6, [3, 9], ""), inst(ssa.BINARY, 7, [5, 2], "lt_s")], term: ssa.STerm { kind_tag: ssa.TERM_BRIF, cond: 7, target: 0, t: 2, f: 3, value: 0 }, preds: [0, 2] };
+  let b2 = ssa.SBlock { id: 2, insts: [inst(ssa.BINARY, 8, [5, 1], "add"), inst(ssa.BINARY, 9, [6, 1], "add")], term: ssa.STerm { kind_tag: ssa.TERM_BR, cond: 0, target: 1, t: 0, f: 0, value: 0 }, preds: [1] };
+  let b3 = ssa.SBlock { id: 3, insts: [inst(ssa.BINARY, 10, [5, 0], "add"), inst(ssa.BINARY, 11, [10, 6], "add")], term: ssa.STerm { kind_tag: ssa.TERM_RET, cond: 0, target: 0, t: 0, f: 0, value: 11 }, preds: [1] };
+  let f = ssa.SFunc { name: "phi_mate", nparams: 0, nvals: 12, entry: 0, takes_env: false, blocks: [b0, b1, b2, b3] };
+  let no_home: boolean[] = [];
+  for _ in 0..12 {
+    no_home = no_home.append(false);
+  }
+  return ssa.regalloc_linear_fixed_costs(f, nregs, nsaved, -1, false, no_home, [], [], 0, 0, ssafixed.none(), [], [], [], [], ssa.SpillCosts { fold_alu_rhs: true, two_address: true });
+}
+
+function main(): i32 {
+  let failed: string[] = [];
+  // With caller registers to spare, v5 takes another one and v6 shares v3's.
+  let wide = probe(8, 0);
+  if (wide.reg_of[6] < 0 || wide.reg_of[6] != wide.reg_of[3] || wide.reg_of[5] < 0 || wide.reg_of[5] == wide.reg_of[3]) {
+    failed = failed.append("spare caller register");
+  }
+  // With only v3's caller register free, v5 takes the free saved register.
+  let saved = probe(4, 1);
+  if (saved.reg_of[6] < 0 || saved.reg_of[6] != saved.reg_of[3] || saved.reg_of[5] != 4) {
+    failed = failed.append("free saved register");
+  }
+  // With no other register free, v5 keeps v3's register.
+  let full = probe(4, 0);
+  if (full.reg_of[5] < 0 || full.reg_of[5] != full.reg_of[3]) {
+    failed = failed.append("no other register");
+  }
+  for name in failed {
+    eprint("failed: " + name + "\n");
+  }
+  print("failures=" + util.i32_to_string(failed.len()));
+  return failed.len();
+}

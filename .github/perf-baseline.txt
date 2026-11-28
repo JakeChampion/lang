@@ -168,8 +168,8 @@ aarch64/sort_strings.text	4348
 aarch64/sort_strings.ir	94599716
 aarch64/string_build.text	2453
 aarch64/string_build.ir	42011384
-aarch64/string_count_byte.text	1603
-aarch64/string_count_byte.ir	295207223
+aarch64/string_count_byte.text	1644
+aarch64/string_count_byte.ir	75235283
 aarch64/string_find_byte.text	2005
 aarch64/string_find_byte.ir	55747338
 aarch64/string_rfind_byte.text	2116
