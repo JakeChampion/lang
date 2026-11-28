@@ -284,6 +284,22 @@ func sedUTF8Cases() []invocation {
 			}
 		},
 	})
+	for _, tc := range []struct{ locale, name, data string }{
+		{"fern.UTF-8", "fern", "C.utf8"},
+		{"fern_XX.utf8@euro", "fern", "C.utf8"},
+		{"fern.UTF-8", "fern.UTF-8", "de_DE"},
+	} {
+		cases = append(cases, invocation{
+			name: "UTF-8 category files " + tc.locale + " in " + tc.data,
+			args: []string{"s/./X/g"}, stdin: "é\n",
+			env: []string{"LC_ALL=" + tc.locale, "LOCPATH=."},
+			seedTree: func(t *testing.T, dir string) {
+				if err := os.Symlink(filepath.Join("/usr/lib/locale", tc.data), filepath.Join(dir, tc.name)); err != nil {
+					t.Fatal(err)
+				}
+			},
+		})
+	}
 	return cases
 }
 

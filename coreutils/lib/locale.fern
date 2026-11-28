@@ -229,16 +229,35 @@ function category_file(dir: string, category: string): string {
   return "";
 }
 
-// The glibc LC_CTYPE header holds a count and the offsets of its items.
-// Item 14 is _NL_CTYPE_CODESET_NAME, a NUL-terminated string.
-function ctype_utf8(path: string, base: i64, length: i64): boolean {
+// glibc's category magic and the index of its _NL_*_CODESET item.
+function codeset_item(category: string): (i64, i32) {
+  return match (category) {
+    "LC_CTYPE" => (0x20090720i64, 14),
+    "LC_NUMERIC" => (0x20031114i64, 5),
+    "LC_TIME" => (0x20031117i64, 110),
+    "LC_COLLATE" => (0x20051017i64, 18),
+    "LC_MONETARY" => (0x20031111i64, 45),
+    "LC_MESSAGES" => (0x20031110i64, 4),
+    "LC_PAPER" => (0x20031112i64, 2),
+    "LC_NAME" => (0x2003111di64, 6),
+    "LC_ADDRESS" => (0x2003111ci64, 12),
+    "LC_TELEPHONE" => (0x2003111fi64, 4),
+    "LC_MEASUREMENT" => (0x2003111ei64, 1),
+    "LC_IDENTIFICATION" => (0x20031119i64, 15),
+    _ => (0i64, 0),
+  };
+}
+
+function category_utf8(path: string, base: i64, length: i64, category: string): boolean {
   let Ok(rd) = open_reader(path) else {
     return false;
   };
-  let head = read_at(rd, base, 68i64);
-  let off = u32_at(head, 64);
+  let (magic, item) = codeset_item(category);
+  let header = 8 + 4 * (item + 1);
+  let head = read_at(rd, base, header as i64);
+  let off = u32_at(head, header - 4);
   let is_utf8 = false;
-  if (u32_at(head, 0) == 0x20090720i64 && u32_at(head, 4) > 14i64 && off >= 68i64 && off < length) {
+  if (u32_at(head, 0) == magic && u32_at(head, 4) > item as i64 && off >= 8i64 + 4i64 * u32_at(head, 4) && off < length) {
     let n = length - off;
     let bytes = read_at(rd, base + off, if (n < 6i64) { n } else { 6i64 });
     let i = 0;
@@ -265,7 +284,7 @@ function archive_ctype_utf8(path: string, record: i64): boolean {
   let entry = read_at(rd, record + 4i64, 8i64);
   let _ = rd.close();
   let base = u32_at(entry, 0);
-  return base >= 0i64 && ctype_utf8(path, base, u32_at(entry, 4));
+  return base >= 0i64 && category_utf8(path, base, u32_at(entry, 4), "LC_CTYPE");
 }
 
 // Whether glibc loads a category of the locale `name` from the files. The
@@ -302,11 +321,11 @@ function directory_loads_glibc(p: Parts, category: string, dirs: string[]): bool
     for d in dirs {
       let path = category_file(d + "/" + names[k], category);
       if (path.len() > 0) {
-        if (category == "LC_CTYPE" && !p.has_codeset) {
+        if (category == "LC_CTYPE" || p.has_codeset && utf8_codeset(p.codeset)) {
           let Ok(st) = stat(path) else {
             return false;
           };
-          return ctype_utf8(path, 0i64, st.size);
+          return category_utf8(path, 0i64, st.size, category);
         }
         return coded[k] || !p.has_codeset;
       }
