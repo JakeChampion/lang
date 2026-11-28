@@ -1,0 +1,112 @@
+import "../packages/codecs/icc/srgb_destination";
+import "../packages/codecs/icc/matrix_solve";
+import "../packages/codecs/icc/matrix_eval";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function encode(x: f64, y: f64, z: f64): Result[srgb_destination.Srgb8, srgb_destination.DestinationError] {
+  return srgb_destination.encode(matrix_eval.XYZ { x: x, y: y, z: z }, never);
+}
+
+function bytes(result: Result[srgb_destination.Srgb8, srgb_destination.DestinationError], r: i32, g: i32, b: i32): boolean {
+  return match (result) { Ok(out) => out.r as i32 == r && out.g as i32 == g && out.b as i32 == b, _ => false };
+}
+
+// t times the sum of the selected columns, exact in binary64 for a dyadic t.
+function columns(t: f64, red: boolean, green: boolean, blue: boolean): Result[srgb_destination.Srgb8, srgb_destination.DestinationError] {
+  let m = srgb_destination.matrix();
+  let xyz = [0.0, 0.0, 0.0];
+  for row in 0..3 {
+    let sum = 0;
+    if (red) {
+      sum += m[row * 3];
+    }
+    if (green) {
+      sum += m[row * 3 + 1];
+    }
+    if (blue) {
+      sum += m[row * 3 + 2];
+    }
+    xyz = xyz.with(row, t * (sum as f64) / 65536.0);
+  }
+  return encode(xyz[0], xyz[1], xyz[2]);
+}
+
+function black_and_white(): test.TestOutcome {
+  if (!bytes(encode(0.0, 0.0, 0.0), 0, 0, 0) || !bytes(encode(-0.0, -0.0, -0.0), 0, 0, 0)) {
+    return test.fail("black encodes as zero bytes");
+  }
+  return test.assert_true(bytes(columns(1.0, true, true, true), 255, 255, 255));
+}
+
+function gray_axis(): test.TestOutcome {
+  for (t, level) in [(0.0009765625, 3), (0.0625, 71), (0.1875, 120), (0.25, 137), (0.5, 188), (0.75, 225)] {
+    if (!bytes(columns(t, true, true, true), level, level, level)) {
+      return test.fail(f"gray axis at {t}");
+    }
+  }
+  return test.pass();
+}
+
+function primaries(): test.TestOutcome {
+  for (t, level) in [(0.25, 137), (1.0, 255)] {
+    if (!bytes(columns(t, true, false, false), level, 0, 0) || !bytes(columns(t, false, true, false), 0, level, 0) || !bytes(columns(t, false, false, true), 0, 0, level)) {
+      return test.fail("primaries map to one channel");
+    }
+    if (!bytes(columns(t, true, true, false), level, level, 0) || !bytes(columns(t, false, true, true), 0, level, level) || !bytes(columns(t, true, false, true), level, 0, level)) {
+      return test.fail("secondaries map to two channels");
+    }
+  }
+  return test.pass();
+}
+
+function clipping(): test.TestOutcome {
+  if (!bytes(columns(2.0, true, false, false), 255, 0, 0) || !bytes(columns(-0.5, false, true, false), 0, 0, 0)) {
+    return test.fail("each linear channel clips independently");
+  }
+  return test.assert_true(bytes(encode(2.0, 2.0, 2.0), 255, 255, 255) && bytes(encode(-2.0, -2.0, -2.0), 0, 0, 0));
+}
+
+function admission(): test.TestOutcome {
+  let infinity = f64_from_bits(0x7ff0000000000000);
+  for (x, error) in [(infinity, matrix_solve.SolveError.Input), (f64_from_bits(0x7ff8000000000000), matrix_solve.SolveError.Input), (f64_from_bits(0x4000000000000001), matrix_solve.SolveError.Unsupported), (-f64_from_bits(0x4000000000000001), matrix_solve.SolveError.Unsupported)] {
+    let polls = cell_new(0);
+    let result = srgb_destination.encode(matrix_eval.XYZ { x: 0.5, y: x, z: 0.5 }, (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(srgb_destination.DestinationError.Solve(actual)) => actual != error, _ => true }) {
+      return test.fail("input and domain errors before callbacks");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  for stop in 1..3 {
+    let polls = cell_new(0);
+    let result = srgb_destination.encode(matrix_eval.XYZ { x: 0.25, y: 0.5, z: 0.75 }, (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    });
+    if (polls.get() != stop || match (result) { Err(srgb_destination.DestinationError.Cancelled) => false, _ => true }) {
+      return test.fail("both cancellation polls");
+    }
+  }
+  return test.pass();
+}
+
+pub function main(): i32 {
+  let runner = test.new("ICC sRGB destination");
+  runner = runner.it("ICC sRGB destination black and media white", black_and_white);
+  runner = runner.it("ICC sRGB destination gray axis", gray_axis);
+  runner = runner.it("ICC sRGB destination primaries and secondaries", primaries);
+  runner = runner.it("ICC sRGB destination linear clip", clipping);
+  runner = runner.it("ICC sRGB destination admission before callbacks", admission);
+  runner = runner.it("ICC sRGB destination cooperative cancellation", cancellation);
+  return runner.finish();
+}

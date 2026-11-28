@@ -80,6 +80,7 @@ wasmtime --version
   tests/icc_matrix_model_test.fern \
   tests/icc_matrix_trc_eval_test.fern \
   tests/icc_matrix_solve_test.fern \
+  tests/icc_srgb_destination_test.fern \
   tests/png_incremental_test.fern \
   tests/icc_quadratic_inverse_test.fern \
   tests/icc_inverse_test.fern
