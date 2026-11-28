@@ -1057,8 +1057,6 @@ function value_let_else(e: ast.Expr): ValueLetElse {
     sg = ast.MatchSugar { ...sg, arms: sg.arms.with(0, ast.MatchArm { ...sg.arms[0], body: [] }) };
   } else if (sg.tup.len() > 0) {
     sg = ast.MatchSugar { ...sg, tup: sg.tup.with(0, ast.TupArm { ...sg.tup[0], body: [] }) };
-  } else if (sg.strct.len() > 0) {
-    sg = ast.MatchSugar { ...sg, strct: sg.strct.with(0, ast.StructArm { ...sg.strct[0], body: [] }) };
   } else {
     sg = ast.MatchSugar { ...sg, lits: sg.lits.with(0, ast.LitArm { ...sg.lits[0], body: [] }) };
   }
@@ -2021,35 +2019,6 @@ function rest_suffix(rest_written: boolean, n: i32): string {
   return "..";
 }
 
-function print_struct_arm(a: ast.StructArm): string {
-  if (a.is_wild) {
-    if (a.at_binding.len() > 0) {
-      return a.at_binding + " @ _";
-    }
-    return "_";
-  }
-  let out = a.type_name + " { ";
-  for i in 0..a.fields.len() {
-    if (i > 0) {
-      out += ", ";
-    }
-    out += a.fields[i];
-    if (a.field_kinds[i] == 2) {
-      out = out + ": " + print_lit(a.field_lits[i]);
-    } else if (a.field_kinds[i] == 3) {
-      out = out + ": " + print_pattern_ctx(a.field_pats[i], true);
-    } else if (a.binds[i] != a.fields[i]) {
-      out = out + ": " + a.binds[i];
-    }
-  }
-  out += rest_suffix(a.rest_written, a.fields.len());
-  out += " }";
-  if (a.at_binding.len() > 0) {
-    return a.at_binding + " @ " + out;
-  }
-  return out;
-}
-
 struct WrittenArm { head: string, body: ast.Stmt[], guard: ast.Expr, has_guard: boolean, line: i32 }
 
 function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
@@ -2068,7 +2037,7 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
     }
     return out;
   }
-  let n = sg.tup.len() + sg.strct.len() + sg.lits.len();
+  let n = sg.tup.len() + sg.lits.len();
   while (i < n) {
     let head = "";
     let body: ast.Stmt[] = [];
@@ -2086,22 +2055,14 @@ function sugar_written_arms(sg: ast.MatchSugar): WrittenArm[] {
         head = head + " | " + print_tup_arm(sg.tup[i]);
       }
     } else {
-      if (sg.strct.len() > 0) {
-        head = print_struct_arm(sg.strct[i]);
-        body = sg.strct[i].body;
-        line = sg.strct[i].line;
-        guard = sg.strct[i].guard;
-        has_guard = sg.strct[i].has_guard;
-      } else {
-        head = print_lit_pat(sg.lits[i]);
-        body = sg.lits[i].body;
-        line = sg.lits[i].line;
-        guard = sg.lits[i].guard;
-        has_guard = sg.lits[i].has_guard;
-        while (i + 1 < n && sg.lits[i + 1].alt_cont) {
-          i += 1;
-          head = head + " | " + print_lit_pat(sg.lits[i]);
-        }
+      head = print_lit_pat(sg.lits[i]);
+      body = sg.lits[i].body;
+      line = sg.lits[i].line;
+      guard = sg.lits[i].guard;
+      has_guard = sg.lits[i].has_guard;
+      while (i + 1 < n && sg.lits[i + 1].alt_cont) {
+        i += 1;
+        head = head + " | " + print_lit_pat(sg.lits[i]);
       }
     }
     out = out.append(WrittenArm { head: head, body: body, guard: guard, has_guard: has_guard, line: line });
@@ -2874,7 +2835,7 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       return (xv + ";", xf);
     },
     ast.StmtIf(ifs) => {
-      if (ifs.sugar.tup.len() > 0 || ifs.sugar.strct.len() > 0 || ifs.sugar.lits.len() > 0 || ifs.sugar.arms.len() > 0) {
+      if (ifs.sugar.tup.len() > 0 || ifs.sugar.lits.len() > 0 || ifs.sugar.arms.len() > 0) {
         if (ifs.sugar.origin == "if_let") {
           return print_sugared_if_let(ifs.sugar, depth, f);
         }
