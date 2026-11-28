@@ -210,8 +210,6 @@ func TestSelfHostArm64ExtractExtendGas(t *testing.T) {
 		"sbfx x0, x1, #64, #1",
 		"sbfx w0, w1, #0, #0",
 		"ubfx x0, x1, #4",
-		"ldrsb x0, [x1, x2]",
-		"ldrsh w0, [x1, w2, uxtw #1]",
 	})
 }
 
@@ -636,6 +634,11 @@ func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 		{"ldr w23, [x9, w28, uxtw #2]", 0xb87c5937},
 		{"ldr w23, [x9, w28, sxtw]", 0xb87cc937},
 		{"ldr w0, [x1, x2]", 0xb8626820},
+		{"ldrsb x0, [x1, x2]", 0x38a26820},
+		{"ldrsb w23, [x9, w28, sxtw #0]", 0x38fcd937},
+		{"ldrsh x23, [x9, x28, lsl #1]", 0x78bc7937},
+		{"ldrsh w0, [x1, w2, uxtw #1]", 0x78e25820},
+		{"ldrsh x0, [sp, x2]", 0x78a26be0},
 		{"ldrsw x23, [x9, x28, lsl #2]", 0xb8bc7937},
 		{"ldrsw x0, [x1, x2]", 0xb8a26820},
 		{"ldrsw x23, [x9, w28, sxtw #2]", 0xb8bcd937},
@@ -662,6 +665,9 @@ func TestSelfHostArm64ExtRegAddressingGas(t *testing.T) {
 		"ldr x0, [x1, x2, lsl]",
 		"ldrb w0, [x1, w2, uxtw #1]",
 		"ldrh w0, [x1, w2, uxtw #2]",
+		"ldrsh x0, [x1, w2, sxtw #2]",
+		"ldrsw w0, [x1, x2]",
+		"ldrsb w0, [x1, x2, lsl #1]",
 		"ldr x0, [x1, x2, ror #3]",
 	})
 }
