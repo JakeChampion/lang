@@ -1319,17 +1319,25 @@ function generate(kind: string): i32 {
 // Config arguments are byte strings. Trim Unicode whitespace at the edges
 // and keep undecodable bytes as part of the argument.
 function trim_config_line(line: string): string {
-  let start: i32 = 0;
+  let start = 0;
   let end = line.len();
   while (start < end) {
-    let Some(cp) = utf8.decode_at(line, start) else { break; };
-    if (!(cp.0 as char).is_whitespace()) { break; }
+    let Some(cp) = utf8.decode_at(line, start) else {
+      break;
+    };
+    if (!(cp.0 as char).is_whitespace()) {
+      break;
+    }
     start += cp.1;
   }
   while (end > start) {
     let pos = utf8.floor_char_boundary(line, end - 1);
-    let Some(cp) = utf8.decode_at(line, pos) else { break; };
-    if (pos + cp.1 != end || !(cp.0 as char).is_whitespace()) { break; }
+    let Some(cp) = utf8.decode_at(line, pos) else {
+      break;
+    };
+    if (pos + cp.1 != end || !(cp.0 as char).is_whitespace()) {
+      break;
+    }
     end = pos;
   }
   return slice_unchecked(line, start, end).to_owned();
