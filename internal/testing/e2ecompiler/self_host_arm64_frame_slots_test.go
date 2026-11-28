@@ -38,9 +38,9 @@ function main(): i32 {
 }
 `
 
-// On arm64 a function saves and restores its registers at fixed slots below
-// x29, so no save and no restore moves sp. A loop that tests a variant with
-// no field forms the address of its static box once, before the loop.
+// On arm64 the frame record reserves the saved-register slots, and each
+// register is saved and restored at a fixed positive offset from x29. A loop that
+// tests a variant with no field forms its static box address before the loop.
 func TestSelfHostArm64FrameSlotsAndHoistedBox(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -61,10 +61,13 @@ func TestSelfHostArm64FrameSlotsAndHoistedBox(t *testing.T) {
 			if moved.MatchString(fn) {
 				t.Errorf("%s: total saves or restores a register through sp:\n%s", tg.target, fn)
 			}
-			for _, want := range []string{"stp x19, x20, [x29, #-16]", "ldp x19, x20, [x29, #-16]", "mov sp, x29"} {
+			for _, want := range []string{"stp x29, x30, [sp, #-64]!", ".cfi_def_cfa_offset 64", ".cfi_offset x29, -64", ".cfi_offset x30, -56", "stp x19, x20, [x29, #48]", "ldp x19, x20, [x29, #48]", "ldp x29, x30, [sp], #64"} {
 				if !strings.Contains(fn, want) {
 					t.Errorf("%s: total has no `%s`:\n%s", tg.target, want, fn)
 				}
+			}
+			if strings.Contains(fn, "mov sp, x29") || strings.Contains(fn, "sub sp, sp, #48") {
+				t.Errorf("%s: total adjusts sp separately from the frame record:\n%s", tg.target, fn)
 			}
 			boxes := 0
 			for _, line := range strings.Split(fn, "\n") {
