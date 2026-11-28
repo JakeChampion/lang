@@ -1264,18 +1264,19 @@ function wit_externdesc_mapped(tbody: i32[], e: i32, map: i32[]): i32[] {
   return wit_tx_externdesc(tbody, e, none).out;
 }
 
-pub function wit_iface_instance_offset(tbody: i32[], iface: string): Option[i32] {
+pub function wit_iface_instance_offset(tbody: i32[], iface: string, exported: boolean = false): Option[i32] {
   let none: i32[] = [];
   let world = wit_world_start(tbody);
   let p = world.next;
   let typeOffsets: Option[i32][] = [];
+  let decl = if (exported) { 4 } else { 3 };
   for i in 0..world.value {
     let kind = tbody[p];
     if (kind == 1) {
       typeOffsets = typeOffsets.append(Some(p + 1));
     } else if (wit_decl_defines_type(tbody, p)) {
       typeOffsets = typeOffsets.append(None);
-    } else if (kind == 3) {
+    } else if (kind == decl) {
       let nr = wit_read_name(tbody, p + 2);
       if (nr.s == iface && tbody[nr.next] == 5) {
         let tr = wit_read_uleb(tbody, nr.next + 1);
@@ -1553,9 +1554,9 @@ function wit_iface_export_type_slot(tbody: i32[], instOff: i32, name: string): O
 
 pub struct WitFuncLookup { found: boolean, off: i32, scope: WitScope }
 
-pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string): WitFuncLookup {
+pub function wit_iface_func_lookup(tbody: i32[], iface: string, fname: string, exported: boolean = false): WitFuncLookup {
   let none: i32[] = [];
-  let Some(instOff) = wit_iface_instance_offset(tbody, iface) else {
+  let Some(instOff) = wit_iface_instance_offset(tbody, iface, exported) else {
     return WitFuncLookup { found: false, off: -1, scope: WitScope { offs: none, owners: none } };
   };
   let scope = wit_iface_scope(tbody, instOff);

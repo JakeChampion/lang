@@ -228,6 +228,14 @@ Fern program needs `wasi:cli/stdout`, `wasi:cli/stderr` and `wasi:cli/exit`, so
 the world must import them. `TestSelfHostCLIWitWorld` runs such a component
 with a provider of the world's own interface.
 
+For a provider, declare the interface as an export in the WIT world and mark
+each Fern function with `@export("package/interface@version", "function-name")`.
+The CLI groups the marked functions into their interface. It checks parameter
+and result types against WIT before emitting a lift. Synchronous exports
+support scalars, strings, and lists of booleans, bytes, 32- or 64-bit integers
+and floats. The host can release returned strings and lists through canonical
+post-return.
+
 A self-hosted synchronous import can take a record containing `string`
 and list fields of `u8`, `i32`, `u32`, `i64`, `u64`, `f32` or `f64`, including
 inside nested records. Each contributes an

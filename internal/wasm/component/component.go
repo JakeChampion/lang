@@ -2075,14 +2075,23 @@ func PutTypeSectionResultEmptyAndUnitFuncReturningResult(buf []byte, resultTypei
 }
 
 func PutInstanceSectionOnePackagedFunc(buf []byte, exportName string, funcIdx uint32) []byte {
-	body := []byte{}
-	body = leb128.UlebU64(body, 1)
-	body = append(body, 0x01)
-	body = leb128.UlebU64(body, 1)
-	body = append(body, 0x00)
-	body = putName(body, exportName)
-	body = append(body, 0x01)
-	body = leb128.UlebU64(body, uint64(funcIdx))
+	return putInstanceSectionPackagedFuncs(buf, []packagedFunc{{name: exportName, index: funcIdx}})
+}
+
+type packagedFunc struct {
+	name  string
+	index uint32
+}
+
+func putInstanceSectionPackagedFuncs(buf []byte, funcs []packagedFunc) []byte {
+	body := []byte{1, 1}
+	body = leb128.UlebU64(body, uint64(len(funcs)))
+	for _, f := range funcs {
+		body = append(body, 0x00)
+		body = putName(body, f.name)
+		body = append(body, 0x01)
+		body = leb128.UlebU64(body, uint64(f.index))
+	}
 	return wrapSection(buf, SectionInstance, body)
 }
 
