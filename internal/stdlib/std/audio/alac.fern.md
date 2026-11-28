@@ -123,28 +123,31 @@ function packet_frame_count(input: [u8], info: config.Info, limits: pcm.Limits):
   }
 }
 
+// Raw samples already carry their signed PCM width. Write them in channel order.
+function raw_element(input: [u8], info: config.Info, fields: ElementHeader, count: i32, first_channel: i32, second_channel: i32, own output: i32[]): Result[(i64, i32[]), pcm.AudioError] {
+  let at = fields.at;
+  let width = info.format.bits_per_sample as i64;
+  let end = bits.skip(input, at, fields.frames as i64 * (count as i64) * width)?;
+  let unused = 64i64 - width;
+  for i in 0..fields.frames {
+    let start = i * info.format.channels;
+    output = output.with(start + first_channel, (bits.window(input, at) as i64 >> unused) as i32);
+    at += width;
+    if (count == 2) {
+      output = output.with(start + second_channel, (bits.window(input, at) as i64 >> unused) as i32);
+      at += width;
+    }
+  }
+  return Ok((end, output));
+}
+
 // Residuals, prediction, and low bits share one checked element extent.
 // fern-lint: allow cyclomatic-complexity
-function element(input: [u8], info: config.Info, paired: boolean, fields: ElementHeader, own work: Work): Result[(i64, Work), pcm.AudioError] {
+function compressed_element(input: [u8], info: config.Info, paired: boolean, fields: ElementHeader, own work: Work): Result[(i64, Work), pcm.AudioError] {
   let at = fields.at;
   let count = fields.frames;
   let shift = fields.shift;
   let Work { first, second, first_taps, second_taps } = work;
-  if (fields.raw) {
-    let width = info.format.bits_per_sample;
-    let channels = if (paired) { 2 } else { 1 };
-    let end = bits.skip(input, at, count as i64 * (channels as i64) * (width as i64))?;
-    let unused = (64 - width) as i64;
-    for i in 0..count {
-      first = first.with(i, (bits.window(input, at) as i64 >> unused) as i32);
-      at += width as i64;
-      if (paired) {
-        second = second.with(i, (bits.window(input, at) as i64 >> unused) as i32);
-        at += width as i64;
-      }
-    }
-    return Ok((end, Work { first: first, second: second, first_taps: first_taps, second_taps: second_taps }));
-  }
   let depth = info.format.bits_per_sample - shift + (if (paired) { 1 } else { 0 });
   let (p4, mid_shift) = bits.read(input, at, 8)?;
   let (p5, weight) = bits.signed(input, p4, 8)?;
@@ -197,13 +200,6 @@ function element(input: [u8], info: config.Info, paired: boolean, fields: Elemen
         low = next_pair_low;
         second = second.with(i, second[i] << shift | other as i32);
       }
-    }
-  }
-  let clip = 32 - info.format.bits_per_sample;
-  for i in 0..count {
-    first = first.with(i, first[i] << clip >> clip);
-    if (paired) {
-      second = second.with(i, second[i] << clip >> clip);
     }
   }
   return Ok((at, Work { first: first, second: second, first_taps: first_taps, second_taps: second_taps }));
@@ -280,18 +276,29 @@ pub function (own value: Decoder) decode_packet_into(input: [u8], own output: i3
     if (needed > output.len()) {
       return Err(pcm.Buffer);
     }
-    let (after_element, next_work) = element(input, info, paired, fields, work)?;
-    work = next_work;
-    at = after_element;
     frames = fields.frames;
     let first_channel = config.channel(info.format.channels, channel)?;
-    for i in 0..frames {
-      output = output.with(i * info.format.channels + first_channel, work.first[i]);
+    let second_channel = if (paired) { config.channel(info.format.channels, channel + 1)? } else { first_channel };
+    if (fields.raw) {
+      let (next_at, samples) = raw_element(input, info, fields, count, first_channel, second_channel, output)?;
+      output = samples;
+      at = next_at;
+      channel += count;
+      continue;
     }
+    let (after_element, next_work) = compressed_element(input, info, paired, fields, work)?;
+    work = next_work;
+    at = after_element;
+    let clip = 32 - info.format.bits_per_sample;
     if (paired) {
-      let second_channel = config.channel(info.format.channels, channel + 1)?;
       for i in 0..frames {
-        output = output.with(i * info.format.channels + second_channel, work.second[i]);
+        let start = i * info.format.channels;
+        output = output.with(start + first_channel, work.first[i] << clip >> clip);
+        output = output.with(start + second_channel, work.second[i] << clip >> clip);
+      }
+    } else {
+      for i in 0..frames {
+        output = output.with(i * info.format.channels + first_channel, work.first[i] << clip >> clip);
       }
     }
     channel += count;
