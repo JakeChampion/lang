@@ -95,3 +95,91 @@ func TestSelfHostScaledElementLoad(t *testing.T) {
 		}
 	}
 }
+
+// Each function writes two elements of one array in each trip: 4 bytes, 2
+// bytes with no sign, 2 bytes with the sign, and bytes.
+const indexedElementStoreFunctions = `@noinline function swap32(own xs: i32[], n: i32, k: i32): i32[] {
+  for i in 0..n {
+    let t = xs[i];
+    xs = xs.with(i, xs[i + k]);
+    xs = xs.with(i + k, t - 1);
+  }
+  return xs;
+}
+@noinline function fill16(own xs: u16[], n: i32, k: i32): u16[] {
+  for i in 0..n {
+    xs = xs.with(i, (i * 7) as u16);
+    xs = xs.with(i + k, 65535u16);
+  }
+  return xs;
+}
+@noinline function neg16(own xs: i16[], n: i32, k: i32): i16[] {
+  for i in 0..n {
+    xs = xs.with(i, (0 - i - 5) as i16);
+    xs = xs.with(i + k, 9 as i16);
+  }
+  return xs;
+}
+@noinline function bytes(own xs: u8[], n: i32, k: i32): u8[] {
+  for i in 0..n {
+    xs = xs.with(i, (i + 200) as u8);
+    xs = xs.with(i + k, 7u8);
+  }
+  return xs;
+}
+`
+
+const indexedElementStoreMain = `function main(): i32 {
+  let a = swap32([0 - 5, 7, 0 - 2000000000, 9], 3, 1);
+  if (a[0] != 7 || a[1] != 0 - 2000000000 || a[2] != 9 || a[3] != 0 - 8) { return 1; }
+  let h = fill16([1u16, 2u16, 3u16, 4u16], 3, 1);
+  if (h[0] != 0u16 || h[1] != 7u16 || h[2] != 14u16 || h[3] != 65535u16) { return 2; }
+  let g = neg16([1 as i16, 2 as i16, 3 as i16], 2, 1);
+  if (g[0] as i32 != 0 - 5 || g[1] as i32 != 0 - 6 || g[2] as i32 != 9) { return 3; }
+  let b = bytes([1u8, 2u8, 3u8, 4u8], 3, 1);
+  if (b[0] != 200u8 || b[1] != 201u8 || b[2] != 202u8 || b[3] != 7u8) { return 4; }
+  return 0;
+}`
+
+var arm64IndexedStore = regexp.MustCompile(`(?:str w\d+|strh w\d+|strb w\d+), \[x\d+, x\d+(?:, lsl #[12])?\]`)
+
+// A loop that writes one array two times or more writes each element with
+// one store at the address of the elements and the index. A write past the
+// end aborts as before.
+func TestSelfHostIndexedElementStore(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	program := indexedElementStoreFunctions + indexedElementStoreMain
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"swap32", "fill16", "neg16", "bytes"} {
+		body := tailCallBody(t, string(asm), name)
+		if !arm64IndexedStore.MatchString(body) {
+			t.Errorf("%s has no store with a register index:\n%s", name, body)
+		}
+		if strings.Contains(body, "add x5,") {
+			t.Errorf("%s forms the address of an element for an access:\n%s", name, body)
+		}
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+		if stderr, code := cli.exitOf(t, program, target, "FERN_LEAKCHECK=1", "FERN_SANITIZE=1"); code != 0 {
+			t.Errorf("%s: exit %d, want 0\n%s", target, code, stderr)
+		}
+		past := indexedElementStoreFunctions + "function main(): i32 { return fill16([1u16, 2u16, 3u16], 3, 1).len(); }"
+		stderr, code := cli.exitOf(t, past, target)
+		if target == "wasm32-wasi" {
+			if code == 0 {
+				t.Errorf("%s: a write past the end exits 0, want a trap\n%s", target, stderr)
+			}
+			continue
+		}
+		if code != 134 || !strings.Contains(stderr, "fern: array index out of range") {
+			t.Errorf("%s: a write past the end exits %d, want array abort 134\n%s", target, code, stderr)
+		}
+	}
+}

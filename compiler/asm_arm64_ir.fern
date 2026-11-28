@@ -4832,6 +4832,10 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.E
   if (k == ssa.ST_IDX) {
     return s.write("    str " + c + ", " + at + "\n");
   }
+  if (ins.ir_kind == ssa.SUM_SCALED) {
+    let half = ssa_elem_bytes(ins.str) == 2;
+    return s.write("    " + (if (half) { "strh " } else { "str " }) + ssa_wreg(c) + ", [" + a + ", " + ssa_src(reg_of, ins.args[1], "x5") + ", lsl #" + (if (half) { "1" } else { "2" }) + "]\n");
+  }
   return s.write("    strb " + ssa_wreg(c) + ", " + at + "\n");
 }
 
