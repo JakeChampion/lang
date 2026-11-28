@@ -119,6 +119,12 @@ function test_property_aliases(): test.TestOutcome {
   return test.assert_eq(got.join(" / "), "αβ / д / α / 😀 / 😀 / © /   / 1 / error / α℘ / _9·α / α / αำ9 / (∫)");
 }
 
+function test_case_change_properties(): test.TestOutcome {
+  let text = "AaßǅﬃςᎠᎰ1";
+  let got = [all("\\p{CWCF}+", text), all("\\p{Changes_When_Casemapped}+", text), all("\\p{CWL}+", text), all("\\p{CWT}+", text), all("\\p{CWU}+", text)];
+  return test.assert_eq(got.join(" / "), "A|ßǅﬃς / AaßǅﬃςᎠᎰ / A|ǅ|ᎠᎰ / aß|ﬃς / aßǅﬃς");
+}
+
 // A class of Grapheme_Cluster_Break or Word_Break needs the name of its
 // property. Other is not a value, and "ex" is Extend in one property and
 // ExtendNumLet in the other, as in regex-syntax.
@@ -451,6 +457,7 @@ function main(): i32 {
   r = r.it("full and lazy tables", test_full_and_lazy_tables);
   r = r.it("many columns stay lazy", test_many_columns_stay_lazy);
   r = r.it("property aliases", test_property_aliases);
+  r = r.it("case change properties", test_case_change_properties);
   r = r.it("break classes", test_break_classes);
   r = r.it("break class errors", test_break_class_errors);
   r = r.it("spaces and repetitions", test_spaces_and_repetitions);
