@@ -1148,6 +1148,8 @@ function interp_char_boundary(s: string, i: i32): boolean {
 
 pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: Funcs, aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, try_cleanup: ast.Stmt[], heap: interpheap.Heap, cells: boolean, tynames: boolean }
 
+pub struct CallParams { names: string[], types: string[] }
+
 // The program's functions in declaration order, indexed by the name a call
 // uses: the declared name, except that a Map `__iterator` is `iter`.
 // `iterator_decls` keeps every declaration spelled `__iterator` in source order.
@@ -1156,9 +1158,24 @@ pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[
 // `receiver_refs` holds the parsed receiver type of each declaration.
 // `receiver_args` holds the receiver argument names to check for const bindings.
 // `plain` is true for a function with no receiver whose name no builtin takes.
-pub struct Funcs { decls: parser.FuncDecl[], runtime_names: util.NameIndex, qualifiers: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], receiver_refs: parser.TypeRef[], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
+pub struct Funcs { params: CallParams[], decls: parser.FuncDecl[], runtime_names: util.NameIndex, qualifiers: util.NameIndex, iterator_decls: i32[], receivers: string[], receiver_args: string[][], receiver_refs: parser.TypeRef[], cells: boolean[], cleanups: ast.Stmt[][], plain: boolean[] }
+
+function param_layout(fd: parser.FuncDecl): CallParams {
+  let names: string[] = [];
+  let types: string[] = [];
+  if (fd.receiver_name.len() > 0) {
+    names = names.append(fd.receiver_name);
+    types = types.append("");
+  }
+  for p in fd.params {
+    names = names.append(p.name);
+    types = types.append(p.type_name);
+  }
+  return CallParams { names: names, types: types };
+}
 
 function funcs_of(decls: parser.FuncDecl[]): Funcs {
+  let params: CallParams[] = [];
   let names: string[] = [];
   let iterator_decls: i32[] = [];
   let receivers: string[] = [];
@@ -1169,6 +1186,7 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
   let plain: boolean[] = [];
   let qualifiers = util.name_index([]);
   for fd in decls {
+    params = params.append(param_layout(fd));
     let qualifier = name_qualifier(fd.name);
     if (qualifier.len() > 0 && fd.receiver_type.len() == 0 && !qualifiers.has(qualifier)) {
       qualifiers = qualifiers.added(qualifier);
@@ -1190,7 +1208,7 @@ function funcs_of(decls: parser.FuncDecl[]): Funcs {
     cleanups = cleanups.append(deferlower.try_cleanup(fd.body));
     plain = plain.append(fd.receiver_type.len() == 0 && !builtin_takes_name(fd.name));
   }
-  return Funcs { decls: decls, runtime_names: util.name_index(names), qualifiers: qualifiers, iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, receiver_refs: receiver_refs, cells: cells, cleanups: cleanups, plain: plain };
+  return Funcs { params: params, decls: decls, runtime_names: util.name_index(names), qualifiers: qualifiers, iterator_decls: iterator_decls, receivers: receivers, receiver_args: receiver_args, receiver_refs: receiver_refs, cells: cells, cleanups: cleanups, plain: plain };
 }
 
 // The part of a function name before its first dot, or "" for a name with no
@@ -1272,6 +1290,40 @@ function (e: Env) bind_decl(name: string, v: Value, decl_ty: string): Env {
   let vs = e.values.append(coerce_int_width(v, decl_ty));
   let ts = e.types.append(decl_ty);
   return Env { ...e, names: ns, values: vs, types: ts };
+}
+
+// Each call supplies new values. The parameter names and types belong to
+// the declaration and can be shared by frames without earlier bindings.
+function (e: Env) bind_params(at: i32, args: Value[], recv: Value, has_recv: boolean): Env {
+  if (args.len() == 0 && !has_recv) {
+    return e;
+  }
+  let layout = e.funcs.params[at];
+  let vs = e.values;
+  let offset = 0;
+  if (has_recv) {
+    vs = vs.append(recv);
+    offset = 1;
+  }
+  if (layout.names.len() != offset + args.len()) {
+    // A declaration called through an associated name has no bound receiver.
+    let fd = e.funcs.decls[at];
+    let frame = e;
+    if (has_recv) {
+      frame = frame.bind(fd.receiver_name, recv);
+    }
+    for i in 0..args.len() {
+      frame = frame.bind_decl(fd.params[i].name, args[i], fd.params[i].type_name);
+    }
+    return frame;
+  }
+  for i in 0..args.len() {
+    vs = vs.append(coerce_int_width(args[i], layout.types[offset + i]));
+  }
+  if (e.names.len() == 0) {
+    return Env { ...e, names: layout.names, types: layout.types, values: vs };
+  }
+  return Env { ...e, names: e.names.concat(layout.names), types: e.types.concat(layout.types), values: vs };
 }
 
 function (e: Env) decl_type(name: string): string {
@@ -6922,9 +6974,7 @@ function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args
       t += 1;
     }
   }
-  for j in 0..fd.params.len() {
-    env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-  }
+  env = env.bind_params(ai, args, v_absent(), false);
   let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
@@ -7597,10 +7647,7 @@ function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: s
     if (receiver_args.len() > 0) {
       env = bind_receiver_consts(env, fd.receiver_type, recv_static, receiver_args);
     }
-    env = env.bind(fd.receiver_name, recv);
-    for j in 0..fd.params.len() {
-      env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-    }
+    env = env.bind_params(at, args, recv, true);
     let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
     if (step.sig != 1) {
       return v_void();
@@ -10100,9 +10147,7 @@ function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], typ
   let env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type, try_cleanup: funcs.cleanups[at], cells: funcs.cells[at] };
   let no_recv = v_absent();
   env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
-  for j in 0..fd.params.len() {
-    env = env.bind_decl(fd.params[j].name, args[j], fd.params[j].type_name);
-  }
+  env = env.bind_params(at, args, no_recv, false);
   let step = call_block(heap, fd.body, unsafe { share_unchecked(env) });
   if (step.sig != 1) {
     return v_void();
