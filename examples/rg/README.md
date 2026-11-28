@@ -222,7 +222,7 @@ order of the walk.
   `\p{Greek}` and `\p{Grek}`, and the properties of emoji are there. As in
   ripgrep, `\p{sc!=Greek}` is `\p{Greek}`. Some properties are not in
   `std/regex`, and a pattern with one of them gives an error of
-  `std/regex`. They are Script_Extensions, Age and Sentence_Break. The
+  `std/regex`. They include Script_Extensions and Age. The
   binary properties include ID_Start, ID_Continue, XID_Start, XID_Continue,
   Bidi_Mirrored and the five Changes_When case properties.
 

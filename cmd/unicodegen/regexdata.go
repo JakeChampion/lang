@@ -274,7 +274,7 @@ func breakClasses(each func(yield func(lo, hi rune, class int))) []uint8 {
 }
 
 // propTables gives each table of ranges and the keys that name it. A key is
-// "gc:", "sc:", "bp:", "gcb:" or "wb:" and the loose name, or "pw:word" for
+// "gc:", "sc:", "bp:", "gcb:", "wb:" or "sb:" and the loose name, or "pw:word" for
 // \w.
 func propTables() []propTable {
 	var out []propTable
@@ -337,6 +337,7 @@ func propTables() []propTable {
 			yield(w.lo, w.hi, w.class)
 		}
 	}))
+	out = append(out, sentenceBreakTables...)
 	props := binaryProps()
 	var names []string
 	for name := range props {
@@ -560,7 +561,8 @@ function _prop_decode(span: (i32, i32)): Option[i32[]] {
 // and an "is" at the start do not count. ` + "`gc=`" + `, ` + "`sc=`" + `, ` + "`gcb=`" + ` and ` + "`wb=`" + `, their long
 // names ` + "`General_Category=`" + `, ` + "`Script=`" + `, ` + "`Grapheme_Cluster_Break=`" + ` and
 // ` + "`Word_Break=`" + `, or the same names with ` + "`:`" + ` or ` + "`!=`" + `, select the kind of
-// property. A break class always needs its kind. Without a kind, a binary
+// property. Sentence_Break takes the same operators and the short name sb.
+// A break class always needs its kind. Without a kind, a binary
 // property comes first, then a general category, then a script. An unknown
 // name gives None.
 pub function property_ranges(name: string): Option[i32[]] {
@@ -578,10 +580,11 @@ pub function property_ranges(name: string): Option[i32[]] {
 
 // _prop_valued gives the span of the ranges of a value of the property
 // kind: a general category, Any, Assigned and ASCII for gc, a script, or a
-// class of Grapheme_Cluster_Break or Word_Break other than Other.
+// class of Grapheme_Cluster_Break, Word_Break or Sentence_Break other than Other.
 function _prop_valued(kind: string, value: string): (i32, i32) {
     if (kind == "sc" || kind == "script") { return _prop_index("sc:" + value); }
     if (kind == "gcb" || kind == "graphemeclusterbreak") { return _prop_index("gcb:" + value); }
+    if (kind == "sb" || kind == "sentencebreak") { return _prop_index("sb:" + value); }
     if (kind == "wb" || kind == "wordbreak") { return _prop_index("wb:" + value); }
     if (kind != "gc" && kind != "generalcategory") { return (-1, 0); }
     let span = _prop_index("gc:" + value);

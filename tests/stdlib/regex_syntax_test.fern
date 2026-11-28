@@ -139,6 +139,12 @@ function test_break_classes(): test.TestOutcome {
   return test.assert_eq(got.join(" / "), "🇬🇧 / \u{0600} / 가 / \t / \u{200C} / _ / \u{200C} / ab|cd / א / 12|3 / ,  / . / \"ア\" / '");
 }
 
+function test_sentence_break_classes(): test.TestOutcome {
+  let text = "Aα9.!,";
+  let got = [all("\\p{sb=AT}", text), all("\\p{Sentence_Break:STerm}", text), all("\\p{sb!=sc}", text), all("\\P{sb=Lower}+", text), all("\\p{sb=LE}", "A漢")];
+  return test.assert_eq(got.join(" / "), ". / ! / , / A|9.!, / 漢");
+}
+
 function test_break_class_errors(): test.TestOutcome {
   let got = [
     reported("\\p{gcb=Other}"), reported("\\p{wb=xx}"), reported("\\p{gcb=eb}"), reported("\\p{wb=gaz}"),
@@ -459,6 +465,7 @@ function main(): i32 {
   r = r.it("property aliases", test_property_aliases);
   r = r.it("case change properties", test_case_change_properties);
   r = r.it("break classes", test_break_classes);
+  r = r.it("sentence break classes", test_sentence_break_classes);
   r = r.it("break class errors", test_break_class_errors);
   r = r.it("spaces and repetitions", test_spaces_and_repetitions);
   r = r.it("syntax errors", test_syntax_errors);

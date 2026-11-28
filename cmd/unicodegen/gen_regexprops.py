@@ -20,11 +20,34 @@ def properties(text, names):
     return values
 
 
-def emit(name, points):
-    print(f"\nvar {name} = [][2]rune{{")
+def ranges(points):
     for _, group in groupby(enumerate(sorted(points)), lambda pair: pair[1] - pair[0]):
         span = [cp for _, cp in group]
-        print(f"\t{{0x{span[0]:04X}, 0x{span[-1]:04X}}},")
+        yield span[0], span[-1]
+
+
+def emit(name, points):
+    print(f"\nvar {name} = [][2]rune{{")
+    for lo, hi in ranges(points):
+        print(f"\t{{0x{lo:04X}, 0x{hi:04X}}},")
+    print("}")
+
+
+def emit_sentence_break(version, ucd):
+    aliases = {}
+    for line in ucd_file(version, ucd, "PropertyValueAliases.txt").splitlines():
+        fields = [part.strip() for part in line.partition("#")[0].split(";")]
+        if fields[0] == "SB" and fields[2] != "Other":
+            short, name = fields[1:3]
+            aliases[name] = list(dict.fromkeys((name.lower(), short.lower())))
+    classes = properties(ucd_file(version, ucd, "auxiliary/SentenceBreakProperty.txt"), aliases)
+    print("\nvar sentenceBreakTables = []propTable{")
+    for name, keys in sorted(aliases.items()):
+        names = ", ".join(f'"sb:{key}"' for key in keys)
+        print(f"\t{{keys: []string{{{names}}}, rs: [][2]rune{{")
+        for lo, hi in ranges(classes[name]):
+            print(f"\t\t{{0x{lo:04X}, 0x{hi:04X}}},")
+        print("\t}},")
     print("}")
 
 
@@ -56,6 +79,7 @@ def main():
     mapped = changes["Changes_When_Lowercased"] | changes["Changes_When_Uppercased"] | changes["Changes_When_Titlecased"]
     if changes["Changes_When_Casemapped"] != mapped:
         raise ValueError("unexpected Changes_When_Casemapped definition")
+    emit_sentence_break(args.version, args.ucd)
 
 
 if __name__ == "__main__":

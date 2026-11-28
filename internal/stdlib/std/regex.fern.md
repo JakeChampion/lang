@@ -28,7 +28,7 @@ The syntax is that of the Rust `regex` crate:
 
 - A literal character, `.`, `^` and `$`, groups `(...)`, `(?:...)`, `(?<name>...)` and `(?P<name>...)`, alternatives `|`, and the repetitions `*`, `+`, `?`, `{n}`, `{n,}` and `{n,m}`. A `?` after a repetition makes it lazy: it prefers one fewer repeat to one more.
 - The classes `\d`, `\s` and `\w`, and their complements `\D`, `\S` and `\W`.
-- A general category, a script, a binary property or a break class of Unicode: `\p{...}` or `\pL`, and `\P{...}` or `\PL` for the complement. Examples are `\p{Greek}`, `\p{Lu}`, `\p{sc=Cyrillic}` and `\p{White_Space}`. A class of Grapheme_Cluster_Break or Word_Break needs the name of its property, as `\p{gcb=Extend}` and `\p{wb=ALetter}`.
+- A general category, a script, a binary property or a break class of Unicode: `\p{...}` or `\pL`, and `\P{...}` or `\PL` for the complement. Examples are `\p{Greek}`, `\p{Lu}`, `\p{sc=Cyrillic}` and `\p{White_Space}`. A class of Grapheme_Cluster_Break, Word_Break or Sentence_Break needs the name of its property, as `\p{gcb=Extend}`, `\p{wb=ALetter}` or `\p{sb=STerm}`.
 - Bracket classes such as `[a-z\d]` and `[^\p{L}]`. They can hold nested classes and the ASCII classes such as `[:alpha:]`. `&&`, `--` and `~~` give the intersection, the difference and the symmetric difference.
 - The assertions `\b`, `\B`, `\<`, `\>`, `\A`, `\z`, `\b{start}`, `\b{end}`, `\b{start-half}` and `\b{end-half}`.
 - The escapes `\n`, `\t`, `\r`, `\f`, `\v` and `\a`, and an escaped ASCII mark that is not a letter or a digit.
