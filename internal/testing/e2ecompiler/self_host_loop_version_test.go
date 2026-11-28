@@ -171,7 +171,8 @@ func TestSelfHostLoopVersioning(t *testing.T) {
 	}
 	loads := map[string]*regexp.Regexp{
 		"x86-64-linux": regexp.MustCompile(`movslq 8\(%r\w+,%r\w+,4\)`),
-		"arm64-linux":  regexp.MustCompile(`ldrsw x\d+, \[x\d+, #8\]`),
+		// A loop that touches the array two times reads with a scaled index.
+		"arm64-linux": regexp.MustCompile(`ldrsw x\d+, \[x\d+, (#8|x\d+, lsl #2)\]`),
 	}
 	laneLoads := map[string]*regexp.Regexp{
 		"x86-64-linux": regexp.MustCompile(`movupd 8\(%r\w+,%r\w+(,8)?\), %xmm`),

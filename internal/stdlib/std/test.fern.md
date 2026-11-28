@@ -88,21 +88,17 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<25 pub function assert_is_ok[T, E](res: Result[T, E]): TestOutcome>>
 
-<<26 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome>>
+<<26 pub function assert_array_disjoint[T: cmp.Eq + cmp.Display](a: T[], b: T[]): TestOutcome>>
 
-<<27 function __match_subseq_i32(arr: i32[], needle: i32[]): boolean>>
+<<27 function __match_subseq[T: cmp.Eq](arr: T[], needle: T[]): boolean>>
 
-<<28 pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): TestOutcome>>
+<<28 pub function assert_array_contains_subseq[T: cmp.Eq + cmp.Display](arr: T[], needle: T[]): TestOutcome>>
 
-<<29 function __match_subseq_string(arr: string[], needle: string[]): boolean>>
-
-<<30 pub function assert_array_contains_subseq_string(arr: string[], needle: string[]): TestOutcome>>
+<<30 pub function assert_all_starts_with(arr: string[], prefix: string): TestOutcome>>
 
 <<31 pub function assert_json_has_key(json_text: string, key: string): TestOutcome>>
 
 <<32 pub function assert_json_object_size(json_text: string, n: i32): TestOutcome>>
-
-<<33 pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): TestOutcome>>
 ```
 
 
@@ -351,17 +347,7 @@ pub function (r: TestRunner) log(msg: string): TestRunner {
   return r;
 }
 
-pub function (r: TestRunner) log_kv_string(key: string, value: string): TestRunner {
-  print("# " + key + "=\"" + value + "\"");
-  return r;
-}
-
-pub function (r: TestRunner) log_kv_i32(key: string, value: i32): TestRunner {
-  print("# " + key + "=" + value.to_string());
-  return r;
-}
-
-pub function (r: TestRunner) log_kv_i64(key: string, value: i64): TestRunner {
+pub function (r: TestRunner) log_kv[T: cmp.Display](key: string, value: T): TestRunner {
   print("# " + key + "=" + value.to_string());
   return r;
 }
@@ -820,21 +806,12 @@ pub function assert_set_eq[T: cmp.Eq + cmp.Display](actual: T[], expected: T[]):
   return Pass;
 }
 
-pub function assert_len_i32(arr: i32[], n: i32): TestOutcome {
+pub function assert_len[T](arr: T[], n: i32): TestOutcome {
   let got = arr.len();
   if (got == n) {
     return Pass;
   }
-  return Fail("assert_len_i32: expected length " + n.to_string()
-    + ", got " + got.to_string());
-}
-
-pub function assert_len_string(arr: string[], n: i32): TestOutcome {
-  let got = arr.len();
-  if (got == n) {
-    return Pass;
-  }
-  return Fail("assert_len_string: expected length " + n.to_string()
+  return Fail("assert_len: expected length " + n.to_string()
     + ", got " + got.to_string());
 }
 
@@ -1931,15 +1908,11 @@ pub function assert_is_ok[T, E](res: Result[T, E]): TestOutcome {
   return Fail("assert_is_ok: got Err");
 }
 
-pub function assert_is_err_string(res: Result[string, IoError]): TestOutcome {
-  match (res) {
-    Ok(v) => {
-      return Fail("assert_is_err_string: got Ok(\"" + v + "\")");
-    },
-    Err(_) => {
-      return Pass;
-    }
+pub function assert_is_err[T, E](res: Result[T, E]): TestOutcome {
+  if (res.is_err()) {
+    return Pass;
   }
+  return Fail("assert_is_err: got Ok");
 }
 
 pub function assert_is_ok_eq[T: cmp.Eq + cmp.Display, E](res: Result[T, E], expected: T): TestOutcome {
@@ -1959,63 +1932,35 @@ pub function assert_is_ok_eq[T: cmp.Eq + cmp.Display, E](res: Result[T, E], expe
   }
 }
 
-pub function assert_is_err_string_array(res: Result[string[], IoError]): TestOutcome {
-  match (res) {
-    Ok(v) => {
-      return Fail("assert_is_err_string_array: got Ok of length "
-        + v.len().to_string());
-    },
-    Err(_) => {
-      return Pass;
-    }
-  }
-}
-
-pub function assert_array_intersects_i32(a: i32[], b: i32[]): TestOutcome {
+pub function assert_array_intersects[T: cmp.Eq + cmp.Display](a: T[], b: T[]): TestOutcome {
   let i = 0;
   while (i < a.len()) {
     let j = 0;
     while (j < b.len()) {
-      if (a[i] == b[j]) {
+      if (a[i].eq(b[j])) {
         return Pass;
       }
       j += 1;
     }
     i += 1;
   }
-  return Fail("assert_array_intersects_i32: no shared element between arrays of length "
+  return Fail("assert_array_intersects: no shared element between arrays of length "
     + a.len().to_string() + " and " + b.len().to_string());
 }
 ```
 
-### `26 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome`
+### `26 pub function assert_array_disjoint[T: cmp.Eq + cmp.Display](a: T[], b: T[]): TestOutcome`
 
 ```fern
-<<26 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome>>=
-pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome {
+<<26 pub function assert_array_disjoint[T: cmp.Eq + cmp.Display](a: T[], b: T[]): TestOutcome>>=
+pub function assert_array_disjoint[T: cmp.Eq + cmp.Display](a: T[], b: T[]): TestOutcome {
   let i = 0;
   while (i < a.len()) {
     let j = 0;
     while (j < b.len()) {
-      if (a[i] == b[j]) {
-        return Pass;
-      }
-      j += 1;
-    }
-    i += 1;
-  }
-  return Fail("assert_array_intersects_string: no shared element between arrays of length "
-    + a.len().to_string() + " and " + b.len().to_string());
-}
-
-pub function assert_array_disjoint_i32(a: i32[], b: i32[]): TestOutcome {
-  let i = 0;
-  while (i < a.len()) {
-    let j = 0;
-    while (j < b.len()) {
-      if (a[i] == b[j]) {
-        return Fail("assert_array_disjoint_i32: shared element "
-          + a[i].to_string());
+      if (a[i].eq(b[j])) {
+        return Fail("assert_array_disjoint: shared element "
+          + __quoted(a[i].to_string()));
       }
       j += 1;
     }
@@ -2024,98 +1969,42 @@ pub function assert_array_disjoint_i32(a: i32[], b: i32[]): TestOutcome {
   return Pass;
 }
 
-pub function assert_array_disjoint_string(a: string[], b: string[]): TestOutcome {
-  let i = 0;
-  while (i < a.len()) {
-    let j = 0;
-    while (j < b.len()) {
-      if (a[i] == b[j]) {
-        return Fail("assert_array_disjoint_string: shared element \""
-          + a[i] + "\"");
-      }
-      j += 1;
-    }
-    i += 1;
-  }
-  return Pass;
-}
-
-pub function assert_array_starts_with_i32(arr: i32[], prefix: i32[]): TestOutcome {
+pub function assert_array_starts_with[T: cmp.Eq + cmp.Display](arr: T[], prefix: T[]): TestOutcome {
   let pn = prefix.len();
   if (pn > arr.len()) {
-    return Fail("assert_array_starts_with_i32: array length "
+    return Fail("assert_array_starts_with: array length "
       + arr.len().to_string() + " < prefix length "
       + pn.to_string());
   }
   let i = 0;
   while (i < pn) {
-    if (arr[i] != prefix[i]) {
-      return Fail("assert_array_starts_with_i32: at index "
+    if (!arr[i].eq(prefix[i])) {
+      return Fail("assert_array_starts_with: at index "
         + i.to_string() + " expected "
-        + prefix[i].to_string() + ", got "
-        + arr[i].to_string());
+        + __quoted(prefix[i].to_string()) + ", got "
+        + __quoted(arr[i].to_string()));
     }
     i += 1;
   }
   return Pass;
 }
 
-pub function assert_array_starts_with_string(arr: string[], prefix: string[]): TestOutcome {
-  let pn = prefix.len();
-  if (pn > arr.len()) {
-    return Fail("assert_array_starts_with_string: array length "
-      + arr.len().to_string() + " < prefix length "
-      + pn.to_string());
-  }
-  let i = 0;
-  while (i < pn) {
-    if (arr[i] != prefix[i]) {
-      return Fail("assert_array_starts_with_string: at index "
-        + i.to_string() + " expected \""
-        + prefix[i] + "\", got \"" + arr[i] + "\"");
-    }
-    i += 1;
-  }
-  return Pass;
-}
-
-pub function assert_array_ends_with_i32(arr: i32[], suffix: i32[]): TestOutcome {
+pub function assert_array_ends_with[T: cmp.Eq + cmp.Display](arr: T[], suffix: T[]): TestOutcome {
   let sn = suffix.len();
   let an = arr.len();
   if (sn > an) {
-    return Fail("assert_array_ends_with_i32: array length "
+    return Fail("assert_array_ends_with: array length "
       + an.to_string() + " < suffix length "
       + sn.to_string());
   }
   let off = an - sn;
   let i = 0;
   while (i < sn) {
-    if (arr[off + i] != suffix[i]) {
-      return Fail("assert_array_ends_with_i32: at index "
+    if (!arr[off + i].eq(suffix[i])) {
+      return Fail("assert_array_ends_with: at index "
         + (off + i).to_string() + " expected "
-        + suffix[i].to_string() + ", got "
-        + arr[off + i].to_string());
-    }
-    i += 1;
-  }
-  return Pass;
-}
-
-pub function assert_array_ends_with_string(arr: string[], suffix: string[]): TestOutcome {
-  let sn = suffix.len();
-  let an = arr.len();
-  if (sn > an) {
-    return Fail("assert_array_ends_with_string: array length "
-      + an.to_string() + " < suffix length "
-      + sn.to_string());
-  }
-  let off = an - sn;
-  let i = 0;
-  while (i < sn) {
-    if (arr[off + i] != suffix[i]) {
-      return Fail("assert_array_ends_with_string: at index "
-        + (off + i).to_string() + " expected \""
-        + suffix[i] + "\", got \"" + arr[off + i] + "\"");
+        + __quoted(suffix[i].to_string()) + ", got "
+        + __quoted(arr[off + i].to_string()));
     }
     i += 1;
   }
@@ -2123,11 +2012,11 @@ pub function assert_array_ends_with_string(arr: string[], suffix: string[]): Tes
 }
 ```
 
-### `27 function __match_subseq_i32(arr: i32[], needle: i32[]): boolean`
+### `27 function __match_subseq[T: cmp.Eq](arr: T[], needle: T[]): boolean`
 
 ```fern
-<<27 function __match_subseq_i32(arr: i32[], needle: i32[]): boolean>>=
-function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
+<<27 function __match_subseq[T: cmp.Eq](arr: T[], needle: T[]): boolean>>=
+function __match_subseq[T: cmp.Eq](arr: T[], needle: T[]): boolean {
   let nn = needle.len();
   if (nn == 0) {
     return true;
@@ -2141,7 +2030,7 @@ function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
     let matched = true;
     let i = 0;
     while (i < nn) {
-      if (arr[start + i] != needle[i]) {
+      if (!arr[start + i].eq(needle[i])) {
         matched = false;
         i = nn;
       } else {
@@ -2157,69 +2046,25 @@ function __match_subseq_i32(arr: i32[], needle: i32[]): boolean {
 }
 ```
 
-### `28 pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): TestOutcome`
+### `28 pub function assert_array_contains_subseq[T: cmp.Eq + cmp.Display](arr: T[], needle: T[]): TestOutcome`
 
 ```fern
-<<28 pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): TestOutcome>>=
-pub function assert_array_contains_subseq_i32(arr: i32[], needle: i32[]): TestOutcome {
-  if (__match_subseq_i32(arr, needle)) {
+<<28 pub function assert_array_contains_subseq[T: cmp.Eq + cmp.Display](arr: T[], needle: T[]): TestOutcome>>=
+pub function assert_array_contains_subseq[T: cmp.Eq + cmp.Display](arr: T[], needle: T[]): TestOutcome {
+  if (__match_subseq(arr, needle)) {
     return Pass;
   }
-  return Fail("assert_array_contains_subseq_i32: needle of length "
+  return Fail("assert_array_contains_subseq: needle of length "
     + needle.len().to_string()
     + " not found in array of length "
     + arr.len().to_string());
 }
 ```
 
-### `29 function __match_subseq_string(arr: string[], needle: string[]): boolean`
+### `30 pub function assert_all_starts_with(arr: string[], prefix: string): TestOutcome`
 
 ```fern
-<<29 function __match_subseq_string(arr: string[], needle: string[]): boolean>>=
-function __match_subseq_string(arr: string[], needle: string[]): boolean {
-  let nn = needle.len();
-  if (nn == 0) {
-    return true;
-  }
-  let an = arr.len();
-  if (nn > an) {
-    return false;
-  }
-  let start = 0;
-  while (start <= an - nn) {
-    let matched = true;
-    let i = 0;
-    while (i < nn) {
-      if (arr[start + i] != needle[i]) {
-        matched = false;
-        i = nn;
-      } else {
-        i += 1;
-      }
-    }
-    if (matched) {
-      return true;
-    }
-    start += 1;
-  }
-  return false;
-}
-```
-
-### `30 pub function assert_array_contains_subseq_string(arr: string[], needle: string[]): TestOutcome`
-
-```fern
-<<30 pub function assert_array_contains_subseq_string(arr: string[], needle: string[]): TestOutcome>>=
-pub function assert_array_contains_subseq_string(arr: string[], needle: string[]): TestOutcome {
-  if (__match_subseq_string(arr, needle)) {
-    return Pass;
-  }
-  return Fail("assert_array_contains_subseq_string: needle of length "
-    + needle.len().to_string()
-    + " not found in array of length "
-    + arr.len().to_string());
-}
-
+<<30 pub function assert_all_starts_with(arr: string[], prefix: string): TestOutcome>>=
 pub function assert_all_starts_with(arr: string[], prefix: string): TestOutcome {
   let i = 0;
   while (i < arr.len()) {
@@ -2464,196 +2309,40 @@ pub function assert_json_object_size(json_text: string, n: i32): TestOutcome {
   return Pass;
 }
 
-pub function assert_json_eq_field_string(json_text: string, key: string, expected: string): TestOutcome {
+pub function assert_json_eq_field[T: json.FromJson + cmp.Eq + cmp.Display](json_text: string, key: string, expected: T): TestOutcome {
   match (json.parse(json_text)) {
     Err(_) => {
-      return Fail("assert_json_eq_field_string: not valid JSON: " + json_text);
+      return Fail("assert_json_eq_field: not valid JSON: " + json_text);
     },
-    Ok(v) => {
-      match (v) {
+    Ok(root) => {
+      match (root) {
         JObject(m) => {
-          if (!m.contains(key)) {
-            return Fail("assert_json_eq_field_string: key \"" + key
-              + "\" not present");
-          }
-          match (m.get_or(key, JNull)) {
-            JString(s) => {
-              if (s == expected) {
-                return Pass;
-              }
-              return Fail("assert_json_eq_field_string: at \"" + key
-                + "\" expected \"" + expected
-                + "\", got \"" + s + "\"");
+          match (m.get(key)) {
+            None => {
+              return Fail("assert_json_eq_field: key \"" + key
+                + "\" not present");
             },
-            JNull => {
-              return Fail("assert_json_eq_field_string: at \"" + key + "\" value is null, not string");
-            },
-            JBool(_) => {
-              return Fail("assert_json_eq_field_string: at \"" + key + "\" value is bool, not string");
-            },
-            JNumber(_) => {
-              return Fail("assert_json_eq_field_string: at \"" + key + "\" value is number, not string");
-            },
-            JArray(_) => {
-              return Fail("assert_json_eq_field_string: at \"" + key + "\" value is array, not string");
-            },
-            JObject(_) => {
-              return Fail("assert_json_eq_field_string: at \"" + key + "\" value is object, not string");
-            }
-          }
-        },
-        JNull => {
-          return Fail("assert_json_eq_field_string: top-level value is null, not object");
-        },
-        JBool(_) => {
-          return Fail("assert_json_eq_field_string: top-level value is bool, not object");
-        },
-        JNumber(_) => {
-          return Fail("assert_json_eq_field_string: top-level value is number, not object");
-        },
-        JString(_) => {
-          return Fail("assert_json_eq_field_string: top-level value is string, not object");
-        },
-        JArray(_) => {
-          return Fail("assert_json_eq_field_string: top-level value is array, not object");
-        }
-      }
-    }
-  }
-  return Pass;
-}
-```
-
-### `33 pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): TestOutcome`
-
-```fern
-<<33 pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): TestOutcome>>=
-pub function assert_json_eq_field_i32(json_text: string, key: string, expected: i32): TestOutcome {
-  match (json.parse(json_text)) {
-    Err(_) => {
-      return Fail("assert_json_eq_field_i32: not valid JSON: " + json_text);
-    },
-    Ok(v) => {
-      match (v) {
-        JObject(m) => {
-          if (!m.contains(key)) {
-            return Fail("assert_json_eq_field_i32: key \"" + key
-              + "\" not present");
-          }
-          match (m.get_or(key, JNull)) {
-            JNumber(s) => {
-              match (i32.parse_i32(s)) {
-                Err(_) => {
-                  return Fail("assert_json_eq_field_i32: at \"" + key
-                    + "\" value \"" + s + "\" not i32-parseable");
+            Some(v) => {
+              match (T.from_json_value(v)) {
+                Err(e) => {
+                  return Fail("assert_json_eq_field: at \"" + key
+                    + "\" " + e.message());
                 },
                 Ok(got) => {
-                  if (got == expected) {
+                  if (got.eq(expected)) {
                     return Pass;
                   }
-                  return Fail("assert_json_eq_field_i32: at \"" + key
-                    + "\" expected " + expected.to_string()
-                    + ", got " + got.to_string());
+                  return Fail("assert_json_eq_field: at \"" + key
+                    + "\" expected " + __quoted(expected.to_string())
+                    + ", got " + __quoted(got.to_string()));
                 }
               }
-            },
-            JNull => {
-              return Fail("assert_json_eq_field_i32: at \"" + key + "\" value is null, not number");
-            },
-            JBool(_) => {
-              return Fail("assert_json_eq_field_i32: at \"" + key + "\" value is bool, not number");
-            },
-            JString(_) => {
-              return Fail("assert_json_eq_field_i32: at \"" + key + "\" value is string, not number");
-            },
-            JArray(_) => {
-              return Fail("assert_json_eq_field_i32: at \"" + key + "\" value is array, not number");
-            },
-            JObject(_) => {
-              return Fail("assert_json_eq_field_i32: at \"" + key + "\" value is object, not number");
             }
           }
         },
-        JNull => {
-          return Fail("assert_json_eq_field_i32: top-level value is null, not object");
-        },
-        JBool(_) => {
-          return Fail("assert_json_eq_field_i32: top-level value is bool, not object");
-        },
-        JNumber(_) => {
-          return Fail("assert_json_eq_field_i32: top-level value is number, not object");
-        },
-        JString(_) => {
-          return Fail("assert_json_eq_field_i32: top-level value is string, not object");
-        },
-        JArray(_) => {
-          return Fail("assert_json_eq_field_i32: top-level value is array, not object");
-        }
-      }
-    }
-  }
-  return Pass;
-}
-
-pub function assert_json_eq_field_bool(json_text: string, key: string, expected: boolean): TestOutcome {
-  match (json.parse(json_text)) {
-    Err(_) => {
-      return Fail("assert_json_eq_field_bool: not valid JSON: " + json_text);
-    },
-    Ok(v) => {
-      match (v) {
-        JObject(m) => {
-          if (!m.contains(key)) {
-            return Fail("assert_json_eq_field_bool: key \"" + key
-              + "\" not present");
-          }
-          match (m.get_or(key, JNull)) {
-            JBool(b) => {
-              if (b == expected) {
-                return Pass;
-              }
-              let ebs = "false";
-              if (expected) {
-                ebs = "true";
-              }
-              let gbs = "false";
-              if (b) {
-                gbs = "true";
-              }
-              return Fail("assert_json_eq_field_bool: at \"" + key
-                + "\" expected " + ebs + ", got " + gbs);
-            },
-            JNull => {
-              return Fail("assert_json_eq_field_bool: at \"" + key + "\" value is null, not bool");
-            },
-            JNumber(_) => {
-              return Fail("assert_json_eq_field_bool: at \"" + key + "\" value is number, not bool");
-            },
-            JString(_) => {
-              return Fail("assert_json_eq_field_bool: at \"" + key + "\" value is string, not bool");
-            },
-            JArray(_) => {
-              return Fail("assert_json_eq_field_bool: at \"" + key + "\" value is array, not bool");
-            },
-            JObject(_) => {
-              return Fail("assert_json_eq_field_bool: at \"" + key + "\" value is object, not bool");
-            }
-          }
-        },
-        JNull => {
-          return Fail("assert_json_eq_field_bool: top-level value is null, not object");
-        },
-        JBool(_) => {
-          return Fail("assert_json_eq_field_bool: top-level value is bool, not object");
-        },
-        JNumber(_) => {
-          return Fail("assert_json_eq_field_bool: top-level value is number, not object");
-        },
-        JString(_) => {
-          return Fail("assert_json_eq_field_bool: top-level value is string, not object");
-        },
-        JArray(_) => {
-          return Fail("assert_json_eq_field_bool: top-level value is array, not object");
+        _ => {
+          return Fail("assert_json_eq_field: top-level value is "
+            + json.kind(root) + ", not an object");
         }
       }
     }

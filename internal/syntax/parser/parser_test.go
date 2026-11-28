@@ -3,6 +3,7 @@ package parser
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -257,23 +258,29 @@ func TestIfElse(t *testing.T) {
 	}
 }
 
-func TestForProducesForNode(t *testing.T) {
-	prog, err := Parse(`function f(): i32 {
-		for (let i = 0; i < 3; i = i + 1) { i; }
-		return 0;
-	}`)
-	if err != nil {
-		t.Fatal(err)
+func TestThreePartForIsRefused(t *testing.T) {
+	for _, tc := range []struct {
+		src string
+		col int
+	}{
+		{"function f(): i32 { for (let i = 0; i < 3; i = i + 1) { i; } return 0; }", 25},
+		{"function f(): i32 { let i = 0; for (i = 0; i < 3; i = i + 1) {} return 0; }", 36},
+		{"function f(): i32 { let i = 0; for (; i < 3 ;) { i = i + 1; } return i; }", 36},
+		{"function f(): i32 { for (;;) {} return 0; }", 25},
+	} {
+		_, err := Parse(tc.src)
+		want := fmt.Sprintf("parse error at 1:%d: %s", tc.col, threePartForMessage)
+		if err == nil || err.Error() != want {
+			t.Errorf("%s:\ngot  %v\nwant %s", tc.src, err, want)
+		}
 	}
-	loop, ok := prog.Funcs[0].Body.Stmts[0].(*ast.For)
-	if !ok {
-		t.Fatalf("expected For, got %T", prog.Funcs[0].Body.Stmts[0])
-	}
-	if _, ok := loop.Init.(*ast.Var); !ok {
-		t.Errorf("Init should be Var, got %T", loop.Init)
-	}
-	if loop.Step == nil {
-		t.Errorf("Step should be set")
+	for _, tc := range []struct{ src, want string }{
+		{"function f(xs: i32[]): i32 { for x xs { } return 0; }", `expected "in" after the ` + "`for`" + ` pattern`},
+		{"function f(): i32 { for 1 in xs { } return 0; }", `expected a name or a pattern after "for"`},
+	} {
+		if _, err := Parse(tc.src); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want %q", tc.src, err, tc.want)
+		}
 	}
 }
 
@@ -554,45 +561,10 @@ func TestForEachPatternHeaderParses(t *testing.T) {
 }
 
 func TestForHeaderParenDisambiguation(t *testing.T) {
-	prog, err := Parse(`function f(): i32 {
-		let sum: i32 = 0;
-		for (let i: i32 = 0; i < 3; i = i + 1) { sum = sum + i; }
-		return sum;
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := prog.Funcs[0].Body.Stmts[1].(*ast.For); !ok {
-		t.Errorf("C-style for should still parse to *ast.For, got %T", prog.Funcs[0].Body.Stmts[1])
-	}
-	_, err = Parse(`function f(): i32 { for (x) in xs { } return 0; }`)
+	_, err := Parse(`function f(): i32 { for (x) in xs { } return 0; }`)
 	if err == nil || !strings.Contains(err.Error(), "tuple pattern needs at least 2 elements") {
 		t.Errorf("for (x) in xs should report the shared tuple-pattern error, got %v", err)
 	}
-}
-
-func TestForWithExprInit(t *testing.T) {
-	prog, err := Parse(`function f(): i32 {
-		let i = 0;
-		for (i = 0; i < 3; i = i + 1) {}
-		return 0;
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = prog
-}
-
-func TestForEmptyInitAndStep(t *testing.T) {
-	prog, err := Parse(`function f(): i32 {
-		let i = 0;
-		for (; i < 3 ;) { i = i + 1; }
-		return i;
-	}`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = prog
 }
 
 func TestFunctionTypeAnnotation(t *testing.T) {
@@ -808,7 +780,6 @@ func TestAssignmentIsAStatement(t *testing.T) {
 	}
 	for _, src := range []string{
 		`function f(): i32 { let r = 0; let s = 0; r = s = 3; return r; }`,
-		`function f(): i32 { let r = 0; for (r = 1; r < 3; r += 1) { } return r; }`,
 		`function f(): i32 { let r = 0; defer r = 9; return r; }`,
 	} {
 		if _, err := Parse(src); err != nil {
