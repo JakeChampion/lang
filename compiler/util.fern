@@ -723,13 +723,10 @@ pub function hex_digits(text: string, from: i32): boolean {
 
 // path_base is the part of path after its last slash.
 pub function path_base(path: string): string {
-  let start = 0;
-  for i in 0..path.len() {
-    if (path[i] == b'/') {
-      start = i + 1;
-    }
+  if let Some(slash) = path.last_index_of("/") {
+    return slice_unchecked(path, slash + 1, path.len()).to_owned();
   }
-  return slice_unchecked(path, start, path.len()).to_owned();
+  return path;
 }
 
 pub function same_i32s(a: i32[], b: i32[]): boolean {
@@ -1525,33 +1522,15 @@ pub function derive_hint(tn: string, derive: string, trait_name: string): string
   return "add " + routes + " in module `" + slice_unchecked(tn, 0, cut) + "`, which declares it and needs `import \"core/cmp\";` there" + orphan;
 }
 
-pub function last_slash(p: string): i32 {
-  let i = 0;
-  let last: i32 = -1;
-  while (i < p.len()) {
-    if (p[i] == b'/') {
-      last = i;
-    }
-    i += 1;
-  }
-  return last;
-}
-
 pub function dir_of(p: string): string {
-  let ls = last_slash(p);
-  if (ls < 0) {
-    return "";
+  if let Some(slash) = p.last_index_of("/") {
+    return slice_unchecked(p, 0, slash).to_owned();
   }
-  return slice_unchecked(p, 0, ls).to_owned();
+  return "";
 }
 
 pub function module_name(import_path: string): string {
-  let path = without_fern_ext(import_path);
-  let ls = last_slash(path);
-  if (ls >= 0) {
-    return slice_unchecked(path, ls + 1, path.len()).to_owned();
-  }
-  return path;
+  return path_base(without_fern_ext(import_path));
 }
 
 pub function without_fern_ext(path: string): string {
