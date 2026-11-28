@@ -801,6 +801,22 @@ func (p *parser) skipBraced() {
 	}
 }
 
+func (p *parser) skipParenthesized() {
+	depth := 0
+	for !p.match(lexer.EOF, "") {
+		switch {
+		case p.match(lexer.Punct, "("):
+			depth++
+		case p.match(lexer.Punct, ")"):
+			depth--
+		}
+		p.advance()
+		if depth == 0 {
+			return
+		}
+	}
+}
+
 func (p *parser) syncToStmt() {
 	for !p.match(lexer.EOF, "") {
 		if p.match(lexer.Punct, ";") {
@@ -3337,58 +3353,20 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 		return p.parseForEachPattern(kw, label)
 	}
 
-	if _, err := p.expect(lexer.Punct, "("); err != nil {
-		return nil, err
+	if p.match(lexer.Punct, "(") {
+		p.errors = append(p.errors, p.errorf(p.peek().Pos, "%s", threePartForMessage))
+		p.skipParenthesized()
+		p.skipBraced()
+		return &ast.Block{P: kw.Pos}, nil
 	}
-
-	var init ast.Stmt
-	if p.match(lexer.Keyword, "let") {
-		kw := p.advance()
-		v, err := p.parseLetBinding(kw.Pos)
-		if err != nil {
-			return nil, err
-		}
-		init = v
-	} else if p.match(lexer.Punct, ";") {
+	if p.match(lexer.Ident, "") {
 		p.advance()
-	} else {
-		e, err := p.parseAssign()
-		if err != nil {
-			return nil, err
-		}
-		if _, err := p.expect(lexer.Punct, ";"); err != nil {
-			return nil, err
-		}
-		init = &ast.ExprStmt{P: e.Pos(), Expr: e}
+		return nil, p.errorf(p.peek().Pos, "expected \"in\" after the `for` pattern")
 	}
-
-	cond, err := p.parseExpr()
-	if err != nil {
-		return nil, err
-	}
-	if _, err := p.expect(lexer.Punct, ";"); err != nil {
-		return nil, err
-	}
-
-	var step ast.Stmt
-	if !p.match(lexer.Punct, ")") {
-		stepExpr, err := p.parseAssign()
-		if err != nil {
-			return nil, err
-		}
-		step = &ast.ExprStmt{P: stepExpr.Pos(), Expr: stepExpr}
-	}
-	if _, err := p.expect(lexer.Punct, ")"); err != nil {
-		return nil, err
-	}
-
-	body, err := p.parseBlock()
-	if err != nil {
-		return nil, err
-	}
-
-	return &ast.For{P: kw.Pos, Init: init, Cond: cond, Step: step, Body: body, Label: label}, nil
+	return nil, p.errorf(p.peek().Pos, "expected a name or a pattern after \"for\"")
 }
+
+const threePartForMessage = "Fern has no three-part `for (init; cond; step)`. Write `for i in lo..hi { … }` or a `while` loop"
 
 func (p *parser) nextForeachID() int {
 	p.foreachN++

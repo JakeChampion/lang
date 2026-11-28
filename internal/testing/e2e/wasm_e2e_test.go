@@ -3289,7 +3289,7 @@ func TestWASMFactorial(t *testing.T) {
 func TestWASMForLoopWithBreakContinue(t *testing.T) {
 	src := `function main(): i32 {
 		let sum = 0;
-		for (let i = 0; i < 10; i = i + 1) {
+		for i in 0..10 {
 			if (i < 5) { continue; }
 			if (i == 8) { break; }
 			sum = sum + i;

@@ -11,7 +11,7 @@ import (
 func TestSelfHostLoopBodiesRequireBlocks(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, head := range []string{
-		"while (false)", "loop", "for (let i = 0; i < 1; i = i + 1)",
+		"while (false)", "loop",
 		"for x in [1]", "for x in 0..1", "for x in 0..=1", "for (x, y) in [(1, 2)]",
 		"outer: while (false)", "outer: loop", "outer: for x in [1]",
 	} {

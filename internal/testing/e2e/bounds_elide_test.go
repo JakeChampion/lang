@@ -13,7 +13,7 @@ func TestBoundsElideLenBoundedLoops(t *testing.T) {
 function main(): i32 {
     let xs: i32[] = [3, 5, 7, 11, 13];
     let s: i32 = 0;
-    for (let i: i32 = 0; i < xs.len(); i = i + 1) { s = s + xs[i]; }
+    for i in 0..xs.len() { s = s + xs[i]; }
     print(s.to_string());
     return 0;
 }`},

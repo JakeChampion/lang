@@ -179,7 +179,6 @@ isn't significant.
   patterns, nested patterns, or-patterns, `@` bindings, literals and
   ranges all work here.
 - **`while (cond) { ... }`** — pre-test loop.
-- **`for (init; cond; step) { ... }`** — three-part loop.
 - **`for x in expr { ... }`** — foreach over an array, slice, range or
   iterator.
 - **`for Pat in expr { ... }`** — foreach with a destructuring binder,

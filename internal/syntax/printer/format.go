@@ -1456,26 +1456,6 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 		f.formatLoopLabel(x.Label)
 		f.b.WriteString("loop ")
 		f.formatStmt(x.Body, depth)
-	case *ast.For:
-		f.formatLoopLabel(x.Label)
-		f.b.WriteString("for (")
-		if x.Init != nil {
-			f.formatStmt(x.Init, depth)
-		} else {
-			f.b.WriteByte(';')
-		}
-		f.b.WriteByte(' ')
-		f.formatExpr(x.Cond, precLowest)
-		f.b.WriteString("; ")
-		if x.Step != nil {
-			if es, ok := x.Step.(*ast.ExprStmt); ok {
-				f.formatExpr(es.Expr, precLowest)
-			} else {
-				f.formatStmt(x.Step, depth)
-			}
-		}
-		f.b.WriteString(") ")
-		f.formatStmt(x.Body, depth)
 	case *ast.Break:
 		f.b.WriteString("break")
 		f.formatJumpLabel(x.Label)
